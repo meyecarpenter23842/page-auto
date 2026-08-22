@@ -1,0 +1,22 @@
+node_modules/
+out/
+dist/
+coverage/
+*.log
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+.env
+.env.*
+!.env.example
+
+# Local PAGE-AUTO data: never commit real sessions/cookies/profiles
+data/
+browser-profiles/
+screenshots/
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
