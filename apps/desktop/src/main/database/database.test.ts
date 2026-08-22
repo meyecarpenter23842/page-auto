@@ -34,9 +34,10 @@ describe('initializeDatabase', () => {
     expect(existsSync(databaseFile)).toBe(true)
     expect(migrations).toEqual([
       { version: 1, name: 'bootstrap_app_settings' },
-      { version: 2, name: 'account_manager' }
+      { version: 2, name: 'account_manager' },
+      { version: 3, name: 'page_tab_config' }
     ])
-    expect(schemaVersion?.value).toBe('2')
+    expect(schemaVersion?.value).toBe('3')
 
     runtime.close()
   })
@@ -50,7 +51,7 @@ describe('initializeDatabase', () => {
       .prepare('SELECT COUNT(*) AS count FROM __page_auto_migrations')
       .get() as { count: number }
 
-    expect(count.count).toBe(2)
+    expect(count.count).toBe(3)
     reopened.close()
   })
 })

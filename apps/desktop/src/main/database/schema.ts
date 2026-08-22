@@ -51,3 +51,78 @@ export const columnLayouts = sqliteTable('column_layouts', {
   layoutJson: text('layout_json').notNull(),
   updatedAt: integer('updated_at').notNull()
 })
+
+export const pageTabs = sqliteTable('page_tabs', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  name: text('name').notNull(),
+  pageUid: text('page_uid').notNull(),
+  status: text('status').notNull().default('idle'),
+  postsPerAccount: integer('posts_per_account').notNull().default(1),
+  postDelayMinSeconds: integer('post_delay_min_seconds').notNull().default(180),
+  postDelayMaxSeconds: integer('post_delay_max_seconds').notNull().default(300),
+  accountDelayMinSeconds: integer('account_delay_min_seconds').notNull().default(600),
+  accountDelayMaxSeconds: integer('account_delay_max_seconds').notNull().default(900),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull()
+})
+
+export const pageTabAccounts = sqliteTable('page_tab_accounts', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  pageTabId: integer('page_tab_id').notNull(),
+  accountId: integer('account_id').notNull(),
+  sortOrder: integer('sort_order').notNull(),
+  enabled: integer('enabled').notNull().default(1),
+  postsPerTurn: integer('posts_per_turn')
+})
+
+export const pageTabSchedules = sqliteTable('page_tab_schedules', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  pageTabId: integer('page_tab_id').notNull(),
+  dayOfWeek: integer('day_of_week').notNull(),
+  startMinute: integer('start_minute').notNull(),
+  endMinute: integer('end_minute').notNull(),
+  enabled: integer('enabled').notNull().default(1),
+  sortOrder: integer('sort_order').notNull()
+})
+
+export const groupSets = sqliteTable('group_sets', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  pageTabId: integer('page_tab_id').notNull().unique(),
+  name: text('name').notNull(),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull()
+})
+
+export const groupSetItems = sqliteTable('group_set_items', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  groupSetId: integer('group_set_id').notNull(),
+  groupUid: text('group_uid').notNull(),
+  sortOrder: integer('sort_order').notNull()
+})
+
+export const contentSets = sqliteTable('content_sets', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  pageTabId: integer('page_tab_id').notNull().unique(),
+  name: text('name').notNull(),
+  mode: text('mode').notNull().default('sequential'),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull()
+})
+
+export const contentItems = sqliteTable('content_items', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  contentSetId: integer('content_set_id').notNull(),
+  content: text('content').notNull(),
+  sortOrder: integer('sort_order').notNull()
+})
+
+export const imageSources = sqliteTable('image_sources', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  pageTabId: integer('page_tab_id').notNull().unique(),
+  folderPath: text('folder_path').notNull().default(''),
+  mode: text('mode').notNull().default('sequential'),
+  imagesPerPost: integer('images_per_post').notNull().default(1),
+  missingPolicy: text('missing_policy').notNull().default('text_only'),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull()
+})

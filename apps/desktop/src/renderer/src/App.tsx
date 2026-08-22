@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { AppInfo } from '../../ipc/channels'
 import { AccountManager } from './accounts/AccountManager'
+import { PageTabsManager } from './page-tabs/PageTabsManager'
 
 type RouteId = 'overview' | 'accounts' | 'page-tabs' | 'logs' | 'settings'
 
@@ -21,7 +22,7 @@ const routes: Route[] = [
 const routeDescriptions: Record<RouteId, { title: string; description: string }> = {
   overview: {
     title: 'Tổng quan',
-    description: 'Desktop foundation đã hoàn tất; Account Manager đang là phase hoạt động hiện tại.'
+    description: 'Account Manager đã có nền dữ liệu; Phase 3 đang cấu hình Page Tabs độc lập trước Run Queue và posting core.'
   },
   accounts: {
     title: 'Account Manager',
@@ -29,20 +30,20 @@ const routeDescriptions: Record<RouteId, { title: string; description: string }>
   },
   'page-tabs': {
     title: 'Page Tabs',
-    description: 'Mỗi Page UID sẽ có cấu hình account, lịch chạy, group, content và image folder độc lập.'
+    description: 'Mỗi Page UID có account order, rotation, lịch chạy, Group Set, Content Set và Image Folder độc lập.'
   },
   logs: {
     title: 'Runtime Logs',
-    description: 'Main process đã có file logger cơ bản; runtime log chi tiết sẽ được mở rộng theo từng phase.'
+    description: 'Runtime execution log chi tiết sẽ được mở rộng ở phase recovery/run; logger nền vẫn nằm trong Main.'
   },
   settings: {
     title: 'Settings',
-    description: 'Thiết lập global sẽ được thêm dần mà không cho renderer truy cập trực tiếp database hoặc browser.'
+    description: 'Thiết lập global vẫn đi qua Main/IPC, renderer không truy cập database hoặc browser trực tiếp.'
   }
 }
 
 export function App() {
-  const [activeRoute, setActiveRoute] = useState<RouteId>('accounts')
+  const [activeRoute, setActiveRoute] = useState<RouteId>('page-tabs')
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null)
   const active = useMemo(() => routeDescriptions[activeRoute], [activeRoute])
 
@@ -92,11 +93,13 @@ export function App() {
 
         {activeRoute === 'accounts' ? (
           <AccountManager />
+        ) : activeRoute === 'page-tabs' ? (
+          <PageTabsManager />
         ) : (
           <>
             <section className="hero-card">
               <div>
-                <span className="phase-badge">PHASE {activeRoute === 'overview' ? '1' : 'NEXT'}</span>
+                <span className="phase-badge">PHASE {activeRoute === 'overview' ? '3' : 'NEXT'}</span>
                 <h2>{active.title}</h2>
                 <p>{active.description}</p>
               </div>
@@ -104,7 +107,7 @@ export function App() {
                 <div><strong>Renderer</strong><span>React UI only</span></div>
                 <div><strong>Main</strong><span>DB + lifecycle</span></div>
                 <div><strong>Storage</strong><span>SQLite + Drizzle</span></div>
-                <div><strong>Browser</strong><span>Playwright worker</span></div>
+                <div><strong>Page Config</strong><span>Independent per tab</span></div>
               </div>
             </section>
 
@@ -112,16 +115,16 @@ export function App() {
               <div className="section-heading">
                 <div>
                   <p className="eyebrow">Architecture status</p>
-                  <h2>Nền tảng giữ đúng ranh giới process</h2>
+                  <h2>Phase 3 giữ config tách khỏi runtime</h2>
                 </div>
-                <span className="healthy-chip">Phase 1 active</span>
+                <span className="healthy-chip">Page Tab config active</span>
               </div>
 
               <div className="check-list">
-                <div><span>01</span><div><strong>Electron lifecycle</strong><p>Main process khởi tạo database trước khi mở UI.</p></div></div>
-                <div><span>02</span><div><strong>Account DB</strong><p>Credentials và metadata chỉ đi qua typed IPC, renderer không chạm DB.</p></div></div>
-                <div><span>03</span><div><strong>Persistent profile</strong><p>Mỗi account có folder browser-profile riêng, worker Playwright chạy tách UI.</p></div></div>
-                <div><span>04</span><div><strong>Portable baseline</strong><p>Phân phối theo folder/ZIP portable; không dùng installer trong MVP.</p></div></div>
+                <div><span>01</span><div><strong>Account references</strong><p>Page Tab chỉ reference account ID, không copy cookie/password/proxy.</p></div></div>
+                <div><span>02</span><div><strong>Source sets</strong><p>Group Set và Content Set là nguồn gốc để Phase 4 clone run snapshot.</p></div></div>
+                <div><span>03</span><div><strong>Schedule config</strong><p>Nhiều khung giờ/ngày được persist độc lập theo từng Page UID.</p></div></div>
+                <div><span>04</span><div><strong>No posting yet</strong><p>Phase 3 chỉ lưu config; Run Queue và posting core chưa được kích hoạt.</p></div></div>
               </div>
             </section>
           </>
