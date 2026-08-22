@@ -1,5 +1,7 @@
-import { app, ipcMain } from 'electron'
+import { app, dialog, ipcMain } from 'electron'
 import type Database from 'better-sqlite3'
+import { readFile, readdir, stat } from 'node:fs/promises'
+import { extname } from 'node:path'
 import {
   IPC_CHANNELS,
   type AccountColumnLayoutPayload,
@@ -14,8 +16,14 @@ import type {
   AccountListFilters,
   SaveImportPresetInput
 } from '../shared/accounts'
+import type {
+  CreatePageTabInput,
+  PageTabIdPayload,
+  UpdatePageTabPayload
+} from '../shared/pageTabs'
 import { BrowserProfileManager } from './browser/browserProfileManager'
 import { AccountRepository } from './database/accountRepository'
+import { PageTabRepository } from './database/pageTabRepository'
 
 interface RegisterIpcOptions {
   database: Database.Database
@@ -26,8 +34,11 @@ export interface IpcRuntime {
   dispose: () => void
 }
 
+const supportedImageExtensions = new Set(['.jpg', '.jpeg', '.png', '.webp'])
+
 export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
   const accounts = new AccountRepository(options.database)
+  const pageTabs = new PageTabRepository(options.database)
   const browserProfiles = new BrowserProfileManager(options.dataDirectory)
 
   ipcMain.handle(IPC_CHANNELS.appInfo, (): AppInfo => ({
@@ -58,6 +69,60 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
       return { status: 'error', message: 'Account không tồn tại.' }
     }
     return browserProfiles.open(payload.accountId)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.pageTabsList, () => pageTabs.list())
+  ipcMain.handle(IPC_CHANNELS.pageTabsGet, (_event, payload: PageTabIdPayload) => pageTabs.get(payload.id))
+  ipcMain.handle(IPC_CHANNELS.pageTabsCreate, (_event, input: CreatePageTabInput) => pageTabs.create(input))
+  ipcMain.handle(IPC_CHANNELS.pageTabsUpdate, (_event, payload: UpdatePageTabPayload) =>
+    pageTabs.update(payload.id, payload.config)
+  )
+  ipcMain.handle(IPC_CHANNELS.pageTabsDelete, (_event, payload: PageTabIdPayload) => pageTabs.delete(payload.id))
+  ipcMain.handle(IPC_CHANNELS.pageTabsDuplicate, (_event, payload: PageTabIdPayload) => pageTabs.duplicate(payload.id))
+
+  ipcMain.handle(IPC_CHANNELS.pageTabsPickImageFolder, async () => {
+    const result = await dialog.showOpenDialog({
+      title: 'Chọn folder ảnh cho Page Tab',
+      properties: ['openDirectory']
+    })
+    return result.canceled ? null : (result.filePaths[0] ?? null)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.pageTabsInspectImageFolder, async (_event, folderPath: string) => {
+    const normalized = folderPath.trim()
+    if (!normalized) return { exists: false, fileCount: 0 }
+    try {
+      const entries = await readdir(normalized, { withFileTypes: true })
+      return {
+        exists: true,
+        fileCount: entries.filter((entry) => entry.isFile() && supportedImageExtensions.has(extname(entry.name).toLowerCase())).length
+      }
+    } catch {
+      return { exists: false, fileCount: 0 }
+    }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.pageTabsPickTextFile, async () => {
+    const result = await dialog.showOpenDialog({
+      title: 'Import text / CSV',
+      properties: ['openFile'],
+      filters: [
+        { name: 'Text / CSV', extensions: ['txt', 'csv'] },
+        { name: 'All files', extensions: ['*'] }
+      ]
+    })
+    const filePath = result.canceled ? undefined : result.filePaths[0]
+    if (!filePath) return null
+
+    const fileStat = await stat(filePath)
+    if (fileStat.size > 10 * 1024 * 1024) {
+      throw new Error('File import lớn hơn giới hạn 10 MB.')
+    }
+
+    return {
+      path: filePath,
+      content: await readFile(filePath, 'utf8')
+    }
   })
 
   return {

@@ -9,6 +9,15 @@ import type {
   ImportPreset,
   SaveImportPresetInput
 } from '../shared/accounts'
+import type {
+  CreatePageTabInput,
+  ImageFolderInspection,
+  PageTabConfig,
+  PageTabIdPayload,
+  PageTabSummary,
+  PickTextFileResult,
+  UpdatePageTabPayload
+} from '../shared/pageTabs'
 
 export const IPC_CHANNELS = {
   appInfo: 'app:get-info',
@@ -22,7 +31,16 @@ export const IPC_CHANNELS = {
   accountPresetsDelete: 'accounts:presets:delete',
   accountColumnLayoutGet: 'accounts:columns:get',
   accountColumnLayoutSave: 'accounts:columns:save',
-  accountOpenProfile: 'accounts:open-profile'
+  accountOpenProfile: 'accounts:open-profile',
+  pageTabsList: 'page-tabs:list',
+  pageTabsGet: 'page-tabs:get',
+  pageTabsCreate: 'page-tabs:create',
+  pageTabsUpdate: 'page-tabs:update',
+  pageTabsDelete: 'page-tabs:delete',
+  pageTabsDuplicate: 'page-tabs:duplicate',
+  pageTabsPickImageFolder: 'page-tabs:pick-image-folder',
+  pageTabsInspectImageFolder: 'page-tabs:inspect-image-folder',
+  pageTabsPickTextFile: 'page-tabs:pick-text-file'
 } as const
 
 export interface AppInfo {
@@ -59,4 +77,13 @@ export interface PageAutoIpcContract {
   getAccountColumnLayout: () => Promise<AccountColumnLayout | null>
   saveAccountColumnLayout: (payload: AccountColumnLayoutPayload) => Promise<void>
   openAccountProfile: (payload: AccountOpenProfilePayload) => Promise<BrowserProfileResult>
+  listPageTabs: () => Promise<PageTabSummary[]>
+  getPageTab: (payload: PageTabIdPayload) => Promise<PageTabConfig | null>
+  createPageTab: (input: CreatePageTabInput) => Promise<PageTabConfig>
+  updatePageTab: (payload: UpdatePageTabPayload) => Promise<PageTabConfig>
+  deletePageTab: (payload: PageTabIdPayload) => Promise<boolean>
+  duplicatePageTab: (payload: PageTabIdPayload) => Promise<PageTabConfig>
+  pickPageTabImageFolder: () => Promise<string | null>
+  inspectPageTabImageFolder: (folderPath: string) => Promise<ImageFolderInspection>
+  pickPageTabTextFile: () => Promise<PickTextFileResult | null>
 }
