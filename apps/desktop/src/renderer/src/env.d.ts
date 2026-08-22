@@ -1,3 +1,5 @@
+/// <reference types="vite/client" />
+
 import type { PageAutoApi } from '../../preload'
 
 declare global {
