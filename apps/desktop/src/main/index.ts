@@ -1,11 +1,12 @@
 import { app, BrowserWindow } from 'electron'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { initializeDatabase, type DatabaseRuntime } from './database'
-import { registerIpcHandlers } from './ipc'
+import { registerIpcHandlers, type IpcRuntime } from './ipc'
 import { createLogger } from './logger'
 
 let mainWindow: BrowserWindow | null = null
 let databaseRuntime: DatabaseRuntime | null = null
+let ipcRuntime: IpcRuntime | null = null
 
 function createMainWindow(): BrowserWindow {
   const window = new BrowserWindow({
@@ -39,15 +40,26 @@ function createMainWindow(): BrowserWindow {
   return window
 }
 
+function resolveDataDirectory(): string {
+  if (process.env.PAGE_AUTO_DATA_DIR) {
+    return process.env.PAGE_AUTO_DATA_DIR
+  }
+
+  return app.isPackaged ? join(dirname(process.execPath), 'data') : join(app.getPath('userData'), 'data')
+}
+
 app.whenReady().then(() => {
-  const dataDirectory = process.env.PAGE_AUTO_DATA_DIR ?? join(app.getPath('userData'), 'data')
+  const dataDirectory = resolveDataDirectory()
   const logFile = join(dataDirectory, 'logs', 'app.log')
   const databaseFile = join(dataDirectory, 'page-auto.sqlite')
   const logger = createLogger(logFile)
 
   try {
     databaseRuntime = initializeDatabase(databaseFile)
-    registerIpcHandlers()
+    ipcRuntime = registerIpcHandlers({
+      database: databaseRuntime.client,
+      dataDirectory
+    })
     logger.info('Application initialized', { databaseFile })
 
     if (process.env.PAGE_AUTO_SMOKE_TEST === '1') {
@@ -61,6 +73,8 @@ app.whenReady().then(() => {
     logger.error('Application initialization failed', {
       error: error instanceof Error ? error.message : String(error)
     })
+    ipcRuntime?.dispose()
+    ipcRuntime = null
     databaseRuntime?.close()
     databaseRuntime = null
     app.exit(1)
@@ -74,6 +88,8 @@ app.whenReady().then(() => {
 })
 
 app.on('before-quit', () => {
+  ipcRuntime?.dispose()
+  ipcRuntime = null
   databaseRuntime?.close()
   databaseRuntime = null
 })
