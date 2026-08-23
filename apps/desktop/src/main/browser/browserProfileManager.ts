@@ -2,6 +2,7 @@ import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { utilityProcess, type UtilityProcess } from 'electron'
 import type { AccountRecord, BrowserProfileResult } from '../../shared/accounts'
+import { DEFAULT_APP_SETTINGS, type BrowserSettings } from '../../shared/appSettings'
 import type { FacebookSessionAccount, FacebookSessionResult } from './facebookSession'
 import { resolveAccountProxy } from './proxyConfig'
 
@@ -59,7 +60,8 @@ export class BrowserProfileManager {
 
   constructor(
     private readonly dataDirectory: string,
-    private readonly onSessionResult?: SessionResultHandler
+    private readonly onSessionResult?: SessionResultHandler,
+    private readonly getBrowserSettings: () => BrowserSettings = () => ({ ...DEFAULT_APP_SETTINGS.browser })
   ) {}
 
   async open(account: AccountRecord): Promise<BrowserProfileResult> {
@@ -131,7 +133,12 @@ export class BrowserProfileManager {
     openStatus: 'started' | 'already_open'
   ): Promise<BrowserProfileResult> {
     const profileDirectory = accountProfileDirectory(this.dataDirectory, account.id)
+    const browserSettings = { ...this.getBrowserSettings() }
     return new Promise<BrowserProfileResult>((resolve) => {
+      const responseTimeout = browserSettings.startupDelayMs
+        + browserSettings.startupTimeoutMs
+        + browserSettings.navigationTimeoutMs
+        + 30_000
       const timer = setTimeout(() => {
         if (!entry.pending || entry.pending.resolve !== resolve) return
         entry.pending = null
@@ -140,7 +147,7 @@ export class BrowserProfileManager {
           profileDirectory,
           message: 'Session Engine quá thời gian chờ phản hồi; browser vẫn được giữ mở.'
         })
-      }, 75_000)
+      }, responseTimeout)
       entry.pending = { resolve, timer, openStatus }
 
       try {
@@ -148,6 +155,7 @@ export class BrowserProfileManager {
         entry.process.postMessage({
           type: 'bootstrap',
           account: sessionAccount(account),
+          browser: browserSettings,
           launch: {
             ...(proxy ? { proxy } : {}),
             ...(account.userAgent ? { userAgent: account.userAgent } : {})
