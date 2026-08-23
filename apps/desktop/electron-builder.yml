@@ -1,0 +1,31 @@
+appId: com.pageauto.desktop
+productName: PageAuto
+
+asar: true
+compression: normal
+npmRebuild: true
+
+directories:
+  output: ../../dist
+  buildResources: resources
+
+files:
+  - out/**/*
+  - package.json
+
+asarUnpack:
+  - node_modules/better-sqlite3/**/*
+
+extraResources:
+  - from: resources/app-icon.png
+    to: app-icon.png
+
+win:
+  executableName: PageAuto
+  icon: resources/app-icon.png
+  target:
+    - target: zip
+      arch:
+        - x64
+
+artifactName: PageAuto-${version}-win-${arch}.${ext}

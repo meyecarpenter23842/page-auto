@@ -1,8 +1,9 @@
 import { app, BrowserWindow } from 'electron'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import { initializeDatabase, type DatabaseRuntime } from './database'
 import { registerIpcHandlers, type IpcRuntime } from './ipc'
 import { createLogger } from './logger'
+import { ensureDataDirectoryLayout, resolveDataDirectory } from './services/portablePaths'
 
 let mainWindow: BrowserWindow | null = null
 let databaseRuntime: DatabaseRuntime | null = null
@@ -47,16 +48,15 @@ function createMainWindow(): BrowserWindow {
   return window
 }
 
-function resolveDataDirectory(): string {
-  if (process.env.PAGE_AUTO_DATA_DIR) {
-    return process.env.PAGE_AUTO_DATA_DIR
-  }
-
-  return app.isPackaged ? join(dirname(process.execPath), 'data') : join(app.getPath('userData'), 'data')
-}
-
 app.whenReady().then(() => {
-  const dataDirectory = resolveDataDirectory()
+  const dataDirectory = resolveDataDirectory({
+    override: process.env.PAGE_AUTO_DATA_DIR,
+    isPackaged: app.isPackaged,
+    execPath: process.execPath,
+    userDataPath: app.getPath('userData')
+  })
+  ensureDataDirectoryLayout(dataDirectory)
+
   const logFile = join(dataDirectory, 'logs', 'app.log')
   const databaseFile = join(dataDirectory, 'page-auto.sqlite')
   const logger = createLogger(logFile)
@@ -67,7 +67,12 @@ app.whenReady().then(() => {
       database: databaseRuntime.client,
       dataDirectory
     })
-    logger.info('Application initialized', { databaseFile })
+    logger.info('Application initialized', {
+      databaseFile,
+      dataDirectory,
+      packaged: app.isPackaged,
+      version: app.getVersion()
+    })
 
     if (process.env.PAGE_AUTO_SMOKE_TEST === '1') {
       logger.info('Electron smoke test completed')

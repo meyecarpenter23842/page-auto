@@ -1,6 +1,6 @@
 {
   "name": "page-auto",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "workspaces": [
     "apps/desktop"
@@ -11,7 +11,9 @@
     "typecheck": "npm run typecheck -w @page-auto/desktop",
     "test": "npm run test -w @page-auto/desktop",
     "rebuild:native": "electron-rebuild -m . -f -w better-sqlite3",
-    "smoke": "npm run smoke -w @page-auto/desktop"
+    "smoke": "npm run smoke -w @page-auto/desktop",
+    "package:portable": "npm run package:portable -w @page-auto/desktop",
+    "verify:portable": "npm run verify:portable -w @page-auto/desktop"
   },
   "engines": {
     "node": ">=22.12.0"

@@ -9,6 +9,7 @@ import type {
   ImportPreset,
   SaveImportPresetInput
 } from '../shared/accounts'
+import type { ConfigBackupExportResult, ConfigBackupRestoreResult } from '../shared/configBackup'
 import type {
   ExecutionLogFilters,
   ExecutionLogRecord,
@@ -61,12 +62,16 @@ export const IPC_CHANNELS = {
   rotationPause: 'rotation:pause',
   rotationResume: 'rotation:resume',
   executionLogsList: 'execution-logs:list',
-  executionLogsRetryItem: 'execution-logs:retry-item'
+  executionLogsRetryItem: 'execution-logs:retry-item',
+  configBackupExport: 'config-backup:export',
+  configBackupRestore: 'config-backup:restore'
 } as const
 
 export interface AppInfo {
   name: string
   version: string
+  isPackaged: boolean
+  dataDirectory: string
 }
 
 export interface AccountUpdatePayload {
@@ -87,6 +92,7 @@ export interface AccountOpenProfilePayload {
 }
 
 export interface PageAutoIpcContract {
+  getAppInfo: () => Promise<AppInfo>
   listAccounts: (filters?: AccountListFilters) => Promise<AccountRecord[]>
   createAccount: (input: AccountDraft) => Promise<AccountRecord>
   updateAccount: (payload: AccountUpdatePayload) => Promise<AccountRecord>
@@ -119,4 +125,6 @@ export interface PageAutoIpcContract {
   resumePageTabRotation: (payload: RotationPageTabPayload) => Promise<RotationRuntimeSnapshot>
   listExecutionLogs: (filters?: ExecutionLogFilters) => Promise<ExecutionLogRecord[]>
   retryExecutionLogItem: (payload: RetryRunItemPayload) => Promise<RetryRunItemResult>
+  exportConfigBackup: () => Promise<ConfigBackupExportResult>
+  restoreConfigBackup: () => Promise<ConfigBackupRestoreResult>
 }

@@ -13,7 +13,7 @@ on:
 jobs:
   desktop-windows:
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
 
     steps:
       - name: Checkout
@@ -41,3 +41,17 @@ jobs:
 
       - name: Electron smoke test
         run: npm run smoke
+
+      - name: Package Windows portable
+        run: npm run package:portable
+
+      - name: Verify portable artifacts
+        run: npm run verify:portable
+
+      - name: Upload portable ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: PageAuto-portable-${{ github.sha }}
+          path: dist/PageAuto-*-win-x64.zip
+          if-no-files-found: error
+          retention-days: 7
