@@ -8,6 +8,12 @@ let mainWindow: BrowserWindow | null = null
 let databaseRuntime: DatabaseRuntime | null = null
 let ipcRuntime: IpcRuntime | null = null
 
+function resolveWindowIcon(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, 'app-icon.png')
+    : join(__dirname, '../../resources/app-icon.png')
+}
+
 function createMainWindow(): BrowserWindow {
   const window = new BrowserWindow({
     width: 1440,
@@ -16,6 +22,7 @@ function createMainWindow(): BrowserWindow {
     minHeight: 700,
     show: false,
     backgroundColor: '#f4f7fb',
+    icon: resolveWindowIcon(),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
