@@ -1,5 +1,5 @@
 import { chromium, type BrowserContext } from 'playwright-core'
-import type { BrowserSettings } from '../../shared/appSettings'
+import type { BrowserSettings, SessionSettings } from '../../shared/appSettings'
 import type { PostingProxyConfig } from '../../shared/posting'
 import {
   bootstrapFacebookSession,
@@ -17,6 +17,7 @@ interface BootstrapCommand {
   type: 'bootstrap'
   account: FacebookSessionAccount
   browser: BrowserSettings
+  session: SessionSettings
   launch?: BrowserLaunchConfig
 }
 
@@ -33,6 +34,7 @@ function sessionError(accountId: number, error: unknown): SessionResultMessage {
     type: 'session-result',
     accountId,
     status: 'unknown',
+    reason: 'unknown',
     cookie: null,
     cookieStatus: 'error',
     lastCookieCheck: Date.now(),
@@ -46,7 +48,7 @@ function commandFromMessage(event: unknown): BootstrapCommand | null {
     : event
   if (!payload || typeof payload !== 'object') return null
   const candidate = payload as Partial<BootstrapCommand>
-  if (candidate.type !== 'bootstrap' || !candidate.account || !candidate.browser) return null
+  if (candidate.type !== 'bootstrap' || !candidate.account || !candidate.browser || !candidate.session) return null
   return candidate as BootstrapCommand
 }
 
@@ -109,7 +111,7 @@ async function run(): Promise<void> {
       try {
         const activeContext = await ensureContext(command)
         const page = activeContext.pages()[0] ?? await activeContext.newPage()
-        const session = await bootstrapFacebookSession(activeContext, page, command.account)
+        const session = await bootstrapFacebookSession(activeContext, page, command.account, command.session.facebookLocale)
         result = { type: 'session-result', ...session }
       } catch (error) {
         result = sessionError(command.account.id, error)

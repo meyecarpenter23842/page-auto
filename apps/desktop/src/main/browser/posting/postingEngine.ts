@@ -1,6 +1,12 @@
 import { chromium, type BrowserContext, type Locator, type Page } from 'playwright-core'
 import type { BrowserSettings } from '../../../shared/appSettings'
 import type { PostingJobRequest, PostingJobResult } from '../../../shared/posting'
+import {
+  applyFacebookLocale,
+  bootstrapFacebookSession,
+  validateFacebookSession,
+  type FacebookSessionResult
+} from '../facebookSession'
 import { applyBrowserContextSettings, buildBrowserLaunchOptions, waitForBrowserStartupDelay } from '../browserRuntime'
 import { activeFacebookProfileId, detectFacebookAccessBlock } from './pageState'
 import { capturePostingFailureScreenshot } from './screenshotService'
@@ -13,6 +19,20 @@ function failure(code: PostingCode, message: string): PostingJobResult {
     status: code === 'needs_login' || code === 'verification_required' ? 'needs_login' : 'failed',
     code,
     message
+  }
+}
+
+function beforeRunSessionFailure(session: FacebookSessionResult): PostingJobResult {
+  const verificationRequired = session.reason === 'checkpoint'
+  return {
+    status: 'needs_login',
+    code: verificationRequired ? 'verification_required' : 'needs_login',
+    message: session.message,
+    sessionValidation: {
+      phase: 'before_run',
+      state: verificationRequired ? 'verification_required' : 'needs_login',
+      message: session.message
+    }
   }
 }
 
@@ -231,6 +251,14 @@ export async function executePostingJob(job: PostingJobRequest): Promise<Posting
 
   try {
     page = context.pages()[0] ?? await context.newPage()
+
+    if (job.session.validateBeforeRun) {
+      const session = await bootstrapFacebookSession(context, page, job.sessionAccount, job.session.facebookLocale)
+      if (session.status !== 'valid') return finish(beforeRunSessionFailure(session))
+    } else {
+      await applyFacebookLocale(context, job.session.facebookLocale).catch(() => undefined)
+    }
+
     const identity = await new PageIdentitySwitcher(page, context, job.browser).switchTo(job.pageUid)
     if (identity.status !== 'success') return finish(identity)
     const navigation = await new GroupNavigator(page, job.browser).open(job.groupUid)
@@ -243,7 +271,23 @@ export async function executePostingJob(job: PostingJobRequest): Promise<Posting
     if (mediaResult.status !== 'success') return finish(mediaResult)
     const publishResult = await new PublishAction().click(composer.container)
     if (publishResult.status !== 'success') return finish(publishResult)
-    return finish(await new PublishResultDetector(page).detect(composer.container, job.content))
+
+    const confirmed = await new PublishResultDetector(page).detect(composer.container, job.content)
+    if (confirmed.status !== 'success' || !job.session.validateAfterRun) return finish(confirmed)
+
+    const afterSession = await validateFacebookSession(context, page)
+    if (afterSession.state === 'valid') {
+      return finish({
+        ...confirmed,
+        sessionValidation: { phase: 'after_run', state: 'valid', message: afterSession.message }
+      })
+    }
+
+    return finish({
+      ...confirmed,
+      message: `${confirmed.message} ${afterSession.message}`,
+      sessionValidation: { phase: 'after_run', state: afterSession.state, message: afterSession.message }
+    })
   } catch (error) {
     return finish(failure('unexpected_error', error instanceof Error ? error.message : String(error)))
   } finally {

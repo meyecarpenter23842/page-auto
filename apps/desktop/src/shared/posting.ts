@@ -1,4 +1,4 @@
-import type { BrowserSettings } from './appSettings'
+import type { BrowserSettings, SessionSettings } from './appSettings'
 import type { RunDetails, RunItem } from './runs'
 
 export const POSTING_RESULT_STATUSES = ['success', 'failed', 'needs_login', 'skipped'] as const
@@ -29,6 +29,25 @@ export const POSTING_ERROR_CODES = [
 ] as const
 export type PostingErrorCode = (typeof POSTING_ERROR_CODES)[number]
 
+export const POSTING_SESSION_STATES = ['valid', 'needs_login', 'verification_required'] as const
+export type PostingSessionState = (typeof POSTING_SESSION_STATES)[number]
+export type PostingSessionPhase = 'before_run' | 'after_run'
+
+export interface PostingSessionValidation {
+  phase: PostingSessionPhase
+  state: PostingSessionState
+  message: string
+}
+
+export interface PostingSessionAccount {
+  id: number
+  uid: string
+  username: string | null
+  password: string | null
+  cookie: string | null
+  twoFactorSecret: string | null
+}
+
 export interface PostingProxyConfig {
   server: string
   username?: string
@@ -45,6 +64,8 @@ export interface PostingJobRequest {
   content: string
   imagePaths: string[]
   browser: BrowserSettings
+  session: SessionSettings
+  sessionAccount: PostingSessionAccount
   userAgent?: string
   proxy?: PostingProxyConfig
 }
@@ -55,6 +76,7 @@ export interface PostingJobResult {
   message: string
   publishedUrl?: string
   screenshotPath?: string
+  sessionValidation?: PostingSessionValidation
 }
 
 export interface PostingWorkerRequestMessage {

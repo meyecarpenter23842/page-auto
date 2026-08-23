@@ -1,6 +1,7 @@
 import { createHmac } from 'node:crypto'
 import type { BrowserContext, Locator, Page } from 'playwright-core'
 import type { AccountStatus } from '../../shared/accounts'
+import type { FacebookLocale } from '../../shared/appSettings'
 
 export interface FacebookSessionAccount {
   id: number
@@ -11,9 +12,21 @@ export interface FacebookSessionAccount {
   twoFactorSecret: string | null
 }
 
+export type FacebookSessionReason =
+  | 'valid'
+  | 'login_required'
+  | 'checkpoint'
+  | 'two_factor_missing'
+  | 'two_factor_failed'
+  | 'login_failed'
+  | 'unknown'
+
+export type FacebookSessionGate = 'valid' | 'login' | 'two_factor' | 'manual_verification' | 'unknown'
+
 export interface FacebookSessionResult {
   accountId: number
   status: AccountStatus
+  reason: FacebookSessionReason
   cookie: string | null
   cookieStatus: 'valid' | 'needs_login' | 'error'
   lastCookieCheck: number
@@ -29,6 +42,19 @@ export interface FacebookCookieInput {
   httpOnly?: boolean
   secure?: boolean
   sameSite?: 'Strict' | 'Lax' | 'None'
+}
+
+export interface FacebookSessionGateInput {
+  url: string
+  hasUserCookie: boolean
+  loginFormVisible: boolean
+  twoFactorVisible: boolean
+  manualVerificationTextVisible: boolean
+}
+
+export interface FacebookSessionValidation {
+  state: 'valid' | 'needs_login' | 'verification_required'
+  message: string
 }
 
 type ContextCookie = FacebookCookieInput
@@ -138,6 +164,24 @@ export function generateTotp(secret: string, timestampMs = Date.now(), digits = 
   return String(binary % modulo).padStart(digits, '0')
 }
 
+export function resolveTwoFactorCode(rawSecret: string, timestampMs = Date.now()): string {
+  const directCode = rawSecret.trim().replace(/\s+/g, '')
+  if (/^\d{6,8}$/.test(directCode)) return directCode
+  return generateTotp(rawSecret, timestampMs, 6)
+}
+
+export function facebookLocaleCookieValue(locale: FacebookLocale): string | null {
+  if (locale === 'vi-VN') return 'vi_VN'
+  if (locale === 'en-US') return 'en_US'
+  return null
+}
+
+export async function applyFacebookLocale(context: BrowserContext, locale: FacebookLocale): Promise<void> {
+  const value = facebookLocaleCookieValue(locale)
+  if (!value) return
+  await context.addCookies([{ name: 'locale', value, domain: '.facebook.com', path: '/', secure: true, sameSite: 'Lax' }])
+}
+
 async function currentFacebookUserId(context: BrowserContext): Promise<string | null> {
   const cookies = await context.cookies('https://www.facebook.com')
   return cookies.find((cookie) => cookie.name === 'c_user')?.value?.trim() || null
@@ -162,10 +206,16 @@ function isManualVerificationUrl(url: string): boolean {
     || normalized.includes('/recover/')
     || normalized.includes('/confirmemail')
     || normalized.includes('/identity/')
+    || normalized.includes('/two_step_verification/')
 }
 
 async function hasManualVerificationText(page: Page): Promise<boolean> {
-  const marker = page.getByText(/confirm your identity|xác minh danh tính|phê duyệt đăng nhập|upload.*id|tải.*giấy tờ/i).first()
+  const marker = page.getByText(/confirm your identity|xác minh danh tính|phê duyệt đăng nhập|upload.*id|tải.*giấy tờ|verify your identity/i).first()
+  return marker.isVisible().catch(() => false)
+}
+
+async function hasAuthenticatorPrompt(page: Page): Promise<boolean> {
+  const marker = page.getByText(/authentication app|authenticator app|code generator|two[- ]factor authentication|security code.*app|xác thực hai yếu tố|ứng dụng xác thực|trình tạo mã/i).first()
   return marker.isVisible().catch(() => false)
 }
 
@@ -176,14 +226,56 @@ async function firstVisible(candidates: Locator[]): Promise<Locator | null> {
   return null
 }
 
-async function findTwoFactorInput(page: Page) {
-  const candidates = [
+async function findTwoFactorInput(page: Page): Promise<Locator | null> {
+  const approvalsInput = await firstVisible([
     page.locator('input[name="approvals_code"]').first(),
+    page.locator('input[name="approvalsCode"]').first()
+  ])
+  if (approvalsInput) return approvalsInput
+  if (!await hasAuthenticatorPrompt(page)) return null
+
+  return firstVisible([
     page.locator('input[name="code"]').first(),
     page.locator('input[autocomplete="one-time-code"]').first(),
-    page.locator('input[inputmode="numeric"]').first()
-  ]
-  return firstVisible(candidates)
+    page.locator('input[inputmode="numeric"]').first(),
+    page.locator('input[type="tel"]').first()
+  ])
+}
+
+export function classifyFacebookSessionGate(input: FacebookSessionGateInput): FacebookSessionGate {
+  if (input.twoFactorVisible) return 'two_factor'
+  if (isManualVerificationUrl(input.url) || input.manualVerificationTextVisible) return 'manual_verification'
+  if (input.loginFormVisible || input.url.toLowerCase().includes('/login/')) return 'login'
+  if (input.hasUserCookie) return 'valid'
+  return 'unknown'
+}
+
+export async function inspectFacebookSessionGate(context: BrowserContext, page: Page): Promise<FacebookSessionGate> {
+  const [userId, loginFormVisible, twoFactorInput, manualVerificationTextVisible] = await Promise.all([
+    currentFacebookUserId(context),
+    isLoginFormVisible(page),
+    findTwoFactorInput(page),
+    hasManualVerificationText(page)
+  ])
+
+  return classifyFacebookSessionGate({
+    url: page.url(),
+    hasUserCookie: Boolean(userId),
+    loginFormVisible,
+    twoFactorVisible: Boolean(twoFactorInput),
+    manualVerificationTextVisible
+  })
+}
+
+async function waitForPostLoginGate(context: BrowserContext, page: Page, timeoutMs = 12_000): Promise<FacebookSessionGate> {
+  const deadline = Date.now() + timeoutMs
+  let latest: FacebookSessionGate = 'unknown'
+  while (Date.now() < deadline) {
+    latest = await inspectFacebookSessionGate(context, page)
+    if (latest === 'valid' || latest === 'two_factor' || latest === 'manual_verification') return latest
+    await page.waitForTimeout(250)
+  }
+  return latest
 }
 
 async function submitLogin(page: Page, identifier: string, password: string): Promise<void> {
@@ -216,16 +308,16 @@ async function submitLogin(page: Page, identifier: string, password: string): Pr
   }
 
   await page.waitForLoadState('domcontentloaded', { timeout: 20_000 }).catch(() => undefined)
-  await page.waitForTimeout(1_500)
+  await page.waitForTimeout(1_000)
 }
 
 async function submitTotp(page: Page, secret: string): Promise<boolean> {
   const input = await findTwoFactorInput(page)
   if (!input) return false
-  await input.fill(generateTotp(secret))
+  await input.fill(resolveTwoFactorCode(secret))
 
   const submit = await firstVisible([
-    page.getByRole('button', { name: /continue|tiếp tục|submit|gửi/i }).first(),
+    page.getByRole('button', { name: /continue|tiếp tục|submit|gửi|confirm|xác nhận/i }).first(),
     page.locator('button[type="submit"]:visible').first(),
     page.locator('input[type="submit"]:visible').first()
   ])
@@ -235,7 +327,7 @@ async function submitTotp(page: Page, secret: string): Promise<boolean> {
     await input.press('Enter')
   }
   await page.waitForLoadState('domcontentloaded', { timeout: 20_000 }).catch(() => undefined)
-  await page.waitForTimeout(1_200)
+  await page.waitForTimeout(800)
   return true
 }
 
@@ -243,6 +335,7 @@ async function successResult(accountId: number, context: BrowserContext, message
   return {
     accountId,
     status: 'valid',
+    reason: 'valid',
     cookie: await serializeFacebookCookies(context),
     cookieStatus: 'valid',
     lastCookieCheck: Date.now(),
@@ -250,10 +343,11 @@ async function successResult(accountId: number, context: BrowserContext, message
   }
 }
 
-function needsLoginResult(accountId: number, message: string): FacebookSessionResult {
+function needsLoginResult(accountId: number, reason: Exclude<FacebookSessionReason, 'valid'>, message: string): FacebookSessionResult {
   return {
     accountId,
     status: 'needs_login',
+    reason,
     cookie: null,
     cookieStatus: 'needs_login',
     lastCookieCheck: Date.now(),
@@ -261,15 +355,56 @@ function needsLoginResult(accountId: number, message: string): FacebookSessionRe
   }
 }
 
+async function completeTwoFactor(
+  context: BrowserContext,
+  page: Page,
+  account: FacebookSessionAccount,
+  successMessage: string
+): Promise<FacebookSessionResult> {
+  if (!account.twoFactorSecret?.trim()) {
+    return needsLoginResult(account.id, 'two_factor_missing', 'Facebook yêu cầu mã 2FA nhưng account chưa có dữ liệu 2FA.')
+  }
+
+  try {
+    if (!await submitTotp(page, account.twoFactorSecret)) {
+      return needsLoginResult(account.id, 'two_factor_failed', 'Không phát hiện được ô nhập mã 2FA để tiếp tục đăng nhập.')
+    }
+  } catch {
+    return needsLoginResult(account.id, 'two_factor_failed', 'Không thể tạo/nhập mã 2FA từ dữ liệu 2FA của account.')
+  }
+
+  const gate = await waitForPostLoginGate(context, page)
+  if (gate === 'valid') return successResult(account.id, context, successMessage)
+  if (gate === 'manual_verification') {
+    return needsLoginResult(account.id, 'checkpoint', 'Facebook yêu cầu checkpoint/xác minh danh tính sau 2FA; cần xử lý thủ công.')
+  }
+  return needsLoginResult(account.id, 'two_factor_failed', 'Đã nhập mã 2FA nhưng Facebook chưa xác nhận session; cần kiểm tra thủ công trên browser.')
+}
+
+export async function validateFacebookSession(context: BrowserContext, page: Page): Promise<FacebookSessionValidation> {
+  const gate = await inspectFacebookSessionGate(context, page)
+  if (gate === 'valid') return { state: 'valid', message: 'Session Facebook hợp lệ.' }
+  if (gate === 'manual_verification') {
+    return { state: 'verification_required', message: 'Facebook yêu cầu checkpoint/xác minh danh tính; cần xử lý thủ công.' }
+  }
+  if (gate === 'two_factor') {
+    return { state: 'needs_login', message: 'Facebook đang yêu cầu mã 2FA; cần hoàn tất luồng đăng nhập trước khi tiếp tục.' }
+  }
+  return { state: 'needs_login', message: 'Session Facebook đã hết hoặc chưa đăng nhập.' }
+}
+
 export async function bootstrapFacebookSession(
   context: BrowserContext,
   page: Page,
-  account: FacebookSessionAccount
+  account: FacebookSessionAccount,
+  locale: FacebookLocale = 'auto'
 ): Promise<FacebookSessionResult> {
-  const importedCookies = parseFacebookCookies(account.cookie)
-  if (importedCookies.length > 0) {
-    await context.addCookies(importedCookies).catch(() => undefined)
+  const existingUserId = await currentFacebookUserId(context).catch(() => null)
+  if (!existingUserId) {
+    const importedCookies = parseFacebookCookies(account.cookie)
+    if (importedCookies.length > 0) await context.addCookies(importedCookies).catch(() => undefined)
   }
+  await applyFacebookLocale(context, locale).catch(() => undefined)
 
   await page.goto('https://www.facebook.com/', {
     waitUntil: 'domcontentloaded',
@@ -277,58 +412,44 @@ export async function bootstrapFacebookSession(
   })
   await page.waitForTimeout(700)
 
-  if (isManualVerificationUrl(page.url()) || await hasManualVerificationText(page)) {
-    return needsLoginResult(account.id, 'Facebook yêu cầu checkpoint/xác minh danh tính; cần xử lý thủ công trên browser đang mở.')
+  let gate = await inspectFacebookSessionGate(context, page)
+  if (gate === 'two_factor') {
+    return completeTwoFactor(context, page, account, 'Đã xác thực 2FA và session Facebook hợp lệ.')
   }
-
-  if (!await isLoginFormVisible(page) && await currentFacebookUserId(context)) {
+  if (gate === 'manual_verification') {
+    return needsLoginResult(account.id, 'checkpoint', 'Facebook yêu cầu checkpoint/xác minh danh tính; cần xử lý thủ công trên browser đang mở.')
+  }
+  if (gate === 'valid') {
     return successResult(account.id, context, 'Session Facebook hợp lệ từ persistent profile/cookie.')
   }
-
-  if (!await isLoginFormVisible(page)) {
-    const twoFactorInput = await findTwoFactorInput(page)
-    if (twoFactorInput && account.twoFactorSecret) {
-      await submitTotp(page, account.twoFactorSecret).catch(() => false)
-      if (!await isLoginFormVisible(page) && await currentFacebookUserId(context)) {
-        return successResult(account.id, context, 'Đã xác thực 2FA và session Facebook hợp lệ.')
-      }
-    }
-    return needsLoginResult(account.id, 'Facebook chưa xác nhận session; browser được giữ mở để xử lý thủ công.')
+  if (gate !== 'login') {
+    return needsLoginResult(account.id, 'unknown', 'Facebook chưa xác nhận session; browser được giữ mở để xử lý thủ công.')
   }
 
   const identifier = account.username?.trim() || account.uid.trim()
   const password = account.password?.trim()
   if (!identifier || !password) {
-    return needsLoginResult(account.id, 'Account thiếu UID/UserName hoặc password để tự đăng nhập.')
+    return needsLoginResult(account.id, 'login_required', 'Account thiếu UID/UserName hoặc password để tự đăng nhập.')
   }
 
   try {
     await submitLogin(page, identifier, password)
   } catch (error) {
-    return needsLoginResult(account.id, error instanceof Error ? error.message : String(error))
+    return needsLoginResult(account.id, 'login_failed', error instanceof Error ? error.message : String(error))
   }
 
-  if (isManualVerificationUrl(page.url()) || await hasManualVerificationText(page)) {
-    return needsLoginResult(account.id, 'Facebook yêu cầu checkpoint/xác minh danh tính sau login; cần xử lý thủ công.')
-  }
-
-  if (!await isLoginFormVisible(page) && await currentFacebookUserId(context)) {
+  gate = await waitForPostLoginGate(context, page)
+  if (gate === 'valid') {
     return successResult(account.id, context, 'Đăng nhập Facebook bằng UID/UserName + password thành công.')
   }
-
-  const twoFactorInput = await findTwoFactorInput(page)
-  if (twoFactorInput) {
-    if (!account.twoFactorSecret) {
-      return needsLoginResult(account.id, 'Facebook yêu cầu mã 2FA nhưng account chưa có 2FA secret.')
-    }
-
-    const submitted = await submitTotp(page, account.twoFactorSecret).catch(() => false)
-    if (submitted && !await isLoginFormVisible(page) && await currentFacebookUserId(context)) {
-      return successResult(account.id, context, 'Đăng nhập Facebook + 2FA thành công.')
-    }
-
-    return needsLoginResult(account.id, 'Đã thử mã 2FA nhưng Facebook còn yêu cầu thao tác/xác minh thêm; cần xử lý thủ công.')
+  if (gate === 'two_factor') {
+    return completeTwoFactor(context, page, account, 'Đăng nhập Facebook + 2FA thành công.')
   }
-
-  return needsLoginResult(account.id, 'Facebook chưa tạo session hợp lệ sau login; kiểm tra thông báo trên browser.')
+  if (gate === 'manual_verification') {
+    return needsLoginResult(account.id, 'checkpoint', 'Facebook yêu cầu checkpoint/xác minh danh tính sau login; cần xử lý thủ công.')
+  }
+  if (gate === 'login') {
+    return needsLoginResult(account.id, 'login_failed', 'Facebook vẫn hiển thị màn đăng nhập; kiểm tra UID/UserName, password hoặc thông báo trên browser.')
+  }
+  return needsLoginResult(account.id, 'unknown', 'Facebook chưa tạo session hợp lệ sau login; kiểm tra thông báo trên browser.')
 }

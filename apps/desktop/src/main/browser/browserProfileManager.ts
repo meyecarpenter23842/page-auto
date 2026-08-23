@@ -2,7 +2,7 @@ import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { utilityProcess, type UtilityProcess } from 'electron'
 import type { AccountRecord, BrowserProfileResult } from '../../shared/accounts'
-import { DEFAULT_APP_SETTINGS, type BrowserSettings } from '../../shared/appSettings'
+import { DEFAULT_APP_SETTINGS, type BrowserSettings, type SessionSettings } from '../../shared/appSettings'
 import type { FacebookSessionAccount, FacebookSessionResult } from './facebookSession'
 import { resolveAccountProxy } from './proxyConfig'
 
@@ -61,7 +61,8 @@ export class BrowserProfileManager {
   constructor(
     private readonly dataDirectory: string,
     private readonly onSessionResult?: SessionResultHandler,
-    private readonly getBrowserSettings: () => BrowserSettings = () => ({ ...DEFAULT_APP_SETTINGS.browser })
+    private readonly getBrowserSettings: () => BrowserSettings = () => ({ ...DEFAULT_APP_SETTINGS.browser }),
+    private readonly getSessionSettings: () => SessionSettings = () => ({ ...DEFAULT_APP_SETTINGS.session })
   ) {}
 
   async open(account: AccountRecord): Promise<BrowserProfileResult> {
@@ -134,6 +135,7 @@ export class BrowserProfileManager {
   ): Promise<BrowserProfileResult> {
     const profileDirectory = accountProfileDirectory(this.dataDirectory, account.id)
     const browserSettings = { ...this.getBrowserSettings() }
+    const sessionSettings = { ...this.getSessionSettings() }
     return new Promise<BrowserProfileResult>((resolve) => {
       const responseTimeout = browserSettings.startupDelayMs
         + browserSettings.startupTimeoutMs
@@ -156,6 +158,7 @@ export class BrowserProfileManager {
           type: 'bootstrap',
           account: sessionAccount(account),
           browser: browserSettings,
+          session: sessionSettings,
           launch: {
             ...(proxy ? { proxy } : {}),
             ...(account.userAgent ? { userAgent: account.userAgent } : {})
