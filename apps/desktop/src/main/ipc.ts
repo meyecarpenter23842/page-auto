@@ -63,7 +63,17 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
   const configBackup = new ConfigBackupService(options.database)
   recovery.recoverInterruptedRuns()
 
-  const browserProfiles = new BrowserProfileManager(options.dataDirectory)
+  const browserProfiles = new BrowserProfileManager(options.dataDirectory, (session) => {
+    const current = accounts.getById(session.accountId)
+    if (!current) return
+    accounts.update(session.accountId, {
+      status: session.status === 'valid' || session.status === 'needs_login' ? session.status : current.status,
+      cookie: session.status === 'valid' && session.cookie ? session.cookie : current.cookie,
+      cookieStatus: session.cookieStatus,
+      lastCookieCheck: session.lastCookieCheck,
+      lastUsedAt: session.status === 'valid' ? Date.now() : current.lastUsedAt
+    })
+  })
   const corePosting = new PostingService(options.database, options.dataDirectory)
   const posting = new ResilientPostingService(corePosting, options.database, executionLogs)
   const accountExecution = new AccountExecutionCoordinator()
@@ -104,10 +114,11 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
     accounts.saveColumnLayout('accounts', payload.layout)
   })
   ipcMain.handle(IPC_CHANNELS.accountOpenProfile, (_event, payload: AccountOpenProfilePayload) => {
-    if (!accounts.getById(payload.accountId)) {
+    const account = accounts.getById(payload.accountId)
+    if (!account) {
       return { status: 'error', message: 'Account không tồn tại.' }
     }
-    return browserProfiles.open(payload.accountId)
+    return browserProfiles.open(account)
   })
 
   ipcMain.handle(IPC_CHANNELS.pageTabsList, () => pageTabs.list())
