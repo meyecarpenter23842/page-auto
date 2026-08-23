@@ -1,4 +1,4 @@
-import type { BrowserSettings, SessionSettings } from './appSettings'
+import type { BrowserSettings, NetworkSettings, SessionSettings } from './appSettings'
 import type { RunDetails, RunItem } from './runs'
 
 export const POSTING_RESULT_STATUSES = ['success', 'failed', 'needs_login', 'skipped'] as const
@@ -9,6 +9,8 @@ export const POSTING_ERROR_CODES = [
   'account_disabled',
   'needs_login',
   'verification_required',
+  'proxy_invalid',
+  'proxy_unavailable',
   'profile_in_use',
   'browser_launch_failed',
   'page_navigation_failed',
@@ -65,6 +67,7 @@ export interface PostingJobRequest {
   imagePaths: string[]
   browser: BrowserSettings
   session: SessionSettings
+  network: NetworkSettings
   sessionAccount: PostingSessionAccount
   userAgent?: string
   proxy?: PostingProxyConfig
