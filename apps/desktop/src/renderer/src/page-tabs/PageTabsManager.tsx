@@ -30,6 +30,14 @@ function timeToMinutes(value: string): number {
   return Math.max(0, Math.min(1439, hours * 60 + minutes))
 }
 
+function scheduleValidationError(schedule: PageTabSchedule, index: number): string | null {
+  if (!schedule.enabled) return null
+  if (schedule.startMinute >= schedule.endMinute) {
+    return `Khung giờ #${index + 1}: giờ kết thúc phải sau giờ bắt đầu. Hãy sửa thời gian hoặc tắt khung giờ này.`
+  }
+  return null
+}
+
 function parseGroupText(text: string): string[] {
   const seen = new Set<string>()
   const result: string[] = []
@@ -221,6 +229,15 @@ export function PageTabsManager() {
 
   const save = async () => {
     if (!config) return
+    const scheduleError = config.schedules
+      .map((schedule, index) => scheduleValidationError(schedule, index))
+      .find((message): message is string => message !== null)
+    if (scheduleError) {
+      setNotice(null)
+      setError(scheduleError)
+      return
+    }
+
     setSaving(true)
     setError(null)
     try {
