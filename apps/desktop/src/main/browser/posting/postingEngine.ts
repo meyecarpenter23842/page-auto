@@ -8,6 +8,7 @@ import {
   type FacebookSessionResult
 } from '../facebookSession'
 import { applyBrowserContextSettings, buildBrowserLaunchOptions, waitForBrowserStartupDelay } from '../browserRuntime'
+import { effectiveNavigationTimeoutMs, probeFacebookThroughProxy } from '../proxyPreflight'
 import { activeFacebookProfileId, detectFacebookAccessBlock } from './pageState'
 import { capturePostingFailureScreenshot } from './screenshotService'
 
@@ -251,6 +252,17 @@ export async function executePostingJob(job: PostingJobRequest): Promise<Posting
 
   try {
     page = context.pages()[0] ?? await context.newPage()
+    const runtimeBrowser: BrowserSettings = {
+      ...job.browser,
+      navigationTimeoutMs: effectiveNavigationTimeoutMs(job.browser.navigationTimeoutMs, job.network.networkTimeoutMs)
+    }
+    page.setDefaultTimeout(job.network.networkTimeoutMs)
+    page.setDefaultNavigationTimeout(runtimeBrowser.navigationTimeoutMs)
+
+    if (job.proxy && job.network.checkProxyBeforeRun) {
+      const proxyCheck = await probeFacebookThroughProxy(page, job.network)
+      if (proxyCheck.status === 'failed') return finish(failure('proxy_unavailable', proxyCheck.message))
+    }
 
     if (job.session.validateBeforeRun) {
       const session = await bootstrapFacebookSession(context, page, job.sessionAccount, job.session.facebookLocale)
@@ -259,9 +271,9 @@ export async function executePostingJob(job: PostingJobRequest): Promise<Posting
       await applyFacebookLocale(context, job.session.facebookLocale).catch(() => undefined)
     }
 
-    const identity = await new PageIdentitySwitcher(page, context, job.browser).switchTo(job.pageUid)
+    const identity = await new PageIdentitySwitcher(page, context, runtimeBrowser).switchTo(job.pageUid)
     if (identity.status !== 'success') return finish(identity)
-    const navigation = await new GroupNavigator(page, job.browser).open(job.groupUid)
+    const navigation = await new GroupNavigator(page, runtimeBrowser).open(job.groupUid)
     if (navigation.status !== 'success') return finish(navigation)
     const composer = await new ComposerDetector(page).open()
     if (!composer) return finish(failure('composer_not_found', 'Không phát hiện được composer đăng bài trong Group.'))

@@ -1,13 +1,18 @@
 import type Database from 'better-sqlite3'
 import type { AccountRecord } from '../../shared/accounts'
-import { DEFAULT_APP_SETTINGS, type BrowserSettings, type SessionSettings } from '../../shared/appSettings'
+import {
+  DEFAULT_APP_SETTINGS,
+  type BrowserSettings,
+  type NetworkSettings,
+  type SessionSettings
+} from '../../shared/appSettings'
 import type {
   ExecuteSinglePostingJobPayload,
   ExecuteSinglePostingJobResult,
   PostingJobResult
 } from '../../shared/posting'
 import { accountProfileDirectory } from '../browser/browserProfileManager'
-import { resolveAccountProxy } from '../browser/proxyConfig'
+import { resolveAccountProxyState } from '../browser/proxyConfig'
 import { PostingWorkerManager } from '../browser/postingWorkerManager'
 import { AccountRepository } from '../database/accountRepository'
 import { RunRepository } from '../database/runRepository'
@@ -28,6 +33,11 @@ function hasInvalidSession(result: PostingJobResult): boolean {
     || result.sessionValidation?.state === 'verification_required'
 }
 
+function shouldReleasePreflightItem(result: PostingJobResult): boolean {
+  return (result.status === 'needs_login' && result.sessionValidation?.phase === 'before_run')
+    || result.code === 'proxy_unavailable'
+}
+
 export class PostingService {
   private readonly accounts: AccountRepository
   private readonly runs: RunRepository
@@ -37,7 +47,8 @@ export class PostingService {
     database: Database.Database,
     private readonly dataDirectory: string,
     private readonly getBrowserSettings: () => BrowserSettings = () => ({ ...DEFAULT_APP_SETTINGS.browser }),
-    private readonly getSessionSettings: () => SessionSettings = () => ({ ...DEFAULT_APP_SETTINGS.session })
+    private readonly getSessionSettings: () => SessionSettings = () => ({ ...DEFAULT_APP_SETTINGS.session }),
+    private readonly getNetworkSettings: () => NetworkSettings = () => ({ ...DEFAULT_APP_SETTINGS.network })
   ) {
     this.accounts = new AccountRepository(database)
     this.runs = new RunRepository(database)
@@ -58,6 +69,17 @@ export class PostingService {
     if (!account || account.status === 'disabled') return { accountId: selectedRef.accountId, item: null, result: terminalFailure('Account không tồn tại hoặc đang disabled.', 'account_disabled'), run: details }
     if (account.status === 'needs_login') return { accountId: account.id, item: null, result: { status: 'needs_login', code: 'needs_login', message: 'Account đang cần đăng nhập/xác minh thủ công.' }, run: details }
 
+    const proxyResolution = resolveAccountProxyState(account)
+    if (proxyResolution.status === 'invalid') {
+      return {
+        accountId: account.id,
+        item: null,
+        result: terminalFailure(proxyResolution.message, 'proxy_invalid'),
+        run: details
+      }
+    }
+    const proxy = proxyResolution.status === 'valid' ? proxyResolution.proxy : undefined
+
     const item = this.runs.claimNext(payload.runId)
     if (!item) {
       const current = this.runs.get(payload.runId)
@@ -77,8 +99,8 @@ export class PostingService {
       return { accountId: account.id, item, result: { status: 'skipped', code: 'missing_media', message: 'Thiếu ảnh theo cấu hình; item được skip trong run hiện tại.' }, run }
     }
 
-    const proxy = resolveAccountProxy(account)
     const sessionSettings = { ...this.getSessionSettings() }
+    const networkSettings = { ...this.getNetworkSettings() }
     const workerResult = await this.workers.run({
       runId: payload.runId,
       itemId: item.id,
@@ -90,6 +112,7 @@ export class PostingService {
       imagePaths: images.paths,
       browser: { ...this.getBrowserSettings() },
       session: sessionSettings,
+      network: networkSettings,
       sessionAccount: {
         id: account.id,
         uid: account.uid,
@@ -133,7 +156,7 @@ export class PostingService {
       this.accounts.update(account.id, { lastUsedAt: now })
     }
 
-    if (result.status === 'needs_login' && result.sessionValidation?.phase === 'before_run') {
+    if (shouldReleasePreflightItem(result)) {
       const run = this.runs.releaseItem({
         runId: payload.runId,
         itemId: item.id,

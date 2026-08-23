@@ -27,6 +27,8 @@ const blockedCodes = new Set([
   'account_disabled',
   'needs_login',
   'verification_required',
+  'proxy_invalid',
+  'proxy_unavailable',
   'group_unavailable',
   'missing_media',
   'no_content',

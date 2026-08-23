@@ -17,6 +17,12 @@ describe('Phase 8 retry policy', () => {
     expect(canQueueRetry('publish_unconfirmed', 1)).toBe(false)
   })
 
+  it('does not stack generic posting retries on top of the dedicated proxy preflight policy', () => {
+    expect(retryDispositionFor('proxy_invalid')).toBe('blocked')
+    expect(retryDispositionFor('proxy_unavailable')).toBe('blocked')
+    expect(canQueueRetry('proxy_unavailable', 0)).toBe(false)
+  })
+
   it('redacts exact account secrets and key/value credentials from execution errors', () => {
     const sanitized = redactExecutionText(
       'cookie=abc123 password:pass777 proxy_pass=px999 raw pass777',
