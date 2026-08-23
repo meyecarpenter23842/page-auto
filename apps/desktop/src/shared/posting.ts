@@ -1,4 +1,4 @@
-import type { BrowserSettings, NetworkSettings, SessionSettings } from './appSettings'
+import type { BrowserSettings, LoggingSettings, NetworkSettings, SessionSettings } from './appSettings'
 import type { RunDetails, RunItem } from './runs'
 
 export const POSTING_RESULT_STATUSES = ['success', 'failed', 'needs_login', 'skipped'] as const
@@ -68,6 +68,7 @@ export interface PostingJobRequest {
   browser: BrowserSettings
   session: SessionSettings
   network: NetworkSettings
+  logging: LoggingSettings
   sessionAccount: PostingSessionAccount
   userAgent?: string
   proxy?: PostingProxyConfig
@@ -79,6 +80,8 @@ export interface PostingJobResult {
   message: string
   publishedUrl?: string
   screenshotPath?: string
+  currentUrl?: string
+  tracePath?: string
   sessionValidation?: PostingSessionValidation
 }
 

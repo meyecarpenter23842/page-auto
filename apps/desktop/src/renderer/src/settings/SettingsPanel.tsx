@@ -4,6 +4,7 @@ import { AdvancedSettingsSection } from './AdvancedSettingsSection'
 import { BrowserSettingsSection } from './BrowserSettingsSection'
 import { CaptchaSettingsSection } from './CaptchaSettingsSection'
 import { HealthSettingsSection } from './HealthSettingsSection'
+import { LoggingSettingsPanel } from './LoggingSettingsPanel'
 import { NetworkSettingsPanel } from './NetworkSettingsPanel'
 import { RuntimeSettingsPanel } from './RuntimeSettingsPanel'
 import { SessionSettingsPanel } from './SessionSettingsPanel'
@@ -23,10 +24,6 @@ const sections: Array<{ id: SettingsSection; label: string; mark: string }> = [
   { id: 'health', label: 'Kiểm tra hệ thống', mark: 'OK' }
 ]
 
-function Placeholder({ title, copy }: { title: string; copy: string }) {
-  return <div className="settings-section placeholder-section"><div className="placeholder-mark">✓</div><h3>{title}</h3><p>{copy}</p><span>Chưa hiển thị nút cài đặt ở đây để tránh tạo control chưa có tác dụng thật.</span></div>
-}
-
 export function SettingsPanel({ appInfo }: SettingsPanelProps) {
   const [activeSection, setActiveSection] = useState<SettingsSection>('browser')
 
@@ -34,7 +31,7 @@ export function SettingsPanel({ appInfo }: SettingsPanelProps) {
   if (activeSection === 'session') panel = <SessionSettingsPanel />
   else if (activeSection === 'network') panel = <NetworkSettingsPanel />
   else if (activeSection === 'runtime') panel = <RuntimeSettingsPanel />
-  else if (activeSection === 'logs') panel = <Placeholder title="Nhật ký" copy="Mức log, lưu ảnh lỗi và dọn log thuộc Lô 6." />
+  else if (activeSection === 'logs') panel = <LoggingSettingsPanel />
   else if (activeSection === 'captcha') panel = <CaptchaSettingsSection />
   else if (activeSection === 'advanced') panel = <AdvancedSettingsSection appInfo={appInfo} />
   else if (activeSection === 'health') panel = <HealthSettingsSection appInfo={appInfo} />
@@ -48,7 +45,7 @@ export function SettingsPanel({ appInfo }: SettingsPanelProps) {
       : activeSection === 'runtime'
         ? 'Giới hạn tab, launch spacing, timeout và retry policy được Main áp dụng trực tiếp.'
         : activeSection === 'logs'
-          ? 'Màn này chưa có thay đổi cần lưu.'
+          ? 'Mức log, evidence và retention được áp dụng trực tiếp cho posting/runtime log.'
           : 'Thay đổi được lưu bằng nút trong màn cài đặt đang mở.'
 
   return <div className="settings-shell">

@@ -23,6 +23,7 @@ import type { BrowserExecutableResult, BrowserTestRequest, BrowserTestResult } f
 import type { CaptchaSettingsView, SaveCaptchaSettingsInput } from '../shared/captchaSettings'
 import type { ConfigBackupExportResult, ConfigBackupRestoreResult } from '../shared/configBackup'
 import type { ExecutionLogFilters, ExecutionLogRecord, RetryRunItemPayload, RetryRunItemResult } from '../shared/executionLogs'
+import type { LogCleanupResult } from '../shared/loggingMaintenance'
 import type { CreatePageTabInput, ImageFolderInspection, PageTabConfig, PageTabIdPayload, PageTabSummary, PickTextFileResult, UpdatePageTabPayload } from '../shared/pageTabs'
 import type { ExecuteSinglePostingJobPayload, ExecuteSinglePostingJobResult } from '../shared/posting'
 import type { RotationPageTabPayload, RotationRuntimeSnapshot } from '../shared/rotation'
@@ -62,6 +63,7 @@ const api = {
   resumePageTabRotation: (payload: RotationPageTabPayload): Promise<RotationRuntimeSnapshot> => ipcRenderer.invoke(IPC_CHANNELS.rotationResume, payload) as Promise<RotationRuntimeSnapshot>,
   listExecutionLogs: (filters?: ExecutionLogFilters): Promise<ExecutionLogRecord[]> => ipcRenderer.invoke(IPC_CHANNELS.executionLogsList, filters) as Promise<ExecutionLogRecord[]>,
   retryExecutionLogItem: (payload: RetryRunItemPayload): Promise<RetryRunItemResult> => ipcRenderer.invoke(IPC_CHANNELS.executionLogsRetryItem, payload) as Promise<RetryRunItemResult>,
+  cleanupExecutionLogs: (): Promise<LogCleanupResult> => ipcRenderer.invoke(IPC_CHANNELS.executionLogsCleanup) as Promise<LogCleanupResult>,
   exportConfigBackup: (): Promise<ConfigBackupExportResult> => ipcRenderer.invoke(IPC_CHANNELS.configBackupExport) as Promise<ConfigBackupExportResult>,
   restoreConfigBackup: (): Promise<ConfigBackupRestoreResult> => ipcRenderer.invoke(IPC_CHANNELS.configBackupRestore) as Promise<ConfigBackupRestoreResult>,
   getAppSettings: (): Promise<AppSettings> => ipcRenderer.invoke(IPC_CHANNELS.appSettingsGet) as Promise<AppSettings>,

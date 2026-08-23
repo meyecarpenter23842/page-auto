@@ -1,10 +1,11 @@
 import type Database from 'better-sqlite3'
-import { DEFAULT_APP_SETTINGS, type RuntimeSettings } from '../../shared/appSettings'
+import { DEFAULT_APP_SETTINGS, type LoggingSettings, type RuntimeSettings } from '../../shared/appSettings'
 import type { ExecuteSinglePostingJobPayload, ExecuteSinglePostingJobResult } from '../../shared/posting'
 import { AccountRepository } from '../database/accountRepository'
 import { ExecutionLogRepository } from '../database/executionLogRepository'
 import { selectRunContent, selectRunImages } from './postingSelection'
 import { redactExecutionText } from './executionLogSanitizer'
+import { shouldPersistPostingAttempt } from './loggingPolicy'
 import { canQueueRetryWithRuntime, retryDispositionFor } from './retryPolicy'
 import { RuntimeRecoveryService } from './runtimeRecovery'
 import { ConsecutiveFailureTracker } from './runtimeFailureTracker'
@@ -36,7 +37,8 @@ export class ResilientPostingService implements PostingExecutor {
     private readonly core: PostingExecutor,
     database: Database.Database,
     private readonly logs: ExecutionLogRepository,
-    private readonly getRuntimeSettings: () => RuntimeSettings = () => ({ ...DEFAULT_APP_SETTINGS.runtime })
+    private readonly getRuntimeSettings: () => RuntimeSettings = () => ({ ...DEFAULT_APP_SETTINGS.runtime }),
+    private readonly getLoggingSettings: () => LoggingSettings = () => ({ ...DEFAULT_APP_SETTINGS.logging })
   ) {
     this.accounts = new AccountRepository(database)
     this.recovery = new RuntimeRecoveryService(database, logs)
@@ -47,18 +49,24 @@ export class ResilientPostingService implements PostingExecutor {
 
     while (true) {
       const outcome = await this.core.executeSingle(nextPayload)
-      await this.writeAttemptLog(outcome)
       const runtime = { ...this.getRuntimeSettings() }
+      const logging = { ...this.getLoggingSettings() }
       const item = outcome.item
-
-      if (
+      const willRetry = Boolean(
         item
         && outcome.result.status === 'failed'
         && canQueueRetryWithRuntime(outcome.result.code, item.attemptCount, runtime)
-      ) {
+      )
+
+      if (shouldPersistPostingAttempt(logging.level, outcome, willRetry)) {
+        await this.writeAttemptLog(outcome)
+      }
+
+      if (willRetry && item) {
         try {
           this.recovery.retryFailedItem(item.id)
         } catch {
+          if (logging.level === 'normal') await this.writeAttemptLog(outcome)
           return this.applyConsecutiveFailureLimit(payload, outcome, runtime)
         }
 
