@@ -19,6 +19,7 @@ import type {
   RetryRunItemPayload,
   RetryRunItemResult
 } from '../shared/executionLogs'
+import type { LogCleanupResult } from '../shared/loggingMaintenance'
 import type {
   CreatePageTabInput,
   ImageFolderInspection,
@@ -66,6 +67,7 @@ export const IPC_CHANNELS = {
   rotationResume: 'rotation:resume',
   executionLogsList: 'execution-logs:list',
   executionLogsRetryItem: 'execution-logs:retry-item',
+  executionLogsCleanup: 'execution-logs:cleanup',
   configBackupExport: 'config-backup:export',
   configBackupRestore: 'config-backup:restore',
   appSettingsGet: 'settings:app:get',
@@ -125,6 +127,7 @@ export interface PageAutoIpcContract {
   resumePageTabRotation: (payload: RotationPageTabPayload) => Promise<RotationRuntimeSnapshot>
   listExecutionLogs: (filters?: ExecutionLogFilters) => Promise<ExecutionLogRecord[]>
   retryExecutionLogItem: (payload: RetryRunItemPayload) => Promise<RetryRunItemResult>
+  cleanupExecutionLogs: () => Promise<LogCleanupResult>
   exportConfigBackup: () => Promise<ConfigBackupExportResult>
   restoreConfigBackup: () => Promise<ConfigBackupRestoreResult>
   getAppSettings: () => Promise<AppSettings>

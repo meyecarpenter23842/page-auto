@@ -95,7 +95,7 @@ export function ExecutionLogs() {
 
       <div className="execution-log-summary">
         <strong>{logs.length}</strong>
-        <span>log gần nhất · retry tự động chỉ áp dụng lỗi transient tối đa 3 attempt; publish chưa xác nhận luôn cần review.</span>
+        <span>log gần nhất · retry tự động theo budget Vận hành; publish chưa xác nhận và worker crash/timeout luôn cần review.</span>
       </div>
 
       <div className="execution-log-table-wrap">

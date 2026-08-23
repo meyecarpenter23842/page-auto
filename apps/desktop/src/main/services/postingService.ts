@@ -3,6 +3,7 @@ import type { AccountRecord } from '../../shared/accounts'
 import {
   DEFAULT_APP_SETTINGS,
   type BrowserSettings,
+  type LoggingSettings,
   type NetworkSettings,
   type RuntimeSettings,
   type SessionSettings
@@ -50,7 +51,8 @@ export class PostingService {
     private readonly getBrowserSettings: () => BrowserSettings = () => ({ ...DEFAULT_APP_SETTINGS.browser }),
     private readonly getSessionSettings: () => SessionSettings = () => ({ ...DEFAULT_APP_SETTINGS.session }),
     private readonly getNetworkSettings: () => NetworkSettings = () => ({ ...DEFAULT_APP_SETTINGS.network }),
-    private readonly getRuntimeSettings: () => RuntimeSettings = () => ({ ...DEFAULT_APP_SETTINGS.runtime })
+    private readonly getRuntimeSettings: () => RuntimeSettings = () => ({ ...DEFAULT_APP_SETTINGS.runtime }),
+    private readonly getLoggingSettings: () => LoggingSettings = () => ({ ...DEFAULT_APP_SETTINGS.logging })
   ) {
     this.accounts = new AccountRepository(database)
     this.runs = new RunRepository(database)
@@ -103,6 +105,7 @@ export class PostingService {
 
     const sessionSettings = { ...this.getSessionSettings() }
     const networkSettings = { ...this.getNetworkSettings() }
+    const loggingSettings = { ...this.getLoggingSettings() }
     const workerResult = await this.workers.run({
       runId: payload.runId,
       itemId: item.id,
@@ -115,6 +118,7 @@ export class PostingService {
       browser: { ...this.getBrowserSettings() },
       session: sessionSettings,
       network: networkSettings,
+      logging: loggingSettings,
       sessionAccount: {
         id: account.id,
         uid: account.uid,

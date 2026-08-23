@@ -35,6 +35,7 @@ import { PageTabRepository } from './database/pageTabRepository'
 import { RunRepository } from './database/runRepository'
 import { AccountExecutionCoordinator } from './services/accountExecutionCoordinator'
 import { ConfigBackupService } from './services/configBackupService'
+import { LogMaintenanceService } from './services/logMaintenanceService'
 import { PageTabWorkerManager } from './services/pageTabWorkerManager'
 import { PostingService } from './services/postingService'
 import { ResilientPostingService } from './services/resilientPostingService'
@@ -60,8 +61,10 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
   const executionLogs = new ExecutionLogRepository(options.database)
   const recovery = new RuntimeRecoveryService(options.database, executionLogs)
   const configBackup = new ConfigBackupService(options.database)
+  const logMaintenance = new LogMaintenanceService(options.database, options.dataDirectory)
   const browserEngine = new BrowserEngineService()
   recovery.recoverInterruptedRuns()
+  void logMaintenance.cleanup(appSettings.get().logging).catch(() => undefined)
 
   const browserProfiles = new BrowserProfileManager(options.dataDirectory, (session) => {
     const current = accounts.getById(session.accountId)
@@ -81,13 +84,15 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
     () => appSettings.get().browser,
     () => appSettings.get().session,
     () => appSettings.get().network,
-    () => appSettings.get().runtime
+    () => appSettings.get().runtime,
+    () => appSettings.get().logging
   )
   const posting = new ResilientPostingService(
     corePosting,
     options.database,
     executionLogs,
-    () => appSettings.get().runtime
+    () => appSettings.get().runtime,
+    () => appSettings.get().logging
   )
   const accountExecution = new AccountExecutionCoordinator()
   const coordinatedPosting: RotationPostingExecutor = {
@@ -181,10 +186,19 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
 
   ipcMain.handle(IPC_CHANNELS.executionLogsList, (_event, filters?: ExecutionLogFilters) => executionLogs.list(filters))
   ipcMain.handle(IPC_CHANNELS.executionLogsRetryItem, (_event, payload: RetryRunItemPayload) => recovery.retryFailedItem(payload.runItemId))
+  ipcMain.handle(IPC_CHANNELS.executionLogsCleanup, () => logMaintenance.cleanup(appSettings.get().logging, { force: true }))
 
   ipcMain.handle(IPC_CHANNELS.appSettingsGet, () => appSettings.get())
-  ipcMain.handle(IPC_CHANNELS.appSettingsUpdate, (_event, input: AppSettingsPatch) => appSettings.update(input))
-  ipcMain.handle(IPC_CHANNELS.appSettingsReset, () => appSettings.reset())
+  ipcMain.handle(IPC_CHANNELS.appSettingsUpdate, async (_event, input: AppSettingsPatch) => {
+    const next = appSettings.update(input)
+    if (input.logging) await logMaintenance.cleanup(next.logging).catch(() => undefined)
+    return next
+  })
+  ipcMain.handle(IPC_CHANNELS.appSettingsReset, async () => {
+    const next = appSettings.reset()
+    await logMaintenance.cleanup(next.logging).catch(() => undefined)
+    return next
+  })
 
   ipcMain.handle(IPC_CHANNELS.browserDetect, () => browserEngine.detectChrome())
   ipcMain.handle(IPC_CHANNELS.browserProbeExecutable, (_event, executablePath: string) => browserEngine.probeExecutable(executablePath))

@@ -10,10 +10,9 @@ import {
 import { applyBrowserContextSettings, buildBrowserLaunchOptions, waitForBrowserStartupDelay } from '../browserRuntime'
 import { effectiveNavigationTimeoutMs, probeFacebookThroughProxy } from '../proxyPreflight'
 import { activeFacebookProfileId, detectFacebookAccessBlock } from './pageState'
-import { capturePostingFailureScreenshot } from './screenshotService'
+import { finishPostingEvidence, startPostingTrace } from './postingEvidence'
 
 type PostingCode = NonNullable<PostingJobResult['code']>
-type PostingResultWithScreenshot = PostingJobResult & { screenshotPath?: string }
 
 function failure(code: PostingCode, message: string): PostingJobResult {
   return {
@@ -35,13 +34,6 @@ function beforeRunSessionFailure(session: FacebookSessionResult): PostingJobResu
       message: session.message
     }
   }
-}
-
-async function withFailureScreenshot(page: Page, job: PostingJobRequest, result: PostingJobResult): Promise<PostingJobResult> {
-  if (result.status === 'success' || result.status === 'skipped') return result
-  const screenshotPath = await capturePostingFailureScreenshot(page, job)
-  if (!screenshotPath) return result
-  return { ...result, screenshotPath } as PostingResultWithScreenshot
 }
 
 async function firstVisible(candidates: Locator[]): Promise<Locator | null> {
@@ -231,6 +223,7 @@ export async function executePostingJob(job: PostingJobRequest): Promise<Posting
   let context: BrowserContext | null = null
   let page: Page | null = null
   let lifetimeTimer: NodeJS.Timeout | null = null
+  let traceStarted = false
 
   try {
     await waitForBrowserStartupDelay(job.browser)
@@ -248,7 +241,9 @@ export async function executePostingJob(job: PostingJobRequest): Promise<Posting
     return failure(profileInUse ? 'profile_in_use' : 'browser_launch_failed', profileInUse ? 'Browser profile đang được mở ở process khác.' : message)
   }
 
-  const finish = async (result: PostingJobResult): Promise<PostingJobResult> => page ? withFailureScreenshot(page, job, result) : result
+  const finish = async (result: PostingJobResult): Promise<PostingJobResult> => page
+    ? finishPostingEvidence(page, job, result, traceStarted)
+    : result
 
   try {
     page = context.pages()[0] ?? await context.newPage()
@@ -258,6 +253,7 @@ export async function executePostingJob(job: PostingJobRequest): Promise<Posting
     }
     page.setDefaultTimeout(job.network.networkTimeoutMs)
     page.setDefaultNavigationTimeout(runtimeBrowser.navigationTimeoutMs)
+    traceStarted = await startPostingTrace(context, job)
 
     if (job.proxy && job.network.checkProxyBeforeRun) {
       const proxyCheck = await probeFacebookThroughProxy(page, job.network)
