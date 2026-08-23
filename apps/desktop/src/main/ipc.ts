@@ -16,6 +16,7 @@ import type {
   AccountListFilters,
   SaveImportPresetInput
 } from '../shared/accounts'
+import type { SaveCaptchaSettingsInput } from '../shared/captchaSettings'
 import type { ConfigBackupRestoreResult } from '../shared/configBackup'
 import type { ExecutionLogFilters, RetryRunItemPayload } from '../shared/executionLogs'
 import type {
@@ -28,6 +29,7 @@ import type { RotationPageTabPayload } from '../shared/rotation'
 import type { CreateRunPayload, RunIdPayload } from '../shared/runs'
 import { BrowserProfileManager } from './browser/browserProfileManager'
 import { AccountRepository } from './database/accountRepository'
+import { CaptchaSettingsRepository } from './database/captchaSettingsRepository'
 import { ExecutionLogRepository } from './database/executionLogRepository'
 import { PageTabRepository } from './database/pageTabRepository'
 import { RunRepository } from './database/runRepository'
@@ -53,6 +55,7 @@ const MAX_BACKUP_FILE_BYTES = 20 * 1024 * 1024
 
 export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
   const accounts = new AccountRepository(options.database)
+  const captchaSettings = new CaptchaSettingsRepository(options.database)
   const pageTabs = new PageTabRepository(options.database)
   const runs = new RunRepository(options.database)
   const executionLogs = new ExecutionLogRepository(options.database)
@@ -193,6 +196,11 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
   )
   ipcMain.handle(IPC_CHANNELS.executionLogsRetryItem, (_event, payload: RetryRunItemPayload) =>
     recovery.retryFailedItem(payload.runItemId)
+  )
+
+  ipcMain.handle(IPC_CHANNELS.captchaSettingsGet, () => captchaSettings.get())
+  ipcMain.handle(IPC_CHANNELS.captchaSettingsSave, (_event, input: SaveCaptchaSettingsInput) =>
+    captchaSettings.save(input)
   )
 
   ipcMain.handle(IPC_CHANNELS.configBackupExport, async () => {

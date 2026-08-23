@@ -18,6 +18,7 @@ import type {
   ImportPreset,
   SaveImportPresetInput
 } from '../shared/accounts'
+import type { CaptchaSettingsView, SaveCaptchaSettingsInput } from '../shared/captchaSettings'
 import type { ConfigBackupExportResult, ConfigBackupRestoreResult } from '../shared/configBackup'
 import type {
   ExecutionLogFilters,
@@ -107,7 +108,11 @@ const api = {
   exportConfigBackup: (): Promise<ConfigBackupExportResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.configBackupExport) as Promise<ConfigBackupExportResult>,
   restoreConfigBackup: (): Promise<ConfigBackupRestoreResult> =>
-    ipcRenderer.invoke(IPC_CHANNELS.configBackupRestore) as Promise<ConfigBackupRestoreResult>
+    ipcRenderer.invoke(IPC_CHANNELS.configBackupRestore) as Promise<ConfigBackupRestoreResult>,
+  getCaptchaSettings: (): Promise<CaptchaSettingsView> =>
+    ipcRenderer.invoke(IPC_CHANNELS.captchaSettingsGet) as Promise<CaptchaSettingsView>,
+  saveCaptchaSettings: (input: SaveCaptchaSettingsInput): Promise<CaptchaSettingsView> =>
+    ipcRenderer.invoke(IPC_CHANNELS.captchaSettingsSave, input) as Promise<CaptchaSettingsView>
 }
 
 contextBridge.exposeInMainWorld('pageAuto', api)
