@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react'
 import type { AppInfo } from '../../ipc/channels'
 import { AccountManager } from './accounts/AccountManager'
 import { ExecutionLogs } from './logs/ExecutionLogs'
-import { MultiTabRuntimeDashboard } from './page-tabs/MultiTabRuntimeDashboard'
 import { PageTabsManager } from './page-tabs/PageTabsManager'
 import { SettingsPanel } from './settings/SettingsPanel'
 
@@ -98,7 +97,6 @@ export function App() {
           <AccountManager />
         ) : activeRoute === 'page-tabs' ? (
           <div className="page-tabs-route">
-            <MultiTabRuntimeDashboard />
             <PageTabsManager />
           </div>
         ) : activeRoute === 'logs' ? (

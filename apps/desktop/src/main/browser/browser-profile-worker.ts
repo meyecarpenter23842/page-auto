@@ -1,17 +1,28 @@
 import { chromium, type BrowserContext } from 'playwright-core'
+import type { PostingProxyConfig } from '../../shared/posting'
 import {
   bootstrapFacebookSession,
   type FacebookSessionAccount,
   type FacebookSessionResult
 } from './facebookSession'
 
+interface BrowserLaunchConfig {
+  proxy?: PostingProxyConfig
+  userAgent?: string
+}
+
 interface BootstrapCommand {
   type: 'bootstrap'
   account: FacebookSessionAccount
+  launch?: BrowserLaunchConfig
 }
 
 interface SessionResultMessage extends FacebookSessionResult {
   type: 'session-result'
+}
+
+interface BrowserClosedMessage {
+  type: 'browser-closed'
 }
 
 function sessionError(accountId: number, error: unknown): SessionResultMessage {
@@ -40,36 +51,56 @@ async function run(): Promise<void> {
   const profileDirectory = process.argv[2]
   if (!profileDirectory) throw new Error('Missing browser profile directory.')
 
-  const contextPromise: Promise<BrowserContext> = chromium.launchPersistentContext(profileDirectory, {
-    channel: 'chrome',
-    headless: false,
-    viewport: null
-  })
-
+  let context: BrowserContext | null = null
+  let closing = false
   let queue = Promise.resolve()
+
+  const ensureContext = async (command: BootstrapCommand): Promise<BrowserContext> => {
+    if (context) return context
+
+    const launchOptions: NonNullable<Parameters<typeof chromium.launchPersistentContext>[1]> = {
+      channel: 'chrome',
+      headless: false,
+      viewport: null,
+      ...(command.launch?.userAgent ? { userAgent: command.launch.userAgent } : {})
+    }
+    if (command.launch?.proxy) {
+      launchOptions.proxy = {
+        server: command.launch.proxy.server,
+        ...(command.launch.proxy.username ? { username: command.launch.proxy.username } : {}),
+        ...(command.launch.proxy.password ? { password: command.launch.proxy.password } : {})
+      }
+    }
+
+    const opened = await chromium.launchPersistentContext(profileDirectory, launchOptions)
+    context = opened
+    opened.once('close', () => {
+      context = null
+      if (closing) return
+      closing = true
+      const message: BrowserClosedMessage = { type: 'browser-closed' }
+      process.parentPort?.postMessage(message)
+      setTimeout(() => process.exit(0), 25)
+    })
+    return opened
+  }
+
   process.parentPort?.on('message', (event) => {
     const command = commandFromMessage(event)
-    if (!command) return
+    if (!command || closing) return
 
     queue = queue.then(async () => {
-      const context = await contextPromise
-      const page = context.pages()[0] ?? await context.newPage()
       let result: SessionResultMessage
       try {
-        const session = await bootstrapFacebookSession(context, page, command.account)
+        const activeContext = await ensureContext(command)
+        const page = activeContext.pages()[0] ?? await activeContext.newPage()
+        const session = await bootstrapFacebookSession(activeContext, page, command.account)
         result = { type: 'session-result', ...session }
       } catch (error) {
         result = sessionError(command.account.id, error)
       }
       process.parentPort?.postMessage(result)
     })
-  })
-
-  const context = await contextPromise
-  if (context.pages().length === 0) await context.newPage()
-
-  await new Promise<void>((resolve) => {
-    context.once('close', () => resolve())
   })
 }
 
