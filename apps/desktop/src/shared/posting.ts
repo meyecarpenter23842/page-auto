@@ -52,6 +52,7 @@ export interface PostingJobResult {
   code?: PostingErrorCode
   message: string
   publishedUrl?: string
+  screenshotPath?: string
 }
 
 export interface PostingWorkerRequestMessage {

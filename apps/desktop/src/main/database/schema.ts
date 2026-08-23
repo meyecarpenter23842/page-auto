@@ -162,3 +162,24 @@ export const runEvents = sqliteTable('run_events', {
   payloadJson: text('payload_json'),
   createdAt: integer('created_at').notNull()
 })
+
+export const executionLogs = sqliteTable('execution_logs', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  timestamp: integer('timestamp').notNull(),
+  runId: integer('run_id'),
+  runItemId: integer('run_item_id'),
+  pageTabId: integer('page_tab_id'),
+  accountId: integer('account_id'),
+  pageUid: text('page_uid'),
+  groupUid: text('group_uid'),
+  contentIndex: integer('content_index'),
+  imagePathsJson: text('image_paths_json'),
+  action: text('action').notNull(),
+  result: text('result').notNull(),
+  errorCode: text('error_code'),
+  errorMessage: text('error_message'),
+  screenshotPath: text('screenshot_path'),
+  publishedUrl: text('published_url'),
+  attemptCount: integer('attempt_count').notNull().default(0),
+  retryDisposition: text('retry_disposition').notNull().default('not_applicable')
+})

@@ -10,6 +10,12 @@ import type {
   SaveImportPresetInput
 } from '../shared/accounts'
 import type {
+  ExecutionLogFilters,
+  ExecutionLogRecord,
+  RetryRunItemPayload,
+  RetryRunItemResult
+} from '../shared/executionLogs'
+import type {
   CreatePageTabInput,
   ImageFolderInspection,
   PageTabConfig,
@@ -53,7 +59,9 @@ export const IPC_CHANNELS = {
   rotationStatus: 'rotation:status',
   rotationStart: 'rotation:start',
   rotationPause: 'rotation:pause',
-  rotationResume: 'rotation:resume'
+  rotationResume: 'rotation:resume',
+  executionLogsList: 'execution-logs:list',
+  executionLogsRetryItem: 'execution-logs:retry-item'
 } as const
 
 export interface AppInfo {
@@ -109,4 +117,6 @@ export interface PageAutoIpcContract {
   startPageTabRotation: (payload: RotationPageTabPayload) => Promise<RotationRuntimeSnapshot>
   pausePageTabRotation: (payload: RotationPageTabPayload) => Promise<RotationRuntimeSnapshot>
   resumePageTabRotation: (payload: RotationPageTabPayload) => Promise<RotationRuntimeSnapshot>
+  listExecutionLogs: (filters?: ExecutionLogFilters) => Promise<ExecutionLogRecord[]>
+  retryExecutionLogItem: (payload: RetryRunItemPayload) => Promise<RetryRunItemResult>
 }

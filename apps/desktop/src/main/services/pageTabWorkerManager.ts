@@ -10,6 +10,10 @@ export interface PageTabRotationController {
 
 export type PageTabRotationControllerFactory = (pageTabId: number) => PageTabRotationController
 
+function isMissingRotationSession(error: unknown): boolean {
+  return error instanceof Error && /chưa có Account Rotation đang hoạt động/i.test(error.message)
+}
+
 export class PageTabWorkerManager {
   private readonly controllers = new Map<number, PageTabRotationController>()
 
@@ -32,7 +36,13 @@ export class PageTabWorkerManager {
   }
 
   resume(payload: RotationPageTabPayload): RotationRuntimeSnapshot {
-    return this.getOrCreate(payload.pageTabId).resume(payload)
+    const controller = this.getOrCreate(payload.pageTabId)
+    try {
+      return controller.resume(payload)
+    } catch (error) {
+      if (!isMissingRotationSession(error)) throw error
+      return controller.start(payload)
+    }
   }
 
   dispose(): void {
