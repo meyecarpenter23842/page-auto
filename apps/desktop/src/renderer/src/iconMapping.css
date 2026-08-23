@@ -1,0 +1,156 @@
+/* PAGE-AUTO icon mapping extracted from page-auto-icon-reference-sheet.png. */
+
+:root {
+  --pa-icon-sprite: url('./assets/ui-icon-sprite.png');
+}
+
+/* Shared sprite rendering for action buttons. */
+.account-toolbar .button,
+.page-tab-add,
+.page-tabs-empty .pt-button.primary,
+.page-tab-header-actions .pt-button,
+.pt-add-row .pt-button,
+.pt-panel-heading > .pt-button,
+.pt-heading-actions .pt-button,
+.pt-folder-row .pt-button,
+.pt-remove-button,
+.page-tab-modal-actions .pt-button.primary,
+.multi-runtime-summary button,
+.multi-runtime-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.account-toolbar .button::before,
+.page-tab-add::before,
+.page-tabs-empty .pt-button.primary::before,
+.page-tab-header-actions .pt-button::before,
+.pt-add-row .pt-button::before,
+.pt-panel-heading > .pt-button::before,
+.pt-heading-actions .pt-button::before,
+.pt-folder-row .pt-button::before,
+.pt-remove-button::before,
+.page-tab-modal-actions .pt-button.primary::before,
+.multi-runtime-summary button::before,
+.multi-runtime-actions button::before {
+  content: '';
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  background-image: var(--pa-icon-sprite);
+  background-repeat: no-repeat;
+  background-size: 800% 500%;
+}
+
+/* Brand + sidebar. */
+.brand-mark {
+  color: transparent;
+  background-color: transparent;
+  background-image: var(--pa-icon-sprite);
+  background-repeat: no-repeat;
+  background-size: 800% 500%;
+  background-position: 0% 100%;
+  border-radius: 10px;
+}
+
+.nav-icon {
+  color: transparent;
+  font-size: 0;
+  background-color: transparent;
+  background-image: var(--pa-icon-sprite);
+  background-repeat: no-repeat;
+  background-size: 800% 500%;
+  border-color: transparent;
+}
+
+.nav-item:nth-child(1) .nav-icon { background-position: 28.571429% 0%; }
+.nav-item:nth-child(2) .nav-icon { background-position: 0% 0%; }
+.nav-item:nth-child(3) .nav-icon { background-position: 14.285714% 0%; }
+.nav-item:nth-child(4) .nav-icon { background-position: 42.857143% 0%; }
+.nav-item:nth-child(5) .nav-icon { background-position: 57.142857% 0%; }
+
+.nav-item.active .nav-icon {
+  color: transparent;
+  background-color: transparent;
+  border-color: transparent;
+}
+
+/* Account Manager toolbar. */
+.account-toolbar > .toolbar-group:first-child > .button:nth-child(1)::before { background-position: 71.428571% 0%; }
+.account-toolbar > .toolbar-group:first-child > .button:nth-child(2)::before,
+.account-toolbar > .toolbar-group:first-child > .button:nth-child(3)::before { background-position: 0% 25%; }
+.account-toolbar > .toolbar-group:first-child > .button:nth-child(4)::before { background-position: 85.714286% 0%; }
+.account-toolbar > .toolbar-group:first-child > .button:nth-child(5)::before { background-position: 100% 0%; }
+.account-toolbar > .toolbar-group:nth-child(2) > .button:nth-child(1)::before { background-position: 100% 50%; }
+.account-toolbar > .toolbar-group:nth-child(2) > .button:nth-child(2)::before { background-position: 100% 75%; }
+.account-toolbar > .toolbar-group:nth-child(2) > .button:nth-child(3)::before { background-position: 42.857143% 50%; }
+.column-settings-anchor > .button::before { background-position: 57.142857% 25%; }
+
+/* Page Tabs configuration. */
+.page-tab-add::before,
+.page-tabs-empty .pt-button.primary::before,
+.pt-add-row .pt-button::before,
+.page-tab-modal-actions .pt-button.primary::before { background-position: 71.428571% 0%; }
+
+.page-tab-header-actions > .pt-button:nth-child(1)::before { background-position: 100% 50%; }
+.page-tab-header-actions > .pt-button:nth-child(2)::before { background-position: 100% 0%; }
+.page-tab-header-actions > .pt-button:nth-child(3)::before { background-position: 0% 75%; }
+
+.page-tab-main-column > .pt-panel:nth-of-type(4) .pt-panel-heading > .pt-button::before { background-position: 71.428571% 50%; }
+.page-tab-main-column > .pt-panel:nth-of-type(5) .pt-heading-actions > .pt-button::before { background-position: 0% 25%; }
+.page-tab-main-column > .pt-panel:nth-of-type(6) .pt-heading-actions > .pt-button:nth-of-type(1)::before { background-position: 0% 25%; }
+.page-tab-main-column > .pt-panel:nth-of-type(6) .pt-heading-actions > .pt-button:nth-of-type(2)::before { background-position: 71.428571% 0%; }
+.pt-folder-row > .pt-button::before { background-position: 42.857143% 50%; }
+.pt-remove-button::before { background-position: 100% 0%; }
+
+/* Phase 7 runtime controls. */
+.multi-runtime-summary button::before { background-position: 14.285714% 25%; }
+.multi-runtime-actions > button:nth-child(1)::before { background-position: 71.428571% 25%; }
+.multi-runtime-actions > button:nth-child(2)::before { background-position: 85.714286% 25%; }
+.multi-runtime-actions > button:nth-child(3)::before { background-position: 100% 25%; }
+
+/* Runtime + account status glyphs. */
+.multi-runtime-status,
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.multi-runtime-status::before,
+.status-pill::before {
+  content: '';
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  background-image: var(--pa-icon-sprite);
+  background-repeat: no-repeat;
+  background-size: 800% 500%;
+}
+
+.runtime-idle .multi-runtime-status::before,
+.runtime-waiting_window .multi-runtime-status::before { background-position: 42.857143% 75%; }
+.runtime-starting .multi-runtime-status::before,
+.runtime-running .multi-runtime-status::before { background-position: 14.285714% 75%; }
+.runtime-paused .multi-runtime-status::before { background-position: 28.571429% 75%; }
+.runtime-completed .multi-runtime-status::before { background-position: 0% 75%; }
+.runtime-error .multi-runtime-status::before { background-position: 71.428571% 75%; }
+.runtime-stopped .multi-runtime-status::before,
+.runtime-stopping .multi-runtime-status::before { background-position: 0% 50%; }
+
+.status-pill.status-unknown::before { background-position: 42.857143% 75%; }
+.status-pill.status-valid::before { background-position: 0% 75%; }
+.status-pill.status-needs_login::before { background-position: 85.714286% 75%; }
+.status-pill.status-disabled::before { background-position: 71.428571% 75%; }
+
+@media (max-width: 1180px) {
+  .account-toolbar .button::before,
+  .page-tab-header-actions .pt-button::before,
+  .multi-runtime-actions button::before {
+    width: 16px;
+    height: 16px;
+    flex-basis: 16px;
+  }
+}
