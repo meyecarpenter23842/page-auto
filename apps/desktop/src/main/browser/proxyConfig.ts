@@ -7,7 +7,7 @@ type AccountProxySource = Pick<
 >
 
 function normalizeScheme(value: string | null | undefined): string {
-  const raw = value?.trim().toLowerCase().replace(/:\/\/$/, '') ?? ''
+  const raw = value?.trim().toLowerCase().replace(/:\/\/$/, '').replace(/:$/, '') ?? ''
   if (raw === 'https' || raw === 'socks4' || raw === 'socks5') return raw
   return 'http'
 }
