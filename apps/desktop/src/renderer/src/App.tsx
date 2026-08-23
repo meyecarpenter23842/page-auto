@@ -85,7 +85,7 @@ export function App() {
         </div>
       </aside>
 
-      <main className="workspace">
+      <main className={activeRoute === 'page-tabs' ? 'workspace workspace-page-tabs' : 'workspace'}>
         <header className="topbar">
           <div>
             <p className="eyebrow">PAGE-AUTO / {activeRoute.toUpperCase()}</p>
@@ -97,10 +97,10 @@ export function App() {
         {activeRoute === 'accounts' ? (
           <AccountManager />
         ) : activeRoute === 'page-tabs' ? (
-          <>
+          <div className="page-tabs-route">
             <MultiTabRuntimeDashboard />
             <PageTabsManager />
-          </>
+          </div>
         ) : activeRoute === 'logs' ? (
           <ExecutionLogs />
         ) : activeRoute === 'settings' ? (
