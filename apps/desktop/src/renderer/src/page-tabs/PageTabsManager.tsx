@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
-import type { AccountRecord } from '../../../shared/accounts'
+import { useCallback, useEffect, useMemo, useState, type FormEvent, type PointerEvent, type ReactNode } from 'react'
+import type { AccountRecord, AccountStatus } from '../../../shared/accounts'
 import {
   CONTENT_MODES,
   IMAGE_MODES,
@@ -12,10 +12,14 @@ import {
   type PageTabSchedule,
   type PageTabSummary
 } from '../../../shared/pageTabs'
+import { MultiTabRuntimeDashboard } from './MultiTabRuntimeDashboard'
 import './pageTabs.css'
+import './pageTabsWorkspace.css'
 
 const dayLabels = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7']
 type EditorModal = 'schedule' | 'groups' | 'content' | 'images' | null
+
+type AccountPickerStatus = AccountStatus | 'all'
 
 function minutesToTime(minutes: number): string {
   const safe = Math.max(0, Math.min(minutes, 1439))
@@ -97,6 +101,19 @@ function moveItem<T>(items: T[], index: number, direction: -1 | 1): T[] {
   return next
 }
 
+function accountRef(account: AccountRecord, sortOrder: number): PageTabAccountRef {
+  return {
+    accountId: account.id,
+    enabled: true,
+    sortOrder,
+    postsPerTurn: null,
+    uid: account.uid,
+    name: account.name,
+    status: account.status,
+    category: account.category
+  }
+}
+
 interface CreateTabModalProps {
   onClose: () => void
   onCreate: (input: CreatePageTabInput) => Promise<void>
@@ -167,16 +184,180 @@ function ConfigEditorModal({ eyebrow, title, onClose, children, actions }: Confi
   )
 }
 
+interface AccountPickerModalProps {
+  accounts: AccountRecord[]
+  selectedIds: number[]
+  onClose: () => void
+  onApply: (ids: number[]) => void
+}
+
+function AccountPickerModal({ accounts, selectedIds, onClose, onApply }: AccountPickerModalProps) {
+  const [search, setSearch] = useState('')
+  const [status, setStatus] = useState<AccountPickerStatus>('all')
+  const [category, setCategory] = useState('all')
+  const [selected, setSelected] = useState<Set<number>>(() => new Set(selectedIds))
+  const [paintValue, setPaintValue] = useState<boolean | null>(null)
+
+  useEffect(() => {
+    const stopPaint = () => setPaintValue(null)
+    window.addEventListener('pointerup', stopPaint)
+    window.addEventListener('pointercancel', stopPaint)
+    return () => {
+      window.removeEventListener('pointerup', stopPaint)
+      window.removeEventListener('pointercancel', stopPaint)
+    }
+  }, [])
+
+  const categories = useMemo(() => Array.from(new Set(
+    accounts.map((account) => account.category?.trim()).filter((value): value is string => Boolean(value))
+  )).sort((a, b) => a.localeCompare(b)), [accounts])
+
+  const filtered = useMemo(() => {
+    const query = search.trim().toLowerCase()
+    return accounts.filter((account) => {
+      if (status !== 'all' && account.status !== status) return false
+      if (category !== 'all' && (account.category ?? '') !== category) return false
+      if (!query) return true
+      return [account.uid, account.username, account.name, account.email, account.note, account.category]
+        .some((value) => value?.toLowerCase().includes(query))
+    })
+  }, [accounts, category, search, status])
+
+  const setAccountSelected = (accountId: number, value: boolean) => {
+    setSelected((current) => {
+      const next = new Set(current)
+      if (value) next.add(accountId)
+      else next.delete(accountId)
+      return next
+    })
+  }
+
+  const beginPaint = (event: PointerEvent<HTMLElement>, accountId: number) => {
+    if (event.button !== 0) return
+    event.preventDefault()
+    const value = !selected.has(accountId)
+    setAccountSelected(accountId, value)
+    setPaintValue(value)
+  }
+
+  const paintRow = (accountId: number) => {
+    if (paintValue === null) return
+    setAccountSelected(accountId, paintValue)
+  }
+
+  const setFilteredSelection = (value: boolean) => {
+    setSelected((current) => {
+      const next = new Set(current)
+      for (const account of filtered) {
+        if (value) next.add(account.id)
+        else next.delete(account.id)
+      }
+      return next
+    })
+  }
+
+  return (
+    <div className="page-tab-modal-backdrop" role="presentation" onMouseDown={onClose}>
+      <section className="page-tab-modal pt-account-picker-modal" role="dialog" aria-modal="true" aria-label="Chọn tài khoản" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="page-tab-modal-header">
+          <div>
+            <p className="eyebrow">Account Manager</p>
+            <h2>Chọn tài khoản cho Page Tab</h2>
+            <p className="pt-picker-help">Tick nhiều tài khoản một lần. Có thể giữ chuột và rê qua các dòng để tick/bỏ tick hàng loạt.</p>
+          </div>
+          <button type="button" className="page-tab-icon-button" onClick={onClose}>×</button>
+        </div>
+
+        <div className="pt-account-picker-filters">
+          <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Tìm UID, username, tên, email, note…" />
+          <select value={status} onChange={(event) => setStatus(event.target.value as AccountPickerStatus)}>
+            <option value="all">Tất cả status</option>
+            <option value="unknown">unknown</option>
+            <option value="valid">valid</option>
+            <option value="needs_login">needs_login</option>
+            <option value="disabled">disabled</option>
+          </select>
+          <select value={category} onChange={(event) => setCategory(event.target.value)}>
+            <option value="all">Tất cả category</option>
+            {categories.map((item) => <option key={item} value={item}>{item}</option>)}
+          </select>
+          <button className="pt-button secondary" type="button" onClick={() => setFilteredSelection(true)}>Chọn tất cả đang lọc</button>
+          <button className="pt-button secondary" type="button" onClick={() => setFilteredSelection(false)}>Bỏ đang lọc</button>
+        </div>
+
+        <div className="pt-account-picker-grid-wrap">
+          <table className="pt-account-picker-grid">
+            <thead>
+              <tr>
+                <th className="picker-check">Chọn</th>
+                <th>UID / UserName</th>
+                <th>Tên</th>
+                <th>Status</th>
+                <th>Category</th>
+                <th>Proxy</th>
+                <th>Note</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((account) => {
+                const checked = selected.has(account.id)
+                return (
+                  <tr
+                    key={account.id}
+                    className={checked ? 'selected' : ''}
+                    onPointerDown={(event) => {
+                      const target = event.target as HTMLElement
+                      if (target.closest('input,button,select,a')) return
+                      beginPaint(event, account.id)
+                    }}
+                    onPointerEnter={() => paintRow(account.id)}
+                  >
+                    <td className="picker-check">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => undefined}
+                        onPointerDown={(event) => {
+                          event.stopPropagation()
+                          beginPaint(event, account.id)
+                        }}
+                      />
+                    </td>
+                    <td className="picker-uid" title={account.username ? `${account.uid} / ${account.username}` : account.uid}>{account.uid}{account.username ? ` / ${account.username}` : ''}</td>
+                    <td title={account.name ?? ''}>{account.name ?? '—'}</td>
+                    <td><span className={`pt-account-status status-${account.status}`}>{account.status}</span></td>
+                    <td>{account.category ?? '—'}</td>
+                    <td title={account.proxy ?? account.proxyHost ?? ''}>{account.proxy ?? (account.proxyHost && account.proxyPort ? `${account.proxyHost}:${account.proxyPort}` : '—')}</td>
+                    <td title={account.note ?? ''}>{account.note ?? '—'}</td>
+                  </tr>
+                )
+              })}
+              {filtered.length === 0 ? <tr><td colSpan={7} className="pt-account-empty">Không có tài khoản phù hợp bộ lọc.</td></tr> : null}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="page-tab-modal-actions pt-account-picker-actions">
+          <span className="pt-modal-save-note">Đã chọn {selected.size}/{accounts.length} tài khoản · đang hiển thị {filtered.length}</span>
+          <button className="pt-button secondary" type="button" onClick={() => setSelected(new Set())}>Bỏ tất cả</button>
+          <button className="pt-button secondary" type="button" onClick={onClose}>Hủy</button>
+          <button className="pt-button primary" type="button" onClick={() => onApply(accounts.filter((account) => selected.has(account.id)).map((account) => account.id))}>Áp dụng lựa chọn</button>
+        </div>
+      </section>
+    </div>
+  )
+}
+
 export function PageTabsManager() {
   const [tabs, setTabs] = useState<PageTabSummary[]>([])
   const [activeId, setActiveId] = useState<number | null>(null)
   const [config, setConfig] = useState<PageTabConfig | null>(null)
   const [accounts, setAccounts] = useState<AccountRecord[]>([])
-  const [accountToAdd, setAccountToAdd] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [dirty, setDirty] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
+  const [accountPickerOpen, setAccountPickerOpen] = useState(false)
   const [editorModal, setEditorModal] = useState<EditorModal>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -186,11 +367,8 @@ export function PageTabsManager() {
     const nextTabs = await window.pageAuto.listPageTabs()
     setTabs(nextTabs)
     const nextActive = preferredId ?? activeId ?? nextTabs[0]?.id ?? null
-    if (nextActive !== null && nextTabs.some((tab) => tab.id === nextActive)) {
-      setActiveId(nextActive)
-    } else {
-      setActiveId(nextTabs[0]?.id ?? null)
-    }
+    if (nextActive !== null && nextTabs.some((tab) => tab.id === nextActive)) setActiveId(nextActive)
+    else setActiveId(nextTabs[0]?.id ?? null)
   }, [activeId])
 
   useEffect(() => {
@@ -218,6 +396,7 @@ export function PageTabsManager() {
         if (cancelled) return
         setConfig(nextConfig)
         setDirty(false)
+        setAccountPickerOpen(false)
         setEditorModal(null)
         setError(null)
       })
@@ -301,28 +480,22 @@ export function PageTabsManager() {
     await refreshTabs()
   }
 
-  const availableAccounts = useMemo(() => {
-    const selectedIds = new Set(config?.accounts.map((item) => item.accountId) ?? [])
-    return accounts.filter((account) => !selectedIds.has(account.id))
-  }, [accounts, config?.accounts])
-
-  const addAccount = () => {
+  const applyAccountSelection = (selectedIds: number[]) => {
     if (!config) return
-    const accountId = Number(accountToAdd)
-    const account = accounts.find((item) => item.id === accountId)
-    if (!account) return
-    const ref: PageTabAccountRef = {
-      accountId: account.id,
-      enabled: true,
-      sortOrder: config.accounts.length,
-      postsPerTurn: null,
-      uid: account.uid,
-      name: account.name,
-      status: account.status,
-      category: account.category
+    const selected = new Set(selectedIds)
+    const currentById = new Map(config.accounts.map((item) => [item.accountId, item]))
+    const next: PageTabAccountRef[] = []
+
+    for (const item of config.accounts) {
+      if (selected.has(item.accountId)) next.push({ ...item, sortOrder: next.length })
     }
-    patchConfig({ accounts: [...config.accounts, ref] })
-    setAccountToAdd('')
+    for (const account of accounts) {
+      if (!selected.has(account.id) || currentById.has(account.id)) continue
+      next.push(accountRef(account, next.length))
+    }
+
+    patchConfig({ accounts: next })
+    setAccountPickerOpen(false)
   }
 
   const updateAccountRef = (index: number, patch: Partial<PageTabAccountRef>) => {
@@ -437,27 +610,15 @@ export function PageTabsManager() {
             </div>
           </header>
 
-          <div className="page-tab-business-scroll">
-            <div className="page-tab-layout">
-              <section className="pt-panel pt-identity-panel">
-                <div className="pt-panel-heading"><div><p className="eyebrow">Nhận diện</p><h3>Page</h3></div></div>
-                <div className="pt-form-grid two">
-                  <label><span>Tên tab</span><input value={config.name} onChange={(event) => patchConfig({ name: event.target.value })} /></label>
-                  <label><span>Page UID</span><input value={config.pageUid} onChange={(event) => patchConfig({ pageUid: event.target.value })} /></label>
-                </div>
-              </section>
-
-              <section className="pt-panel pt-account-panel">
+          <div className="page-tab-two-column">
+            <div className="page-tab-left-pane">
+              <section className="pt-panel pt-account-panel pt-account-panel-tall">
                 <div className="pt-panel-heading">
                   <div><p className="eyebrow">Tài khoản</p><h3>Danh sách chạy</h3></div>
-                  <span className="pt-count-chip">{enabledAccountCount}/{config.accounts.length} bật</span>
-                </div>
-                <div className="pt-account-toolbar">
-                  <select value={accountToAdd} onChange={(event) => setAccountToAdd(event.target.value)}>
-                    <option value="">Chọn tài khoản từ Account Manager…</option>
-                    {availableAccounts.map((account) => <option key={account.id} value={account.id}>{account.uid} · {account.name ?? 'Chưa có tên'} · {account.status}</option>)}
-                  </select>
-                  <button className="pt-button secondary" type="button" disabled={!accountToAdd} onClick={addAccount}>+ Thêm tài khoản</button>
+                  <div className="pt-account-heading-actions">
+                    <span className="pt-count-chip">{enabledAccountCount}/{config.accounts.length} bật</span>
+                    <button className="pt-button primary" type="button" onClick={() => setAccountPickerOpen(true)}>Chọn tài khoản</button>
+                  </div>
                 </div>
                 <div className="pt-account-grid-wrap">
                   <table className="pt-account-grid">
@@ -488,15 +649,23 @@ export function PageTabsManager() {
                           <td className="pt-account-remove"><button type="button" onClick={() => removeAccount(index)}>×</button></td>
                         </tr>
                       ))}
-                      {config.accounts.length === 0 ? <tr><td className="pt-account-empty" colSpan={9}>Tab chưa có tài khoản. Thêm tài khoản theo đúng thứ tự muốn chạy.</td></tr> : null}
+                      {config.accounts.length === 0 ? <tr><td className="pt-account-empty" colSpan={9}>Tab chưa có tài khoản. Bấm “Chọn tài khoản” để tick nhiều account từ Account Manager.</td></tr> : null}
                     </tbody>
                   </table>
                 </div>
               </section>
 
-              <section className="pt-panel pt-rotation-panel">
+              <section className="pt-panel pt-identity-panel pt-compact-panel">
+                <div className="pt-panel-heading"><div><p className="eyebrow">Nhận diện</p><h3>Page</h3></div></div>
+                <div className="pt-form-grid two">
+                  <label><span>Tên tab</span><input value={config.name} onChange={(event) => patchConfig({ name: event.target.value })} /></label>
+                  <label><span>Page UID</span><input value={config.pageUid} onChange={(event) => patchConfig({ pageUid: event.target.value })} /></label>
+                </div>
+              </section>
+
+              <section className="pt-panel pt-rotation-panel pt-compact-panel">
                 <div className="pt-panel-heading"><div><p className="eyebrow">Vòng chạy</p><h3>Số bài và thời gian nghỉ</h3></div></div>
-                <div className="pt-form-grid five">
+                <div className="pt-form-grid five pt-rotation-grid">
                   <label><span>Bài/account</span><input type="number" min="1" value={config.rotation.postsPerAccount} onChange={(event) => patchConfig({ rotation: { ...config.rotation, postsPerAccount: Number(event.target.value) } })} /></label>
                   <label><span>Delay bài min (s)</span><input type="number" min="0" value={config.rotation.postDelayMinSeconds} onChange={(event) => patchConfig({ rotation: { ...config.rotation, postDelayMinSeconds: Number(event.target.value) } })} /></label>
                   <label><span>Delay bài max (s)</span><input type="number" min="0" value={config.rotation.postDelayMaxSeconds} onChange={(event) => patchConfig({ rotation: { ...config.rotation, postDelayMaxSeconds: Number(event.target.value) } })} /></label>
@@ -504,13 +673,17 @@ export function PageTabsManager() {
                   <label><span>Đổi account max (s)</span><input type="number" min="0" value={config.rotation.accountDelayMaxSeconds} onChange={(event) => patchConfig({ rotation: { ...config.rotation, accountDelayMaxSeconds: Number(event.target.value) } })} /></label>
                 </div>
               </section>
+            </div>
+
+            <div className="page-tab-right-pane">
+              <MultiTabRuntimeDashboard pageTabId={config.id} compact />
 
               <section className="pt-panel pt-popup-launcher-panel">
                 <div className="pt-panel-heading">
-                  <div><p className="eyebrow">Cấu hình nghiệp vụ</p><h3>Mở popup để chỉnh danh sách dài</h3></div>
-                  <span className="pt-popup-hint">Giữ màn tab gọn, không cuộn toàn app</span>
+                  <div><p className="eyebrow">Cấu hình nghiệp vụ</p><h3>Thiết lập Page Tab</h3></div>
+                  <span className="pt-popup-hint">Mở popup để chỉnh</span>
                 </div>
-                <div className="pt-config-launchers">
+                <div className="pt-config-launchers pt-config-launchers-vertical">
                   <button type="button" onClick={() => setEditorModal('schedule')}>
                     <span>Lịch chạy</span><strong>{enabledScheduleCount} khung bật</strong><small>Ngày và nhiều khung giờ</small>
                   </button>
@@ -525,12 +698,28 @@ export function PageTabsManager() {
                   </button>
                 </div>
               </section>
+
+              <section className="pt-panel pt-right-summary">
+                <div><span>Accounts</span><strong>{config.accounts.length}</strong></div>
+                <div><span>Groups</span><strong>{groupCount}</strong></div>
+                <div><span>Contents</span><strong>{contentCount}</strong></div>
+                <div><span>Schedule</span><strong>{enabledScheduleCount}</strong></div>
+              </section>
             </div>
           </div>
         </div>
       )}
 
       {createOpen ? <CreateTabModal onClose={() => setCreateOpen(false)} onCreate={createTab} /> : null}
+
+      {config && accountPickerOpen ? (
+        <AccountPickerModal
+          accounts={accounts}
+          selectedIds={config.accounts.map((item) => item.accountId)}
+          onClose={() => setAccountPickerOpen(false)}
+          onApply={applyAccountSelection}
+        />
+      ) : null}
 
       {config && editorModal === 'schedule' ? (
         <ConfigEditorModal eyebrow="Lịch chạy" title="Ngày và khung giờ" onClose={() => setEditorModal(null)} actions={<button className="pt-button secondary" type="button" onClick={addSchedule}>+ Khung giờ</button>}>

@@ -2,10 +2,10 @@ import type { AccountRecord } from '../../shared/accounts'
 import type {
   ExecuteSinglePostingJobPayload,
   ExecuteSinglePostingJobResult,
-  PostingJobResult,
-  PostingProxyConfig
+  PostingJobResult
 } from '../../shared/posting'
 import { accountProfileDirectory } from '../browser/browserProfileManager'
+import { resolveAccountProxy } from '../browser/proxyConfig'
 import { PostingWorkerManager } from '../browser/postingWorkerManager'
 import { AccountRepository } from '../database/accountRepository'
 import { RunRepository } from '../database/runRepository'
@@ -13,23 +13,13 @@ import type Database from 'better-sqlite3'
 import { redactExecutionText } from './executionLogSanitizer'
 import { selectRunContent, selectRunImages } from './postingSelection'
 
-function buildProxy(account: AccountRecord): PostingProxyConfig | undefined {
-  if (!account.proxyHost || !account.proxyPort) return undefined
-  const scheme = account.proxyType?.trim() || 'http'
-  const server = `${scheme}://${account.proxyHost}:${account.proxyPort}`
-  return {
-    server,
-    ...(account.proxyUsername ? { username: account.proxyUsername } : {}),
-    ...(account.proxyPassword ? { password: account.proxyPassword } : {})
-  }
-}
-
 function accountSecrets(account: AccountRecord): Array<string | null | undefined> {
   return [
     account.password,
     account.cookie,
     account.twoFactorSecret,
     account.emailPassword,
+    account.proxy,
     account.proxyPassword
   ]
 }
@@ -131,7 +121,7 @@ export class PostingService {
       }
     }
 
-    const proxy = buildProxy(account)
+    const proxy = resolveAccountProxy(account)
     const workerResult = await this.workers.run({
       runId: payload.runId,
       itemId: item.id,

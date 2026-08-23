@@ -29,7 +29,12 @@ function canResume(status: RotationRuntimeSnapshot['status']): boolean {
   return status === 'paused'
 }
 
-export function MultiTabRuntimeDashboard() {
+interface MultiTabRuntimeDashboardProps {
+  pageTabId?: number | null
+  compact?: boolean
+}
+
+export function MultiTabRuntimeDashboard({ pageTabId = null, compact = false }: MultiTabRuntimeDashboardProps) {
   const [tabs, setTabs] = useState<PageTabSummary[]>([])
   const [accounts, setAccounts] = useState<AccountRecord[]>([])
   const [runtimeByTab, setRuntimeByTab] = useState<Record<number, RotationRuntimeSnapshot>>({})
@@ -80,42 +85,47 @@ export function MultiTabRuntimeDashboard() {
     `${account.uid}${account.name ? ` · ${account.name}` : ''}`
   ])), [accounts])
 
-  const activeCount = tabs.filter((tab) => {
+  const visibleTabs = useMemo(
+    () => pageTabId === null ? tabs : tabs.filter((tab) => tab.id === pageTabId),
+    [pageTabId, tabs]
+  )
+
+  const activeCount = visibleTabs.filter((tab) => {
     const status = runtimeByTab[tab.id]?.status
     return status === 'starting' || status === 'running' || status === 'waiting_window'
   }).length
 
   const runAction = async (
-    pageTabId: number,
+    currentPageTabId: number,
     action: (payload: { pageTabId: number }) => Promise<RotationRuntimeSnapshot>
   ) => {
-    setBusyTabs((current) => new Set(current).add(pageTabId))
+    setBusyTabs((current) => new Set(current).add(currentPageTabId))
     setError(null)
     try {
-      const snapshot = await action({ pageTabId })
-      setRuntimeByTab((current) => ({ ...current, [pageTabId]: snapshot }))
+      const snapshot = await action({ pageTabId: currentPageTabId })
+      setRuntimeByTab((current) => ({ ...current, [currentPageTabId]: snapshot }))
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
       setBusyTabs((current) => {
         const next = new Set(current)
-        next.delete(pageTabId)
+        next.delete(currentPageTabId)
         return next
       })
     }
   }
 
   return (
-    <section className="multi-runtime-shell">
+    <section className={compact ? 'multi-runtime-shell compact' : 'multi-runtime-shell'}>
       <div className="multi-runtime-heading">
         <div>
           <p className="eyebrow">Phase 7 · Worker Manager</p>
-          <h2>Multi Page Runtime</h2>
-          <p>Mỗi Page Tab có runtime riêng; nhiều tab chạy song song, account trong từng tab vẫn tuần tự.</p>
+          <h2>{compact ? 'Runtime Page hiện tại' : 'Multi Page Runtime'}</h2>
+          {!compact ? <p>Mỗi Page Tab có runtime riêng; nhiều tab chạy song song, account trong từng tab vẫn tuần tự.</p> : null}
         </div>
         <div className="multi-runtime-summary">
-          <span><strong>{activeCount}</strong> active</span>
-          <span><strong>{tabs.length}</strong> tabs</span>
+          {!compact ? <span><strong>{activeCount}</strong> active</span> : null}
+          {!compact ? <span><strong>{visibleTabs.length}</strong> tabs</span> : null}
           <button type="button" onClick={() => { void refreshStatic(); void refreshRuntime() }}>Refresh</button>
         </div>
       </div>
@@ -123,7 +133,7 @@ export function MultiTabRuntimeDashboard() {
       {error ? <div className="multi-runtime-error">{error}</div> : null}
 
       <div className="multi-runtime-grid">
-        {tabs.map((tab) => {
+        {visibleTabs.map((tab) => {
           const runtime = runtimeByTab[tab.id]
           const status = runtime?.status ?? 'idle'
           const run = runtime?.run
@@ -187,9 +197,9 @@ export function MultiTabRuntimeDashboard() {
             </article>
           )
         })}
-        {tabs.length === 0 ? <div className="multi-runtime-empty">Chưa có Page Tab để chạy.</div> : null}
+        {visibleTabs.length === 0 ? <div className="multi-runtime-empty">Chưa có Page Tab để chạy.</div> : null}
       </div>
-      <p className="multi-runtime-note">Runtime đọc cấu hình đã Save trong DB. Chi tiết group/content/image và recovery log sâu được mở rộng ở Phase 8.</p>
+      {!compact ? <p className="multi-runtime-note">Runtime đọc cấu hình đã Save trong DB. Chi tiết group/content/image và recovery log sâu được mở rộng ở Phase 8.</p> : null}
     </section>
   )
 }
