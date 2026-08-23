@@ -1,0 +1,264 @@
+.page-tabs-route {
+  min-height: 0;
+  display: block;
+  overflow: hidden;
+}
+
+.page-tabs-manager,
+.page-tab-workspace {
+  min-height: 0;
+}
+
+.page-tab-workspace {
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.page-tab-two-column {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  overflow: hidden;
+}
+
+.page-tab-left-pane,
+.page-tab-right-pane {
+  min-width: 0;
+  min-height: 0;
+}
+
+.page-tab-left-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow: hidden;
+}
+
+.page-tab-right-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow: auto;
+  padding-right: 3px;
+  scrollbar-gutter: stable;
+}
+
+.pt-account-panel-tall {
+  flex: 1 1 auto;
+  min-height: 300px;
+  display: flex;
+  flex-direction: column;
+}
+
+.pt-account-panel-tall .pt-panel-heading {
+  flex: 0 0 auto;
+}
+
+.pt-account-panel-tall .pt-account-grid-wrap {
+  flex: 1 1 auto;
+  min-height: 220px;
+  max-height: none;
+}
+
+.pt-account-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pt-compact-panel {
+  flex: 0 0 auto;
+  padding: 9px 10px;
+}
+
+.pt-compact-panel .pt-panel-heading {
+  margin-bottom: 6px;
+}
+
+.pt-rotation-grid {
+  grid-template-columns: repeat(5, minmax(82px, 1fr)) !important;
+}
+
+.page-tab-right-pane .multi-runtime-shell.compact {
+  flex: 0 0 auto;
+  height: auto;
+  min-height: 245px;
+  max-height: 45%;
+  margin: 0;
+}
+
+.page-tab-right-pane .multi-runtime-shell.compact .multi-runtime-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.page-tab-right-pane .multi-runtime-shell.compact .multi-runtime-details {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.pt-config-launchers-vertical {
+  grid-template-columns: 1fr !important;
+}
+
+.pt-config-launchers-vertical > button {
+  min-height: 56px;
+  grid-template-columns: minmax(95px, 0.6fr) minmax(90px, 0.6fr) 1fr;
+  align-items: center;
+}
+
+.pt-config-launchers-vertical > button small {
+  text-align: right;
+}
+
+.pt-right-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  padding: 8px 10px;
+}
+
+.pt-right-summary div {
+  display: grid;
+  gap: 2px;
+}
+
+.pt-right-summary span {
+  color: #7a8799;
+  font-size: 8px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.pt-right-summary strong {
+  font-size: 12px;
+}
+
+.pt-account-picker-modal {
+  width: min(1180px, calc(100vw - 40px));
+  height: min(760px, calc(100vh - 40px));
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+}
+
+.pt-picker-help {
+  margin: 4px 0 0;
+  color: #667085;
+  font-size: 10px;
+}
+
+.pt-account-picker-filters {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) 150px 170px auto auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.pt-account-picker-filters input,
+.pt-account-picker-filters select {
+  width: 100%;
+  min-height: 28px;
+  padding: 4px 6px;
+  color: #182033;
+  background: #ffffff;
+  border: 1px solid #c7d0db;
+  border-radius: 3px;
+  outline: none;
+}
+
+.pt-account-picker-filters input:focus,
+.pt-account-picker-filters select:focus {
+  border-color: #6f9ee8;
+  box-shadow: 0 0 0 1px rgba(23, 92, 211, 0.08);
+}
+
+.pt-account-picker-grid-wrap {
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid #cfd8e3;
+  border-radius: 2px;
+  user-select: none;
+}
+
+.pt-account-picker-grid {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: fixed;
+  font-size: 10px;
+}
+
+.pt-account-picker-grid th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  height: 26px;
+  padding: 0 5px;
+  color: #3d4960;
+  background: #e9eef4;
+  border-bottom: 1px solid #c8d1dc;
+  border-right: 1px solid #d5dce5;
+  text-align: left;
+  white-space: nowrap;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.pt-account-picker-grid td {
+  height: 24px;
+  padding: 1px 5px;
+  color: #283548;
+  background: #ffffff;
+  border-bottom: 1px solid #e4e8ed;
+  border-right: 1px solid #e8ecf1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pt-account-picker-grid tbody tr:nth-child(even) td {
+  background: #fafbfc;
+}
+
+.pt-account-picker-grid tbody tr:hover td {
+  background: #eaf3ff;
+}
+
+.pt-account-picker-grid tbody tr.selected td {
+  background: #dcecff;
+}
+
+.pt-account-picker-grid tbody tr {
+  cursor: default;
+}
+
+.pt-account-picker-grid .picker-check {
+  width: 48px;
+  text-align: center;
+}
+
+.pt-account-picker-grid .picker-uid {
+  width: 210px;
+  font-weight: 700;
+}
+
+.pt-account-picker-grid input[type='checkbox'] {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+}
+
+.pt-account-picker-actions {
+  flex-wrap: nowrap;
+}
+
+@media (max-width: 1250px) {
+  .pt-rotation-grid {
+    grid-template-columns: repeat(3, minmax(92px, 1fr)) !important;
+  }
+
+  .pt-account-picker-filters {
+    grid-template-columns: minmax(220px, 1fr) 130px 150px;
+  }
+}
