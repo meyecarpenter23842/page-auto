@@ -49,6 +49,7 @@ export const IPC_CHANNELS = {
   runsPause: 'runs:pause',
   runsResume: 'runs:resume',
   postingExecuteSingle: 'posting:execute-single',
+  rotationList: 'rotation:list',
   rotationStatus: 'rotation:status',
   rotationStart: 'rotation:start',
   rotationPause: 'rotation:pause',
@@ -103,6 +104,7 @@ export interface PageAutoIpcContract {
   pauseRun: (payload: RunIdPayload) => Promise<RunDetails>
   resumeRun: (payload: RunIdPayload) => Promise<RunDetails>
   executeSinglePostingJob: (payload: ExecuteSinglePostingJobPayload) => Promise<ExecuteSinglePostingJobResult>
+  listPageTabRotations: () => Promise<RotationRuntimeSnapshot[]>
   getPageTabRotationStatus: (payload: RotationPageTabPayload) => Promise<RotationRuntimeSnapshot>
   startPageTabRotation: (payload: RotationPageTabPayload) => Promise<RotationRuntimeSnapshot>
   pausePageTabRotation: (payload: RotationPageTabPayload) => Promise<RotationRuntimeSnapshot>

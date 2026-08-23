@@ -28,8 +28,10 @@ import { BrowserProfileManager } from './browser/browserProfileManager'
 import { AccountRepository } from './database/accountRepository'
 import { PageTabRepository } from './database/pageTabRepository'
 import { RunRepository } from './database/runRepository'
+import { AccountExecutionCoordinator } from './services/accountExecutionCoordinator'
+import { PageTabWorkerManager } from './services/pageTabWorkerManager'
 import { PostingService } from './services/postingService'
-import { RotationService } from './services/rotationService'
+import { RotationService, type RotationPostingExecutor } from './services/rotationService'
 
 interface RegisterIpcOptions {
   database: Database.Database
@@ -48,7 +50,17 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
   const runs = new RunRepository(options.database)
   const browserProfiles = new BrowserProfileManager(options.dataDirectory)
   const posting = new PostingService(options.database, options.dataDirectory)
-  const rotation = new RotationService(runs, posting)
+  const accountExecution = new AccountExecutionCoordinator()
+  const coordinatedPosting: RotationPostingExecutor = {
+    executeSingle: (payload) => {
+      const accountId = payload.accountId
+      if (accountId === undefined) return posting.executeSingle(payload)
+      return accountExecution.run(accountId, () => posting.executeSingle(payload))
+    }
+  }
+  const rotation = new PageTabWorkerManager(
+    () => new RotationService(runs, coordinatedPosting)
+  )
 
   ipcMain.handle(IPC_CHANNELS.appInfo, (): AppInfo => ({
     name: app.getName(),
@@ -144,6 +156,9 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
   ipcMain.handle(IPC_CHANNELS.runsResume, (_event, payload: RunIdPayload) => runs.resume(payload.runId))
   ipcMain.handle(IPC_CHANNELS.postingExecuteSingle, (_event, payload: ExecuteSinglePostingJobPayload) =>
     posting.executeSingle(payload)
+  )
+  ipcMain.handle(IPC_CHANNELS.rotationList, () =>
+    rotation.list(pageTabs.list().map((tab) => tab.id))
   )
   ipcMain.handle(IPC_CHANNELS.rotationStatus, (_event, payload: RotationPageTabPayload) =>
     rotation.status(payload)

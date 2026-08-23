@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { AppInfo } from '../../ipc/channels'
 import { AccountManager } from './accounts/AccountManager'
+import { MultiTabRuntimeDashboard } from './page-tabs/MultiTabRuntimeDashboard'
 import { PageTabsManager } from './page-tabs/PageTabsManager'
 
 type RouteId = 'overview' | 'accounts' | 'page-tabs' | 'logs' | 'settings'
@@ -22,7 +23,7 @@ const routes: Route[] = [
 const routeDescriptions: Record<RouteId, { title: string; description: string }> = {
   overview: {
     title: 'Tổng quan',
-    description: 'Account Manager đã có nền dữ liệu; Phase 3 đang cấu hình Page Tabs độc lập trước Run Queue và posting core.'
+    description: 'Phase 7 tách runtime theo từng Page Tab để nhiều Page chạy song song mà account trong mỗi tab vẫn tuần tự.'
   },
   accounts: {
     title: 'Account Manager',
@@ -30,11 +31,11 @@ const routeDescriptions: Record<RouteId, { title: string; description: string }>
   },
   'page-tabs': {
     title: 'Page Tabs',
-    description: 'Mỗi Page UID có account order, rotation, lịch chạy, Group Set, Content Set và Image Folder độc lập.'
+    description: 'Mỗi Page UID có config, queue và runtime độc lập; Worker Manager điều phối nhiều tab song song.'
   },
   logs: {
     title: 'Runtime Logs',
-    description: 'Runtime execution log chi tiết sẽ được mở rộng ở phase recovery/run; logger nền vẫn nằm trong Main.'
+    description: 'Runtime execution log chi tiết và recovery sâu được mở rộng ở Phase 8.'
   },
   settings: {
     title: 'Settings',
@@ -94,20 +95,23 @@ export function App() {
         {activeRoute === 'accounts' ? (
           <AccountManager />
         ) : activeRoute === 'page-tabs' ? (
-          <PageTabsManager />
+          <>
+            <MultiTabRuntimeDashboard />
+            <PageTabsManager />
+          </>
         ) : (
           <>
             <section className="hero-card">
               <div>
-                <span className="phase-badge">PHASE {activeRoute === 'overview' ? '3' : 'NEXT'}</span>
+                <span className="phase-badge">PHASE {activeRoute === 'overview' ? '7' : 'NEXT'}</span>
                 <h2>{active.title}</h2>
                 <p>{active.description}</p>
               </div>
               <div className="architecture-grid">
                 <div><strong>Renderer</strong><span>React UI only</span></div>
-                <div><strong>Main</strong><span>DB + lifecycle</span></div>
-                <div><strong>Storage</strong><span>SQLite + Drizzle</span></div>
-                <div><strong>Page Config</strong><span>Independent per tab</span></div>
+                <div><strong>Main</strong><span>DB + Worker Manager</span></div>
+                <div><strong>Workers</strong><span>Parallel per Page Tab</span></div>
+                <div><strong>Tab runtime</strong><span>Sequential accounts</span></div>
               </div>
             </section>
 
@@ -115,16 +119,16 @@ export function App() {
               <div className="section-heading">
                 <div>
                   <p className="eyebrow">Architecture status</p>
-                  <h2>Phase 3 giữ config tách khỏi runtime</h2>
+                  <h2>Phase 7 tách runtime theo từng Page Tab</h2>
                 </div>
-                <span className="healthy-chip">Page Tab config active</span>
+                <span className="healthy-chip">Multi-tab runtime active</span>
               </div>
 
               <div className="check-list">
-                <div><span>01</span><div><strong>Account references</strong><p>Page Tab chỉ reference account ID, không copy cookie/password/proxy.</p></div></div>
-                <div><span>02</span><div><strong>Source sets</strong><p>Group Set và Content Set là nguồn gốc để Phase 4 clone run snapshot.</p></div></div>
-                <div><span>03</span><div><strong>Schedule config</strong><p>Nhiều khung giờ/ngày được persist độc lập theo từng Page UID.</p></div></div>
-                <div><span>04</span><div><strong>No posting yet</strong><p>Phase 3 chỉ lưu config; Run Queue và posting core chưa được kích hoạt.</p></div></div>
+                <div><span>01</span><div><strong>Independent queue</strong><p>Mỗi Page Tab giữ run/run_items riêng nên không trộn Group UID giữa các tab.</p></div></div>
+                <div><span>02</span><div><strong>Parallel tabs</strong><p>Worker Manager cho nhiều Page Tab active cùng lúc.</p></div></div>
+                <div><span>03</span><div><strong>Sequential inside tab</strong><p>Mỗi tab vẫn chạy account theo đúng thứ tự và quota Phase 6.</p></div></div>
+                <div><span>04</span><div><strong>Realtime UI</strong><p>Renderer cập nhật runtime theo IPC từ Main, không chạy automation trong React.</p></div></div>
               </div>
             </section>
           </>
