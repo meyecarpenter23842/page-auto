@@ -7,7 +7,7 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --no-file-parallelism",
     "rebuild:native": "electron-rebuild -m ../.. -f -w better-sqlite3",
     "smoke": "node ./scripts/smoke.mjs",
     "package:portable": "npm run build && electron-builder --win --x64 --dir --publish never && electron-builder --win zip --x64 --publish never",
