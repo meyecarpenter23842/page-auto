@@ -80,9 +80,15 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
     options.dataDirectory,
     () => appSettings.get().browser,
     () => appSettings.get().session,
-    () => appSettings.get().network
+    () => appSettings.get().network,
+    () => appSettings.get().runtime
   )
-  const posting = new ResilientPostingService(corePosting, options.database, executionLogs)
+  const posting = new ResilientPostingService(
+    corePosting,
+    options.database,
+    executionLogs,
+    () => appSettings.get().runtime
+  )
   const accountExecution = new AccountExecutionCoordinator()
   const coordinatedPosting: RotationPostingExecutor = {
     executeSingle: (payload) => {
@@ -91,13 +97,16 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
       return accountExecution.run(accountId, () => posting.executeSingle(payload))
     }
   }
-  const rotation = new PageTabWorkerManager(() => new RotationService(
-    runs,
-    coordinatedPosting,
-    undefined,
-    () => appSettings.get().session,
-    () => appSettings.get().network
-  ))
+  const rotation = new PageTabWorkerManager(
+    () => new RotationService(
+      runs,
+      coordinatedPosting,
+      undefined,
+      () => appSettings.get().session,
+      () => appSettings.get().network
+    ),
+    () => appSettings.get().runtime.maxActivePageTabs
+  )
 
   ipcMain.handle(IPC_CHANNELS.appInfo, (): AppInfo => ({
     name: app.getName(),

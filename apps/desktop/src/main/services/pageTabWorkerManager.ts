@@ -1,4 +1,5 @@
-import type { RotationPageTabPayload, RotationRuntimeSnapshot } from '../../shared/rotation'
+import { DEFAULT_APP_SETTINGS } from '../../shared/appSettings'
+import type { RotationPageTabPayload, RotationRuntimeSnapshot, RotationRuntimeStatus } from '../../shared/rotation'
 
 export interface PageTabRotationController {
   start(payload: RotationPageTabPayload): RotationRuntimeSnapshot
@@ -14,10 +15,17 @@ function isMissingRotationSession(error: unknown): boolean {
   return error instanceof Error && /chưa có Account Rotation đang hoạt động/i.test(error.message)
 }
 
+function isActiveStatus(status: RotationRuntimeStatus): boolean {
+  return status === 'starting' || status === 'running' || status === 'waiting_window'
+}
+
 export class PageTabWorkerManager {
   private readonly controllers = new Map<number, PageTabRotationController>()
 
-  constructor(private readonly createController: PageTabRotationControllerFactory) {}
+  constructor(
+    private readonly createController: PageTabRotationControllerFactory,
+    private readonly getMaxActivePageTabs: () => number = () => DEFAULT_APP_SETTINGS.runtime.maxActivePageTabs
+  ) {}
 
   list(pageTabIds: number[]): RotationRuntimeSnapshot[] {
     return pageTabIds.map((pageTabId) => this.status({ pageTabId }))
@@ -28,6 +36,7 @@ export class PageTabWorkerManager {
   }
 
   start(payload: RotationPageTabPayload): RotationRuntimeSnapshot {
+    this.assertCapacity(payload.pageTabId)
     return this.getOrCreate(payload.pageTabId).start(payload)
   }
 
@@ -36,6 +45,7 @@ export class PageTabWorkerManager {
   }
 
   resume(payload: RotationPageTabPayload): RotationRuntimeSnapshot {
+    this.assertCapacity(payload.pageTabId)
     const controller = this.getOrCreate(payload.pageTabId)
     try {
       return controller.resume(payload)
@@ -48,6 +58,22 @@ export class PageTabWorkerManager {
   dispose(): void {
     for (const controller of this.controllers.values()) controller.dispose()
     this.controllers.clear()
+  }
+
+  private assertCapacity(pageTabId: number): void {
+    const target = this.controllers.get(pageTabId)
+    if (target && isActiveStatus(target.status({ pageTabId }).status)) return
+
+    let activeCount = 0
+    for (const [id, controller] of this.controllers) {
+      if (id === pageTabId) continue
+      if (isActiveStatus(controller.status({ pageTabId: id }).status)) activeCount += 1
+    }
+
+    const limit = Math.max(1, Math.round(this.getMaxActivePageTabs()))
+    if (activeCount >= limit) {
+      throw new Error(`Đã đạt giới hạn ${limit} Page Tab hoạt động đồng thời. Hãy pause một tab hoặc tăng giới hạn trong Cài đặt > Vận hành.`)
+    }
   }
 
   private getOrCreate(pageTabId: number): PageTabRotationController {

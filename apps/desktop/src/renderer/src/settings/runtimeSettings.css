@@ -1,0 +1,106 @@
+.runtime-settings-section {
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: 64px minmax(0, 1fr) 42px;
+  gap: 9px;
+}
+
+.runtime-summary-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.runtime-summary-row > div {
+  min-width: 0;
+  padding: 9px 11px;
+  border: 1px solid #e4eaf1;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.runtime-summary-row span,
+.runtime-summary-row strong { display: block; }
+.runtime-summary-row span { color: #7b8798; font-size: 10px; }
+.runtime-summary-row strong { margin-top: 3px; color: #233044; font-size: 14px; }
+
+.runtime-settings-grid {
+  min-height: 0;
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-content: start;
+  gap: 8px;
+}
+
+.runtime-settings-grid .number-field {
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid #e4eaf1;
+  border-radius: 9px;
+  background: #fff;
+}
+
+.runtime-settings-grid .number-field > span {
+  display: block;
+  margin-bottom: 6px;
+  color: #667386;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.runtime-settings-grid .number-field > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.runtime-settings-grid .number-field input {
+  min-width: 0;
+  width: 100%;
+}
+
+.runtime-settings-grid .number-field em {
+  color: #8a95a4;
+  font-size: 10px;
+  font-style: normal;
+}
+
+.runtime-wide { grid-column: 1 / -1; }
+
+.runtime-safety-card {
+  padding: 9px 11px;
+  border: 1px solid #e5eaf0;
+  border-radius: 9px;
+  background: #f8fafc;
+}
+.runtime-safety-card strong { color: #2a3748; font-size: 11px; }
+.runtime-safety-card p { margin: 3px 0 0; color: #6f7c8d; font-size: 10px; line-height: 1.35; }
+
+.runtime-action-row {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 7px;
+  border-top: 1px solid #e7ecf2;
+}
+.runtime-action-row > div:last-child { display: flex; gap: 7px; }
+.runtime-feedback { min-width: 0; overflow: hidden; color: #7b8798; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.runtime-feedback .ok { color: #176c3c; }
+.runtime-feedback .bad { color: #9b3030; }
+
+@media (max-width: 1120px) {
+  .runtime-settings-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-height: 780px) {
+  .runtime-settings-section { grid-template-rows: 56px minmax(0, 1fr) 38px; gap: 6px; }
+  .runtime-summary-row > div { padding: 7px 9px; }
+  .runtime-settings-grid { gap: 6px; }
+  .runtime-settings-grid .number-field { padding: 7px; }
+  .runtime-safety-card { padding: 7px 9px; }
+}
