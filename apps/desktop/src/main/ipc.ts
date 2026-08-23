@@ -22,12 +22,14 @@ import type {
   UpdatePageTabPayload
 } from '../shared/pageTabs'
 import type { ExecuteSinglePostingJobPayload } from '../shared/posting'
+import type { RotationPageTabPayload } from '../shared/rotation'
 import type { CreateRunPayload, RunIdPayload } from '../shared/runs'
 import { BrowserProfileManager } from './browser/browserProfileManager'
 import { AccountRepository } from './database/accountRepository'
 import { PageTabRepository } from './database/pageTabRepository'
 import { RunRepository } from './database/runRepository'
 import { PostingService } from './services/postingService'
+import { RotationService } from './services/rotationService'
 
 interface RegisterIpcOptions {
   database: Database.Database
@@ -46,6 +48,7 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
   const runs = new RunRepository(options.database)
   const browserProfiles = new BrowserProfileManager(options.dataDirectory)
   const posting = new PostingService(options.database, options.dataDirectory)
+  const rotation = new RotationService(runs, posting)
 
   ipcMain.handle(IPC_CHANNELS.appInfo, (): AppInfo => ({
     name: app.getName(),
@@ -142,9 +145,22 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
   ipcMain.handle(IPC_CHANNELS.postingExecuteSingle, (_event, payload: ExecuteSinglePostingJobPayload) =>
     posting.executeSingle(payload)
   )
+  ipcMain.handle(IPC_CHANNELS.rotationStatus, (_event, payload: RotationPageTabPayload) =>
+    rotation.status(payload)
+  )
+  ipcMain.handle(IPC_CHANNELS.rotationStart, (_event, payload: RotationPageTabPayload) =>
+    rotation.start(payload)
+  )
+  ipcMain.handle(IPC_CHANNELS.rotationPause, (_event, payload: RotationPageTabPayload) =>
+    rotation.pause(payload)
+  )
+  ipcMain.handle(IPC_CHANNELS.rotationResume, (_event, payload: RotationPageTabPayload) =>
+    rotation.resume(payload)
+  )
 
   return {
     dispose: () => {
+      rotation.dispose()
       posting.closeAll()
       browserProfiles.closeAll()
     }
