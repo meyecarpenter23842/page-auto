@@ -18,6 +18,7 @@ import type {
   ImportPreset,
   SaveImportPresetInput
 } from '../shared/accounts'
+import type { AppSettings, AppSettingsPatch } from '../shared/appSettings'
 import type { CaptchaSettingsView, SaveCaptchaSettingsInput } from '../shared/captchaSettings'
 import type { ConfigBackupExportResult, ConfigBackupRestoreResult } from '../shared/configBackup'
 import type {
@@ -109,6 +110,12 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.configBackupExport) as Promise<ConfigBackupExportResult>,
   restoreConfigBackup: (): Promise<ConfigBackupRestoreResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.configBackupRestore) as Promise<ConfigBackupRestoreResult>,
+  getAppSettings: (): Promise<AppSettings> =>
+    ipcRenderer.invoke(IPC_CHANNELS.appSettingsGet) as Promise<AppSettings>,
+  updateAppSettings: (input: AppSettingsPatch): Promise<AppSettings> =>
+    ipcRenderer.invoke(IPC_CHANNELS.appSettingsUpdate, input) as Promise<AppSettings>,
+  resetAppSettings: (): Promise<AppSettings> =>
+    ipcRenderer.invoke(IPC_CHANNELS.appSettingsReset) as Promise<AppSettings>,
   getCaptchaSettings: (): Promise<CaptchaSettingsView> =>
     ipcRenderer.invoke(IPC_CHANNELS.captchaSettingsGet) as Promise<CaptchaSettingsView>,
   saveCaptchaSettings: (input: SaveCaptchaSettingsInput): Promise<CaptchaSettingsView> =>

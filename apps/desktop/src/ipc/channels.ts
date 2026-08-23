@@ -9,6 +9,7 @@ import type {
   ImportPreset,
   SaveImportPresetInput
 } from '../shared/accounts'
+import type { AppSettings, AppSettingsPatch } from '../shared/appSettings'
 import type { CaptchaSettingsView, SaveCaptchaSettingsInput } from '../shared/captchaSettings'
 import type { ConfigBackupExportResult, ConfigBackupRestoreResult } from '../shared/configBackup'
 import type {
@@ -66,6 +67,9 @@ export const IPC_CHANNELS = {
   executionLogsRetryItem: 'execution-logs:retry-item',
   configBackupExport: 'config-backup:export',
   configBackupRestore: 'config-backup:restore',
+  appSettingsGet: 'settings:app:get',
+  appSettingsUpdate: 'settings:app:update',
+  appSettingsReset: 'settings:app:reset',
   captchaSettingsGet: 'settings:captcha:get',
   captchaSettingsSave: 'settings:captcha:save'
 } as const
@@ -130,6 +134,9 @@ export interface PageAutoIpcContract {
   retryExecutionLogItem: (payload: RetryRunItemPayload) => Promise<RetryRunItemResult>
   exportConfigBackup: () => Promise<ConfigBackupExportResult>
   restoreConfigBackup: () => Promise<ConfigBackupRestoreResult>
+  getAppSettings: () => Promise<AppSettings>
+  updateAppSettings: (input: AppSettingsPatch) => Promise<AppSettings>
+  resetAppSettings: () => Promise<AppSettings>
   getCaptchaSettings: () => Promise<CaptchaSettingsView>
   saveCaptchaSettings: (input: SaveCaptchaSettingsInput) => Promise<CaptchaSettingsView>
 }

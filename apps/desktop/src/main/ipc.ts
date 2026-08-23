@@ -16,6 +16,7 @@ import type {
   AccountListFilters,
   SaveImportPresetInput
 } from '../shared/accounts'
+import type { AppSettingsPatch } from '../shared/appSettings'
 import type { SaveCaptchaSettingsInput } from '../shared/captchaSettings'
 import type { ConfigBackupRestoreResult } from '../shared/configBackup'
 import type { ExecutionLogFilters, RetryRunItemPayload } from '../shared/executionLogs'
@@ -29,6 +30,7 @@ import type { RotationPageTabPayload } from '../shared/rotation'
 import type { CreateRunPayload, RunIdPayload } from '../shared/runs'
 import { BrowserProfileManager } from './browser/browserProfileManager'
 import { AccountRepository } from './database/accountRepository'
+import { AppSettingsRepository } from './database/appSettingsRepository'
 import { CaptchaSettingsRepository } from './database/captchaSettingsRepository'
 import { ExecutionLogRepository } from './database/executionLogRepository'
 import { PageTabRepository } from './database/pageTabRepository'
@@ -55,6 +57,7 @@ const MAX_BACKUP_FILE_BYTES = 20 * 1024 * 1024
 
 export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
   const accounts = new AccountRepository(options.database)
+  const appSettings = new AppSettingsRepository(options.database)
   const captchaSettings = new CaptchaSettingsRepository(options.database)
   const pageTabs = new PageTabRepository(options.database)
   const runs = new RunRepository(options.database)
@@ -208,6 +211,12 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
   ipcMain.handle(IPC_CHANNELS.executionLogsRetryItem, (_event, payload: RetryRunItemPayload) =>
     recovery.retryFailedItem(payload.runItemId)
   )
+
+  ipcMain.handle(IPC_CHANNELS.appSettingsGet, () => appSettings.get())
+  ipcMain.handle(IPC_CHANNELS.appSettingsUpdate, (_event, input: AppSettingsPatch) =>
+    appSettings.update(input)
+  )
+  ipcMain.handle(IPC_CHANNELS.appSettingsReset, () => appSettings.reset())
 
   ipcMain.handle(IPC_CHANNELS.captchaSettingsGet, () => captchaSettings.get())
   ipcMain.handle(IPC_CHANNELS.captchaSettingsSave, (_event, input: SaveCaptchaSettingsInput) =>
