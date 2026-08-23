@@ -41,14 +41,39 @@ export function App() {
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <div className="brand"><div className="brand-mark">PA</div><div><strong>PAGE-AUTO</strong><span>Desktop Control</span></div></div>
-        <nav className="sidebar-nav" aria-label="Điều hướng chính">
-          {routes.map((route) => <button className={route.id === activeRoute ? 'nav-item active' : 'nav-item'} key={route.id} type="button" onClick={() => setActiveRoute(route.id)}><span className="nav-icon">{route.shortLabel}</span><span>{route.label}</span></button>)}
-        </nav>
-        <div className="sidebar-footer"><span className="status-dot" />Local portable mode</div>
+        <span className="sidebar-orbit sidebar-orbit-one" aria-hidden="true" />
+        <span className="sidebar-orbit sidebar-orbit-two" aria-hidden="true" />
+
+        <div className="brand sidebar-card">
+          <div className="brand-mark">PA</div>
+          <div><strong>PAGE-AUTO</strong><span>Desktop Control</span></div>
+        </div>
+
+        <div className="sidebar-menu-card sidebar-card">
+          <p className="sidebar-kicker">MENU CHÍNH</p>
+          <nav className="sidebar-nav" aria-label="Điều hướng chính">
+            {routes.map((route) => (
+              <button
+                aria-current={route.id === activeRoute ? 'page' : undefined}
+                className={route.id === activeRoute ? 'nav-item active' : 'nav-item'}
+                key={route.id}
+                type="button"
+                onClick={() => setActiveRoute(route.id)}
+              >
+                <span className="nav-icon">{route.shortLabel}</span>
+                <span className="nav-label">{route.label}</span>
+              </button>
+            ))}
+          </nav>
+        </div>
+
+        <div className="sidebar-footer sidebar-card">
+          <div className="sidebar-status-line"><span className="status-dot" /><strong>Local portable mode</strong></div>
+          <span className="sidebar-version">{appInfo ? `v${appInfo.version}` : 'Đang tải phiên bản...'}</span>
+        </div>
       </aside>
 
-      <main className={workspaceClass}>
+      <main key={activeRoute} className={`${workspaceClass} workspace-transition`}>
         <header className="topbar"><div><p className="eyebrow">PAGE-AUTO / {activeRoute.toUpperCase()}</p><h1>{active.title}</h1></div><div className="version-badge">{appInfo ? `v${appInfo.version}` : 'Loading...'}</div></header>
 
         {activeRoute === 'accounts' ? <AccountManager /> : activeRoute === 'page-tabs' ? <div className="page-tabs-route"><PageTabsManager /></div> : activeRoute === 'logs' ? <ExecutionLogs /> : activeRoute === 'settings' ? <SettingsPanel appInfo={appInfo} /> : (
