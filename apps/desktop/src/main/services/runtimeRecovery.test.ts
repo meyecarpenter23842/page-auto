@@ -78,13 +78,13 @@ describe('RuntimeRecoveryService', () => {
     runtime.close()
   })
 
-  it('allows a safe transient failure to be queued again and reopens a completed run as paused', () => {
+  it('allows a safe pre-publish navigation failure to be queued again and reopens a completed run as paused', () => {
     const { runtime, account, tab, runs, logs, recovery } = createFixture(['g1'])
     const created = runs.createForPageTab(tab.id)
     runs.resume(created.run.id)
     const claimed = runs.claimNext(created.run.id)
     if (!claimed) throw new Error('Expected claimed item')
-    runs.completeItem({ runId: created.run.id, itemId: claimed.id, status: 'failed', errorMessage: 'worker crash' })
+    runs.completeItem({ runId: created.run.id, itemId: claimed.id, status: 'failed', errorMessage: 'page navigation failed' })
     expect(runs.get(created.run.id)?.run.status).toBe('completed')
 
     logs.insert({
@@ -98,8 +98,8 @@ describe('RuntimeRecoveryService', () => {
       imagePaths: [],
       action: 'posting_attempt',
       result: 'failed',
-      errorCode: 'worker_crashed',
-      errorMessage: 'worker crash',
+      errorCode: 'page_navigation_failed',
+      errorMessage: 'page navigation failed',
       screenshotPath: null,
       publishedUrl: null,
       attemptCount: claimed.attemptCount,
