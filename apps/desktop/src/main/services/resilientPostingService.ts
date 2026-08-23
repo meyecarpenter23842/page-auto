@@ -77,6 +77,7 @@ export class ResilientPostingService implements PostingExecutor {
       account.cookie,
       account.twoFactorSecret,
       account.emailPassword,
+      account.proxy,
       account.proxyPassword
     ] : []
     const images = item

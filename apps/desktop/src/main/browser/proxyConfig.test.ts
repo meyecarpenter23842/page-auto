@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { AccountRecord } from '../../shared/accounts'
-import { parseProxyRaw, resolveAccountProxy } from './proxyConfig'
+import { hasConfiguredProxy, parseProxyRaw, resolveAccountProxy, resolveAccountProxyState } from './proxyConfig'
 
 function source(patch: Partial<AccountRecord>): Pick<AccountRecord, 'proxy' | 'proxyType' | 'proxyHost' | 'proxyPort' | 'proxyUsername' | 'proxyPassword'> {
   return {
@@ -60,5 +60,21 @@ describe('resolveAccountProxy', () => {
       username: 'u',
       password: 'p'
     })
+  })
+
+  it('distinguishes no proxy from malformed proxy so runtime never silently falls back direct', () => {
+    expect(hasConfiguredProxy(source({}))).toBe(false)
+    expect(resolveAccountProxyState(source({}))).toEqual({ status: 'none' })
+
+    const invalid = resolveAccountProxyState(source({ proxy: 'missing-port' }))
+    expect(invalid.status).toBe('invalid')
+    if (invalid.status === 'invalid') {
+      expect(invalid.message).toContain('không mở kết nối trực tiếp')
+      expect(invalid.message).not.toContain('missing-port')
+    }
+  })
+
+  it('treats partial structured credentials as configured but invalid when no usable endpoint exists', () => {
+    expect(resolveAccountProxyState(source({ proxyUsername: 'user-only' }))).toMatchObject({ status: 'invalid' })
   })
 })

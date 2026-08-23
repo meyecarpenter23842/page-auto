@@ -4,7 +4,7 @@ import { utilityProcess, type UtilityProcess } from 'electron'
 import type { AccountRecord, BrowserProfileResult } from '../../shared/accounts'
 import { DEFAULT_APP_SETTINGS, type BrowserSettings, type SessionSettings } from '../../shared/appSettings'
 import type { FacebookSessionAccount, FacebookSessionResult } from './facebookSession'
-import { resolveAccountProxy } from './proxyConfig'
+import { resolveAccountProxyState } from './proxyConfig'
 
 interface SessionResultMessage extends FacebookSessionResult {
   type: 'session-result'
@@ -66,12 +66,22 @@ export class BrowserProfileManager {
   ) {}
 
   async open(account: AccountRecord): Promise<BrowserProfileResult> {
+    const profileDirectory = accountProfileDirectory(this.dataDirectory, account.id)
+    const proxyResolution = resolveAccountProxyState(account)
+    if (proxyResolution.status === 'invalid') {
+      return {
+        status: 'error',
+        profileDirectory,
+        message: proxyResolution.message
+      }
+    }
+
     const existing = this.workers.get(account.id)
     if (existing && !existing.closing) {
       if (existing.pending) {
         return {
           status: 'already_open',
-          profileDirectory: accountProfileDirectory(this.dataDirectory, account.id),
+          profileDirectory,
           message: 'Browser profile đang mở và Session Engine đang kiểm tra account.'
         }
       }
@@ -79,7 +89,6 @@ export class BrowserProfileManager {
     }
     if (existing) this.workers.delete(account.id)
 
-    const profileDirectory = accountProfileDirectory(this.dataDirectory, account.id)
     mkdirSync(profileDirectory, { recursive: true })
 
     try {
@@ -134,6 +143,15 @@ export class BrowserProfileManager {
     openStatus: 'started' | 'already_open'
   ): Promise<BrowserProfileResult> {
     const profileDirectory = accountProfileDirectory(this.dataDirectory, account.id)
+    const proxyResolution = resolveAccountProxyState(account)
+    if (proxyResolution.status === 'invalid') {
+      return Promise.resolve<BrowserProfileResult>({
+        status: 'error',
+        profileDirectory,
+        message: proxyResolution.message
+      })
+    }
+
     const browserSettings = { ...this.getBrowserSettings() }
     const sessionSettings = { ...this.getSessionSettings() }
     return new Promise<BrowserProfileResult>((resolve) => {
@@ -153,7 +171,7 @@ export class BrowserProfileManager {
       entry.pending = { resolve, timer, openStatus }
 
       try {
-        const proxy = resolveAccountProxy(account)
+        const proxy = proxyResolution.status === 'valid' ? proxyResolution.proxy : undefined
         entry.process.postMessage({
           type: 'bootstrap',
           account: sessionAccount(account),

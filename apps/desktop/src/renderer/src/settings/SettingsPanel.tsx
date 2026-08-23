@@ -4,6 +4,7 @@ import { AdvancedSettingsSection } from './AdvancedSettingsSection'
 import { BrowserSettingsSection } from './BrowserSettingsSection'
 import { CaptchaSettingsSection } from './CaptchaSettingsSection'
 import { HealthSettingsSection } from './HealthSettingsSection'
+import { NetworkSettingsPanel } from './NetworkSettingsPanel'
 import { SessionSettingsPanel } from './SessionSettingsPanel'
 import './settings.css'
 
@@ -30,7 +31,7 @@ export function SettingsPanel({ appInfo }: SettingsPanelProps) {
 
   let panel = <BrowserSettingsSection appInfo={appInfo} />
   if (activeSection === 'session') panel = <SessionSettingsPanel />
-  else if (activeSection === 'network') panel = <Placeholder title="Proxy & Mạng" copy="Kiểm tra proxy, timeout và chính sách mạng thuộc Lô 4." />
+  else if (activeSection === 'network') panel = <NetworkSettingsPanel />
   else if (activeSection === 'runtime') panel = <Placeholder title="Vận hành" copy="Giới hạn worker, thời gian chạy account và recovery thuộc Lô 5." />
   else if (activeSection === 'logs') panel = <Placeholder title="Nhật ký" copy="Mức log, lưu ảnh lỗi và dọn log thuộc Lô 6." />
   else if (activeSection === 'captcha') panel = <CaptchaSettingsSection />
@@ -41,9 +42,11 @@ export function SettingsPanel({ appInfo }: SettingsPanelProps) {
   const heading = activeSection === 'browser' ? 'Thiết lập trình duyệt' : active?.label
   const footer = activeSection === 'session'
     ? 'Session, locale và policy được lưu local và dùng trực tiếp bởi worker.'
-    : ['network', 'runtime', 'logs'].includes(activeSection)
-      ? 'Màn này chưa có thay đổi cần lưu.'
-      : 'Thay đổi được lưu bằng nút trong màn cài đặt đang mở.'
+    : activeSection === 'network'
+      ? 'Proxy preflight, timeout và policy mạng được dùng trực tiếp bởi posting runtime.'
+      : ['runtime', 'logs'].includes(activeSection)
+        ? 'Màn này chưa có thay đổi cần lưu.'
+        : 'Thay đổi được lưu bằng nút trong màn cài đặt đang mở.'
 
   return <div className="settings-shell">
     <aside className="settings-menu" aria-label="Nhóm cài đặt">

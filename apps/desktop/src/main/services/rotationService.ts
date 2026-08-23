@@ -1,7 +1,8 @@
-import { DEFAULT_APP_SETTINGS, type SessionSettings } from '../../shared/appSettings'
+import { DEFAULT_APP_SETTINGS, type NetworkSettings, type SessionSettings } from '../../shared/appSettings'
 import type { ExecuteSinglePostingJobPayload, ExecuteSinglePostingJobResult } from '../../shared/posting'
 import type { RotationPageTabPayload, RotationRuntimeSnapshot, RotationRuntimeStatus } from '../../shared/rotation'
 import type { RunDetails, RunSnapshotAccount } from '../../shared/runs'
+import { resolveNetworkFailureDecision } from './networkFailurePolicy'
 import { isWithinSchedule, nextScheduleStart, randomDelaySeconds } from './rotationSchedule'
 import { resolveSessionFailureDecision } from './sessionFailurePolicy'
 
@@ -86,7 +87,8 @@ export class RotationService {
     private readonly runs: RotationRunStore,
     private readonly posting: RotationPostingExecutor,
     private readonly clock: RotationClock = defaultClock,
-    private readonly getSessionSettings: () => SessionSettings = () => ({ ...DEFAULT_APP_SETTINGS.session })
+    private readonly getSessionSettings: () => SessionSettings = () => ({ ...DEFAULT_APP_SETTINGS.session }),
+    private readonly getNetworkSettings: () => NetworkSettings = () => ({ ...DEFAULT_APP_SETTINGS.network })
   ) {}
 
   start(payload: RotationPageTabPayload): RotationRuntimeSnapshot {
@@ -226,6 +228,16 @@ export class RotationService {
     }
   }
 
+  private pauseForNetworkFailure(session: RotationSession, accountId: number): void {
+    session.manualPaused = true
+    session.status = 'paused'
+    session.nextActionAt = null
+    session.message = `Proxy của account #${accountId} không sẵn sàng. Đã pause Page Tab theo chính sách mạng.`
+    if (session.run.run.status === 'running' || session.run.run.status === 'created') {
+      session.run = this.runs.pause(session.runId)
+    }
+  }
+
   private async runLoop(session: RotationSession): Promise<void> {
     const accounts = sortedEnabledAccounts(session.run)
     let accountIndex = 0
@@ -264,8 +276,19 @@ export class RotationService {
         session.run = result.run
         session.lastResult = result.result
         const sessionDecision = resolveSessionFailureDecision(result.result, this.getSessionSettings())
+        const networkDecision = resolveNetworkFailureDecision(result.result, this.getNetworkSettings())
 
         if (result.item === null) {
+          if (networkDecision?.action === 'pause_tab') {
+            this.pauseForNetworkFailure(session, account.accountId)
+            leaveAccountEarly = true
+            break
+          }
+          if (networkDecision?.action === 'switch_account') {
+            session.message = `Proxy account #${account.accountId} lỗi; chuyển account kế tiếp theo chính sách mạng.`
+            leaveAccountEarly = true
+            break
+          }
           if (sessionDecision?.action === 'stop') {
             this.pauseForSessionFailure(session, account.accountId, sessionDecision.kind)
             leaveAccountEarly = true

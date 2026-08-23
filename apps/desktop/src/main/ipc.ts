@@ -79,7 +79,8 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
     options.database,
     options.dataDirectory,
     () => appSettings.get().browser,
-    () => appSettings.get().session
+    () => appSettings.get().session,
+    () => appSettings.get().network
   )
   const posting = new ResilientPostingService(corePosting, options.database, executionLogs)
   const accountExecution = new AccountExecutionCoordinator()
@@ -94,7 +95,8 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
     runs,
     coordinatedPosting,
     undefined,
-    () => appSettings.get().session
+    () => appSettings.get().session,
+    () => appSettings.get().network
   ))
 
   ipcMain.handle(IPC_CHANNELS.appInfo, (): AppInfo => ({
