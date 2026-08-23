@@ -73,9 +73,14 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
       lastCookieCheck: session.lastCookieCheck,
       lastUsedAt: session.status === 'valid' ? Date.now() : current.lastUsedAt
     })
-  }, () => appSettings.get().browser)
+  }, () => appSettings.get().browser, () => appSettings.get().session)
 
-  const corePosting = new PostingService(options.database, options.dataDirectory, () => appSettings.get().browser)
+  const corePosting = new PostingService(
+    options.database,
+    options.dataDirectory,
+    () => appSettings.get().browser,
+    () => appSettings.get().session
+  )
   const posting = new ResilientPostingService(corePosting, options.database, executionLogs)
   const accountExecution = new AccountExecutionCoordinator()
   const coordinatedPosting: RotationPostingExecutor = {
@@ -85,7 +90,12 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
       return accountExecution.run(accountId, () => posting.executeSingle(payload))
     }
   }
-  const rotation = new PageTabWorkerManager(() => new RotationService(runs, coordinatedPosting))
+  const rotation = new PageTabWorkerManager(() => new RotationService(
+    runs,
+    coordinatedPosting,
+    undefined,
+    () => appSettings.get().session
+  ))
 
   ipcMain.handle(IPC_CHANNELS.appInfo, (): AppInfo => ({
     name: app.getName(),

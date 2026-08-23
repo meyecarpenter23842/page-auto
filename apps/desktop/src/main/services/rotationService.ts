@@ -1,7 +1,9 @@
+import { DEFAULT_APP_SETTINGS, type SessionSettings } from '../../shared/appSettings'
 import type { ExecuteSinglePostingJobPayload, ExecuteSinglePostingJobResult } from '../../shared/posting'
 import type { RotationPageTabPayload, RotationRuntimeSnapshot, RotationRuntimeStatus } from '../../shared/rotation'
 import type { RunDetails, RunSnapshotAccount } from '../../shared/runs'
 import { isWithinSchedule, nextScheduleStart, randomDelaySeconds } from './rotationSchedule'
+import { resolveSessionFailureDecision } from './sessionFailurePolicy'
 
 export interface RotationRunStore {
   getLatestForPageTab(pageTabId: number): RunDetails | null
@@ -53,6 +55,7 @@ function sortedEnabledAccounts(run: RunDetails): RunSnapshotAccount[] {
 function isAccountUnavailable(result: ExecuteSinglePostingJobResult): boolean {
   return result.item === null && (
     result.result.code === 'needs_login' ||
+    result.result.code === 'verification_required' ||
     result.result.code === 'account_disabled' ||
     result.result.code === 'no_enabled_account'
   )
@@ -82,7 +85,8 @@ export class RotationService {
   constructor(
     private readonly runs: RotationRunStore,
     private readonly posting: RotationPostingExecutor,
-    private readonly clock: RotationClock = defaultClock
+    private readonly clock: RotationClock = defaultClock,
+    private readonly getSessionSettings: () => SessionSettings = () => ({ ...DEFAULT_APP_SETTINGS.session })
   ) {}
 
   start(payload: RotationPageTabPayload): RotationRuntimeSnapshot {
@@ -210,6 +214,18 @@ export class RotationService {
     return this.session
   }
 
+  private pauseForSessionFailure(session: RotationSession, accountId: number, kind: 'session_expired' | 'checkpoint'): void {
+    session.manualPaused = true
+    session.status = 'paused'
+    session.nextActionAt = null
+    session.message = kind === 'checkpoint'
+      ? `Account #${accountId} cần checkpoint/xác minh thủ công. Đã pause Page Tab theo chính sách.`
+      : `Account #${accountId} hết session/cần đăng nhập lại. Đã pause Page Tab theo chính sách.`
+    if (session.run.run.status === 'running' || session.run.run.status === 'created') {
+      session.run = this.runs.pause(session.runId)
+    }
+  }
+
   private async runLoop(session: RotationSession): Promise<void> {
     const accounts = sortedEnabledAccounts(session.run)
     let accountIndex = 0
@@ -247,8 +263,14 @@ export class RotationService {
         const result = await this.posting.executeSingle({ runId: session.runId, accountId: account.accountId })
         session.run = result.run
         session.lastResult = result.result
+        const sessionDecision = resolveSessionFailureDecision(result.result, this.getSessionSettings())
 
         if (result.item === null) {
+          if (sessionDecision?.action === 'stop') {
+            this.pauseForSessionFailure(session, account.accountId, sessionDecision.kind)
+            leaveAccountEarly = true
+            break
+          }
           if (result.result.code === 'no_pending_item' || result.run.run.status === 'completed' || result.run.metrics.remaining === 0) {
             session.status = 'completed'
             session.message = 'Run đã hết pending item.'
@@ -257,6 +279,9 @@ export class RotationService {
           }
           if (isAccountUnavailable(result)) {
             leaveAccountEarly = true
+            if (sessionDecision) {
+              session.message = `Account #${account.accountId} cần login/xác minh; chuyển account kế tiếp theo chính sách.`
+            }
             break
           }
           leaveAccountEarly = true
@@ -274,9 +299,13 @@ export class RotationService {
           return
         }
 
-        if (result.result.status === 'needs_login') {
+        if (sessionDecision) {
           leaveAccountEarly = true
-          session.message = `Account #${account.accountId} cần login/xác minh; chuyển account kế tiếp.`
+          if (sessionDecision.action === 'stop') {
+            this.pauseForSessionFailure(session, account.accountId, sessionDecision.kind)
+          } else {
+            session.message = `Account #${account.accountId} cần login/xác minh; chuyển account kế tiếp theo chính sách.`
+          }
           break
         }
 
@@ -289,6 +318,8 @@ export class RotationService {
           )
         }
       }
+
+      if (session.manualPaused) continue
 
       if (!usedSlot) unavailableStreak += 1
       if (unavailableStreak >= accounts.length) {

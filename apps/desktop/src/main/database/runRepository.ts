@@ -344,6 +344,31 @@ export class RunRepository {
     return claim()
   }
 
+  releaseItem(payload: { runId: number; itemId: number; errorMessage?: string }): RunDetails {
+    const release = this.client.transaction(() => {
+      const current = this.requireRun(payload.runId)
+      if (current.run.status !== 'running' && current.run.status !== 'paused') {
+        throw new Error('Run không ở trạng thái có thể trả item về hàng chờ.')
+      }
+
+      const now = Date.now()
+      const errorMessage = payload.errorMessage?.trim() || null
+      const changed = this.client.prepare(`
+        UPDATE run_items
+        SET status = 'pending', last_error = ?, started_at = NULL, finished_at = NULL, updated_at = ?
+        WHERE id = ? AND run_id = ? AND status = 'processing'
+      `).run(errorMessage, now, payload.itemId, payload.runId).changes
+
+      if (changed !== 1) {
+        throw new Error('Run item không tồn tại hoặc không còn ở trạng thái processing.')
+      }
+      this.addEvent(payload.runId, 'item_released', { itemId: payload.itemId, reason: errorMessage }, now)
+    })
+
+    release()
+    return this.requireRun(payload.runId)
+  }
+
   completeItem(payload: CompleteRunItemPayload): RunDetails {
     const complete = this.client.transaction(() => {
       const current = this.requireRun(payload.runId)

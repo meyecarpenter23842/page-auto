@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3'
 import type { AccountRecord } from '../../shared/accounts'
-import { DEFAULT_APP_SETTINGS, type BrowserSettings } from '../../shared/appSettings'
+import { DEFAULT_APP_SETTINGS, type BrowserSettings, type SessionSettings } from '../../shared/appSettings'
 import type {
   ExecuteSinglePostingJobPayload,
   ExecuteSinglePostingJobResult,
@@ -22,6 +22,12 @@ function terminalFailure(message: string, code: NonNullable<PostingJobResult['co
   return { status: 'failed', code, message }
 }
 
+function hasInvalidSession(result: PostingJobResult): boolean {
+  return result.status === 'needs_login'
+    || result.sessionValidation?.state === 'needs_login'
+    || result.sessionValidation?.state === 'verification_required'
+}
+
 export class PostingService {
   private readonly accounts: AccountRepository
   private readonly runs: RunRepository
@@ -30,7 +36,8 @@ export class PostingService {
   constructor(
     database: Database.Database,
     private readonly dataDirectory: string,
-    private readonly getBrowserSettings: () => BrowserSettings = () => ({ ...DEFAULT_APP_SETTINGS.browser })
+    private readonly getBrowserSettings: () => BrowserSettings = () => ({ ...DEFAULT_APP_SETTINGS.browser }),
+    private readonly getSessionSettings: () => SessionSettings = () => ({ ...DEFAULT_APP_SETTINGS.session })
   ) {
     this.accounts = new AccountRepository(database)
     this.runs = new RunRepository(database)
@@ -71,6 +78,7 @@ export class PostingService {
     }
 
     const proxy = resolveAccountProxy(account)
+    const sessionSettings = { ...this.getSessionSettings() }
     const workerResult = await this.workers.run({
       runId: payload.runId,
       itemId: item.id,
@@ -81,15 +89,58 @@ export class PostingService {
       content,
       imagePaths: images.paths,
       browser: { ...this.getBrowserSettings() },
+      session: sessionSettings,
+      sessionAccount: {
+        id: account.id,
+        uid: account.uid,
+        username: account.username,
+        password: account.password,
+        cookie: account.cookie,
+        twoFactorSecret: account.twoFactorSecret
+      },
       ...(account.userAgent ? { userAgent: account.userAgent } : {}),
       ...(proxy ? { proxy } : {})
     })
     const safeMessage = redactExecutionText(workerResult.message, accountSecrets(account)) ?? 'Unknown error'
-    const result: PostingJobResult = safeMessage === workerResult.message ? workerResult : { ...workerResult, message: safeMessage }
+    const safeValidation = workerResult.sessionValidation
+      ? {
+          ...workerResult.sessionValidation,
+          message: redactExecutionText(workerResult.sessionValidation.message, accountSecrets(account)) ?? 'Session validation failed.'
+        }
+      : undefined
+    const result: PostingJobResult = {
+      ...workerResult,
+      message: safeMessage,
+      ...(safeValidation ? { sessionValidation: safeValidation } : {})
+    }
 
-    if (result.status === 'needs_login') this.accounts.update(account.id, { status: 'needs_login', lastUsedAt: Date.now() })
-    else if (result.status === 'success') this.accounts.update(account.id, { status: 'valid', lastUsedAt: Date.now() })
-    else this.accounts.update(account.id, { lastUsedAt: Date.now() })
+    const now = Date.now()
+    if (hasInvalidSession(result)) {
+      this.accounts.update(account.id, {
+        status: 'needs_login',
+        cookieStatus: 'needs_login',
+        lastCookieCheck: now,
+        lastUsedAt: now
+      })
+    } else if (result.status === 'success') {
+      const sessionWasChecked = sessionSettings.validateBeforeRun || sessionSettings.validateAfterRun
+      this.accounts.update(account.id, {
+        status: 'valid',
+        ...(sessionWasChecked ? { cookieStatus: 'valid' as const, lastCookieCheck: now } : {}),
+        lastUsedAt: now
+      })
+    } else {
+      this.accounts.update(account.id, { lastUsedAt: now })
+    }
+
+    if (result.status === 'needs_login' && result.sessionValidation?.phase === 'before_run') {
+      const run = this.runs.releaseItem({
+        runId: payload.runId,
+        itemId: item.id,
+        errorMessage: result.message
+      })
+      return { accountId: account.id, item: null, result, run }
+    }
 
     const run = this.runs.completeItem({
       runId: payload.runId,

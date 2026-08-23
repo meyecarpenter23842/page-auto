@@ -1,0 +1,99 @@
+import { useEffect, useMemo, useState } from 'react'
+import type { AppInfo } from '../../../ipc/channels'
+import { DEFAULT_APP_SETTINGS, type BrowserSettings } from '../../../shared/appSettings'
+import type { BrowserExecutableResult, BrowserTestResult } from '../../../shared/browserSettings'
+import './settingsSections.css'
+
+interface BrowserSettingsSectionProps { appInfo: AppInfo | null }
+type BusyState = 'save' | 'detect' | 'pick' | 'test' | null
+
+function copyBrowser(settings: BrowserSettings): BrowserSettings { return { ...settings } }
+function errorText(caught: unknown): string { return caught instanceof Error ? caught.message : String(caught) }
+
+export function BrowserSettingsSection({ appInfo }: BrowserSettingsSectionProps) {
+  const [saved, setSaved] = useState<BrowserSettings | null>(null)
+  const [draft, setDraft] = useState<BrowserSettings | null>(null)
+  const [probe, setProbe] = useState<BrowserExecutableResult | null>(null)
+  const [test, setTest] = useState<BrowserTestResult | null>(null)
+  const [busy, setBusy] = useState<BusyState>(null)
+  const [feedback, setFeedback] = useState<{ kind: 'ok' | 'bad'; text: string } | null>(null)
+
+  const dirty = useMemo(() => Boolean(saved && draft && JSON.stringify(saved) !== JSON.stringify(draft)), [draft, saved])
+
+  useEffect(() => {
+    void window.pageAuto.getAppSettings().then(async (settings) => {
+      const browser = copyBrowser(settings.browser)
+      setSaved(browser)
+      setDraft(copyBrowser(browser))
+      setProbe(browser.executablePath ? await window.pageAuto.probeChromeExecutable(browser.executablePath) : await window.pageAuto.detectChrome())
+    }).catch((caught) => setFeedback({ kind: 'bad', text: errorText(caught) }))
+  }, [])
+
+  const update = <K extends keyof BrowserSettings>(key: K, value: BrowserSettings[K]) => {
+    setDraft((current) => current ? { ...current, [key]: value } : current)
+    setFeedback(null)
+  }
+
+  const save = async () => {
+    if (!draft) return
+    setBusy('save'); setFeedback(null)
+    try {
+      const next = await window.pageAuto.updateAppSettings({ browser: draft })
+      const browser = copyBrowser(next.browser)
+      setSaved(browser); setDraft(copyBrowser(browser))
+      setFeedback({ kind: 'ok', text: 'Đã lưu cài đặt trình duyệt.' })
+    } catch (caught) { setFeedback({ kind: 'bad', text: errorText(caught) }) } finally { setBusy(null) }
+  }
+
+  const detectChrome = async () => {
+    setBusy('detect'); setFeedback(null)
+    try {
+      const result = await window.pageAuto.detectChrome(); setProbe(result)
+      if (result.status === 'found' && result.executablePath) update('executablePath', result.executablePath)
+      setFeedback({ kind: result.status === 'found' ? 'ok' : 'bad', text: result.message })
+    } catch (caught) { setFeedback({ kind: 'bad', text: errorText(caught) }) } finally { setBusy(null) }
+  }
+
+  const pickChrome = async () => {
+    setBusy('pick'); setFeedback(null)
+    try {
+      const result = await window.pageAuto.pickChromeExecutable()
+      if (result.status !== 'canceled') setProbe(result)
+      if (result.status === 'found' && result.executablePath) update('executablePath', result.executablePath)
+      if (result.status !== 'canceled') setFeedback({ kind: result.status === 'found' ? 'ok' : 'bad', text: result.message })
+    } catch (caught) { setFeedback({ kind: 'bad', text: errorText(caught) }) } finally { setBusy(null) }
+  }
+
+  const testChrome = async () => {
+    if (!draft) return
+    setBusy('test'); setFeedback(null); setTest(null)
+    try {
+      const result = await window.pageAuto.testBrowser({ settings: draft }); setTest(result)
+      if (result.executablePath) setProbe({ status: result.status === 'success' ? 'found' : 'invalid', executablePath: result.executablePath, version: result.version, message: result.message })
+      setFeedback({ kind: result.status === 'success' ? 'ok' : 'bad', text: result.message })
+    } catch (caught) { setFeedback({ kind: 'bad', text: errorText(caught) }) } finally { setBusy(null) }
+  }
+
+  if (!draft) return <div className="settings-empty">Đang đọc cài đặt trình duyệt...</div>
+
+  return <div className="settings-section settings-section-with-actions">
+    <div className="settings-section-content"><div className="browser-section">
+      <div className="browser-status-grid"><div><span>Phiên bản Chrome</span><strong>{probe?.version ?? 'Chưa đọc được'}</strong></div><div><span>Tình trạng Chrome</span><strong className={probe?.status === 'found' ? 'status-ok' : ''}>{probe?.status === 'found' ? 'Đã tìm thấy' : 'Chưa sẵn sàng'}</strong></div><div className="path-card"><span>Thư mục dữ liệu</span><strong title={appInfo?.dataDirectory ?? ''}>{appInfo?.dataDirectory ?? 'Đang đọc...'}</strong></div></div>
+      <div className="browser-form-grid">
+        <label className="field span-3"><span>Đường dẫn Chrome</span><div className="path-input-row"><input value={draft.executablePath ?? ''} onChange={(event) => update('executablePath', event.target.value || null)} placeholder="Chọn chrome.exe" /><button className="settings-button" type="button" disabled={busy !== null} onClick={() => void pickChrome()}>Chọn file</button><button className="settings-button" type="button" disabled={busy !== null} onClick={() => void detectChrome()}>{busy === 'detect' ? 'Đang tìm...' : 'Tự tìm Chrome'}</button><button className="settings-button primary" type="button" disabled={busy !== null} onClick={() => void testChrome()}>{busy === 'test' ? 'Đang kiểm tra...' : 'Kiểm tra Chrome'}</button></div></label>
+        <label className="field"><span>Cách mở Chrome</span><select value={draft.mode} onChange={(event) => update('mode', event.target.value as BrowserSettings['mode'])}><option value="visible">Hiện Chrome</option><option value="minimized">Thu nhỏ Chrome</option></select></label>
+        <label className="field"><span>Kích thước cửa sổ</span><select value={`${draft.windowWidth}x${draft.windowHeight}`} onChange={(event) => { const [width, height] = event.target.value.split('x').map(Number); if (width && height) { update('windowWidth', width); update('windowHeight', height) } }}><option value="1280x720">1280 x 720</option><option value="1280x800">1280 x 800</option><option value="1366x768">1366 x 768</option><option value="1440x900">1440 x 900</option><option value="1920x1080">1920 x 1080</option></select></label>
+        <div className="field"><span>Kết quả kiểm tra</span><div className={`test-result ${test?.status === 'success' ? 'ok' : test ? 'bad' : ''}`}>{test ? (test.status === 'success' ? `Hoạt động · ${test.launchDurationMs ?? 0} ms` : 'Không mở được') : 'Chưa kiểm tra'}</div></div>
+        <label className="toggle-card"><div><strong>Không tải ảnh</strong><small>Giảm băng thông khi chạy.</small></div><input type="checkbox" checked={draft.disableImageLoading} onChange={(event) => update('disableImageLoading', event.target.checked)} /></label>
+        <label className="toggle-card"><div><strong>Tắt âm thanh</strong><small>Chrome không phát âm thanh.</small></div><input type="checkbox" checked={draft.muteAudio} onChange={(event) => update('muteAudio', event.target.checked)} /></label>
+        <div className="toggle-card muted"><div><strong>Tăng tốc phần cứng</strong><small>Chỉnh trong mục Nâng cao.</small></div><span>{draft.disableGpu ? 'Đang tắt' : 'Đang bật'}</span></div>
+        <label className="number-field"><span>Chờ trước khi mở Chrome</span><div><input type="number" min="0" value={draft.startupDelayMs / 1000} onChange={(event) => update('startupDelayMs', Math.round(Number(event.target.value) * 1000))} /><em>giây</em></div></label>
+        <label className="number-field"><span>Thời gian chờ Chrome mở</span><div><input type="number" min="1" value={draft.startupTimeoutMs / 1000} onChange={(event) => update('startupTimeoutMs', Math.round(Number(event.target.value) * 1000))} /><em>giây</em></div></label>
+        <label className="number-field"><span>Thời gian chờ mở trang</span><div><input type="number" min="1" value={draft.navigationTimeoutMs / 1000} onChange={(event) => update('navigationTimeoutMs', Math.round(Number(event.target.value) * 1000))} /><em>giây</em></div></label>
+        <label className="number-field"><span>Chờ trang ổn định</span><div><input type="number" min="0" value={draft.pageSettleDelayMs / 1000} onChange={(event) => update('pageSettleDelayMs', Math.round(Number(event.target.value) * 1000))} /><em>giây</em></div></label>
+        <label className="number-field"><span>Tự đóng Chrome sau</span><div><input type="number" min="1" value={draft.maxLifetimeMinutes} onChange={(event) => update('maxLifetimeMinutes', Number(event.target.value))} /><em>phút</em></div></label>
+      </div>
+    </div></div>
+    <div className="inline-settings-actions"><span className={`inline-settings-feedback ${feedback?.kind ?? ''}`}>{feedback?.text ?? 'Các lần mở Chrome tiếp theo sẽ dùng cấu hình đã lưu.'}</span><div><button type="button" className="settings-button" disabled={busy !== null} onClick={() => setDraft(copyBrowser(DEFAULT_APP_SETTINGS.browser))}>Mặc định</button><button type="button" className="settings-button" disabled={!dirty || busy !== null} onClick={() => saved && setDraft(copyBrowser(saved))}>Hủy</button><button type="button" className="settings-button primary" disabled={!dirty || busy !== null} onClick={() => void save()}>{busy === 'save' ? 'Đang lưu...' : 'Lưu cài đặt'}</button></div></div>
+  </div>
+}
