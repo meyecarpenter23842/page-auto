@@ -1,57 +1,37 @@
 # PAGE-AUTO — Baseline triển khai hiện hành
 
-> Đây là file baseline bắt buộc phải đọc trước khi sửa code. Bản kế hoạch chi tiết trước khi chuẩn hóa portable được giữ nguyên tại [`PROJECT_PLAN_DETAILS.md`](./PROJECT_PLAN_DETAILS.md) để tra cứu đầy đủ. Nếu hai file có điểm xung đột, **`PROJECT_PLAN.md` hiện hành được ưu tiên**.
+> Đây là baseline bắt buộc phải đọc trước khi sửa code. Nếu `PROJECT_PLAN_DETAILS.md` có điểm xung đột thì file này được ưu tiên.
 
 ## 1. Mục tiêu sản phẩm
 
-PAGE-AUTO là **desktop app Windows portable** để quản lý nhiều tài khoản Facebook và tự động hóa đăng bài theo nhiều Page Tab độc lập.
+PAGE-AUTO là desktop app Windows portable để quản lý nhiều tài khoản Facebook và tự động hóa đăng bài theo nhiều Page Tab độc lập.
 
 Nguyên tắc cốt lõi:
 
-- Account là phiên đăng nhập/session thực tế.
+- Account là session/profile thực tế.
 - Page không phải account; Page được switch theo Page UID từ session account.
-- Account Manager là màn riêng, quản lý dữ liệu account tập trung.
 - 1 Page Tab = 1 Page UID + 1 cấu hình automation độc lập.
-- Account trong cùng tab chạy **lần lượt**, không song song.
+- Account trong cùng tab chạy tuần tự, không song song.
 - Nhiều Page Tab khác nhau có thể chạy song song.
-- Group gốc không bị xóa khi run; mỗi run clone snapshot riêng để chống trùng trong phiên.
-- React chỉ làm UI; renderer không truy cập DB hoặc browser trực tiếp.
-- Electron Main quản lý DB, scheduler và worker lifecycle.
-- Playwright chạy ở **worker/utility process riêng**, không chạy trong renderer và không để browser crash làm treo UI.
-- Không xây CAPTCHA/checkpoint bypass, anti-detection/evasion hoặc cơ chế né bảo vệ nền tảng.
+- Group gốc không bị xóa; mỗi run clone snapshot riêng để chống trùng trong phiên.
+- React chỉ làm UI; renderer không truy cập DB/browser trực tiếp.
+- Electron Main quản lý SQLite, scheduler và worker lifecycle.
+- Playwright chạy ở worker/utility process riêng.
+- Không xây anti-detection/evasion hoặc cơ chế né bảo vệ nền tảng.
+- CAPTCHA challenge có thể dùng provider API thông qua adapter cấu hình rõ ràng. Checkpoint/login/xác minh danh tính vẫn là trạng thái riêng và không được tự động bypass.
 
 ---
 
 ## 2. Stack đã chốt
 
-### Desktop
+- Electron + React + TypeScript strict + Vite/electron-vite.
+- SQLite local + Drizzle ORM + migration versioned.
+- Playwright worker riêng.
+- electron-builder cho Windows portable folder/ZIP.
+- Không dùng Supabase cho core local.
+- Không dùng installer/NSIS/Setup trong baseline hiện tại.
 
-- Electron
-- React
-- TypeScript strict
-- Vite / electron-vite
-
-### Database
-
-- SQLite local
-- Drizzle ORM
-- Migration có version
-- Repository/service layer; renderer không query DB trực tiếp
-
-### Browser automation
-
-- Node.js worker / Electron utility process
-- Playwright
-- Persistent browser profile riêng từng account
-- Browser headed là mặc định cho MVP để dễ kiểm tra và login thủ công
-
-### Packaging
-
-- Dùng `electron-builder` khi tới Phase Packaging.
-- **Không dùng Windows installer / Setup / NSIS trong MVP.**
-- Artifact mặc định là **folder portable hoặc ZIP portable**.
-- `PageAuto.exe` là file chạy ứng dụng trực tiếp, không phải trình cài đặt.
-- Khi đã package, dữ liệu runtime mặc định nằm cạnh executable:
+Portable layout mục tiêu:
 
 ```text
 Page-Auto/
@@ -60,13 +40,12 @@ Page-Auto/
   data/
     page-auto.sqlite
     browser-profiles/
-      account-<id>/
     logs/
     screenshots/
+    backups/
 ```
 
-- Ưu tiên folder/ZIP portable thay vì ép toàn bộ Playwright/browser/native SQLite vào một file portable duy nhất.
-- Copy nguyên folder sang máy Windows khác là mô hình phân phối mục tiêu; migration/backup phải xử lý dữ liệu local an toàn.
+Runtime account/session/profile/cookie thật không commit Git.
 
 ---
 
@@ -74,27 +53,25 @@ Page-Auto/
 
 ```text
 Electron Main
-  |
   +-- SQLite / repositories
   +-- Scheduler
   +-- Worker Manager
-  |      +-- Account/Profile Worker -> Playwright
-  |      +-- Tab Worker A -> Playwright
-  |      +-- Tab Worker B -> Playwright
-  |      +-- Tab Worker C -> Playwright
-  |
-  +-- Typed IPC / preload bridge
-         |
-         +-- React Renderer
+  |     +-- Account/Profile Worker -> Playwright
+  |     +-- Tab Worker A -> Playwright
+  |     +-- Tab Worker B -> Playwright
+  +-- Provider adapters
+  |     +-- CaptchaProviderAdapter
+  +-- Typed IPC / preload
+        +-- React Renderer
 ```
 
 Ràng buộc:
 
-- Renderer chỉ gọi API qua preload/IPC.
-- Main giữ quyền truy cập DB và tạo worker.
+- Renderer chỉ gọi typed IPC qua preload.
+- Main giữ quyền DB, filesystem và worker.
 - 1 active Page Tab có tối đa 1 sequential worker cho tab đó.
-- Nhiều Page Tab có thể có worker song song theo giới hạn cấu hình.
-- Mỗi browser action về sau phải có typed result; không viết một script automation dài khó bảo trì.
+- Nhiều Page Tab được chạy song song theo giới hạn cấu hình.
+- Mỗi browser action/provider action phải có typed result; không viết một script dài khó bảo trì.
 
 ---
 
@@ -102,23 +79,18 @@ Ràng buộc:
 
 ### 4.1. Dữ liệu account
 
-Account hỗ trợ các field chính:
+Account hỗ trợ:
 
-- UID / UserName
+- UID/UserName, UserName riêng
 - Password
 - Tên hiển thị
 - Status
-- Category / Folder
+- Category/Folder
 - Friend count
-- Cookie / Session
-- Cookie status
-- Last cookie/session check
-- Proxy raw
-- Proxy type / host / port / username / password
-- 2FA key
-- Email
-- Password email
-- Backup/support email
+- Cookie/session + cookie status + last check
+- Proxy raw + type/host/port/username/password
+- 2FA
+- Email + Password Email + Backup Email
 - Phone
 - UserAgent
 - Ngày tạo
@@ -126,44 +98,46 @@ Account hỗ trợ các field chính:
 - Lần dùng cuối
 - metadata bổ sung về sau
 
-Password, Cookie, 2FA, Password Email và Proxy Password phải mask mặc định trên UI. Không log plaintext secret.
+Password, Cookie, 2FA, Password Email, Proxy Password phải mask mặc định. Không log plaintext secret.
 
 ### 4.2. Data-grid
 
-Account Manager dùng **data-grid mạnh**, không dùng card list.
-
-Toolbar mục tiêu:
-
-- Import
-- Import Custom
-- Add account
-- Edit
-- Delete
-- Check session
-- Open Chrome
-- Assign Category
-- Search
-- Filter Status
-- Filter Category
-- Column settings
+Account Manager là data-grid mật độ cao kiểu công cụ quản lý account desktop, không dùng card list.
 
 Grid cần:
 
-- nhiều cột
-- sort/filter
+- nhiều dòng hiển thị đồng thời
+- row height thấp, text-first
+- sort/filter/search
 - chọn một/nhiều dòng
-- hide/show cột
-- reorder cột
-- resize/width
-- save layout và restore sau restart
+- hide/show/reorder/resize cột
+- persist layout sau restart
+- cột nhạy cảm mặc định ẩn/mask
 
-Cột nhạy cảm/ít dùng mặc định ẩn; người dùng chủ động bật/reveal khi cần.
+Toolbar:
+
+- Add account
+- Import
+- Import Custom
+- Edit/Delete
+- Open Chrome
+- Check session
+- Assign Category
+- Columns
 
 ### 4.3. Import
 
-Import nhanh mặc định delimiter `|`, nhưng không khóa format duy nhất.
+Import nhanh mặc định delimiter `|` nhưng không khóa format.
 
-Custom Import cho map từng cột sang:
+Custom Import phải mở popup rộng và có mapping theo thứ tự cột. Khi chưa paste dữ liệu vẫn hiển thị tối thiểu 9 mapping để phù hợp format account phổ biến:
+
+```text
+UID | Password | 2FA | Cookie | Email | PassEmail | Proxy | UserAgent | Note
+```
+
+Người dùng có thể đổi từng mapping, thêm/bớt cột và lưu preset. Khi paste dòng có nhiều cột hơn, UI tự mở rộng mapping tương ứng.
+
+Mapping hỗ trợ:
 
 - Ignore
 - UID/UserName
@@ -178,7 +152,7 @@ Custom Import cho map từng cột sang:
 - Phone
 - Proxy
 - Proxy Type
-- Proxy Host / Port / Username / Password
+- Proxy Host/Port/Username/Password
 - UserAgent
 - Category
 - Note
@@ -187,48 +161,38 @@ Custom Import cho map từng cột sang:
 
 Validation:
 
-- trim whitespace
-- bỏ dòng trống
+- trim whitespace, bỏ dòng trống
 - báo dòng lỗi
-- bắt UID thiếu/trùng trong nguồn import
-- duplicate DB: `Skip` hoặc `Update existing`
-- lỗi import không được echo credential plaintext
+- bắt UID thiếu/trùng trong source
+- DB duplicate: Skip hoặc Update existing
+- lỗi import không echo credential plaintext
 
-Preset:
+Preset built-in:
 
-- Basic: `UID | Cookie`
-- Basic + Note
-- Full account
+- Basic — UID | Cookie
+- Basic — UID | Cookie | Note
+- Full account — 9 cột mặc định ở trên
 - Custom preset do người dùng lưu
-
-### 4.4. Browser profile ở Phase 1
-
-- Mỗi account có folder `data/browser-profiles/account-<id>/`.
-- Nút Open Chrome gọi Main -> BrowserProfileManager -> worker Playwright riêng.
-- Worker mở persistent context của đúng account.
-- Phase 1 **chưa** kiểm tra session Facebook và chưa posting; `SessionChecker` thuộc Phase 2.
 
 ---
 
 ## 5. Page Tabs
 
-Mỗi tab chứa cấu hình độc lập:
+Mỗi Page Tab lưu độc lập:
 
 - Page UID
-- danh sách account + thứ tự
-- enable/disable từng account
+- account list + thứ tự + enable/disable
 - số bài/account
-- delay giữa bài
-- delay khi chuyển account
-- ngày chạy + nhiều time windows/ngày
+- delay bài, delay đổi account
+- ngày chạy + nhiều time windows
 - Group UID list
 - Content Set
 - Image Folder
-- sequential/random/round-robin khi phù hợp
-- Start / Pause / Resume / Stop
+- sequential/random khi phù hợp
+- Start/Pause/Resume/Stop
 - runtime status + log
 
-Account trong cùng tab chạy tuần tự. Nhiều tab có thể chạy song song.
+Account trong tab luôn tuần tự; nhiều tab khác nhau có thể song song.
 
 ---
 
@@ -236,52 +200,73 @@ Account trong cùng tab chạy tuần tự. Nhiều tab có thể chạy song so
 
 Group Set gốc luôn giữ nguyên.
 
-Khi mở run:
-
 ```text
-Group Set gốc
-  -> clone -> run_items
+Group Set gốc -> clone -> run_items
 ```
 
-Run item states:
+Run item: pending / processing / success / failed / skipped.
 
-- pending
-- processing
-- success
-- failed
-- skipped
+Constraint: `UNIQUE(run_id, group_uid)`.
 
-Constraint:
-
-```text
-UNIQUE(run_id, group_uid)
-```
-
-Khi đăng thành công, group được consume khỏi queue **của run hiện tại** nhưng không xóa khỏi Group Set gốc. Run/ngày sau clone lại đầy đủ từ nguồn gốc.
-
-Không consume group khi kết quả publish chưa đủ bằng chứng success.
+Chỉ consume group khỏi run hiện tại khi publish được xác nhận success. Không xóa group khỏi source và không coi click nút Đăng là success.
 
 ---
 
-## 7. Browser Session và posting modules
+## 7. Browser session, posting và CAPTCHA providers
 
-### Session
+### 7.1. Session
 
-Account session states:
+Account states:
 
 - unknown
 - valid
 - needs_login
 - disabled
 
-Nếu Facebook yêu cầu login/checkpoint/xác minh:
+Nếu Facebook yêu cầu login/checkpoint/xác minh danh tính:
 
 - dừng account hiện tại
 - chuyển `needs_login`
-- log lý do dễ đọc
-- người vận hành mở browser profile và xử lý thủ công
+- ghi log lý do
+- mở đúng persistent browser profile để người vận hành xử lý
 
-### Modules
+Checkpoint hoặc xác minh danh tính không được route sang CAPTCHA provider như một cách bypass.
+
+### 7.2. CAPTCHA challenge
+
+Settings có khu `CAPTCHA Providers`.
+
+Provider baseline:
+
+- OmoCaptcha
+- EzCaptcha
+- 2Captcha
+
+Yêu cầu cấu hình:
+
+- enable/disable từng provider
+- chọn provider mặc định
+- nhập/thay/xóa API key
+- API key mask trên UI sau khi lưu
+- API key không được log
+- Config Backup không chứa CAPTCHA API key
+- provider config lưu local trong `app_settings`
+- renderer không đọc plaintext API key đã lưu; Main/provider adapter giữ quyền truy cập
+
+Runtime integration mục tiêu:
+
+```text
+ChallengeDetector
+  -> nếu là CAPTCHA được hỗ trợ
+     -> CaptchaProviderAdapter(default provider)
+     -> typed solve result
+  -> nếu là login/checkpoint/identity verification
+     -> needs_login/manual handling
+```
+
+Lô UI/settings có thể hoàn thành trước khi wiring solver vào posting worker. Không được trộn việc thêm provider UI với thay đổi lớn posting core trong cùng một commit nếu chưa test riêng.
+
+### 7.3. Browser modules
 
 ```text
 BrowserProfileManager
@@ -293,329 +278,172 @@ PostComposer
 MediaUploader
 PublishAction
 PublishResultDetector
-ScreenshotService
+ChallengeDetector
+CaptchaProviderAdapter
 RuntimeRecovery
 ```
 
-Không coi click nút Đăng là success. `PublishResultDetector` phải xác minh UI/result state đủ tin cậy; nếu chưa chắc thì `unknown/failed` và không consume group mù quáng.
-
 ---
 
-## 8. Scheduler và state machine
+## 8. Scheduler + recovery
 
-Tab states:
+Tab states: idle / scheduled / running / paused / waiting_window / stopping / stopped / error.
 
-- idle
-- scheduled
-- running
-- paused
-- waiting_window
-- stopping
-- stopped
-- error
+Run states: created / running / paused / completed / stopped / failed.
 
-Run states:
+App restart không mất config/lịch sử. Item đang processing mà publish chưa xác nhận không được tự coi success hoặc retry mù.
 
-- created
-- running
-- paused
-- completed
-- stopped
-- failed
-
-App restart không làm mất cấu hình/lịch sử. Job đang `processing` mà chưa xác nhận success phải được recovery/review/retry an toàn, không tự coi là thành công.
+Retry chỉ áp dụng lỗi được policy đánh dấu an toàn; lỗi publish_unconfirmed/manual_review không auto-retry.
 
 ---
 
 ## 9. Database hướng mục tiêu
-
-Các bảng dự kiến:
 
 ```text
 accounts
 account_categories
 account_sessions
 account_custom_fields
-
 page_tabs
 page_tab_accounts
 page_tab_schedules
-
 group_sets
 group_set_items
-
 content_sets
 content_items
 image_sources
-
 runs
 run_items
 run_events
 execution_logs
-
 app_settings
 import_presets
 column_layouts
 ```
 
-Nguyên tắc:
+`app_settings` chứa cấu hình app-level như CAPTCHA providers. Secret trong app settings không được đưa vào config backup hoặc log.
 
-- Page Tab reference account ID, không copy password/cookie/proxy.
-- Sửa account ở Account Manager thì tab dùng dữ liệu mới.
-- Group Set gốc và Run Items tách riêng.
-- Migration DB có version.
+Page Tab reference account ID; không copy password/cookie/proxy sang tab.
 
 ---
 
 ## 10. Logging và security
 
-Log action quan trọng gồm khi phù hợp:
+Execution log khi phù hợp có timestamp, tab/account/page/group/content/images/action/result/error/attempt/evidence.
 
-- timestamp
-- tab_id
-- account_id
-- page_uid
-- group_uid
-- content_id
-- image(s)
-- action
-- result
-- error_code
-- error_message
-- screenshot path
+Không ghi plaintext:
 
-Không ghi plaintext password/cookie/2FA/email password/proxy password vào log.
+- password
+- cookie/session
+- 2FA
+- email password
+- proxy password
+- CAPTCHA provider API key
 
-Runtime data/profile không commit Git. Export/backup có secret phải có cảnh báo và mặc định tránh plaintext nếu không cần.
+Config Backup mặc định loại toàn bộ secret ở trên, browser profile, runtime log và screenshot.
 
 ---
 
-## 11. MVP phases
+## 11. Phase baseline
 
-### Phase 0 — Bootstrap
+Phase 0 — Bootstrap: Electron/React/TS, DB migration, shell, logging.
 
-- Electron + React + TypeScript
-- SQLite migration
-- app shell/sidebar
-- error boundary
-- logging cơ bản
+Phase 1 — Account Manager: full grid, CRUD, import/custom mapping/preset, masking, persistent profile.
 
-Done khi app mở/đóng ổn, DB tự tạo, navigation hoạt động và CI Windows xanh.
+Phase 2 — Session Engine: session loader/checker, valid/needs_login, manual login flow.
 
-### Phase 1 — Account Manager
+Phase 3 — Page Tab Config: CRUD/duplicate tab, account order, delays, schedules, groups/content/images.
 
-- data model account
-- grid nhiều cột
-- hide/show/reorder/width + persist layout
-- Add/Edit/Delete
-- search/filter/sort
-- basic import
-- custom import mapping
-- import preset
-- cookie/session fields + masking
-- persistent browser profile
-- Open Chrome qua Playwright worker riêng
+Phase 4 — Run Queue: snapshot, clone groups, anti-duplicate, resume, metrics.
 
-Done khi import/manage account được, restart vẫn giữ DB/layout, và mở đúng persistent browser profile theo account.
+Phase 5 — Posting Core: switch Page, navigate Group, compose/media/publish/result verification.
 
-### Phase 2 — Session Engine
+Phase 6 — Account Rotation: N bài/account, delays, sequential account transitions.
 
-- BrowserProfileManager hoàn thiện
-- cookie/session loader
-- SessionChecker
-- valid / needs_login
-- manual login flow
+Phase 7 — Multi Page Tabs: worker manager, independent queues, realtime runtime UI.
 
-Done khi restart app vẫn mở đúng profile và kiểm tra session được.
+Phase 8 — Recovery + Logs: crash recovery, detailed logs, retry policy, resume-after-restart.
 
-### Phase 3 — Page Tab Config
+Phase 9 — Portable Packaging: Windows folder/ZIP, data migration, backup/restore, versioning, release notes.
 
-- Create/Edit/Delete/Duplicate Page Tab
-- Page UID
-- add/remove/reorder account
-- rotation/delay
-- schedule windows
-- Group Set
-- Content Set
-- Image Folder
+Post-MVP polish đang triển khai:
 
-Done khi cấu hình tab lưu DB và restore chính xác sau restart.
-
-### Phase 4 — Run Queue + Anti-duplicate
-
-- create run snapshot
-- clone Group Set -> Run Items
-- consume success trong current run
-- giữ Group Set gốc
-- resume run
-- runtime metrics
-
-Done khi test 500+ group giả lập không trùng trong cùng run và run mới clone đủ source.
-
-### Phase 5 — Browser Posting Core
-
-- PageIdentitySwitcher
-- GroupNavigator
-- ComposerDetector
-- PostComposer
-- MediaUploader
-- PublishAction
-- PublishResultDetector
-
-Done khi một account/session chạy end-to-end một job thử nghiệm trong môi trường được phép sử dụng.
-
-### Phase 6 — Account Rotation
-
-- N bài/account
-- delay giữa bài
-- delay đổi account
-- move next account
-- loop account list
-- pause ngoài schedule window
-
-Done khi một tab chạy đúng thứ tự account và số bài cấu hình.
-
-### Phase 7 — Multi Page Tabs
-
-- Worker Manager
-- nhiều tab song song
-- queue riêng từng tab
-- realtime runtime UI
-
-Done khi Page A/B chạy song song nhưng bên trong mỗi tab vẫn tuần tự.
-
-### Phase 8 — Recovery + Logs
-
-- crash recovery
-- screenshot lỗi
-- detailed execution log
-- retry policy
-- resume after restart
-
-### Phase 9 — Portable Packaging
-
-- build Windows portable folder/ZIP
-- không installer/NSIS/Setup trong MVP
-- packaged data migration
-- backup/restore config
-- versioning
-- release notes
+- Account Manager high-density UI
+- Custom Import tối thiểu 9 mapping
+- CAPTCHA Provider settings + provider adapter foundation
 
 ---
 
 ## 12. Test baseline
 
-### Account
+Account:
 
-- import 1 account
-- import 1,000+ account
+- import 1 và 1,000+ account
 - duplicate UID
-- missing cookie
 - invalid/custom delimiter
-- custom mapping
+- custom mapping 9+ cột
 - preset persistence
-- hidden/reordered/width columns persist after restart
+- hidden/reordered/width columns persist
 - secret masked mặc định
-- CRUD + filter/sort
-- đúng browser profile theo account
+- CRUD/filter/sort
 
-### Session
+CAPTCHA settings:
 
-- valid session
-- expired session
-- manual login then save
-- restart và reopen same profile
+- default empty state
+- save enable/default provider
+- save API key nhưng IPC view không trả plaintext
+- lưu lại khi draft API key trống
+- clear API key explicit
+- config backup không chứa CAPTCHA API key
 
-### Tab / Group / Scheduler / Multi-tab
-
-Giữ toàn bộ test cases trong `PROJECT_PLAN_DETAILS.md`, gồm reorder account, nhiều time windows, 500+ groups, consume current run only, content/image selection, schedule transitions, multi-tab isolation và recovery.
-
----
-
-## 13. Acceptance Criteria MVP
-
-MVP đạt khi:
-
-1. Import/manage account với custom columns được.
-2. Account giữ persistent browser session qua restart.
-3. Tạo nhiều Page Tab độc lập.
-4. Mỗi tab add đúng account và giữ thứ tự.
-5. Rotation/delay/schedule windows hoạt động.
-6. Group Set gốc không bị phá sau run.
-7. Mỗi run chống trùng Group UID.
-8. Content Set + Image Folder hoạt động.
-9. Một tab chạy tuần tự account đúng cấu hình.
-10. Nhiều Page Tab chạy song song độc lập.
-11. Pause/resume/stop hoạt động.
-12. Runtime status/log đủ truy lỗi account/page/group/post.
-13. Restart không mất config/lịch sử.
-14. Secret không bị phơi ra log/UI mặc định.
-15. Bản phát hành Windows là portable folder/ZIP, không installer trong MVP.
+Run/Group/Multi-tab giữ toàn bộ test chống trùng, schedule, rotation, recovery và portable packaging hiện có.
 
 ---
 
-## 14. Không làm trong MVP
+## 13. Acceptance Criteria hiện hành
+
+1. Import/manage account bằng dense data-grid.
+2. Custom Import map tối thiểu 9 cột và mở rộng theo input.
+3. Account giữ persistent session qua restart.
+4. Page Tabs độc lập và account tuần tự trong từng tab.
+5. Group source không bị phá; run chống trùng.
+6. Content/Image/Schedule hoạt động.
+7. Nhiều Page Tab chạy song song.
+8. Pause/resume/stop/recovery/log hoạt động.
+9. Secret không lộ mặc định.
+10. CAPTCHA provider settings lưu local, API key mask và không nằm trong backup/log.
+11. Windows artifact là portable folder/ZIP với PageAuto.exe.
+
+---
+
+## 14. Không làm theo baseline
 
 - SaaS/cloud multi-user
 - subscription/license server
 - mobile app
 - remote worker farm
-- AI content generation
-- inbox/comment automation
-- marketing analytics nâng cao
 - auto-create Facebook account
-- CAPTCHA/checkpoint bypass
+- checkpoint/identity-verification bypass
 - anti-detection/evasion
 - installer/NSIS/Setup workflow
 
 ---
 
-## 15. Quy tắc code và làm việc bắt buộc
+## 15. Quy tắc làm việc bắt buộc
 
-- TypeScript strict.
-- Renderer không truy cập DB/browser trực tiếp.
-- DB dùng repository/service layer.
-- Browser automation chạy worker riêng.
-- Mỗi browser action có typed result.
-- Không swallow exception.
-- Không log secrets.
-- Migration DB có version.
-- Mỗi phase có test trước khi sang phase sau.
-- Không đổi stack/kiến trúc/phạm vi đã chốt nếu chưa cập nhật plan.
-- Không sửa posting core và scheduler cùng lúc khi debug một lỗi production.
+- Trước khi sửa phải đọc `PROJECT_PLAN.md`, kiểm tra đúng repo/branch/SHA.
+- Không tự đổi stack/kiến trúc/phạm vi nếu chưa cập nhật plan hoặc chưa có lệnh của anh.
+- Làm theo từng lô có mục tiêu rõ ràng.
+- Test local trước khi push khi môi trường cho phép.
+- Không commit/push/run CI dồn dập cho từng lỗi nhỏ.
+- Khi CI đỏ: đọc đủ lỗi liên quan, gom sửa một lần rồi push lại.
+- Sau mỗi push phải theo dõi workflow bắt buộc tới xanh.
+- Chỉ báo “xong” khi có bằng chứng test/CI; nếu còn đỏ phải nói blocker chính xác.
+- Ưu tiên một commit/lô gọn, dễ review.
+- Không merge PR tự động.
+- Chỉ merge khi anh ra lệnh rõ ràng.
+- Sau merge, nếu `main` có CI thì theo dõi `main` tới xanh mới báo hoàn tất.
+- Không deploy/release nếu chưa có lệnh riêng.
+- Trước mọi commit/push phải báo rõ phạm vi thay đổi nếu cuộc trao đổi hiện tại chưa cho phép thao tác đó.
 
-Trước khi sửa:
-
-1. đọc `PROJECT_PLAN.md` và phần chi tiết liên quan trong `PROJECT_PLAN_DETAILS.md` nếu cần;
-2. kiểm tra đúng repo/local/branch/SHA;
-3. xác định lô thay đổi rõ ràng;
-4. test local trước;
-5. gom lỗi trong cùng lô rồi mới push;
-6. không spam commit kiểu `fix CI`, `fix again`, `try again`;
-7. sau push theo CI tới khi mọi workflow bắt buộc xanh;
-8. chỉ báo xong khi có bằng chứng test/CI;
-9. không tự merge PR;
-10. chỉ merge khi anh ra lệnh rõ ràng;
-11. sau merge nếu `main` có CI thì theo tới xanh;
-12. không deploy/release nếu chưa có lệnh riêng.
-
----
-
-## 16. Thứ tự ưu tiên thực tế
-
-```text
-Account Manager
--> Session ổn định
--> Page Tab config
--> Group Run snapshot/chống trùng
--> 1 job đăng end-to-end
--> rotation nhiều account trong 1 tab
--> schedule
--> nhiều tab song song
--> recovery/log
--> portable packaging
-```
-
-Không làm UI phụ, license, analytics hoặc tính năng marketing trước khi posting core + session + run queue ổn định.
-
-**Baseline này là quyết định hiện hành để code. Nếu thay đổi Account/Page model, worker model, anti-duplicate hoặc portable packaging thì phải sửa plan trước khi triển khai phần liên quan.**
+**Baseline này là quyết định hiện hành để code.**
