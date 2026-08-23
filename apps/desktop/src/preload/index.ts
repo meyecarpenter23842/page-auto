@@ -27,6 +27,7 @@ import type {
   PickTextFileResult,
   UpdatePageTabPayload
 } from '../shared/pageTabs'
+import type { CreateRunPayload, RunDetails, RunIdPayload } from '../shared/runs'
 
 const api = {
   getAppInfo: (): Promise<AppInfo> => ipcRenderer.invoke(IPC_CHANNELS.appInfo) as Promise<AppInfo>,
@@ -69,7 +70,15 @@ const api = {
   inspectPageTabImageFolder: (folderPath: string): Promise<ImageFolderInspection> =>
     ipcRenderer.invoke(IPC_CHANNELS.pageTabsInspectImageFolder, folderPath) as Promise<ImageFolderInspection>,
   pickPageTabTextFile: (): Promise<PickTextFileResult | null> =>
-    ipcRenderer.invoke(IPC_CHANNELS.pageTabsPickTextFile) as Promise<PickTextFileResult | null>
+    ipcRenderer.invoke(IPC_CHANNELS.pageTabsPickTextFile) as Promise<PickTextFileResult | null>,
+  getLatestRunForPageTab: (payload: CreateRunPayload): Promise<RunDetails | null> =>
+    ipcRenderer.invoke(IPC_CHANNELS.runsLatestForPageTab, payload) as Promise<RunDetails | null>,
+  createRun: (payload: CreateRunPayload): Promise<RunDetails> =>
+    ipcRenderer.invoke(IPC_CHANNELS.runsCreate, payload) as Promise<RunDetails>,
+  pauseRun: (payload: RunIdPayload): Promise<RunDetails> =>
+    ipcRenderer.invoke(IPC_CHANNELS.runsPause, payload) as Promise<RunDetails>,
+  resumeRun: (payload: RunIdPayload): Promise<RunDetails> =>
+    ipcRenderer.invoke(IPC_CHANNELS.runsResume, payload) as Promise<RunDetails>
 }
 
 contextBridge.exposeInMainWorld('pageAuto', api)

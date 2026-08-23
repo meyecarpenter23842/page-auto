@@ -126,3 +126,39 @@ export const imageSources = sqliteTable('image_sources', {
   createdAt: integer('created_at').notNull(),
   updatedAt: integer('updated_at').notNull()
 })
+
+export const runs = sqliteTable('runs', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  pageTabId: integer('page_tab_id'),
+  status: text('status').notNull().default('created'),
+  tabName: text('tab_name').notNull(),
+  pageUid: text('page_uid').notNull(),
+  snapshotJson: text('snapshot_json').notNull(),
+  createdAt: integer('created_at').notNull(),
+  startedAt: integer('started_at'),
+  pausedAt: integer('paused_at'),
+  completedAt: integer('completed_at'),
+  updatedAt: integer('updated_at').notNull()
+})
+
+export const runItems = sqliteTable('run_items', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  runId: integer('run_id').notNull(),
+  sourceGroupItemId: integer('source_group_item_id'),
+  groupUid: text('group_uid').notNull(),
+  sortOrder: integer('sort_order').notNull(),
+  status: text('status').notNull().default('pending'),
+  attemptCount: integer('attempt_count').notNull().default(0),
+  lastError: text('last_error'),
+  startedAt: integer('started_at'),
+  finishedAt: integer('finished_at'),
+  updatedAt: integer('updated_at').notNull()
+})
+
+export const runEvents = sqliteTable('run_events', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  runId: integer('run_id').notNull(),
+  eventType: text('event_type').notNull(),
+  payloadJson: text('payload_json'),
+  createdAt: integer('created_at').notNull()
+})

@@ -35,9 +35,10 @@ describe('initializeDatabase', () => {
     expect(migrations).toEqual([
       { version: 1, name: 'bootstrap_app_settings' },
       { version: 2, name: 'account_manager' },
-      { version: 3, name: 'page_tab_config' }
+      { version: 3, name: 'page_tab_config' },
+      { version: 4, name: 'run_queue' }
     ])
-    expect(schemaVersion?.value).toBe('3')
+    expect(schemaVersion?.value).toBe('4')
 
     runtime.close()
   })
@@ -51,7 +52,7 @@ describe('initializeDatabase', () => {
       .prepare('SELECT COUNT(*) AS count FROM __page_auto_migrations')
       .get() as { count: number }
 
-    expect(count.count).toBe(3)
+    expect(count.count).toBe(4)
     reopened.close()
   })
 })

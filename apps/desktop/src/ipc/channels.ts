@@ -18,6 +18,7 @@ import type {
   PickTextFileResult,
   UpdatePageTabPayload
 } from '../shared/pageTabs'
+import type { CreateRunPayload, RunDetails, RunIdPayload } from '../shared/runs'
 
 export const IPC_CHANNELS = {
   appInfo: 'app:get-info',
@@ -40,7 +41,11 @@ export const IPC_CHANNELS = {
   pageTabsDuplicate: 'page-tabs:duplicate',
   pageTabsPickImageFolder: 'page-tabs:pick-image-folder',
   pageTabsInspectImageFolder: 'page-tabs:inspect-image-folder',
-  pageTabsPickTextFile: 'page-tabs:pick-text-file'
+  pageTabsPickTextFile: 'page-tabs:pick-text-file',
+  runsLatestForPageTab: 'runs:latest-for-page-tab',
+  runsCreate: 'runs:create',
+  runsPause: 'runs:pause',
+  runsResume: 'runs:resume'
 } as const
 
 export interface AppInfo {
@@ -86,4 +91,8 @@ export interface PageAutoIpcContract {
   pickPageTabImageFolder: () => Promise<string | null>
   inspectPageTabImageFolder: (folderPath: string) => Promise<ImageFolderInspection>
   pickPageTabTextFile: () => Promise<PickTextFileResult | null>
+  getLatestRunForPageTab: (payload: CreateRunPayload) => Promise<RunDetails | null>
+  createRun: (payload: CreateRunPayload) => Promise<RunDetails>
+  pauseRun: (payload: RunIdPayload) => Promise<RunDetails>
+  resumeRun: (payload: RunIdPayload) => Promise<RunDetails>
 }

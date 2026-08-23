@@ -21,9 +21,11 @@ import type {
   PageTabIdPayload,
   UpdatePageTabPayload
 } from '../shared/pageTabs'
+import type { CreateRunPayload, RunIdPayload } from '../shared/runs'
 import { BrowserProfileManager } from './browser/browserProfileManager'
 import { AccountRepository } from './database/accountRepository'
 import { PageTabRepository } from './database/pageTabRepository'
+import { RunRepository } from './database/runRepository'
 
 interface RegisterIpcOptions {
   database: Database.Database
@@ -39,6 +41,7 @@ const supportedImageExtensions = new Set(['.jpg', '.jpeg', '.png', '.webp'])
 export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
   const accounts = new AccountRepository(options.database)
   const pageTabs = new PageTabRepository(options.database)
+  const runs = new RunRepository(options.database)
   const browserProfiles = new BrowserProfileManager(options.dataDirectory)
 
   ipcMain.handle(IPC_CHANNELS.appInfo, (): AppInfo => ({
@@ -124,6 +127,15 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
       content: await readFile(filePath, 'utf8')
     }
   })
+
+  ipcMain.handle(IPC_CHANNELS.runsLatestForPageTab, (_event, payload: CreateRunPayload) =>
+    runs.getLatestForPageTab(payload.pageTabId)
+  )
+  ipcMain.handle(IPC_CHANNELS.runsCreate, (_event, payload: CreateRunPayload) =>
+    runs.createForPageTab(payload.pageTabId)
+  )
+  ipcMain.handle(IPC_CHANNELS.runsPause, (_event, payload: RunIdPayload) => runs.pause(payload.runId))
+  ipcMain.handle(IPC_CHANNELS.runsResume, (_event, payload: RunIdPayload) => runs.resume(payload.runId))
 
   return {
     dispose: () => browserProfiles.closeAll()
