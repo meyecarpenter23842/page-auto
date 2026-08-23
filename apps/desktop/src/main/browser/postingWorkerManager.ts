@@ -1,18 +1,26 @@
 import { join } from 'node:path'
 import { utilityProcess, type UtilityProcess } from 'electron'
+import { DEFAULT_APP_SETTINGS, type RuntimeSettings } from '../../shared/appSettings'
 import type {
   PostingJobRequest,
   PostingJobResult,
   PostingWorkerMessage,
   PostingWorkerRequestMessage
 } from '../../shared/posting'
-
-const WORKER_TIMEOUT_MS = 180_000
+import { BrowserLaunchGate } from './runtimeLaunchGate'
 
 export class PostingWorkerManager {
   private readonly workers = new Set<UtilityProcess>()
+  private readonly launchGate = new BrowserLaunchGate()
 
-  run(job: PostingJobRequest): Promise<PostingJobResult> {
+  constructor(
+    private readonly getRuntimeSettings: () => RuntimeSettings = () => ({ ...DEFAULT_APP_SETTINGS.runtime })
+  ) {}
+
+  async run(job: PostingJobRequest): Promise<PostingJobResult> {
+    const runtime = { ...this.getRuntimeSettings() }
+    await this.launchGate.wait(runtime.browserLaunchSpacingMs)
+
     return new Promise((resolve) => {
       const worker = utilityProcess.fork(join(__dirname, 'posting-worker.js'), [], {
         serviceName: `PAGE-AUTO posting run ${job.runId} item ${job.itemId}`
@@ -31,8 +39,12 @@ export class PostingWorkerManager {
       }
 
       const timeout = setTimeout(() => {
-        finish({ status: 'failed', code: 'worker_timeout', message: 'Posting worker vượt quá thời gian cho phép.' })
-      }, WORKER_TIMEOUT_MS)
+        finish({
+          status: 'failed',
+          code: 'worker_timeout',
+          message: `Posting worker vượt giới hạn runtime ${runtime.maxAccountRuntimeSeconds}s; cần review trước khi retry để tránh đăng trùng.`
+        })
+      }, runtime.maxAccountRuntimeSeconds * 1000)
 
       worker.on('message', (raw: unknown) => {
         const message = raw as PostingWorkerMessage
@@ -49,7 +61,11 @@ export class PostingWorkerManager {
 
       worker.once('exit', (code) => {
         if (!settled) {
-          finish({ status: 'failed', code: 'worker_crashed', message: `Posting worker thoát với code ${code}.` })
+          finish({
+            status: 'failed',
+            code: 'worker_crashed',
+            message: `Posting worker thoát với code ${code}; trạng thái publish có thể chưa xác định, cần review trước khi retry.`
+          })
         }
       })
     })

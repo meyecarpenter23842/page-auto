@@ -4,6 +4,7 @@ import {
   DEFAULT_APP_SETTINGS,
   type BrowserSettings,
   type NetworkSettings,
+  type RuntimeSettings,
   type SessionSettings
 } from '../../shared/appSettings'
 import type {
@@ -48,11 +49,12 @@ export class PostingService {
     private readonly dataDirectory: string,
     private readonly getBrowserSettings: () => BrowserSettings = () => ({ ...DEFAULT_APP_SETTINGS.browser }),
     private readonly getSessionSettings: () => SessionSettings = () => ({ ...DEFAULT_APP_SETTINGS.session }),
-    private readonly getNetworkSettings: () => NetworkSettings = () => ({ ...DEFAULT_APP_SETTINGS.network })
+    private readonly getNetworkSettings: () => NetworkSettings = () => ({ ...DEFAULT_APP_SETTINGS.network }),
+    private readonly getRuntimeSettings: () => RuntimeSettings = () => ({ ...DEFAULT_APP_SETTINGS.runtime })
   ) {
     this.accounts = new AccountRepository(database)
     this.runs = new RunRepository(database)
-    this.workers = new PostingWorkerManager()
+    this.workers = new PostingWorkerManager(this.getRuntimeSettings)
   }
 
   async executeSingle(payload: ExecuteSinglePostingJobPayload): Promise<ExecuteSinglePostingJobResult> {

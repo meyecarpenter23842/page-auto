@@ -1,4 +1,3 @@
-import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { utilityProcess, type UtilityProcess } from 'electron'
@@ -28,20 +27,6 @@ export function chromeExecutableCandidates(env: NodeJS.ProcessEnv = process.env)
   return [...new Set(roots.map((root) => join(root, 'Google', 'Chrome', 'Application', 'chrome.exe')))]
 }
 
-function parseVersion(text: string): string | null {
-  return text.match(/\b(\d+(?:\.\d+){1,3})\b/)?.[1] ?? null
-}
-
-export function readChromeVersion(executablePath: string): Promise<string | null> {
-  return new Promise((resolve) => {
-    execFile(executablePath, ['--version'], { timeout: 5_000, windowsHide: true }, (error, stdout, stderr) => {
-      const output = `${String(stdout ?? '')} ${String(stderr ?? '')}`
-      const version = parseVersion(output)
-      resolve(version ?? (error ? null : parseVersion(output)))
-    })
-  })
-}
-
 export class BrowserEngineService {
   private readonly workers = new Set<UtilityProcess>()
 
@@ -56,11 +41,14 @@ export class BrowserEngineService {
       }
     }
 
+    // Important: probing Settings must never execute chrome.exe. On Windows, launching
+    // chrome.exe with --version may still open the GUI. Version is read only by the
+    // explicit browser test worker, where launching Chrome is a user-requested action.
     return {
       status: 'found',
       executablePath: normalized,
-      version: await readChromeVersion(normalized),
-      message: 'Đã tìm thấy Chrome.'
+      version: null,
+      message: 'Đã tìm thấy file Chrome.'
     }
   }
 
@@ -79,7 +67,6 @@ export class BrowserEngineService {
 
   async testBrowser(settings: BrowserSettings): Promise<BrowserTestResult> {
     let executablePath = settings.executablePath?.trim() || null
-    let version: string | null = null
 
     if (executablePath) {
       const probed = await this.probeExecutable(executablePath)
@@ -92,7 +79,6 @@ export class BrowserEngineService {
           message: probed.message
         }
       }
-      version = probed.version
     } else {
       const detected = await this.detectChrome()
       if (detected.status !== 'found' || !detected.executablePath) {
@@ -105,7 +91,6 @@ export class BrowserEngineService {
         }
       }
       executablePath = detected.executablePath
-      version = detected.version
     }
 
     const effectiveSettings: BrowserSettings = { ...settings, executablePath }
@@ -124,7 +109,11 @@ export class BrowserEngineService {
         clearTimeout(timer)
         this.workers.delete(worker)
         worker.kill()
-        resolve({ ...result, executablePath, version })
+        resolve({
+          ...result,
+          executablePath,
+          version: result.version ?? null
+        })
       }
 
       const timeoutMs = settings.startupDelayMs + settings.startupTimeoutMs + 8_000
@@ -133,7 +122,7 @@ export class BrowserEngineService {
           status: 'failed',
           code: 'timeout',
           executablePath,
-          version,
+          version: null,
           message: 'Chrome mở quá thời gian chờ cho phép.'
         })
       }, timeoutMs)
@@ -155,7 +144,7 @@ export class BrowserEngineService {
             status: 'failed',
             code: 'worker_crashed',
             executablePath,
-            version,
+            version: null,
             message: `Browser worker đã dừng trước khi kiểm tra xong (code ${code}).`
           })
         }

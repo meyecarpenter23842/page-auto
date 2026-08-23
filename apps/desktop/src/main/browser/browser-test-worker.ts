@@ -36,6 +36,7 @@ parentPort.once('message', (event) => {
     try {
       await waitForBrowserStartupDelay(message.settings)
       browser = await chromium.launch(buildBrowserLaunchOptions(message.settings))
+      const browserVersion = browser.version()
       const context = await browser.newContext({
         viewport: {
           width: message.settings.windowWidth,
@@ -54,7 +55,7 @@ parentPort.once('message', (event) => {
         result: {
           status: 'success',
           executablePath: message.settings.executablePath,
-          version: null,
+          version: browserVersion,
           message: 'Chrome mở và phản hồi bình thường.',
           launchDurationMs: Date.now() - startedAt
         }
