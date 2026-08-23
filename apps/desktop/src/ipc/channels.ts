@@ -18,6 +18,7 @@ import type {
   PickTextFileResult,
   UpdatePageTabPayload
 } from '../shared/pageTabs'
+import type { ExecuteSinglePostingJobPayload, ExecuteSinglePostingJobResult } from '../shared/posting'
 import type { CreateRunPayload, RunDetails, RunIdPayload } from '../shared/runs'
 
 export const IPC_CHANNELS = {
@@ -45,7 +46,8 @@ export const IPC_CHANNELS = {
   runsLatestForPageTab: 'runs:latest-for-page-tab',
   runsCreate: 'runs:create',
   runsPause: 'runs:pause',
-  runsResume: 'runs:resume'
+  runsResume: 'runs:resume',
+  postingExecuteSingle: 'posting:execute-single'
 } as const
 
 export interface AppInfo {
@@ -95,4 +97,5 @@ export interface PageAutoIpcContract {
   createRun: (payload: CreateRunPayload) => Promise<RunDetails>
   pauseRun: (payload: RunIdPayload) => Promise<RunDetails>
   resumeRun: (payload: RunIdPayload) => Promise<RunDetails>
+  executeSinglePostingJob: (payload: ExecuteSinglePostingJobPayload) => Promise<ExecuteSinglePostingJobResult>
 }

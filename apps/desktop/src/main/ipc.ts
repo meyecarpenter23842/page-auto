@@ -21,11 +21,13 @@ import type {
   PageTabIdPayload,
   UpdatePageTabPayload
 } from '../shared/pageTabs'
+import type { ExecuteSinglePostingJobPayload } from '../shared/posting'
 import type { CreateRunPayload, RunIdPayload } from '../shared/runs'
 import { BrowserProfileManager } from './browser/browserProfileManager'
 import { AccountRepository } from './database/accountRepository'
 import { PageTabRepository } from './database/pageTabRepository'
 import { RunRepository } from './database/runRepository'
+import { PostingService } from './services/postingService'
 
 interface RegisterIpcOptions {
   database: Database.Database
@@ -43,6 +45,7 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
   const pageTabs = new PageTabRepository(options.database)
   const runs = new RunRepository(options.database)
   const browserProfiles = new BrowserProfileManager(options.dataDirectory)
+  const posting = new PostingService(options.database, options.dataDirectory)
 
   ipcMain.handle(IPC_CHANNELS.appInfo, (): AppInfo => ({
     name: app.getName(),
@@ -136,8 +139,14 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
   )
   ipcMain.handle(IPC_CHANNELS.runsPause, (_event, payload: RunIdPayload) => runs.pause(payload.runId))
   ipcMain.handle(IPC_CHANNELS.runsResume, (_event, payload: RunIdPayload) => runs.resume(payload.runId))
+  ipcMain.handle(IPC_CHANNELS.postingExecuteSingle, (_event, payload: ExecuteSinglePostingJobPayload) =>
+    posting.executeSingle(payload)
+  )
 
   return {
-    dispose: () => browserProfiles.closeAll()
+    dispose: () => {
+      posting.closeAll()
+      browserProfiles.closeAll()
+    }
   }
 }

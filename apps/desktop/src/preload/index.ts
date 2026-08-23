@@ -27,6 +27,7 @@ import type {
   PickTextFileResult,
   UpdatePageTabPayload
 } from '../shared/pageTabs'
+import type { ExecuteSinglePostingJobPayload, ExecuteSinglePostingJobResult } from '../shared/posting'
 import type { CreateRunPayload, RunDetails, RunIdPayload } from '../shared/runs'
 
 const api = {
@@ -78,7 +79,9 @@ const api = {
   pauseRun: (payload: RunIdPayload): Promise<RunDetails> =>
     ipcRenderer.invoke(IPC_CHANNELS.runsPause, payload) as Promise<RunDetails>,
   resumeRun: (payload: RunIdPayload): Promise<RunDetails> =>
-    ipcRenderer.invoke(IPC_CHANNELS.runsResume, payload) as Promise<RunDetails>
+    ipcRenderer.invoke(IPC_CHANNELS.runsResume, payload) as Promise<RunDetails>,
+  executeSinglePostingJob: (payload: ExecuteSinglePostingJobPayload): Promise<ExecuteSinglePostingJobResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.postingExecuteSingle, payload) as Promise<ExecuteSinglePostingJobResult>
 }
 
 contextBridge.exposeInMainWorld('pageAuto', api)
