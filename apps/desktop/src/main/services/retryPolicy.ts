@@ -1,0 +1,50 @@
+import type { RetryDisposition } from '../../shared/executionLogs'
+
+export const MAX_RETRY_ATTEMPTS = 3
+
+const retryableCodes = new Set([
+  'profile_in_use',
+  'browser_launch_failed',
+  'page_navigation_failed',
+  'page_identity_unconfirmed',
+  'group_navigation_failed',
+  'composer_not_found',
+  'content_failed',
+  'media_failed',
+  'worker_timeout',
+  'worker_crashed',
+  'unexpected_error'
+])
+
+const manualReviewCodes = new Set([
+  'publish_action_failed',
+  'publish_unconfirmed',
+  'recovery_unconfirmed'
+])
+
+const blockedCodes = new Set([
+  'no_enabled_account',
+  'account_disabled',
+  'needs_login',
+  'verification_required',
+  'group_unavailable',
+  'missing_media',
+  'no_content',
+  'no_pending_item'
+])
+
+export function retryDispositionFor(errorCode: string | null | undefined): RetryDisposition {
+  if (!errorCode) return 'not_applicable'
+  if (retryableCodes.has(errorCode)) return 'retryable'
+  if (manualReviewCodes.has(errorCode)) return 'manual_review'
+  if (blockedCodes.has(errorCode)) return 'blocked'
+  return 'blocked'
+}
+
+export function canQueueRetry(
+  errorCode: string | null | undefined,
+  attemptCount: number,
+  maxAttempts = MAX_RETRY_ATTEMPTS
+): boolean {
+  return retryDispositionFor(errorCode) === 'retryable' && attemptCount < maxAttempts
+}

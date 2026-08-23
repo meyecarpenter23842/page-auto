@@ -214,6 +214,39 @@ export const migrations: Migration[] = [
 
       CREATE INDEX IF NOT EXISTS idx_run_events_run ON run_events(run_id, id);
     `
+  },
+  {
+    version: 5,
+    name: 'recovery_execution_logs',
+    sql: `
+      CREATE TABLE IF NOT EXISTS execution_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+        timestamp INTEGER NOT NULL,
+        run_id INTEGER REFERENCES runs(id) ON DELETE SET NULL,
+        run_item_id INTEGER REFERENCES run_items(id) ON DELETE SET NULL,
+        page_tab_id INTEGER,
+        account_id INTEGER,
+        page_uid TEXT,
+        group_uid TEXT,
+        content_index INTEGER,
+        image_paths_json TEXT,
+        action TEXT NOT NULL,
+        result TEXT NOT NULL,
+        error_code TEXT,
+        error_message TEXT,
+        screenshot_path TEXT,
+        published_url TEXT,
+        attempt_count INTEGER NOT NULL DEFAULT 0,
+        retry_disposition TEXT NOT NULL DEFAULT 'not_applicable'
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_execution_logs_time ON execution_logs(timestamp DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_execution_logs_tab ON execution_logs(page_tab_id, timestamp DESC);
+      CREATE INDEX IF NOT EXISTS idx_execution_logs_account ON execution_logs(account_id, timestamp DESC);
+      CREATE INDEX IF NOT EXISTS idx_execution_logs_group ON execution_logs(group_uid, timestamp DESC);
+      CREATE INDEX IF NOT EXISTS idx_execution_logs_result ON execution_logs(result, timestamp DESC);
+      CREATE INDEX IF NOT EXISTS idx_execution_logs_run_item ON execution_logs(run_item_id, id DESC);
+    `
   }
 ]
 

@@ -15,6 +15,15 @@ class FakeController implements PageTabRotationController {
   dispose(){}
 }
 
+class RestartedController extends FakeController {
+  private hasSession = false
+  override start(){this.hasSession=true;return super.start()}
+  override resume(){
+    if (!this.hasSession) throw new Error(`Page Tab #${this.pageTabId} chưa có Account Rotation đang hoạt động.`)
+    return super.resume()
+  }
+}
+
 describe('PageTabWorkerManager',()=>{
   it('keeps Page A and Page B independent while each tab owns only one controller',()=>{
     let created=0
@@ -27,5 +36,11 @@ describe('PageTabWorkerManager',()=>{
     expect(manager.status({pageTabId:20}).status).toBe('running')
     manager.status({pageTabId:10})
     expect(created).toBe(2)
+  })
+
+  it('recreates an in-memory rotation session when resuming a paused run after app restart',()=>{
+    const manager=new PageTabWorkerManager((pageTabId)=>new RestartedController(pageTabId))
+    expect(manager.resume({pageTabId:10}).status).toBe('running')
+    expect(manager.status({pageTabId:10}).status).toBe('running')
   })
 })

@@ -16,6 +16,7 @@ import type {
   AccountListFilters,
   SaveImportPresetInput
 } from '../shared/accounts'
+import type { ExecutionLogFilters, RetryRunItemPayload } from '../shared/executionLogs'
 import type {
   CreatePageTabInput,
   PageTabIdPayload,
@@ -26,12 +27,15 @@ import type { RotationPageTabPayload } from '../shared/rotation'
 import type { CreateRunPayload, RunIdPayload } from '../shared/runs'
 import { BrowserProfileManager } from './browser/browserProfileManager'
 import { AccountRepository } from './database/accountRepository'
+import { ExecutionLogRepository } from './database/executionLogRepository'
 import { PageTabRepository } from './database/pageTabRepository'
 import { RunRepository } from './database/runRepository'
 import { AccountExecutionCoordinator } from './services/accountExecutionCoordinator'
 import { PageTabWorkerManager } from './services/pageTabWorkerManager'
 import { PostingService } from './services/postingService'
+import { ResilientPostingService } from './services/resilientPostingService'
 import { RotationService, type RotationPostingExecutor } from './services/rotationService'
+import { RuntimeRecoveryService } from './services/runtimeRecovery'
 
 interface RegisterIpcOptions {
   database: Database.Database
@@ -48,8 +52,13 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
   const accounts = new AccountRepository(options.database)
   const pageTabs = new PageTabRepository(options.database)
   const runs = new RunRepository(options.database)
+  const executionLogs = new ExecutionLogRepository(options.database)
+  const recovery = new RuntimeRecoveryService(options.database, executionLogs)
+  recovery.recoverInterruptedRuns()
+
   const browserProfiles = new BrowserProfileManager(options.dataDirectory)
-  const posting = new PostingService(options.database, options.dataDirectory)
+  const corePosting = new PostingService(options.database, options.dataDirectory)
+  const posting = new ResilientPostingService(corePosting, options.database, executionLogs)
   const accountExecution = new AccountExecutionCoordinator()
   const coordinatedPosting: RotationPostingExecutor = {
     executeSingle: (payload) => {
@@ -155,7 +164,7 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
   ipcMain.handle(IPC_CHANNELS.runsPause, (_event, payload: RunIdPayload) => runs.pause(payload.runId))
   ipcMain.handle(IPC_CHANNELS.runsResume, (_event, payload: RunIdPayload) => runs.resume(payload.runId))
   ipcMain.handle(IPC_CHANNELS.postingExecuteSingle, (_event, payload: ExecuteSinglePostingJobPayload) =>
-    posting.executeSingle(payload)
+    coordinatedPosting.executeSingle(payload)
   )
   ipcMain.handle(IPC_CHANNELS.rotationList, () =>
     rotation.list(pageTabs.list().map((tab) => tab.id))
@@ -173,10 +182,17 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
     rotation.resume(payload)
   )
 
+  ipcMain.handle(IPC_CHANNELS.executionLogsList, (_event, filters?: ExecutionLogFilters) =>
+    executionLogs.list(filters)
+  )
+  ipcMain.handle(IPC_CHANNELS.executionLogsRetryItem, (_event, payload: RetryRunItemPayload) =>
+    recovery.retryFailedItem(payload.runItemId)
+  )
+
   return {
     dispose: () => {
       rotation.dispose()
-      posting.closeAll()
+      corePosting.closeAll()
       browserProfiles.closeAll()
     }
   }

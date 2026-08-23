@@ -94,7 +94,7 @@ describe('RunRepository', () => {
     runtime.close()
   })
 
-  it('restores processing items to pending on resume and keeps the original snapshot immutable', () => {
+  it('preserves an in-flight processing item across pause/resume and keeps the original snapshot immutable', () => {
     const { runtime, tabs, runs, tab } = configureTab(['g1', 'g2', 'g3'])
     const created = runs.createForPageTab(tab.id)
 
@@ -108,10 +108,13 @@ describe('RunRepository', () => {
 
     runs.pause(created.run.id)
     const resumed = runs.resume(created.run.id)
-    expect(resumed.metrics.processing).toBe(0)
-    expect(resumed.metrics.pending).toBe(3)
+    expect(resumed.metrics.processing).toBe(1)
+    expect(resumed.metrics.pending).toBe(2)
     expect(resumed.metrics.success).toBe(0)
     expect(runs.listItems(created.run.id)[0]?.attemptCount).toBe(1)
+
+    if (!claimed) throw new Error('Expected claimed run item.')
+    runs.completeItem({ runId: created.run.id, itemId: claimed.id, status: 'success' })
 
     const current = tabs.get(tab.id)
     if (!current) throw new Error('Expected Page Tab config.')

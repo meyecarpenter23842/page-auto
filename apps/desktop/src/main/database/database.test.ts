@@ -30,15 +30,20 @@ describe('initializeDatabase', () => {
     const schemaVersion = runtime.client
       .prepare("SELECT value FROM app_settings WHERE key = 'schema_version'")
       .get() as { value: string } | undefined
+    const executionLogsTable = runtime.client
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'execution_logs'")
+      .get() as { name: string } | undefined
 
     expect(existsSync(databaseFile)).toBe(true)
     expect(migrations).toEqual([
       { version: 1, name: 'bootstrap_app_settings' },
       { version: 2, name: 'account_manager' },
       { version: 3, name: 'page_tab_config' },
-      { version: 4, name: 'run_queue' }
+      { version: 4, name: 'run_queue' },
+      { version: 5, name: 'recovery_execution_logs' }
     ])
-    expect(schemaVersion?.value).toBe('4')
+    expect(schemaVersion?.value).toBe('5')
+    expect(executionLogsTable?.name).toBe('execution_logs')
 
     runtime.close()
   })
@@ -52,7 +57,7 @@ describe('initializeDatabase', () => {
       .prepare('SELECT COUNT(*) AS count FROM __page_auto_migrations')
       .get() as { count: number }
 
-    expect(count.count).toBe(4)
+    expect(count.count).toBe(5)
     reopened.close()
   })
 })

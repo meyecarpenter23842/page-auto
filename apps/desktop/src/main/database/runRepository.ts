@@ -281,11 +281,7 @@ export class RunRepository {
       }
 
       const now = Date.now()
-      const recovered = this.client.prepare(`
-        UPDATE run_items
-        SET status = 'pending', started_at = NULL, updated_at = ?
-        WHERE run_id = ? AND status = 'processing'
-      `).run(now, runId).changes
+      const processingItemsPreserved = current.metrics.processing
 
       this.client.prepare(`
         UPDATE runs
@@ -302,7 +298,7 @@ export class RunRepository {
         WHERE id = (SELECT page_tab_id FROM runs WHERE id = ?)
       `).run(now, runId)
 
-      this.addEvent(runId, 'run_resumed', { recoveredProcessingItems: recovered }, now)
+      this.addEvent(runId, 'run_resumed', { processingItemsPreserved }, now)
     })
 
     resume()

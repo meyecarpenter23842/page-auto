@@ -10,6 +10,7 @@ import { PostingWorkerManager } from '../browser/postingWorkerManager'
 import { AccountRepository } from '../database/accountRepository'
 import { RunRepository } from '../database/runRepository'
 import type Database from 'better-sqlite3'
+import { redactExecutionText } from './executionLogSanitizer'
 import { selectRunContent, selectRunImages } from './postingSelection'
 
 function buildProxy(account: AccountRecord): PostingProxyConfig | undefined {
@@ -21,6 +22,16 @@ function buildProxy(account: AccountRecord): PostingProxyConfig | undefined {
     ...(account.proxyUsername ? { username: account.proxyUsername } : {}),
     ...(account.proxyPassword ? { password: account.proxyPassword } : {})
   }
+}
+
+function accountSecrets(account: AccountRecord): Array<string | null | undefined> {
+  return [
+    account.password,
+    account.cookie,
+    account.twoFactorSecret,
+    account.emailPassword,
+    account.proxyPassword
+  ]
 }
 
 function terminalFailure(message: string, code: NonNullable<PostingJobResult['code']> = 'unexpected_error'): PostingJobResult {
@@ -121,7 +132,7 @@ export class PostingService {
     }
 
     const proxy = buildProxy(account)
-    const result = await this.workers.run({
+    const workerResult = await this.workers.run({
       runId: payload.runId,
       itemId: item.id,
       accountId: account.id,
@@ -133,6 +144,10 @@ export class PostingService {
       ...(account.userAgent ? { userAgent: account.userAgent } : {}),
       ...(proxy ? { proxy } : {})
     })
+    const safeMessage = redactExecutionText(workerResult.message, accountSecrets(account)) ?? 'Unknown error'
+    const result: PostingJobResult = safeMessage === workerResult.message
+      ? workerResult
+      : { ...workerResult, message: safeMessage }
 
     if (result.status === 'needs_login') {
       this.accounts.update(account.id, { status: 'needs_login', lastUsedAt: Date.now() })

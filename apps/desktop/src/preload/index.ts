@@ -19,6 +19,12 @@ import type {
   SaveImportPresetInput
 } from '../shared/accounts'
 import type {
+  ExecutionLogFilters,
+  ExecutionLogRecord,
+  RetryRunItemPayload,
+  RetryRunItemResult
+} from '../shared/executionLogs'
+import type {
   CreatePageTabInput,
   ImageFolderInspection,
   PageTabConfig,
@@ -92,7 +98,11 @@ const api = {
   pausePageTabRotation: (payload: RotationPageTabPayload): Promise<RotationRuntimeSnapshot> =>
     ipcRenderer.invoke(IPC_CHANNELS.rotationPause, payload) as Promise<RotationRuntimeSnapshot>,
   resumePageTabRotation: (payload: RotationPageTabPayload): Promise<RotationRuntimeSnapshot> =>
-    ipcRenderer.invoke(IPC_CHANNELS.rotationResume, payload) as Promise<RotationRuntimeSnapshot>
+    ipcRenderer.invoke(IPC_CHANNELS.rotationResume, payload) as Promise<RotationRuntimeSnapshot>,
+  listExecutionLogs: (filters?: ExecutionLogFilters): Promise<ExecutionLogRecord[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.executionLogsList, filters) as Promise<ExecutionLogRecord[]>,
+  retryExecutionLogItem: (payload: RetryRunItemPayload): Promise<RetryRunItemResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.executionLogsRetryItem, payload) as Promise<RetryRunItemResult>
 }
 
 contextBridge.exposeInMainWorld('pageAuto', api)
