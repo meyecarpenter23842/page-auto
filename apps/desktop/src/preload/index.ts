@@ -28,6 +28,7 @@ import type {
   UpdatePageTabPayload
 } from '../shared/pageTabs'
 import type { ExecuteSinglePostingJobPayload, ExecuteSinglePostingJobResult } from '../shared/posting'
+import type { RotationPageTabPayload, RotationRuntimeSnapshot } from '../shared/rotation'
 import type { CreateRunPayload, RunDetails, RunIdPayload } from '../shared/runs'
 
 const api = {
@@ -81,7 +82,15 @@ const api = {
   resumeRun: (payload: RunIdPayload): Promise<RunDetails> =>
     ipcRenderer.invoke(IPC_CHANNELS.runsResume, payload) as Promise<RunDetails>,
   executeSinglePostingJob: (payload: ExecuteSinglePostingJobPayload): Promise<ExecuteSinglePostingJobResult> =>
-    ipcRenderer.invoke(IPC_CHANNELS.postingExecuteSingle, payload) as Promise<ExecuteSinglePostingJobResult>
+    ipcRenderer.invoke(IPC_CHANNELS.postingExecuteSingle, payload) as Promise<ExecuteSinglePostingJobResult>,
+  getPageTabRotationStatus: (payload: RotationPageTabPayload): Promise<RotationRuntimeSnapshot> =>
+    ipcRenderer.invoke(IPC_CHANNELS.rotationStatus, payload) as Promise<RotationRuntimeSnapshot>,
+  startPageTabRotation: (payload: RotationPageTabPayload): Promise<RotationRuntimeSnapshot> =>
+    ipcRenderer.invoke(IPC_CHANNELS.rotationStart, payload) as Promise<RotationRuntimeSnapshot>,
+  pausePageTabRotation: (payload: RotationPageTabPayload): Promise<RotationRuntimeSnapshot> =>
+    ipcRenderer.invoke(IPC_CHANNELS.rotationPause, payload) as Promise<RotationRuntimeSnapshot>,
+  resumePageTabRotation: (payload: RotationPageTabPayload): Promise<RotationRuntimeSnapshot> =>
+    ipcRenderer.invoke(IPC_CHANNELS.rotationResume, payload) as Promise<RotationRuntimeSnapshot>
 }
 
 contextBridge.exposeInMainWorld('pageAuto', api)

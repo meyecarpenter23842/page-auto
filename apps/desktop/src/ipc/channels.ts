@@ -19,6 +19,7 @@ import type {
   UpdatePageTabPayload
 } from '../shared/pageTabs'
 import type { ExecuteSinglePostingJobPayload, ExecuteSinglePostingJobResult } from '../shared/posting'
+import type { RotationPageTabPayload, RotationRuntimeSnapshot } from '../shared/rotation'
 import type { CreateRunPayload, RunDetails, RunIdPayload } from '../shared/runs'
 
 export const IPC_CHANNELS = {
@@ -47,7 +48,11 @@ export const IPC_CHANNELS = {
   runsCreate: 'runs:create',
   runsPause: 'runs:pause',
   runsResume: 'runs:resume',
-  postingExecuteSingle: 'posting:execute-single'
+  postingExecuteSingle: 'posting:execute-single',
+  rotationStatus: 'rotation:status',
+  rotationStart: 'rotation:start',
+  rotationPause: 'rotation:pause',
+  rotationResume: 'rotation:resume'
 } as const
 
 export interface AppInfo {
@@ -98,4 +103,8 @@ export interface PageAutoIpcContract {
   pauseRun: (payload: RunIdPayload) => Promise<RunDetails>
   resumeRun: (payload: RunIdPayload) => Promise<RunDetails>
   executeSinglePostingJob: (payload: ExecuteSinglePostingJobPayload) => Promise<ExecuteSinglePostingJobResult>
+  getPageTabRotationStatus: (payload: RotationPageTabPayload) => Promise<RotationRuntimeSnapshot>
+  startPageTabRotation: (payload: RotationPageTabPayload) => Promise<RotationRuntimeSnapshot>
+  pausePageTabRotation: (payload: RotationPageTabPayload) => Promise<RotationRuntimeSnapshot>
+  resumePageTabRotation: (payload: RotationPageTabPayload) => Promise<RotationRuntimeSnapshot>
 }
