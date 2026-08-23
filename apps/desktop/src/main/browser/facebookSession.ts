@@ -1,5 +1,5 @@
 import { createHmac } from 'node:crypto'
-import type { BrowserContext, Page } from 'playwright-core'
+import type { BrowserContext, Locator, Page } from 'playwright-core'
 import type { AccountStatus } from '../../shared/accounts'
 
 export interface FacebookSessionAccount {
@@ -169,6 +169,13 @@ async function hasManualVerificationText(page: Page): Promise<boolean> {
   return marker.isVisible().catch(() => false)
 }
 
+async function firstVisible(candidates: Locator[]): Promise<Locator | null> {
+  for (const candidate of candidates) {
+    if (await candidate.isVisible().catch(() => false)) return candidate
+  }
+  return null
+}
+
 async function findTwoFactorInput(page: Page) {
   const candidates = [
     page.locator('input[name="approvals_code"]').first(),
@@ -176,10 +183,7 @@ async function findTwoFactorInput(page: Page) {
     page.locator('input[autocomplete="one-time-code"]').first(),
     page.locator('input[inputmode="numeric"]').first()
   ]
-  for (const candidate of candidates) {
-    if (await candidate.isVisible().catch(() => false)) return candidate
-  }
-  return null
+  return firstVisible(candidates)
 }
 
 async function submitLogin(page: Page, identifier: string, password: string): Promise<void> {
@@ -188,14 +192,31 @@ async function submitLogin(page: Page, identifier: string, password: string): Pr
   if (!await emailInput.isVisible().catch(() => false) || !await passwordInput.isVisible().catch(() => false)) {
     throw new Error('Không tìm thấy form đăng nhập Facebook.')
   }
+
   await emailInput.fill(identifier)
   await passwordInput.fill(password)
 
-  const loginButton = page.locator('button[name="login"], button[type="submit"], input[type="submit"]').first()
-  if (!await loginButton.isVisible().catch(() => false)) throw new Error('Không tìm thấy nút đăng nhập Facebook.')
-  await loginButton.click({ timeout: 15_000 })
+  const loginButton = await firstVisible([
+    page.locator('button[name="login"]:visible').first(),
+    page.locator('[data-testid="royal_login_button"]:visible').first(),
+    page.getByRole('button', { name: /^(log in|login|đăng nhập)$/i }).first(),
+    page.locator('input[name="login"][type="submit"]:visible').first(),
+    page.locator('button[type="submit"]:visible').first()
+  ])
+
+  if (loginButton) {
+    try {
+      await loginButton.scrollIntoViewIfNeeded().catch(() => undefined)
+      await loginButton.click({ timeout: 15_000 })
+    } catch {
+      await passwordInput.press('Enter')
+    }
+  } else {
+    await passwordInput.press('Enter')
+  }
+
   await page.waitForLoadState('domcontentloaded', { timeout: 20_000 }).catch(() => undefined)
-  await page.waitForTimeout(1_200)
+  await page.waitForTimeout(1_500)
 }
 
 async function submitTotp(page: Page, secret: string): Promise<boolean> {
@@ -203,8 +224,12 @@ async function submitTotp(page: Page, secret: string): Promise<boolean> {
   if (!input) return false
   await input.fill(generateTotp(secret))
 
-  const submit = page.locator('button[type="submit"], input[type="submit"]').first()
-  if (await submit.isVisible().catch(() => false)) {
+  const submit = await firstVisible([
+    page.getByRole('button', { name: /continue|tiếp tục|submit|gửi/i }).first(),
+    page.locator('button[type="submit"]:visible').first(),
+    page.locator('input[type="submit"]:visible').first()
+  ])
+  if (submit) {
     await submit.click({ timeout: 15_000 })
   } else {
     await input.press('Enter')
