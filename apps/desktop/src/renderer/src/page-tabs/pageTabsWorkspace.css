@@ -1,24 +1,37 @@
-.page-tabs-route {
-  flex: 1 1 auto;
+.workspace.workspace-page-tabs {
   min-height: 0;
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
 }
 
-.page-tabs-manager {
-  flex: 1 1 auto;
+.workspace.workspace-page-tabs > .topbar {
   min-height: 0;
+  margin-bottom: 14px;
+}
+
+.workspace.workspace-page-tabs > .page-tabs-route {
+  min-height: 0;
+  height: auto;
+  display: block;
+  overflow: hidden;
+}
+
+.page-tabs-route > .page-tabs-manager {
+  width: 100%;
   height: 100%;
+  min-height: 0;
+}
+
+.page-tabs-manager {
+  min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
 
 .page-tab-workspace {
-  flex: 1 1 auto;
+  flex: 1 1 0;
   min-height: 0;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
@@ -28,7 +41,6 @@
 
 .page-tab-two-column {
   min-height: 0;
-  height: 100%;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 10px;
@@ -40,25 +52,23 @@
 .page-tab-right-pane {
   min-width: 0;
   min-height: 0;
-  height: 100%;
   overflow: hidden;
 }
 
 .page-tab-left-pane {
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto auto;
+  grid-template-rows: minmax(220px, 1fr) auto auto;
   gap: 8px;
 }
 
 .page-tab-right-pane {
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto auto;
+  grid-template-rows: minmax(220px, 1fr) auto auto;
   gap: 8px;
 }
 
 .pt-account-panel-tall {
   min-height: 0;
-  height: 100%;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -69,7 +79,7 @@
 }
 
 .pt-account-panel-tall .pt-account-grid-wrap {
-  flex: 1 1 auto;
+  flex: 1 1 0;
   min-height: 0;
   max-height: none;
   overflow: auto;
@@ -96,14 +106,14 @@
 
 .page-tab-right-pane .multi-runtime-shell.compact {
   min-height: 0;
-  height: 100%;
   max-height: none;
   margin: 0;
+  align-self: stretch;
   overflow: hidden;
 }
 
 .page-tab-right-pane .multi-runtime-shell.compact .multi-runtime-grid {
-  flex: 1 1 auto;
+  flex: 1 1 0;
   min-height: 0;
   overflow: auto;
 }
