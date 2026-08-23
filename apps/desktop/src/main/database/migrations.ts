@@ -162,6 +162,58 @@ export const migrations: Migration[] = [
         updated_at INTEGER NOT NULL
       );
     `
+  },
+  {
+    version: 4,
+    name: 'run_queue',
+    sql: `
+      CREATE TABLE IF NOT EXISTS runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+        page_tab_id INTEGER REFERENCES page_tabs(id) ON DELETE SET NULL,
+        status TEXT NOT NULL DEFAULT 'created',
+        tab_name TEXT NOT NULL,
+        page_uid TEXT NOT NULL,
+        snapshot_json TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        started_at INTEGER,
+        paused_at INTEGER,
+        completed_at INTEGER,
+        updated_at INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_runs_page_tab ON runs(page_tab_id, id);
+      CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_runs_one_active_per_tab
+        ON runs(page_tab_id)
+        WHERE page_tab_id IS NOT NULL AND status IN ('created', 'running', 'paused');
+
+      CREATE TABLE IF NOT EXISTS run_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+        run_id INTEGER NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+        source_group_item_id INTEGER,
+        group_uid TEXT NOT NULL,
+        sort_order INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        attempt_count INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT,
+        started_at INTEGER,
+        finished_at INTEGER,
+        updated_at INTEGER NOT NULL,
+        UNIQUE(run_id, group_uid)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_run_items_queue ON run_items(run_id, status, sort_order, id);
+
+      CREATE TABLE IF NOT EXISTS run_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+        run_id INTEGER NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+        event_type TEXT NOT NULL,
+        payload_json TEXT,
+        created_at INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_run_events_run ON run_events(run_id, id);
+    `
   }
 ]
 
