@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import type { AccountRecord } from '../../../shared/accounts'
 import {
   CONTENT_MODES,
@@ -13,8 +13,10 @@ import {
   type PageTabSummary
 } from '../../../shared/pageTabs'
 import './pageTabs.css'
+import './pageTabsCompact.css'
 
 const dayLabels = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7']
+type ConfigDialog = 'rotation' | 'schedule' | 'groups' | 'content' | 'images'
 
 function minutesToTime(minutes: number): string {
   const safe = Math.max(0, Math.min(minutes, 1439))
@@ -96,6 +98,36 @@ function moveItem<T>(items: T[], index: number, direction: -1 | 1): T[] {
   return next
 }
 
+interface ModalShellProps {
+  eyebrow: string
+  title: string
+  wide?: boolean
+  onClose: () => void
+  children: ReactNode
+  footer?: ReactNode
+}
+
+function ModalShell({ eyebrow, title, wide = false, onClose, children, footer }: ModalShellProps) {
+  return (
+    <div className="page-tab-modal-backdrop" role="presentation" onMouseDown={onClose}>
+      <section
+        className={wide ? 'page-tab-modal page-tab-config-modal wide' : 'page-tab-modal page-tab-config-modal'}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="page-tab-modal-header">
+          <div><p className="eyebrow">{eyebrow}</p><h2>{title}</h2></div>
+          <button type="button" className="page-tab-icon-button" onClick={onClose}>×</button>
+        </div>
+        <div className="page-tab-modal-body">{children}</div>
+        {footer ? <div className="page-tab-modal-actions">{footer}</div> : null}
+      </section>
+    </div>
+  )
+}
+
 interface CreateTabModalProps {
   onClose: () => void
   onCreate: (input: CreatePageTabInput) => Promise<void>
@@ -149,6 +181,7 @@ export function PageTabsManager() {
   const [saving, setSaving] = useState(false)
   const [dirty, setDirty] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
+  const [dialog, setDialog] = useState<ConfigDialog | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [imageInspection, setImageInspection] = useState<ImageFolderInspection | null>(null)
@@ -179,11 +212,13 @@ export function PageTabsManager() {
     if (activeId === null) {
       setConfig(null)
       setDirty(false)
+      setDialog(null)
       return
     }
 
     let cancelled = false
     setLoading(true)
+    setDialog(null)
     void window.pageAuto.getPageTab({ id: activeId })
       .then((nextConfig) => {
         if (cancelled) return
@@ -235,6 +270,7 @@ export function PageTabsManager() {
     if (scheduleError) {
       setNotice(null)
       setError(scheduleError)
+      setDialog('schedule')
       return
     }
 
@@ -296,8 +332,9 @@ export function PageTabsManager() {
 
   const updateAccountRef = (index: number, patch: Partial<PageTabAccountRef>) => {
     if (!config) return
-    const next = config.accounts.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item)
-    patchConfig({ accounts: next })
+    patchConfig({
+      accounts: config.accounts.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item)
+    })
   }
 
   const moveAccount = (index: number, direction: -1 | 1) => {
@@ -326,6 +363,7 @@ export function PageTabsManager() {
   const updateSchedule = (index: number, patch: Partial<PageTabSchedule>) => {
     if (!config) return
     patchConfig({ schedules: config.schedules.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item) })
+    if (error?.startsWith('Khung giờ #')) setError(null)
   }
 
   const importGroups = async () => {
@@ -351,6 +389,15 @@ export function PageTabsManager() {
   if (loading && tabs.length === 0) {
     return <section className="page-tabs-empty"><strong>Đang tải Page Tabs…</strong></section>
   }
+
+  const modalFooter = (
+    <>
+      <button className="pt-button secondary" type="button" onClick={() => setDialog(null)}>Đóng</button>
+      <button className="pt-button primary" type="button" disabled={!dirty || saving} onClick={() => void save()}>
+        {saving ? 'Đang lưu…' : 'Save config'}
+      </button>
+    </>
+  )
 
   return (
     <section className="page-tabs-manager">
@@ -386,144 +433,229 @@ export function PageTabsManager() {
       ) : (
         <div className="page-tab-workspace">
           <header className="page-tab-editor-header">
-            <div>
+            <div className="page-tab-editor-title">
               <div className="page-tab-title-line">
                 <span className="pt-status-badge">{config.status}</span>
                 {dirty ? <span className="pt-dirty-badge">Chưa lưu</span> : <span className="pt-saved-badge">Đã lưu</span>}
               </div>
-              <h2>{config.name}</h2>
-              <p>Page UID: {config.pageUid}</p>
+              <strong>{config.name}</strong>
+              <span>Page UID {config.pageUid}</span>
             </div>
             <div className="page-tab-header-actions">
               <button className="pt-button secondary" type="button" onClick={() => void duplicate()}>Duplicate</button>
               <button className="pt-button danger" type="button" onClick={() => void deleteCurrent()}>Delete</button>
-              <button className="pt-button primary" type="button" disabled={!dirty || saving} onClick={() => void save()}>{saving ? 'Đang lưu…' : 'Save config'}</button>
+              <button className="pt-button primary" type="button" disabled={!dirty || saving} onClick={() => void save()}>
+                {saving ? 'Đang lưu…' : 'Save config'}
+              </button>
             </div>
           </header>
 
-          <div className="page-tab-layout">
-            <div className="page-tab-main-column">
-              <section className="pt-panel">
-                <div className="pt-panel-heading"><div><p className="eyebrow">Identity</p><h3>Page</h3></div></div>
-                <div className="pt-form-grid two">
-                  <label><span>Tên tab</span><input value={config.name} onChange={(event) => patchConfig({ name: event.target.value })} /></label>
-                  <label><span>Page UID</span><input value={config.pageUid} onChange={(event) => patchConfig({ pageUid: event.target.value })} /></label>
-                </div>
-              </section>
+          <section className="pt-inline-panel pt-identity-panel">
+            <div className="pt-panel-heading compact">
+              <div><p className="eyebrow">Identity</p><h3>Page</h3></div>
+            </div>
+            <div className="pt-form-grid two">
+              <label><span>Tên tab</span><input value={config.name} onChange={(event) => patchConfig({ name: event.target.value })} /></label>
+              <label><span>Page UID</span><input value={config.pageUid} onChange={(event) => patchConfig({ pageUid: event.target.value })} /></label>
+            </div>
+          </section>
 
-              <section className="pt-panel">
-                <div className="pt-panel-heading">
-                  <div><p className="eyebrow">Accounts</p><h3>Account rotation order</h3></div>
-                  <span className="pt-count-chip">{config.accounts.length} account</span>
-                </div>
-                <div className="pt-add-row">
-                  <select value={accountToAdd} onChange={(event) => setAccountToAdd(event.target.value)}>
-                    <option value="">Chọn account từ Account Manager…</option>
-                    {availableAccounts.map((account) => <option key={account.id} value={account.id}>{account.uid} · {account.name ?? 'No name'} · {account.status}</option>)}
-                  </select>
-                  <button className="pt-button secondary" type="button" disabled={!accountToAdd} onClick={addAccount}>Add account</button>
-                </div>
-                <div className="pt-account-list">
-                  {config.accounts.map((account, index) => (
-                    <div className="pt-account-row" key={account.accountId}>
-                      <div className="pt-order-actions">
-                        <button type="button" onClick={() => moveAccount(index, -1)} disabled={index === 0}>↑</button>
-                        <button type="button" onClick={() => moveAccount(index, 1)} disabled={index === config.accounts.length - 1}>↓</button>
-                      </div>
-                      <label className="pt-enable-check"><input type="checkbox" checked={account.enabled} onChange={(event) => updateAccountRef(index, { enabled: event.target.checked })} /></label>
-                      <div className="pt-account-info"><strong>{account.uid}</strong><span>{account.name ?? 'Chưa có tên'} · {account.category ?? 'No category'}</span></div>
-                      <span className={`pt-account-status status-${account.status}`}>{account.status}</span>
-                      <label className="pt-post-override"><span>Bài/lượt</span><input type="number" min="1" placeholder={String(config.rotation.postsPerAccount)} value={account.postsPerTurn ?? ''} onChange={(event) => updateAccountRef(index, { postsPerTurn: event.target.value === '' ? null : Number(event.target.value) })} /></label>
-                      <button className="pt-remove-button" type="button" onClick={() => removeAccount(index)}>Remove</button>
-                    </div>
-                  ))}
-                  {config.accounts.length === 0 ? <div className="pt-empty-row">Tab chưa có account. Thêm account theo đúng thứ tự muốn chạy.</div> : null}
-                </div>
-              </section>
-
-              <section className="pt-panel">
-                <div className="pt-panel-heading"><div><p className="eyebrow">Rotation</p><h3>Số bài & delay</h3></div></div>
-                <div className="pt-form-grid five">
-                  <label><span>Bài/account</span><input type="number" min="1" value={config.rotation.postsPerAccount} onChange={(event) => patchConfig({ rotation: { ...config.rotation, postsPerAccount: Number(event.target.value) } })} /></label>
-                  <label><span>Delay bài min (s)</span><input type="number" min="0" value={config.rotation.postDelayMinSeconds} onChange={(event) => patchConfig({ rotation: { ...config.rotation, postDelayMinSeconds: Number(event.target.value) } })} /></label>
-                  <label><span>Delay bài max (s)</span><input type="number" min="0" value={config.rotation.postDelayMaxSeconds} onChange={(event) => patchConfig({ rotation: { ...config.rotation, postDelayMaxSeconds: Number(event.target.value) } })} /></label>
-                  <label><span>Đổi account min (s)</span><input type="number" min="0" value={config.rotation.accountDelayMinSeconds} onChange={(event) => patchConfig({ rotation: { ...config.rotation, accountDelayMinSeconds: Number(event.target.value) } })} /></label>
-                  <label><span>Đổi account max (s)</span><input type="number" min="0" value={config.rotation.accountDelayMaxSeconds} onChange={(event) => patchConfig({ rotation: { ...config.rotation, accountDelayMaxSeconds: Number(event.target.value) } })} /></label>
-                </div>
-              </section>
-
-              <section className="pt-panel">
-                <div className="pt-panel-heading">
-                  <div><p className="eyebrow">Schedule</p><h3>Nhiều khung giờ/ngày</h3></div>
-                  <button className="pt-button secondary" type="button" onClick={addSchedule}>+ Khung giờ</button>
-                </div>
-                <div className="pt-schedule-list">
-                  {config.schedules.map((schedule, index) => (
-                    <div className="pt-schedule-row" key={`${schedule.id}:${index}`}>
-                      <label><span>On</span><input type="checkbox" checked={schedule.enabled} onChange={(event) => updateSchedule(index, { enabled: event.target.checked })} /></label>
-                      <label><span>Ngày</span><select value={schedule.dayOfWeek} onChange={(event) => updateSchedule(index, { dayOfWeek: Number(event.target.value) })}>{dayLabels.map((label, day) => <option key={label} value={day}>{label}</option>)}</select></label>
-                      <label><span>Từ</span><input type="time" value={minutesToTime(schedule.startMinute)} onChange={(event) => updateSchedule(index, { startMinute: timeToMinutes(event.target.value) })} /></label>
-                      <label><span>Đến</span><input type="time" value={minutesToTime(schedule.endMinute)} onChange={(event) => updateSchedule(index, { endMinute: timeToMinutes(event.target.value) })} /></label>
-                      <button className="pt-remove-button" type="button" onClick={() => patchConfig({ schedules: config.schedules.filter((_, itemIndex) => itemIndex !== index) })}>Remove</button>
-                    </div>
-                  ))}
-                  {config.schedules.length === 0 ? <div className="pt-empty-row">Chưa có lịch. Có thể lưu tab trước và thêm lịch sau.</div> : null}
-                </div>
-              </section>
-
-              <section className="pt-panel">
-                <div className="pt-panel-heading">
-                  <div><p className="eyebrow">Groups</p><h3>Group Set gốc</h3></div>
-                  <div className="pt-heading-actions"><span className="pt-count-chip">{parseGroupText(config.groupUids.join('\n')).length} group</span><button className="pt-button secondary" type="button" onClick={() => void importGroups()}>Import TXT/CSV</button></div>
-                </div>
-                <textarea className="pt-source-textarea" rows={10} value={config.groupUids.join('\n')} onChange={(event) => patchConfig({ groupUids: event.target.value.split(/\r?\n/) })} placeholder={'123456789\n987654321\n...'} />
-                <p className="pt-help">Save sẽ trim + deduplicate UID. Danh sách này là nguồn gốc; Phase 4 mới clone sang run_items.</p>
-              </section>
-
-              <section className="pt-panel">
-                <div className="pt-panel-heading">
-                  <div><p className="eyebrow">Content</p><h3>Content Set</h3></div>
-                  <div className="pt-heading-actions"><select value={config.contentMode} onChange={(event) => patchConfig({ contentMode: event.target.value as PageTabConfig['contentMode'] })}>{CONTENT_MODES.map((mode) => <option key={mode} value={mode}>{mode}</option>)}</select><button className="pt-button secondary" type="button" onClick={() => void importContents()}>Import TXT</button><button className="pt-button secondary" type="button" onClick={() => patchConfig({ contents: [...config.contents, ''] })}>+ Content</button></div>
-                </div>
-                <div className="pt-content-list">
-                  {config.contents.map((content, index) => (
-                    <div className="pt-content-item" key={index}>
-                      <div className="pt-content-order"><strong>#{index + 1}</strong><button type="button" onClick={() => patchConfig({ contents: moveItem(config.contents, index, -1) })} disabled={index === 0}>↑</button><button type="button" onClick={() => patchConfig({ contents: moveItem(config.contents, index, 1) })} disabled={index === config.contents.length - 1}>↓</button></div>
-                      <textarea rows={5} value={content} onChange={(event) => patchConfig({ contents: config.contents.map((item, itemIndex) => itemIndex === index ? event.target.value : item) })} placeholder="Nội dung bài viết…" />
-                      <button className="pt-remove-button" type="button" onClick={() => patchConfig({ contents: config.contents.filter((_, itemIndex) => itemIndex !== index) })}>Remove</button>
-                    </div>
-                  ))}
-                  {config.contents.length === 0 ? <div className="pt-empty-row">Chưa có content item.</div> : null}
-                </div>
-              </section>
+          <section className="pt-inline-panel pt-accounts-panel">
+            <div className="pt-panel-heading compact">
+              <div><p className="eyebrow">Accounts</p><h3>Account rotation order</h3></div>
+              <span className="pt-count-chip">{config.accounts.length} account</span>
+            </div>
+            <div className="pt-add-row">
+              <select value={accountToAdd} onChange={(event) => setAccountToAdd(event.target.value)}>
+                <option value="">Chọn account từ Account Manager…</option>
+                {availableAccounts.map((account) => (
+                  <option key={account.id} value={account.id}>{account.uid} · {account.name ?? 'No name'} · {account.status}</option>
+                ))}
+              </select>
+              <button className="pt-button secondary" type="button" disabled={!accountToAdd} onClick={addAccount}>Add account</button>
             </div>
 
-            <aside className="page-tab-side-column">
-              <section className="pt-panel sticky-panel">
-                <div className="pt-panel-heading"><div><p className="eyebrow">Images</p><h3>Image Folder</h3></div></div>
-                <label className="pt-stack-field"><span>Folder Windows</span><div className="pt-folder-row"><input readOnly value={config.image.folderPath} placeholder="Chưa chọn folder" /><button className="pt-button secondary" type="button" onClick={() => void pickImageFolder()}>Browse</button></div></label>
-                <div className="pt-folder-status">
-                  {!config.image.folderPath ? 'Chưa chọn folder ảnh.' : imageInspection?.exists ? `${imageInspection.fileCount} file ảnh jpg/jpeg/png/webp` : 'Folder không tồn tại hoặc không đọc được.'}
-                </div>
-                <label className="pt-stack-field"><span>Chế độ ảnh</span><select value={config.image.mode} onChange={(event) => patchConfig({ image: { ...config.image, mode: event.target.value as PageTabConfig['image']['mode'] } })}>{IMAGE_MODES.map((mode) => <option key={mode} value={mode}>{mode}</option>)}</select></label>
-                <label className="pt-stack-field"><span>Số ảnh/bài</span><input type="number" min="1" value={config.image.imagesPerPost} onChange={(event) => patchConfig({ image: { ...config.image, imagesPerPost: Number(event.target.value) } })} /></label>
-                <label className="pt-stack-field"><span>Nếu thiếu ảnh</span><select value={config.image.missingPolicy} onChange={(event) => patchConfig({ image: { ...config.image, missingPolicy: event.target.value as PageTabConfig['image']['missingPolicy'] } })}>{MISSING_IMAGE_POLICIES.map((policy) => <option key={policy} value={policy}>{policy}</option>)}</select></label>
-              </section>
+            <div className="pt-account-grid-wrap">
+              <table className="pt-account-grid">
+                <thead>
+                  <tr>
+                    <th className="pt-col-order">#</th>
+                    <th className="pt-col-on">On</th>
+                    <th className="pt-col-uid">UID / UserName</th>
+                    <th className="pt-col-name">Tên</th>
+                    <th className="pt-col-status">Status</th>
+                    <th className="pt-col-category">Category</th>
+                    <th className="pt-col-posts">Bài/lượt</th>
+                    <th className="pt-col-move">Thứ tự</th>
+                    <th className="pt-col-remove" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {config.accounts.map((account, index) => (
+                    <tr key={account.accountId}>
+                      <td className="pt-col-order">{index + 1}</td>
+                      <td className="pt-col-on"><input type="checkbox" checked={account.enabled} onChange={(event) => updateAccountRef(index, { enabled: event.target.checked })} /></td>
+                      <td className="pt-col-uid" title={account.uid}>{account.uid}</td>
+                      <td className="pt-col-name" title={account.name ?? ''}>{account.name ?? '—'}</td>
+                      <td className="pt-col-status"><span className={`pt-account-status-text status-${account.status}`}>{account.status}</span></td>
+                      <td className="pt-col-category" title={account.category ?? ''}>{account.category ?? '—'}</td>
+                      <td className="pt-col-posts">
+                        <input
+                          type="number"
+                          min="1"
+                          placeholder={String(config.rotation.postsPerAccount)}
+                          value={account.postsPerTurn ?? ''}
+                          onChange={(event) => updateAccountRef(index, { postsPerTurn: event.target.value === '' ? null : Number(event.target.value) })}
+                        />
+                      </td>
+                      <td className="pt-col-move">
+                        <button type="button" onClick={() => moveAccount(index, -1)} disabled={index === 0}>↑</button>
+                        <button type="button" onClick={() => moveAccount(index, 1)} disabled={index === config.accounts.length - 1}>↓</button>
+                      </td>
+                      <td className="pt-col-remove"><button type="button" onClick={() => removeAccount(index)}>×</button></td>
+                    </tr>
+                  ))}
+                  {config.accounts.length === 0 ? (
+                    <tr><td className="pt-account-empty" colSpan={9}>Tab chưa có account. Thêm account theo đúng thứ tự muốn chạy.</td></tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </section>
 
-              <section className="pt-panel pt-summary-panel">
-                <p className="eyebrow">Config summary</p>
-                <div><span>Accounts</span><strong>{config.accounts.length}</strong></div>
-                <div><span>Enabled</span><strong>{config.accounts.filter((item) => item.enabled).length}</strong></div>
-                <div><span>Schedules</span><strong>{config.schedules.filter((item) => item.enabled).length}</strong></div>
-                <div><span>Groups</span><strong>{parseGroupText(config.groupUids.join('\n')).length}</strong></div>
-                <div><span>Contents</span><strong>{config.contents.filter((item) => item.trim()).length}</strong></div>
-              </section>
-            </aside>
-          </div>
+          <section className="pt-config-shortcuts" aria-label="Cấu hình Page Tab">
+            <button type="button" onClick={() => setDialog('rotation')}>
+              <span>Rotation & Delay</span>
+              <strong>{config.rotation.postsPerAccount} bài/account</strong>
+              <small>{config.rotation.postDelayMinSeconds}–{config.rotation.postDelayMaxSeconds}s giữa bài</small>
+            </button>
+            <button type="button" onClick={() => setDialog('schedule')}>
+              <span>Schedule</span>
+              <strong>{config.schedules.filter((item) => item.enabled).length} khung bật</strong>
+              <small>{config.schedules.length === 0 ? 'Không có lịch = chạy mọi lúc' : `${config.schedules.length} khung đã tạo`}</small>
+            </button>
+            <button type="button" onClick={() => setDialog('groups')}>
+              <span>Groups</span>
+              <strong>{parseGroupText(config.groupUids.join('\n')).length} group</strong>
+              <small>Group Set gốc</small>
+            </button>
+            <button type="button" onClick={() => setDialog('content')}>
+              <span>Content</span>
+              <strong>{config.contents.filter((item) => item.trim()).length} nội dung</strong>
+              <small>{config.contentMode}</small>
+            </button>
+            <button type="button" onClick={() => setDialog('images')}>
+              <span>Images</span>
+              <strong>{config.image.folderPath ? `${imageInspection?.fileCount ?? 0} ảnh` : 'Chưa chọn folder'}</strong>
+              <small>{config.image.mode} · {config.image.imagesPerPost} ảnh/bài</small>
+            </button>
+          </section>
         </div>
       )}
 
       {createOpen ? <CreateTabModal onClose={() => setCreateOpen(false)} onCreate={createTab} /> : null}
+
+      {config && dialog === 'rotation' ? (
+        <ModalShell eyebrow="Page Tab config" title="Rotation & Delay" wide onClose={() => setDialog(null)} footer={modalFooter}>
+          <div className="pt-form-grid modal-five">
+            <label><span>Bài/account</span><input type="number" min="1" value={config.rotation.postsPerAccount} onChange={(event) => patchConfig({ rotation: { ...config.rotation, postsPerAccount: Number(event.target.value) } })} /></label>
+            <label><span>Delay bài min (s)</span><input type="number" min="0" value={config.rotation.postDelayMinSeconds} onChange={(event) => patchConfig({ rotation: { ...config.rotation, postDelayMinSeconds: Number(event.target.value) } })} /></label>
+            <label><span>Delay bài max (s)</span><input type="number" min="0" value={config.rotation.postDelayMaxSeconds} onChange={(event) => patchConfig({ rotation: { ...config.rotation, postDelayMaxSeconds: Number(event.target.value) } })} /></label>
+            <label><span>Đổi account min (s)</span><input type="number" min="0" value={config.rotation.accountDelayMinSeconds} onChange={(event) => patchConfig({ rotation: { ...config.rotation, accountDelayMinSeconds: Number(event.target.value) } })} /></label>
+            <label><span>Đổi account max (s)</span><input type="number" min="0" value={config.rotation.accountDelayMaxSeconds} onChange={(event) => patchConfig({ rotation: { ...config.rotation, accountDelayMaxSeconds: Number(event.target.value) } })} /></label>
+          </div>
+          <p className="pt-help">Account trong cùng Page Tab luôn chạy tuần tự. Bài/lượt riêng ở bảng account sẽ override Bài/account.</p>
+        </ModalShell>
+      ) : null}
+
+      {config && dialog === 'schedule' ? (
+        <ModalShell eyebrow="Page Tab config" title="Schedule" wide onClose={() => setDialog(null)} footer={modalFooter}>
+          <div className="pt-modal-toolbar">
+            <span>Không có khung giờ bật = tab được phép chạy mọi lúc.</span>
+            <button className="pt-button secondary" type="button" onClick={addSchedule}>+ Khung giờ</button>
+          </div>
+          <div className="pt-schedule-list">
+            {config.schedules.map((schedule, index) => {
+              const validation = scheduleValidationError(schedule, index)
+              return (
+                <div className={validation ? 'pt-schedule-item invalid' : 'pt-schedule-item'} key={`${schedule.id}:${index}`}>
+                  <div className="pt-schedule-row">
+                    <label><span>On</span><input type="checkbox" checked={schedule.enabled} onChange={(event) => updateSchedule(index, { enabled: event.target.checked })} /></label>
+                    <label><span>Ngày</span><select value={schedule.dayOfWeek} onChange={(event) => updateSchedule(index, { dayOfWeek: Number(event.target.value) })}>{dayLabels.map((label, day) => <option key={label} value={day}>{label}</option>)}</select></label>
+                    <label><span>Từ</span><input type="time" value={minutesToTime(schedule.startMinute)} onChange={(event) => updateSchedule(index, { startMinute: timeToMinutes(event.target.value) })} /></label>
+                    <label><span>Đến</span><input type="time" value={minutesToTime(schedule.endMinute)} onChange={(event) => updateSchedule(index, { endMinute: timeToMinutes(event.target.value) })} /></label>
+                    <button className="pt-remove-button" type="button" onClick={() => patchConfig({ schedules: config.schedules.filter((_, itemIndex) => itemIndex !== index) })}>Remove</button>
+                  </div>
+                  {validation ? <div className="pt-inline-error">{validation}</div> : null}
+                </div>
+              )
+            })}
+            {config.schedules.length === 0 ? <div className="pt-empty-row">Chưa có lịch.</div> : null}
+          </div>
+        </ModalShell>
+      ) : null}
+
+      {config && dialog === 'groups' ? (
+        <ModalShell eyebrow="Page Tab config" title="Group Set gốc" wide onClose={() => setDialog(null)} footer={modalFooter}>
+          <div className="pt-modal-toolbar">
+            <span>{parseGroupText(config.groupUids.join('\n')).length} Group UID · Save sẽ trim và deduplicate.</span>
+            <button className="pt-button secondary" type="button" onClick={() => void importGroups()}>Import TXT/CSV</button>
+          </div>
+          <textarea
+            className="pt-source-textarea tall"
+            rows={18}
+            value={config.groupUids.join('\n')}
+            onChange={(event) => patchConfig({ groupUids: event.target.value.split(/\r?\n/) })}
+            placeholder={'123456789\n987654321\n...'}
+          />
+          <p className="pt-help">Đây là danh sách nguồn. Mỗi run clone riêng sang run_items; success chỉ consume trong run hiện tại.</p>
+        </ModalShell>
+      ) : null}
+
+      {config && dialog === 'content' ? (
+        <ModalShell eyebrow="Page Tab config" title="Content Set" wide onClose={() => setDialog(null)} footer={modalFooter}>
+          <div className="pt-modal-toolbar">
+            <div className="pt-modal-inline-field">
+              <span>Mode</span>
+              <select value={config.contentMode} onChange={(event) => patchConfig({ contentMode: event.target.value as PageTabConfig['contentMode'] })}>
+                {CONTENT_MODES.map((mode) => <option key={mode} value={mode}>{mode}</option>)}
+              </select>
+            </div>
+            <div className="pt-heading-actions">
+              <button className="pt-button secondary" type="button" onClick={() => void importContents()}>Import TXT</button>
+              <button className="pt-button secondary" type="button" onClick={() => patchConfig({ contents: [...config.contents, ''] })}>+ Content</button>
+            </div>
+          </div>
+          <div className="pt-content-list">
+            {config.contents.map((content, index) => (
+              <div className="pt-content-item" key={index}>
+                <div className="pt-content-order">
+                  <strong>#{index + 1}</strong>
+                  <button type="button" onClick={() => patchConfig({ contents: moveItem(config.contents, index, -1) })} disabled={index === 0}>↑</button>
+                  <button type="button" onClick={() => patchConfig({ contents: moveItem(config.contents, index, 1) })} disabled={index === config.contents.length - 1}>↓</button>
+                </div>
+                <textarea rows={5} value={content} onChange={(event) => patchConfig({ contents: config.contents.map((item, itemIndex) => itemIndex === index ? event.target.value : item) })} placeholder="Nội dung bài viết…" />
+                <button className="pt-remove-button" type="button" onClick={() => patchConfig({ contents: config.contents.filter((_, itemIndex) => itemIndex !== index) })}>Remove</button>
+              </div>
+            ))}
+            {config.contents.length === 0 ? <div className="pt-empty-row">Chưa có content item.</div> : null}
+          </div>
+        </ModalShell>
+      ) : null}
+
+      {config && dialog === 'images' ? (
+        <ModalShell eyebrow="Page Tab config" title="Images" wide onClose={() => setDialog(null)} footer={modalFooter}>
+          <div className="pt-image-grid">
+            <label className="pt-stack-field full"><span>Folder Windows</span><div className="pt-folder-row"><input readOnly value={config.image.folderPath} placeholder="Chưa chọn folder" /><button className="pt-button secondary" type="button" onClick={() => void pickImageFolder()}>Browse</button></div></label>
+            <div className="pt-folder-status full">
+              {!config.image.folderPath ? 'Chưa chọn folder ảnh.' : imageInspection?.exists ? `${imageInspection.fileCount} file ảnh jpg/jpeg/png/webp` : 'Folder không tồn tại hoặc không đọc được.'}
+            </div>
+            <label className="pt-stack-field"><span>Chế độ ảnh</span><select value={config.image.mode} onChange={(event) => patchConfig({ image: { ...config.image, mode: event.target.value as PageTabConfig['image']['mode'] } })}>{IMAGE_MODES.map((mode) => <option key={mode} value={mode}>{mode}</option>)}</select></label>
+            <label className="pt-stack-field"><span>Số ảnh/bài</span><input type="number" min="1" value={config.image.imagesPerPost} onChange={(event) => patchConfig({ image: { ...config.image, imagesPerPost: Number(event.target.value) } })} /></label>
+            <label className="pt-stack-field"><span>Nếu thiếu ảnh</span><select value={config.image.missingPolicy} onChange={(event) => patchConfig({ image: { ...config.image, missingPolicy: event.target.value as PageTabConfig['image']['missingPolicy'] } })}>{MISSING_IMAGE_POLICIES.map((policy) => <option key={policy} value={policy}>{policy}</option>)}</select></label>
+          </div>
+        </ModalShell>
+      ) : null}
     </section>
   )
 }
