@@ -1,7 +1,7 @@
 import { app, dialog, ipcMain } from 'electron'
 import type Database from 'better-sqlite3'
-import { readFile, readdir, stat } from 'node:fs/promises'
-import { extname } from 'node:path'
+import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import { dirname, extname, join } from 'node:path'
 import {
   IPC_CHANNELS,
   type AccountColumnLayoutPayload,
@@ -16,6 +16,7 @@ import type {
   AccountListFilters,
   SaveImportPresetInput
 } from '../shared/accounts'
+import type { ConfigBackupRestoreResult } from '../shared/configBackup'
 import type { ExecutionLogFilters, RetryRunItemPayload } from '../shared/executionLogs'
 import type {
   CreatePageTabInput,
@@ -31,6 +32,7 @@ import { ExecutionLogRepository } from './database/executionLogRepository'
 import { PageTabRepository } from './database/pageTabRepository'
 import { RunRepository } from './database/runRepository'
 import { AccountExecutionCoordinator } from './services/accountExecutionCoordinator'
+import { ConfigBackupService } from './services/configBackupService'
 import { PageTabWorkerManager } from './services/pageTabWorkerManager'
 import { PostingService } from './services/postingService'
 import { ResilientPostingService } from './services/resilientPostingService'
@@ -47,6 +49,7 @@ export interface IpcRuntime {
 }
 
 const supportedImageExtensions = new Set(['.jpg', '.jpeg', '.png', '.webp'])
+const MAX_BACKUP_FILE_BYTES = 20 * 1024 * 1024
 
 export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
   const accounts = new AccountRepository(options.database)
@@ -54,6 +57,7 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
   const runs = new RunRepository(options.database)
   const executionLogs = new ExecutionLogRepository(options.database)
   const recovery = new RuntimeRecoveryService(options.database, executionLogs)
+  const configBackup = new ConfigBackupService(options.database)
   recovery.recoverInterruptedRuns()
 
   const browserProfiles = new BrowserProfileManager(options.dataDirectory)
@@ -73,7 +77,9 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
 
   ipcMain.handle(IPC_CHANNELS.appInfo, (): AppInfo => ({
     name: app.getName(),
-    version: app.getVersion()
+    version: app.getVersion(),
+    isPackaged: app.isPackaged,
+    dataDirectory: options.dataDirectory
   }))
 
   ipcMain.handle(IPC_CHANNELS.accountsList, (_event, filters?: AccountListFilters) => accounts.list(filters))
@@ -188,6 +194,57 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
   ipcMain.handle(IPC_CHANNELS.executionLogsRetryItem, (_event, payload: RetryRunItemPayload) =>
     recovery.retryFailedItem(payload.runItemId)
   )
+
+  ipcMain.handle(IPC_CHANNELS.configBackupExport, async () => {
+    const backupDirectory = join(options.dataDirectory, 'backups')
+    await mkdir(backupDirectory, { recursive: true })
+    const defaultName = `PageAuto-config-v${app.getVersion()}-${new Date().toISOString().slice(0, 10)}.json`
+    const result = await dialog.showSaveDialog({
+      title: 'Xuất PAGE-AUTO config backup',
+      defaultPath: join(backupDirectory, defaultName),
+      filters: [{ name: 'PAGE-AUTO config backup', extensions: ['json'] }]
+    })
+    if (result.canceled || !result.filePath) {
+      return { canceled: true, filePath: null, summary: null, message: 'Đã hủy xuất backup.' }
+    }
+
+    const payload = configBackup.createPayload(app.getVersion())
+    await mkdir(dirname(result.filePath), { recursive: true })
+    await writeFile(result.filePath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8')
+    return {
+      canceled: false,
+      filePath: result.filePath,
+      summary: configBackup.getSummary(payload),
+      message: `Đã xuất backup cấu hình: ${result.filePath}`
+    }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.configBackupRestore, async (): Promise<ConfigBackupRestoreResult> => {
+    const result = await dialog.showOpenDialog({
+      title: 'Khôi phục PAGE-AUTO config backup',
+      properties: ['openFile'],
+      filters: [{ name: 'PAGE-AUTO config backup', extensions: ['json'] }]
+    })
+    const filePath = result.canceled ? undefined : result.filePaths[0]
+    if (!filePath) {
+      return {
+        canceled: true,
+        filePath: null,
+        accountsCreated: 0,
+        pageTabsCreated: 0,
+        pageTabsUpdated: 0,
+        importPresetsRestored: 0,
+        columnLayoutRestored: false,
+        message: 'Đã hủy restore backup.'
+      }
+    }
+
+    const fileStat = await stat(filePath)
+    if (fileStat.size > MAX_BACKUP_FILE_BYTES) {
+      throw new Error('File backup lớn hơn giới hạn 20 MB.')
+    }
+    return configBackup.restoreFromJson(await readFile(filePath, 'utf8'), filePath)
+  })
 
   return {
     dispose: () => {

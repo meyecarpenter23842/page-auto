@@ -18,6 +18,7 @@ import type {
   ImportPreset,
   SaveImportPresetInput
 } from '../shared/accounts'
+import type { ConfigBackupExportResult, ConfigBackupRestoreResult } from '../shared/configBackup'
 import type {
   ExecutionLogFilters,
   ExecutionLogRecord,
@@ -102,7 +103,11 @@ const api = {
   listExecutionLogs: (filters?: ExecutionLogFilters): Promise<ExecutionLogRecord[]> =>
     ipcRenderer.invoke(IPC_CHANNELS.executionLogsList, filters) as Promise<ExecutionLogRecord[]>,
   retryExecutionLogItem: (payload: RetryRunItemPayload): Promise<RetryRunItemResult> =>
-    ipcRenderer.invoke(IPC_CHANNELS.executionLogsRetryItem, payload) as Promise<RetryRunItemResult>
+    ipcRenderer.invoke(IPC_CHANNELS.executionLogsRetryItem, payload) as Promise<RetryRunItemResult>,
+  exportConfigBackup: (): Promise<ConfigBackupExportResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.configBackupExport) as Promise<ConfigBackupExportResult>,
+  restoreConfigBackup: (): Promise<ConfigBackupRestoreResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.configBackupRestore) as Promise<ConfigBackupRestoreResult>
 }
 
 contextBridge.exposeInMainWorld('pageAuto', api)

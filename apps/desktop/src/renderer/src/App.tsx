@@ -4,6 +4,7 @@ import { AccountManager } from './accounts/AccountManager'
 import { ExecutionLogs } from './logs/ExecutionLogs'
 import { MultiTabRuntimeDashboard } from './page-tabs/MultiTabRuntimeDashboard'
 import { PageTabsManager } from './page-tabs/PageTabsManager'
+import { SettingsPanel } from './settings/SettingsPanel'
 
 type RouteId = 'overview' | 'accounts' | 'page-tabs' | 'logs' | 'settings'
 
@@ -24,7 +25,7 @@ const routes: Route[] = [
 const routeDescriptions: Record<RouteId, { title: string; description: string }> = {
   overview: {
     title: 'Tổng quan',
-    description: 'Phase 8 bổ sung crash recovery, retry policy an toàn, screenshot lỗi và execution log có thể audit theo từng Page/Account/Group.'
+    description: 'Phase 9 đóng gói PAGE-AUTO thành Windows portable folder/ZIP, giữ data cạnh executable và bổ sung backup/restore config không chứa plaintext secret.'
   },
   accounts: {
     title: 'Account Manager',
@@ -40,7 +41,7 @@ const routeDescriptions: Record<RouteId, { title: string; description: string }>
   },
   settings: {
     title: 'Settings',
-    description: 'Thiết lập global vẫn đi qua Main/IPC, renderer không truy cập database hoặc browser trực tiếp.'
+    description: 'Portable runtime, data folder, version và backup/restore cấu hình được quản lý qua Main/IPC.'
   }
 }
 
@@ -102,36 +103,38 @@ export function App() {
           </>
         ) : activeRoute === 'logs' ? (
           <ExecutionLogs />
+        ) : activeRoute === 'settings' ? (
+          <SettingsPanel appInfo={appInfo} />
         ) : (
           <>
             <section className="hero-card">
               <div>
-                <span className="phase-badge">PHASE {activeRoute === 'overview' ? '8' : 'NEXT'}</span>
+                <span className="phase-badge">PHASE 9</span>
                 <h2>{active.title}</h2>
                 <p>{active.description}</p>
               </div>
               <div className="architecture-grid">
-                <div><strong>Recovery</strong><span>Crash-safe run state</span></div>
-                <div><strong>Retry</strong><span>Transient only · max 3</span></div>
-                <div><strong>Evidence</strong><span>Error screenshots</span></div>
-                <div><strong>Audit</strong><span>Execution logs</span></div>
+                <div><strong>Portable</strong><span>Folder + ZIP</span></div>
+                <div><strong>Executable</strong><span>PageAuto.exe</span></div>
+                <div><strong>Data</strong><span>Beside executable</span></div>
+                <div><strong>Backup</strong><span>Config · no secrets</span></div>
               </div>
             </section>
 
             <section className="content-card">
               <div className="section-heading">
                 <div>
-                  <p className="eyebrow">Architecture status</p>
-                  <h2>Phase 8 bảo toàn queue khi worker/app bị gián đoạn</h2>
+                  <p className="eyebrow">MVP packaging status</p>
+                  <h2>Phase 9 hoàn thiện mô hình Windows portable</h2>
                 </div>
-                <span className="healthy-chip">Recovery + logs active</span>
+                <span className="healthy-chip">Portable-ready architecture</span>
               </div>
 
               <div className="check-list">
-                <div><span>01</span><div><strong>No blind success</strong><p>Item processing bị gián đoạn không bao giờ tự chuyển success.</p></div></div>
-                <div><span>02</span><div><strong>No blind duplicate</strong><p>Publish chưa xác nhận hoặc crash giữa job được đưa vào manual review thay vì tự đăng lại.</p></div></div>
-                <div><span>03</span><div><strong>Bounded retry</strong><p>Chỉ lỗi transient được retry, tối đa ba attempt cho mỗi run item.</p></div></div>
-                <div><span>04</span><div><strong>Traceable evidence</strong><p>Log lưu Page/Account/Group/error/screenshot path mà không ghi credential plaintext.</p></div></div>
+                <div><span>01</span><div><strong>No installer</strong><p>Artifact mục tiêu là folder/ZIP portable, không tạo Setup/NSIS trong MVP.</p></div></div>
+                <div><span>02</span><div><strong>Stable data path</strong><p>SQLite, browser profile, logs và screenshots nằm trong data cạnh PageAuto.exe.</p></div></div>
+                <div><span>03</span><div><strong>Versioned migration</strong><p>Database cũ tiếp tục chạy migration version khi mở bằng bản app mới.</p></div></div>
+                <div><span>04</span><div><strong>Safe config backup</strong><p>Backup cấu hình không xuất password, cookie, 2FA hoặc browser profile.</p></div></div>
               </div>
             </section>
           </>

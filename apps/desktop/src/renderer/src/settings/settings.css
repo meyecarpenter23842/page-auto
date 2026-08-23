@@ -1,0 +1,118 @@
+.settings-page {
+  display: grid;
+  gap: 18px;
+}
+
+.settings-card {
+  overflow: hidden;
+}
+
+.settings-info-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.settings-info-grid > div {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+  border: 1px solid #dbe4f0;
+  border-radius: 12px;
+  background: #f8fbff;
+}
+
+.settings-info-grid span {
+  color: #697b91;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.settings-info-grid strong {
+  min-width: 0;
+  color: #17324d;
+  font-size: 14px;
+}
+
+.settings-path strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-note,
+.settings-backup-copy {
+  margin-top: 16px;
+  color: #53677d;
+  line-height: 1.65;
+}
+
+.settings-note code,
+.settings-backup-copy code {
+  padding: 2px 5px;
+  border-radius: 5px;
+  background: #eef4fb;
+  color: #1f5d91;
+}
+
+.settings-backup-copy {
+  display: grid;
+  gap: 8px;
+}
+
+.settings-backup-copy p {
+  margin: 0;
+}
+
+.settings-safe-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid #b8dfca;
+  border-radius: 999px;
+  background: #effaf4;
+  color: #237a4b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.settings-message {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.settings-message.success {
+  border: 1px solid #b8dfca;
+  background: #effaf4;
+  color: #237a4b;
+}
+
+.settings-message.error {
+  border: 1px solid #f0c2c2;
+  background: #fff4f4;
+  color: #a43b3b;
+}
+
+.settings-check-list {
+  margin-top: 4px;
+}
+
+@media (max-width: 1050px) {
+  .settings-info-grid {
+    grid-template-columns: 1fr;
+  }
+}

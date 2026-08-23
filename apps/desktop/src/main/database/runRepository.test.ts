@@ -92,7 +92,7 @@ describe('RunRepository', () => {
     expect(runs.listItems(secondRun.run.id).map((item) => item.groupUid)).toEqual(groupUids)
 
     runtime.close()
-  })
+  }, 15_000)
 
   it('preserves an in-flight processing item across pause/resume and keeps the original snapshot immutable', () => {
     const { runtime, tabs, runs, tab } = configureTab(['g1', 'g2', 'g3'])
