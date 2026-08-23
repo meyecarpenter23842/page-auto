@@ -119,6 +119,42 @@ describe('PageTabRepository', () => {
     runtime.close()
   })
 
+  it('allows disabled schedule drafts but still rejects invalid enabled windows', () => {
+    const runtime = createRuntime()
+    const tabs = new PageTabRepository(runtime.client)
+    const tab = tabs.create({ name: 'Page A', pageUid: '90001' })
+
+    const baseConfig = {
+      name: 'Page A',
+      pageUid: '90001',
+      rotation: {
+        postsPerAccount: 1,
+        postDelayMinSeconds: 1,
+        postDelayMaxSeconds: 2,
+        accountDelayMinSeconds: 1,
+        accountDelayMaxSeconds: 2
+      },
+      accounts: [],
+      groupUids: [],
+      contentMode: 'sequential' as const,
+      contents: [],
+      image: { folderPath: '', mode: 'sequential' as const, imagesPerPost: 1, missingPolicy: 'text_only' as const }
+    }
+
+    const saved = tabs.update(tab.id, {
+      ...baseConfig,
+      schedules: [{ dayOfWeek: 1, startMinute: 600, endMinute: 600, enabled: false, sortOrder: 0 }]
+    })
+    expect(saved.schedules[0]).toMatchObject({ startMinute: 600, endMinute: 600, enabled: false })
+
+    expect(() => tabs.update(tab.id, {
+      ...baseConfig,
+      schedules: [{ dayOfWeek: 1, startMinute: 600, endMinute: 600, enabled: true, sortOrder: 0 }]
+    })).toThrow('Khung giờ phải có giờ kết thúc sau giờ bắt đầu')
+
+    runtime.close()
+  })
+
   it('rejects invalid delay windows and missing account references', () => {
     const runtime = createRuntime()
     const tabs = new PageTabRepository(runtime.client)

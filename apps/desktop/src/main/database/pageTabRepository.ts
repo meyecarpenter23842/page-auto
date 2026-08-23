@@ -106,17 +106,19 @@ function normalizeConfig(input: PageTabSaveInput): PageTabSaveInput {
   })
 
   const schedules = input.schedules.map((item, index) => {
-    if (!Number.isInteger(item.dayOfWeek) || item.dayOfWeek < 0 || item.dayOfWeek > 6) {
-      throw new Error('Ngày chạy không hợp lệ.')
-    }
-    if (!Number.isInteger(item.startMinute) || item.startMinute < 0 || item.startMinute >= 1440) {
-      throw new Error('Giờ bắt đầu không hợp lệ.')
-    }
-    if (!Number.isInteger(item.endMinute) || item.endMinute <= 0 || item.endMinute > 1440) {
-      throw new Error('Giờ kết thúc không hợp lệ.')
-    }
-    if (item.startMinute >= item.endMinute) {
-      throw new Error('Khung giờ phải có giờ kết thúc sau giờ bắt đầu.')
+    if (item.enabled) {
+      if (!Number.isInteger(item.dayOfWeek) || item.dayOfWeek < 0 || item.dayOfWeek > 6) {
+        throw new Error('Ngày chạy không hợp lệ.')
+      }
+      if (!Number.isInteger(item.startMinute) || item.startMinute < 0 || item.startMinute >= 1440) {
+        throw new Error('Giờ bắt đầu không hợp lệ.')
+      }
+      if (!Number.isInteger(item.endMinute) || item.endMinute <= 0 || item.endMinute > 1440) {
+        throw new Error('Giờ kết thúc không hợp lệ.')
+      }
+      if (item.startMinute >= item.endMinute) {
+        throw new Error('Khung giờ phải có giờ kết thúc sau giờ bắt đầu.')
+      }
     }
     return {
       dayOfWeek: item.dayOfWeek,
