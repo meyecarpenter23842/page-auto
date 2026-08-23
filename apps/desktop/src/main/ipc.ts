@@ -128,7 +128,7 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
     pageTabs.update(payload.id, payload.config)
   )
   ipcMain.handle(IPC_CHANNELS.pageTabsDelete, (_event, payload: PageTabIdPayload) => pageTabs.delete(payload.id))
-  ipcMain.handle(IPC_CHANNELS.pageTabsDuplicate, (_event, payload: PageTabIdPayload) => pageTabs.duplicate(payload))
+  ipcMain.handle(IPC_CHANNELS.pageTabsDuplicate, (_event, payload: PageTabIdPayload) => pageTabs.duplicate(payload.id))
 
   ipcMain.handle(IPC_CHANNELS.pageTabsPickImageFolder, async () => {
     const result = await dialog.showOpenDialog({
@@ -158,7 +158,7 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
       properties: ['openFile'],
       filters: [
         { name: 'Text / CSV', extensions: ['txt', 'csv'] },
-        { name: 'All files', extensions: ['+'] }
+        { name: 'All files', extensions: ['*'] }
       ]
     })
     const filePath = result.canceled ? undefined : result.filePaths[0]
