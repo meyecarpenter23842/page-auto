@@ -83,6 +83,8 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.runsResume, payload) as Promise<RunDetails>,
   executeSinglePostingJob: (payload: ExecuteSinglePostingJobPayload): Promise<ExecuteSinglePostingJobResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.postingExecuteSingle, payload) as Promise<ExecuteSinglePostingJobResult>,
+  listPageTabRotations: (): Promise<RotationRuntimeSnapshot[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.rotationList) as Promise<RotationRuntimeSnapshot[]>,
   getPageTabRotationStatus: (payload: RotationPageTabPayload): Promise<RotationRuntimeSnapshot> =>
     ipcRenderer.invoke(IPC_CHANNELS.rotationStatus, payload) as Promise<RotationRuntimeSnapshot>,
   startPageTabRotation: (payload: RotationPageTabPayload): Promise<RotationRuntimeSnapshot> =>
