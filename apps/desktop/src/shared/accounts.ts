@@ -112,6 +112,7 @@ export interface AccountColumnLayout {
 export interface BrowserProfileResult {
   status: 'started' | 'already_open' | 'error'
   profileDirectory?: string
+  sessionStatus?: AccountStatus
   message?: string
 }
 
