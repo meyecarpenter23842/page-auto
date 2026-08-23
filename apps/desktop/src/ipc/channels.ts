@@ -10,6 +10,7 @@ import type {
   SaveImportPresetInput
 } from '../shared/accounts'
 import type { AppSettings, AppSettingsPatch } from '../shared/appSettings'
+import type { BrowserExecutableResult, BrowserTestRequest, BrowserTestResult } from '../shared/browserSettings'
 import type { CaptchaSettingsView, SaveCaptchaSettingsInput } from '../shared/captchaSettings'
 import type { ConfigBackupExportResult, ConfigBackupRestoreResult } from '../shared/configBackup'
 import type {
@@ -70,6 +71,10 @@ export const IPC_CHANNELS = {
   appSettingsGet: 'settings:app:get',
   appSettingsUpdate: 'settings:app:update',
   appSettingsReset: 'settings:app:reset',
+  browserDetect: 'settings:browser:detect',
+  browserPickExecutable: 'settings:browser:pick-executable',
+  browserProbeExecutable: 'settings:browser:probe-executable',
+  browserTest: 'settings:browser:test',
   captchaSettingsGet: 'settings:captcha:get',
   captchaSettingsSave: 'settings:captcha:save'
 } as const
@@ -81,22 +86,10 @@ export interface AppInfo {
   dataDirectory: string
 }
 
-export interface AccountUpdatePayload {
-  id: number
-  patch: Partial<AccountDraft>
-}
-
-export interface AccountDeletePayload {
-  ids: number[]
-}
-
-export interface AccountColumnLayoutPayload {
-  layout: AccountColumnLayout
-}
-
-export interface AccountOpenProfilePayload {
-  accountId: number
-}
+export interface AccountUpdatePayload { id: number; patch: Partial<AccountDraft> }
+export interface AccountDeletePayload { ids: number[] }
+export interface AccountColumnLayoutPayload { layout: AccountColumnLayout }
+export interface AccountOpenProfilePayload { accountId: number }
 
 export interface PageAutoIpcContract {
   getAppInfo: () => Promise<AppInfo>
@@ -137,6 +130,10 @@ export interface PageAutoIpcContract {
   getAppSettings: () => Promise<AppSettings>
   updateAppSettings: (input: AppSettingsPatch) => Promise<AppSettings>
   resetAppSettings: () => Promise<AppSettings>
+  detectChrome: () => Promise<BrowserExecutableResult>
+  pickChromeExecutable: () => Promise<BrowserExecutableResult>
+  probeChromeExecutable: (executablePath: string) => Promise<BrowserExecutableResult>
+  testBrowser: (input: BrowserTestRequest) => Promise<BrowserTestResult>
   getCaptchaSettings: () => Promise<CaptchaSettingsView>
   saveCaptchaSettings: (input: SaveCaptchaSettingsInput) => Promise<CaptchaSettingsView>
 }

@@ -1,10 +1,12 @@
 import { chromium, type BrowserContext } from 'playwright-core'
+import type { BrowserSettings } from '../../shared/appSettings'
 import type { PostingProxyConfig } from '../../shared/posting'
 import {
   bootstrapFacebookSession,
   type FacebookSessionAccount,
   type FacebookSessionResult
 } from './facebookSession'
+import { applyBrowserContextSettings, buildBrowserLaunchOptions, waitForBrowserStartupDelay } from './browserRuntime'
 
 interface BrowserLaunchConfig {
   proxy?: PostingProxyConfig
@@ -14,6 +16,7 @@ interface BrowserLaunchConfig {
 interface BootstrapCommand {
   type: 'bootstrap'
   account: FacebookSessionAccount
+  browser: BrowserSettings
   launch?: BrowserLaunchConfig
 }
 
@@ -43,7 +46,7 @@ function commandFromMessage(event: unknown): BootstrapCommand | null {
     : event
   if (!payload || typeof payload !== 'object') return null
   const candidate = payload as Partial<BootstrapCommand>
-  if (candidate.type !== 'bootstrap' || !candidate.account) return null
+  if (candidate.type !== 'bootstrap' || !candidate.account || !candidate.browser) return null
   return candidate as BootstrapCommand
 }
 
@@ -52,15 +55,16 @@ async function run(): Promise<void> {
   if (!profileDirectory) throw new Error('Missing browser profile directory.')
 
   let context: BrowserContext | null = null
+  let lifetimeTimer: NodeJS.Timeout | null = null
   let closing = false
   let queue = Promise.resolve()
 
   const ensureContext = async (command: BootstrapCommand): Promise<BrowserContext> => {
     if (context) return context
 
+    await waitForBrowserStartupDelay(command.browser)
     const launchOptions: NonNullable<Parameters<typeof chromium.launchPersistentContext>[1]> = {
-      channel: 'chrome',
-      headless: false,
+      ...buildBrowserLaunchOptions(command.browser),
       viewport: null,
       ...(command.launch?.userAgent ? { userAgent: command.launch.userAgent } : {})
     }
@@ -73,9 +77,20 @@ async function run(): Promise<void> {
     }
 
     const opened = await chromium.launchPersistentContext(profileDirectory, launchOptions)
+    await applyBrowserContextSettings(opened, command.browser)
     context = opened
+
+    if (lifetimeTimer) clearTimeout(lifetimeTimer)
+    lifetimeTimer = setTimeout(() => {
+      void opened.close().catch(() => undefined)
+    }, command.browser.maxLifetimeMinutes * 60_000)
+
     opened.once('close', () => {
       context = null
+      if (lifetimeTimer) {
+        clearTimeout(lifetimeTimer)
+        lifetimeTimer = null
+      }
       if (closing) return
       closing = true
       const message: BrowserClosedMessage = { type: 'browser-closed' }

@@ -1,3 +1,4 @@
+import type { BrowserSettings } from './appSettings'
 import type { RunDetails, RunItem } from './runs'
 
 export const POSTING_RESULT_STATUSES = ['success', 'failed', 'needs_login', 'skipped'] as const
@@ -43,6 +44,7 @@ export interface PostingJobRequest {
   groupUid: string
   content: string
   imagePaths: string[]
+  browser: BrowserSettings
   userAgent?: string
   proxy?: PostingProxyConfig
 }
