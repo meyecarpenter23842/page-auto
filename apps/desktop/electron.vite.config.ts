@@ -9,7 +9,8 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: resolve('src/main/index.ts'),
-          'browser-profile-worker': resolve('src/main/browser/browser-profile-worker.ts')
+          'browser-profile-worker': resolve('src/main/browser/browser-profile-worker.ts'),
+          'posting-worker': resolve('src/main/browser/posting-worker.ts')
         }
       }
     }
