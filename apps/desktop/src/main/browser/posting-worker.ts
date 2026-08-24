@@ -22,6 +22,10 @@ interface RetileRequest {
   placement: BrowserWindowPlacement | null
 }
 
+function isRetileRequest(payload: unknown): payload is RetileRequest {
+  return Boolean(payload && typeof payload === 'object' && (payload as { type?: unknown }).type === 'retile')
+}
+
 parentPort.on('message', (event) => {
   const payload = event.data as PostingWorkerRequestMessage | RetileRequest | { type?: string }
   if (payload?.type === 'shutdown') {
@@ -34,7 +38,7 @@ parentPort.on('message', (event) => {
     return
   }
 
-  if (payload?.type === 'retile' && !shuttingDown) {
+  if (isRetileRequest(payload) && !shuttingDown) {
     queue = queue.then(() => retileManagedPostingBrowser(payload.placement))
     return
   }
