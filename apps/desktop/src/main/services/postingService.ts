@@ -193,6 +193,10 @@ export class PostingService {
     return { accountId: account.id, item, result, run }
   }
 
+  async releaseAccount(accountId: number): Promise<void> {
+    await this.workers.closeAccount(accountId)
+  }
+
   closeAll(): void {
     this.workers.closeAll()
   }
