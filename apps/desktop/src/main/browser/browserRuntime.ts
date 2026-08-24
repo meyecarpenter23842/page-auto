@@ -20,7 +20,23 @@ export interface CompactDeviceMetrics {
   scale: number
 }
 
-export function compactDeviceMetrics(placement: BrowserWindowPlacement): CompactDeviceMetrics {
+const MIN_COMPACT_SCALE = 0.08
+
+export function effectiveCompactContentScale(
+  placement: BrowserWindowPlacement,
+  innerWidth: number,
+  innerHeight: number
+): number {
+  const widthScale = Math.max(1, innerWidth) / Math.max(1, placement.viewportWidth)
+  const heightScale = Math.max(1, innerHeight) / Math.max(1, placement.viewportHeight)
+  const scale = Math.min(1, widthScale, heightScale)
+  return Math.max(MIN_COMPACT_SCALE, Math.round(scale * 1000) / 1000)
+}
+
+export function compactDeviceMetrics(
+  placement: BrowserWindowPlacement,
+  actualScale: number = placement.contentScale
+): CompactDeviceMetrics {
   return {
     width: placement.viewportWidth,
     height: placement.viewportHeight,
@@ -28,7 +44,7 @@ export function compactDeviceMetrics(placement: BrowserWindowPlacement): Compact
     mobile: false,
     screenWidth: placement.viewportWidth,
     screenHeight: placement.viewportHeight,
-    scale: placement.contentScale
+    scale: actualScale
   }
 }
 
@@ -44,7 +60,6 @@ export function buildBrowserLaunchOptions(
       ]
     : [`--window-size=${settings.windowWidth},${settings.windowHeight}`]
 
-  // Compact/tiled windows must stay visible. Minimized applies only to the normal mode.
   if (!placement && settings.mode === 'minimized') args.push('--start-minimized')
   if (settings.muteAudio) args.push('--mute-audio')
   if (settings.disableGpu) args.push('--disable-gpu')
@@ -77,9 +92,10 @@ export async function applyBrowserContextSettings(
 
 /**
  * Compact mode keeps Facebook on the configured desktop layout viewport while the
- * real Chrome top-level window is physically much smaller. CDP scales the rendered
- * view down to the slot, so the operator sees the whole page at a smaller ratio
- * instead of a large desktop page cropped to one corner.
+ * real Chrome top-level window is physically much smaller. After resizing, the
+ * worker measures the real content area (excluding tabs/address bar) and scales the
+ * rendered page to fit that area, so the whole desktop page stays visible instead
+ * of being cropped to a corner.
  */
 export async function applyBrowserWindowPlacement(
   context: BrowserContext,
@@ -101,6 +117,8 @@ export async function applyBrowserWindowPlacement(
       return
     }
 
+    await session.send('Emulation.clearDeviceMetricsOverride').catch(() => undefined)
+
     if (targetWindow?.windowId !== undefined) {
       await session.send('Browser.setWindowBounds', {
         windowId: targetWindow.windowId,
@@ -114,7 +132,14 @@ export async function applyBrowserWindowPlacement(
       }).catch(() => undefined)
     }
 
-    await session.send('Emulation.setDeviceMetricsOverride', compactDeviceMetrics(placement))
+    await page.waitForTimeout(60).catch(() => undefined)
+    const inner = await page.evaluate(() => ({
+      width: window.innerWidth,
+      height: window.innerHeight
+    })).catch(() => ({ width: placement.width, height: placement.height }))
+    const actualScale = effectiveCompactContentScale(placement, inner.width, inner.height)
+
+    await session.send('Emulation.setDeviceMetricsOverride', compactDeviceMetrics(placement, actualScale))
   } finally {
     await session.detach().catch(() => undefined)
   }
