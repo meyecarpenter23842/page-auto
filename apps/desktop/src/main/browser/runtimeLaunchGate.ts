@@ -8,13 +8,26 @@ const defaultClock: LaunchGateClock = {
   sleep: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
 }
 
+export type BrowserLaunchScope = string | number
+
 export class BrowserLaunchGate {
   private tail = Promise.resolve()
   private lastLaunchAt: number | null = null
+  private readonly launchedScopes = new Set<BrowserLaunchScope>()
 
   constructor(private readonly clock: LaunchGateClock = defaultClock) {}
 
-  async wait(spacingMs: number): Promise<void> {
+  /**
+   * When scopeId is provided, only the first Chrome launch in that Page Tab run is
+   * staggered. Later account rotations in the same run rely on the Page Tab's own
+   * account-switch delay instead of stacking both delays.
+   */
+  async wait(spacingMs: number, scopeId?: BrowserLaunchScope): Promise<void> {
+    if (scopeId !== undefined) {
+      if (this.launchedScopes.has(scopeId)) return
+      this.launchedScopes.add(scopeId)
+    }
+
     let release!: () => void
     const previous = this.tail
     const gate = new Promise<void>((resolve) => { release = resolve })

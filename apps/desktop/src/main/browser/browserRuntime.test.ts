@@ -59,12 +59,19 @@ describe('buildBrowserLaunchOptions', () => {
     expect(options.args).not.toContain('--start-minimized')
   })
 
-  it('fits the logical desktop viewport to the real inner area instead of letterboxing', () => {
-    expect(effectiveCompactContentScale(placement, 320, 120)).toBe(0.15)
+  it('keeps desktop width while fitting logical height to the real Chrome inner area', () => {
+    expect(effectiveCompactContentScale(placement, 320, 120)).toBe(0.25)
     const fit = fitCompactViewportToInnerArea(placement, 320, 120)
-    expect(fit).toEqual({ width: 2133, height: 800, scale: 0.15 })
-    expect(fit.width * fit.scale).toBeCloseTo(320, 0)
+    expect(fit).toEqual({ width: 1280, height: 480, scale: 0.25 })
+    expect(fit.width * fit.scale).toBeCloseTo(320, 5)
     expect(fit.height * fit.scale).toBeCloseTo(120, 5)
+  })
+
+  it('uses the tile width as the compact scale anchor instead of shrinking for a short content height', () => {
+    const fit = fitCompactViewportToInnerArea(placement, 640, 200)
+    expect(fit).toEqual({ width: 1280, height: 400, scale: 0.5 })
+    expect(fit.width * fit.scale).toBeCloseTo(640, 5)
+    expect(fit.height * fit.scale).toBeCloseTo(200, 5)
   })
 
   it('recognizes a real manual resize but ignores small Windows bound jitter', () => {
@@ -131,6 +138,39 @@ describe('buildBrowserLaunchOptions', () => {
 
     expect(detached).toHaveBeenCalledTimes(1)
     expect(send).toHaveBeenCalledWith('Emulation.clearDeviceMetricsOverride')
+    expect(detach).toHaveBeenCalledTimes(1)
+    stop()
+  })
+
+  it('does not mistake post-retile window settling for a manual resize', async () => {
+    vi.useFakeTimers()
+    let boundsRead = 0
+    const send = vi.fn(async (method: string) => {
+      if (method === 'Browser.getWindowForTarget') return { windowId: 7 }
+      if (method === 'Browser.getWindowBounds') {
+        boundsRead += 1
+        if (boundsRead === 1) return { bounds: { width: 470, height: 270 } }
+        if (boundsRead <= 3) return { bounds: { width: 500, height: 300 } }
+        return { bounds: { width: 700, height: 500 } }
+      }
+      return {}
+    })
+    const detach = vi.fn(async () => undefined)
+    const session = { send, detach }
+    const page = { once: vi.fn() }
+    const context = {
+      pages: vi.fn(() => [page]),
+      newCDPSession: vi.fn(async () => session)
+    } as unknown as Parameters<typeof watchForManualBrowserResize>[0]
+    const detached = vi.fn()
+
+    const stop = watchForManualBrowserResize(context, detached, 100, { width: 500, height: 300 })
+    await vi.advanceTimersByTimeAsync(300)
+    expect(detached).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(100)
+    await Promise.resolve()
+    expect(detached).toHaveBeenCalledTimes(1)
     expect(detach).toHaveBeenCalledTimes(1)
     stop()
   })
