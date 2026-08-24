@@ -280,7 +280,7 @@ export class RotationService {
     this.settleCycle()
     if (!this.session.inFlight && (this.session.run.run.status === 'running' || this.session.run.run.status === 'created')) {
       try {
-        this.session.run = this.runs.pause(this.session.runId)
+        this.session.run = this.runs.pause(session.runId)
       } catch {
         // Shutdown should continue even when DB state already changed.
       }
@@ -522,7 +522,6 @@ export class RotationService {
               break
             }
             if (result.result.code === 'no_pending_item' || isRunExhausted(result.run)) {
-              this.settleCycle()
               continue runLoop
             }
             if (isAccountUnavailable(result)) {
@@ -541,7 +540,6 @@ export class RotationService {
           session.slotsCompletedThisTurn += 1
 
           if (isRunExhausted(result.run)) {
-            this.settleCycle()
             continue runLoop
           }
 
