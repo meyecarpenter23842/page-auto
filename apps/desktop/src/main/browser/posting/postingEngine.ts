@@ -10,7 +10,8 @@ import {
 } from '../facebookSession'
 import { applyBrowserContextSettings, buildBrowserLaunchOptions, waitForBrowserStartupDelay } from '../browserRuntime'
 import { effectiveNavigationTimeoutMs, probeFacebookThroughProxy } from '../proxyPreflight'
-import { activeFacebookProfileId, detectFacebookAccessBlock } from './pageState'
+import { PageIdentitySwitcher } from './pageIdentitySwitcher'
+import { detectFacebookAccessBlock } from './pageState'
 import { finishPostingEvidence, startPostingTrace } from './postingEvidence'
 import {
   isMediaAttachmentReady,
@@ -76,13 +77,6 @@ function engineDiagnostic(job: PostingJobRequest, message: string): void {
   )
 }
 
-async function firstVisible(candidates: Locator[]): Promise<Locator | null> {
-  for (const candidate of candidates) {
-    if (await candidate.isVisible().catch(() => false)) return candidate
-  }
-  return null
-}
-
 async function firstVisibleMatch(candidates: Locator[]): Promise<Locator | null> {
   for (const candidate of candidates) {
     const count = await candidate.count().catch(() => 0)
@@ -129,47 +123,6 @@ async function composerContainsText(textbox: Locator, content: string): Promise<
   let actualText = await textbox.innerText().catch(() => '')
   if (!actualText) actualText = await textbox.textContent().catch(() => null) ?? ''
   return normalizeComposerText(actualText).includes(expected)
-}
-
-export class PageIdentitySwitcher {
-  constructor(private readonly page: Page, private readonly context: BrowserContext, private readonly browser: BrowserSettings) {}
-
-  async switchTo(pageUid: string): Promise<PostingJobResult> {
-    try {
-      await this.page.goto(`https://www.facebook.com/${encodeURIComponent(pageUid)}`, {
-        waitUntil: 'domcontentloaded',
-        timeout: this.browser.navigationTimeoutMs
-      })
-      await settlePage(this.page, this.browser)
-    } catch (error) {
-      return failure('page_navigation_failed', error instanceof Error ? error.message : String(error))
-    }
-
-    const blocked = await detectFacebookAccessBlock(this.page)
-    if (blocked === 'login_required') return failure('needs_login', 'Facebook yêu cầu đăng nhập lại.')
-    if (blocked === 'verification_required') return failure('verification_required', 'Facebook yêu cầu checkpoint/xác minh thủ công.')
-    if ((await activeFacebookProfileId(this.context)) === pageUid) return { status: 'success', message: 'Page identity đã active.' }
-
-    const switchControl = await firstVisible([
-      this.page.getByRole('button', { name: /switch now|chuyển ngay/i }).first(),
-      this.page.getByRole('button', { name: /switch into|chuyển sang/i }).first(),
-      this.page.getByText(/switch into this page|chuyển sang trang này/i).first()
-    ])
-    if (!switchControl) return failure('page_identity_unconfirmed', 'Không tìm thấy control chuyển sang Page và không xác minh được Page identity hiện tại.')
-
-    try {
-      await switchControl.click({ timeout: Math.min(this.browser.navigationTimeoutMs, 15_000) })
-      await settlePage(this.page, this.browser)
-    } catch (error) {
-      return failure('page_identity_unconfirmed', error instanceof Error ? error.message : String(error))
-    }
-
-    const afterSwitchBlock = await detectFacebookAccessBlock(this.page)
-    if (afterSwitchBlock === 'login_required') return failure('needs_login', 'Facebook yêu cầu đăng nhập lại sau khi switch Page.')
-    if (afterSwitchBlock === 'verification_required') return failure('verification_required', 'Facebook yêu cầu checkpoint/xác minh sau khi switch Page.')
-    if ((await activeFacebookProfileId(this.context)) !== pageUid) return failure('page_identity_unconfirmed', 'Đã bấm switch nhưng chưa xác minh được Page identity bằng session hiện tại.')
-    return { status: 'success', message: 'Đã chuyển sang Page identity.' }
-  }
 }
 
 export class GroupNavigator {
