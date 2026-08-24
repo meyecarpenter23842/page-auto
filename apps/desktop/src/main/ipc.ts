@@ -102,7 +102,8 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
       const accountId = payload.accountId
       if (accountId === undefined) return posting.executeSingle(payload)
       return accountExecution.run(accountId, () => posting.executeSingle(payload))
-    }
+    },
+    releaseAccount: (accountId) => accountExecution.run(accountId, () => corePosting.releaseAccount(accountId))
   }
   const rotation = new PageTabWorkerManager(
     () => new RotationService(
