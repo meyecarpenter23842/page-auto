@@ -6,6 +6,7 @@ export interface BrowserLaunchShape {
   headless: false
   args: string[]
   timeout: number
+  ignoreDefaultArgs: string[]
   executablePath?: string
   channel?: 'chrome'
 }
@@ -218,6 +219,12 @@ export function buildBrowserLaunchOptions(
       ]
     : [`--window-size=${settings.windowWidth},${settings.windowHeight}`]
 
+  // The Chrome automation infobar is triggered by Playwright's default
+  // --enable-automation switch. Ignore only that UI-facing switch. Profile workers
+  // still launch with --remote-debugging-port=0, which keeps navigator.webdriver=true,
+  // so this is not an anti-detection mode and Facebook still sees an automated browser.
+  args.push('--no-default-browser-check')
+
   if (!placement && settings.mode === 'minimized') args.push('--start-minimized')
   if (settings.muteAudio) args.push('--mute-audio')
   if (settings.disableGpu) args.push('--disable-gpu')
@@ -226,6 +233,7 @@ export function buildBrowserLaunchOptions(
     headless: false,
     args,
     timeout: settings.startupTimeoutMs,
+    ignoreDefaultArgs: ['--enable-automation'],
     ...(executablePath ? { executablePath } : { channel: 'chrome' as const })
   }
 }

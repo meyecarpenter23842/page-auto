@@ -75,6 +75,8 @@ export interface BrowserTileGrid {
 
 const TILE_GAP_PX = 4
 const MIN_RENDER_SCALE = 0.001
+/** Chrome desktop currently clamps normal browser windows to roughly 500px minimum width. */
+export const CHROME_MIN_COMPACT_OUTER_SIDE_PX = 500
 
 function clampInteger(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min
@@ -174,9 +176,30 @@ export function browserTileGrid(settings: BrowserWindowLayoutSettings): BrowserT
   }
 }
 
-/** FPlus-style compact rule: choosing N vertical rows always produces an N × N grid. */
+/** Requested FPlus-style rule: choosing N vertical rows means N × N before runtime limits. */
 export function squareBrowserTileGrid(settings: BrowserWindowLayoutSettings): BrowserTileGrid {
   const side = clampInteger(settings.rowCount, 1, MAX_SQUARE_SIDE)
+  return { columns: side, rows: side, capacity: side * side }
+}
+
+/**
+ * Normal Chrome windows on Windows cannot be shrunk below roughly 500px width.
+ * A nominal 4×4 grid on a 1080p display therefore asks for ~250×250 windows, but
+ * Chrome silently clamps only the width and produces ~500×250 rectangles. Limit
+ * the real square grid before placement so width and height remain equal in reality.
+ */
+export function maximumTrueSquareRows(display: BrowserDisplayInfo): number {
+  const widthRows = Math.floor((Math.max(1, display.workArea.width) + TILE_GAP_PX) / (CHROME_MIN_COMPACT_OUTER_SIDE_PX + TILE_GAP_PX))
+  const heightRows = Math.floor((Math.max(1, display.workArea.height) + TILE_GAP_PX) / (CHROME_MIN_COMPACT_OUTER_SIDE_PX + TILE_GAP_PX))
+  return clampInteger(Math.min(widthRows, heightRows), 1, MAX_SQUARE_SIDE)
+}
+
+export function effectiveSquareBrowserTileGrid(
+  settings: BrowserWindowLayoutSettings,
+  display: BrowserDisplayInfo
+): BrowserTileGrid {
+  const requested = squareBrowserTileGrid(settings)
+  const side = Math.min(requested.rows, maximumTrueSquareRows(display))
   return { columns: side, rows: side, capacity: side * side }
 }
 
@@ -184,9 +207,9 @@ export function squareBrowserTileGrid(settings: BrowserWindowLayoutSettings): Br
 export function autoBalancedBrowserTileGrid(
   settings: BrowserWindowLayoutSettings,
   _browser: BrowserSettings,
-  _display: BrowserDisplayInfo
+  display: BrowserDisplayInfo
 ): BrowserTileGrid {
-  return squareBrowserTileGrid(settings)
+  return effectiveSquareBrowserTileGrid(settings, display)
 }
 
 export function withSquareBrowserRows(
@@ -230,11 +253,9 @@ export function compactContentScale(
 }
 
 /**
- * Compact windows are physically square. We choose the largest square side that can
- * fit the complete N × N grid inside the selected display work area, then center the
- * grid. Chrome's own title bar / automation infobar is intentionally left intact;
- * browserRuntime measures the real inner content area after launch and fits Facebook
- * into the remaining space instead of pretending the browser chrome does not exist.
+ * Compact windows are physically square. Runtime first limits N so the requested
+ * square is not below Chrome's own minimum outer width, then chooses the largest
+ * square side that fits that effective N × N grid and centers it on the display.
  */
 export function computeBrowserWindowPlacement(
   layout: BrowserWindowLayoutSettings,
@@ -244,7 +265,7 @@ export function computeBrowserWindowPlacement(
 ): BrowserWindowPlacement | null {
   if (!layout.enabled) return null
 
-  const grid = squareBrowserTileGrid(layout)
+  const grid = effectiveSquareBrowserTileGrid(layout, display)
   if (!Number.isInteger(slotIndex) || slotIndex < 0 || slotIndex >= grid.capacity) return null
 
   const gapX = TILE_GAP_PX * Math.max(0, grid.columns - 1)
