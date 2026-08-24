@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { AccountRepository } from './accountRepository'
+import { HotmailRepository } from './hotmailRepository'
 import { initializeDatabase } from './index'
 
 const tempDirectories: string[] = []
@@ -39,6 +40,15 @@ describe('initializeDatabase', () => {
     const pageTabColumns = runtime.client
       .prepare('PRAGMA table_info(page_tabs)')
       .all() as Array<{ name: string }>
+    const emailStateTable = runtime.client
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'account_email_state'")
+      .get() as { name: string } | undefined
+    const emailProfileSettingsTable = runtime.client
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'email_profile_settings'")
+      .get() as { name: string } | undefined
+    const emailProxySettingsTable = runtime.client
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'email_proxy_settings'")
+      .get() as { name: string } | undefined
 
     expect(existsSync(databaseFile)).toBe(true)
     expect(migrations).toEqual([
@@ -48,12 +58,16 @@ describe('initializeDatabase', () => {
       { version: 4, name: 'run_queue' },
       { version: 5, name: 'recovery_execution_logs' },
       { version: 6, name: 'page_tab_post_library' },
-      { version: 7, name: 'page_tab_account_order_mode' }
+      { version: 7, name: 'page_tab_account_order_mode' },
+      { version: 8, name: 'hotmail_auto_subsystem' }
     ])
-    expect(schemaVersion?.value).toBe('7')
+    expect(schemaVersion?.value).toBe('8')
     expect(executionLogsTable?.name).toBe('execution_logs')
     expect(postLibraryTable?.name).toBe('page_tab_posts')
     expect(pageTabColumns.some((column) => column.name === 'account_order_mode')).toBe(true)
+    expect(emailStateTable?.name).toBe('account_email_state')
+    expect(emailProfileSettingsTable?.name).toBe('email_profile_settings')
+    expect(emailProxySettingsTable?.name).toBe('email_proxy_settings')
 
     runtime.close()
   })
@@ -67,7 +81,7 @@ describe('initializeDatabase', () => {
       .prepare('SELECT COUNT(*) AS count FROM __page_auto_migrations')
       .get() as { count: number }
 
-    expect(count.count).toBe(7)
+    expect(count.count).toBe(8)
     reopened.close()
   })
 })
@@ -124,6 +138,46 @@ describe('AccountRepository', () => {
     const layout = { order: ['uid', 'name'], hidden: ['password'], widths: { uid: 180 } }
     repository.saveColumnLayout('accounts', layout)
     expect(repository.getColumnLayout('accounts')).toEqual(layout)
+
+    runtime.close()
+  })
+})
+
+describe('HotmailRepository security boundary', () => {
+  it('masks email password and never exposes OAuth/proxy credentials through renderer views', () => {
+    const { runtime } = createRuntime()
+    const accounts = new AccountRepository(runtime.client)
+    const hotmail = new HotmailRepository(runtime.client)
+    const account = accounts.create({
+      uid: '20001',
+      email: 'demo@outlook.com',
+      emailPassword: 'mail-super-secret',
+      backupEmail: 'backup@example.com'
+    })
+
+    hotmail.updateEmailState(account.id, {
+      oauthStatus: 'valid',
+      refreshTokenCiphertext: 'encrypted-refresh-token-value',
+      mailStatus: 'ready'
+    })
+    hotmail.saveSettings({
+      profileRoot: 'D:\\MaxHotmail',
+      browserExecutable: '',
+      oauthClientId: 'public-client-id',
+      oauthTenant: 'consumers',
+      proxyMode: 'random_ipv4',
+      proxyListText: '1.2.3.4:8080:proxy-user:proxy-secret'
+    }, ['1.2.3.4:8080:proxy-user:proxy-secret'])
+
+    const dashboardJson = JSON.stringify(hotmail.listDashboardRows())
+    const settingsJson = JSON.stringify(hotmail.getSettingsView())
+
+    expect(dashboardJson).not.toContain('mail-super-secret')
+    expect(dashboardJson).not.toContain('encrypted-refresh-token-value')
+    expect(settingsJson).not.toContain('proxy-user')
+    expect(settingsJson).not.toContain('proxy-secret')
+    expect(hotmail.listDashboardRows()[0]?.emailPasswordMasked).toMatch(/^•+$/)
+    expect(hotmail.getSettingsView().proxyPreview).toEqual(['http://1.2.3.4:8080'])
 
     runtime.close()
   })
