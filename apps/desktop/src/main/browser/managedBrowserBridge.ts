@@ -1,6 +1,11 @@
 import { chromium, type Browser, type BrowserContext } from 'playwright-core'
 import type { BrowserWindowPlacement } from '../../shared/browserWindowLayout'
-import { applyBrowserPlacementToContext, applyBrowserWindowPlacement } from './browserRuntime'
+import {
+  applyBrowserPlacementToContext,
+  applyBrowserWindowPlacement,
+  watchForManualBrowserResize
+} from './browserRuntime'
+import { runWithResizeWatcherPaused } from './resizeWatchGuard'
 
 const MANAGED_CDP_ARG_PREFIX = '--page-auto-managed-cdp='
 
@@ -9,6 +14,7 @@ let persistentContext: BrowserContext | null = null
 let persistentProxy: BrowserContext | null = null
 let attachedBrowser: Browser | null = null
 let activePlacement: BrowserWindowPlacement | null = null
+let stopResizeWatch: (() => void) | null = null
 
 function managedCdpEndpointFromArgs(argv: string[] = process.argv): string | null {
   const raw = argv.find((item) => item.startsWith(MANAGED_CDP_ARG_PREFIX))
@@ -40,8 +46,27 @@ function keepManagedBrowserOpen(context: BrowserContext): BrowserContext {
   })
 }
 
+function stopWatchingResize(): void {
+  stopResizeWatch?.()
+  stopResizeWatch = null
+}
+
+function armResizeWatch(context: BrowserContext): void {
+  stopWatchingResize()
+  if (!activePlacement) return
+  stopResizeWatch = watchForManualBrowserResize(context, () => {
+    if (persistentContext !== context) return
+    activePlacement = null
+    stopResizeWatch = null
+  })
+}
+
 async function applyCurrentPlacement(context: BrowserContext): Promise<void> {
-  await applyBrowserPlacementToContext(context, activePlacement)
+  await runWithResizeWatcherPaused(
+    stopWatchingResize,
+    () => applyBrowserPlacementToContext(context, activePlacement),
+    () => armResizeWatch(context)
+  )
 }
 
 function rememberContext(context: BrowserContext, browser: Browser | null): BrowserContext {
@@ -53,6 +78,7 @@ function rememberContext(context: BrowserContext, browser: Browser | null): Brow
   })
   context.once('close', () => {
     if (persistentContext !== context) return
+    stopWatchingResize()
     persistentContext = null
     persistentProxy = null
     attachedBrowser = null
@@ -76,7 +102,8 @@ export async function retileManagedPostingBrowser(placement: BrowserWindowPlacem
 /**
  * Reuse one persistent account browser for every Group/post inside the current
  * account turn. Placement is applied once when the browser is opened/attached and
- * later only when the operator explicitly requests re-tile.
+ * later only when the operator explicitly requests re-tile. A manual resize clears
+ * compact emulation for that window until the next explicit re-tile.
  */
 export function installManagedBrowserReuse(): void {
   if (installed) return
@@ -124,6 +151,7 @@ export function installManagedBrowserReuse(): void {
 export async function closeManagedPostingBrowser(): Promise<void> {
   const context = persistentContext
   const browser = attachedBrowser
+  stopWatchingResize()
   persistentContext = null
   persistentProxy = null
   attachedBrowser = null
