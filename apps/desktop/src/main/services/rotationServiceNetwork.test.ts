@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { DEFAULT_APP_SETTINGS } from '../../shared/appSettings'
 import type { ExecuteSinglePostingJobResult } from '../../shared/posting'
 import type { RunDetails, RunItem } from '../../shared/runs'
-import { RotationService, type RotationRunStore } from './rotationService'
+import { RotationService, type RotationRunStore, type RunStopReason } from './rotationService'
 
 function makeRun(): RunDetails {
   return {
@@ -61,6 +61,7 @@ class Store implements RotationRunStore {
   get(): RunDetails { return this.details }
   pause(): RunDetails { this.details.run.status = 'paused'; return this.details }
   resume(): RunDetails { this.details.run.status = 'running'; return this.details }
+  stop(_runId: number, _reason?: RunStopReason): RunDetails { this.details.run.status = 'stopped'; return this.details }
 
   finish(): RunDetails {
     this.details.metrics.pending = 0
@@ -116,7 +117,13 @@ describe('RotationService proxy policy', () => {
     const service = new RotationService(
       store,
       posting,
-      { now: () => new Date(2026, 7, 24, 10, 30), random: () => 0, sleep: async () => undefined },
+      {
+        now: () => new Date(2026, 7, 24, 10, 30),
+        random: () => 0,
+        sleep: async () => {
+          if (store.details.run.status === 'completed') return new Promise(() => undefined)
+        }
+      },
       () => ({ ...DEFAULT_APP_SETTINGS.session }),
       () => ({ ...DEFAULT_APP_SETTINGS.network, abortAccountOnProxyFailure: true })
     )
@@ -125,6 +132,7 @@ describe('RotationService proxy policy', () => {
     await service.waitForSettled()
 
     expect(accountCalls).toEqual([101, 202])
-    expect(service.status({ pageTabId: 10 }).status).toBe('completed')
+    expect(service.status({ pageTabId: 10 }).status).toBe('waiting_window')
+    service.dispose()
   })
 })
