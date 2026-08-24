@@ -33,6 +33,7 @@ export interface BrowserOuterSize {
 
 const MIN_COMPACT_SCALE = 0.001
 const MANUAL_RESIZE_TOLERANCE_PX = 12
+const RESIZE_WATCH_SETTLE_MS = 700
 const compactSessions = new WeakMap<Page, CDPSession>()
 const placementQueues = new WeakMap<BrowserContext, Promise<void>>()
 
@@ -55,20 +56,26 @@ async function releaseCompactSession(page: Page, session: CDPSession): Promise<v
   await session.detach().catch(() => undefined)
 }
 
+/**
+ * Keep Facebook at the configured desktop width and scale that width into the real
+ * Chrome content area. Height follows the real inner-area aspect ratio instead of
+ * shrinking the whole page to satisfy the much shorter browser content height.
+ */
 export function effectiveCompactContentScale(
   placement: BrowserWindowPlacement,
   innerWidth: number,
-  innerHeight: number
+  _innerHeight: number
 ): number {
   const widthScale = Math.max(1, innerWidth) / Math.max(1, placement.viewportWidth)
-  const heightScale = Math.max(1, innerHeight) / Math.max(1, placement.viewportHeight)
-  const scale = Math.min(1, widthScale, heightScale)
+  const scale = Math.min(1, widthScale)
   return Math.max(MIN_COMPACT_SCALE, Math.round(scale * 1000) / 1000)
 }
 
 /**
- * Keep at least the configured desktop viewport, but expand the logical viewport on
- * the axis that would otherwise leave empty letterbox space.
+ * Anchor compact content to a desktop-class logical width, then derive logical
+ * height from the real Chrome inner area. This fills the tile without letterboxing,
+ * avoids a huge ultra-wide viewport that makes Facebook tiny, and lets the page
+ * scroll vertically instead of cropping a corner.
  */
 export function fitCompactViewportToInnerArea(
   placement: BrowserWindowPlacement,
@@ -79,8 +86,8 @@ export function fitCompactViewportToInnerArea(
   const safeInnerHeight = Math.max(1, innerHeight)
   const scale = effectiveCompactContentScale(placement, safeInnerWidth, safeInnerHeight)
   return {
-    width: Math.max(placement.viewportWidth, Math.round(safeInnerWidth / scale)),
-    height: Math.max(placement.viewportHeight, Math.round(safeInnerHeight / scale)),
+    width: scale < 1 ? placement.viewportWidth : Math.max(1, Math.round(safeInnerWidth)),
+    height: Math.max(1, Math.round(safeInnerHeight / scale)),
     scale
   }
 }
@@ -129,16 +136,25 @@ async function readBrowserOuterSize(context: BrowserContext, page: Page): Promis
  * Chrome window by hand, clear device emulation for that browser so native Chrome
  * reflows to the new size instead of keeping a stale compact viewport and showing
  * blank space. Explicit "Sắp xếp lại Chrome" can enable compact again later.
+ *
+ * expectedSize is supplied after a programmatic tile/retile. The watcher first lets
+ * Windows settle onto that target so a transient post-retile bound cannot be mistaken
+ * for a manual drag and immediately detach compact mode.
  */
 export function watchForManualBrowserResize(
   context: BrowserContext,
   onDetached: () => void,
-  intervalMs: number = 350
+  intervalMs: number = 350,
+  expectedSize: BrowserOuterSize | null = null
 ): () => void {
   let stopped = false
   let cancelled = false
   let busy = false
-  let baseline: BrowserOuterSize | null = null
+  let baseline: BrowserOuterSize | null = expectedSize ? { ...expectedSize } : null
+  let settlingToExpected = expectedSize !== null
+  let settleReadsRemaining = expectedSize
+    ? Math.max(2, Math.ceil(RESIZE_WATCH_SETTLE_MS / Math.max(100, intervalMs)))
+    : 0
 
   const timer = setInterval(() => {
     if (stopped || cancelled || busy) return
@@ -148,6 +164,23 @@ export function watchForManualBrowserResize(
       if (!page) return
       const current = await readBrowserOuterSize(context, page).catch(() => null)
       if (cancelled || !current) return
+
+      if (settlingToExpected && baseline) {
+        if (!compactWindowSizeChanged(baseline, current)) {
+          baseline = current
+          settlingToExpected = false
+          return
+        }
+        settleReadsRemaining -= 1
+        if (settleReadsRemaining > 0) return
+
+        // Some Windows/Chrome frame combinations settle a few pixels away from the
+        // requested outer bounds. Accept the stable result, then watch from there.
+        baseline = current
+        settlingToExpected = false
+        return
+      }
+
       if (!baseline) {
         baseline = current
         return
@@ -216,10 +249,9 @@ export async function applyBrowserContextSettings(
 }
 
 /**
- * Compact mode keeps a desktop-class logical viewport while the real Chrome window
- * is physically smaller. The CDP session stays attached while device emulation is
- * active. The logical viewport is expanded to the real content-area aspect ratio so
- * the page fills the tile instead of leaving a large blank strip.
+ * Compact mode keeps a desktop-class logical width while the real Chrome window is
+ * physically smaller. The CDP session stays attached while device emulation is active.
+ * Logical height follows the measured Chrome content area so the page fills the tile.
  */
 export async function applyBrowserWindowPlacement(
   context: BrowserContext,

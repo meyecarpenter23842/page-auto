@@ -158,13 +158,14 @@ async function run(): Promise<void> {
   const armResizeWatch = (): void => {
     stopWatchingResize()
     const activeContext = context
-    if (!activeContext || !activePlacement || manualResizeDetached) return
+    const placement = activePlacement
+    if (!activeContext || !placement || manualResizeDetached) return
     stopResizeWatch = watchForManualBrowserResize(activeContext, () => {
       if (context !== activeContext) return
       manualResizeDetached = true
       activePlacement = null
       stopResizeWatch = null
-    })
+    }, 350, { width: placement.width, height: placement.height })
   }
 
   const closeBrowserAndExit = async (): Promise<void> => {

@@ -53,12 +53,13 @@ function stopWatchingResize(): void {
 
 function armResizeWatch(context: BrowserContext): void {
   stopWatchingResize()
-  if (!activePlacement) return
+  const placement = activePlacement
+  if (!placement) return
   stopResizeWatch = watchForManualBrowserResize(context, () => {
     if (persistentContext !== context) return
     activePlacement = null
     stopResizeWatch = null
-  })
+  }, 350, { width: placement.width, height: placement.height })
 }
 
 async function applyCurrentPlacement(context: BrowserContext): Promise<void> {

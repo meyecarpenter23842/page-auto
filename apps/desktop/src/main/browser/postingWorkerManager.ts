@@ -64,7 +64,7 @@ export class PostingWorkerManager {
     let entry = this.workers.get(job.accountId)
 
     if (!entry || entry.shuttingDown) {
-      await this.launchGate.wait(runtime.browserLaunchSpacingMs)
+      await this.launchGate.wait(runtime.browserLaunchSpacingMs, job.runId)
       try {
         entry = this.spawnWorker(runtimeJob)
       } catch (error) {
