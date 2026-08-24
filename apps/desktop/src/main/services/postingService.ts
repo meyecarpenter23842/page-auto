@@ -35,6 +35,10 @@ function hasInvalidSession(result: PostingJobResult): boolean {
     || result.sessionValidation?.state === 'verification_required'
 }
 
+function hasValidSession(result: PostingJobResult): boolean {
+  return result.sessionValidation?.state === 'valid' || result.status === 'success'
+}
+
 function shouldReleasePreflightItem(result: PostingJobResult): boolean {
   return (result.status === 'needs_login' && result.sessionValidation?.phase === 'before_run')
     || result.code === 'proxy_unavailable'
@@ -61,17 +65,16 @@ export class PostingService {
 
   async executeSingle(payload: ExecuteSinglePostingJobPayload): Promise<ExecuteSinglePostingJobResult> {
     let details = this.runs.get(payload.runId)
-    if (!details) throw new Error(`Không tìm thấy run #${payload.runId}.`)
+    if (!details) throw new Error(`Không tìm thấy phiên #${payload.runId}.`)
     if (details.run.status === 'created' || details.run.status === 'paused') details = this.runs.resume(payload.runId)
-    if (details.run.status !== 'running') throw new Error(`Run #${payload.runId} không ở trạng thái running.`)
+    if (details.run.status !== 'running') throw new Error(`Phiên #${payload.runId} không ở trạng thái đang chạy.`)
 
     const enabledAccounts = details.run.snapshot.accounts.filter((account) => account.enabled).sort((a, b) => a.sortOrder - b.sortOrder)
     const selectedRef = payload.accountId === undefined ? enabledAccounts[0] : enabledAccounts.find((account) => account.accountId === payload.accountId)
-    if (!selectedRef) return { accountId: null, item: null, result: terminalFailure('Run không có account enabled phù hợp.', 'no_enabled_account'), run: details }
+    if (!selectedRef) return { accountId: null, item: null, result: terminalFailure('Phiên chạy không có tài khoản được bật phù hợp.', 'no_enabled_account'), run: details }
 
     const account = this.accounts.getById(selectedRef.accountId)
-    if (!account || account.status === 'disabled') return { accountId: selectedRef.accountId, item: null, result: terminalFailure('Account không tồn tại hoặc đang disabled.', 'account_disabled'), run: details }
-    if (account.status === 'needs_login') return { accountId: account.id, item: null, result: { status: 'needs_login', code: 'needs_login', message: 'Account đang cần đăng nhập/xác minh thủ công.' }, run: details }
+    if (!account || account.status === 'disabled') return { accountId: selectedRef.accountId, item: null, result: terminalFailure('Tài khoản không tồn tại hoặc đang bị tắt.', 'account_disabled'), run: details }
 
     const proxyResolution = resolveAccountProxyState(account)
     if (proxyResolution.status === 'invalid') {
@@ -87,20 +90,20 @@ export class PostingService {
     const item = this.runs.claimNext(payload.runId)
     if (!item) {
       const current = this.runs.get(payload.runId)
-      if (!current) throw new Error(`Không tìm thấy run #${payload.runId} sau khi claim queue.`)
-      return { accountId: account.id, item: null, result: terminalFailure('Run không còn pending item.', 'no_pending_item'), run: current }
+      if (!current) throw new Error(`Không tìm thấy phiên #${payload.runId} sau khi lấy hàng chờ.`)
+      return { accountId: account.id, item: null, result: terminalFailure('Phiên chạy không còn Group chờ xử lý.', 'no_pending_item'), run: current }
     }
 
     const content = selectRunContent(details.run.snapshot, item)
     if (!content) {
-      const run = this.runs.completeItem({ runId: payload.runId, itemId: item.id, status: 'failed', errorMessage: 'Content Set không có nội dung hợp lệ.' })
-      return { accountId: account.id, item, result: terminalFailure('Content Set không có nội dung hợp lệ.', 'no_content'), run }
+      const run = this.runs.completeItem({ runId: payload.runId, itemId: item.id, status: 'failed', errorMessage: 'Bộ nội dung không có bài hợp lệ.' })
+      return { accountId: account.id, item, result: terminalFailure('Bộ nội dung không có bài hợp lệ.', 'no_content'), run }
     }
 
     const images = await selectRunImages(details.run.snapshot.image, item)
     if (images.missing && details.run.snapshot.image.missingPolicy === 'skip') {
       const run = this.runs.completeItem({ runId: payload.runId, itemId: item.id, status: 'skipped' })
-      return { accountId: account.id, item, result: { status: 'skipped', code: 'missing_media', message: 'Thiếu ảnh theo cấu hình; item được skip trong run hiện tại.' }, run }
+      return { accountId: account.id, item, result: { status: 'skipped', code: 'missing_media', message: 'Thiếu ảnh theo cấu hình; Group được bỏ qua trong phiên hiện tại.' }, run }
     }
 
     const sessionSettings = { ...this.getSessionSettings() }
@@ -125,41 +128,51 @@ export class PostingService {
         username: account.username,
         password: account.password,
         cookie: account.cookie,
-        twoFactorSecret: account.twoFactorSecret
+        twoFactorSecret: account.twoFactorSecret,
+        name: account.name
       },
       ...(account.userAgent ? { userAgent: account.userAgent } : {}),
       ...(proxy ? { proxy } : {})
     })
-    const safeMessage = redactExecutionText(workerResult.message, accountSecrets(account)) ?? 'Unknown error'
-    const safeValidation = workerResult.sessionValidation
+
+    const sessionCookie = workerResult.sessionCookie?.trim() || null
+    const publicWorkerResult: PostingJobResult = { ...workerResult }
+    delete publicWorkerResult.sessionCookie
+    const safeMessage = redactExecutionText(publicWorkerResult.message, accountSecrets(account)) ?? 'Lỗi không xác định'
+    const safeValidation = publicWorkerResult.sessionValidation
       ? {
-          ...workerResult.sessionValidation,
-          message: redactExecutionText(workerResult.sessionValidation.message, accountSecrets(account)) ?? 'Session validation failed.'
+          ...publicWorkerResult.sessionValidation,
+          message: redactExecutionText(publicWorkerResult.sessionValidation.message, accountSecrets(account)) ?? 'Kiểm tra phiên đăng nhập thất bại.'
         }
       : undefined
     const result: PostingJobResult = {
-      ...workerResult,
+      ...publicWorkerResult,
       message: safeMessage,
-      ...(safeValidation ? { sessionValidation: safeValidation } : {})
+      ...(safeValidation ? { sessionValidation: safeValidation } : {}),
+      ...(publicWorkerResult.accountName?.trim() ? { accountName: publicWorkerResult.accountName.trim() } : {})
     }
 
     const now = Date.now()
+    const syncedName = result.accountName?.trim() || account.name
     if (hasInvalidSession(result)) {
       this.accounts.update(account.id, {
+        name: syncedName,
         status: 'needs_login',
         cookieStatus: 'needs_login',
         lastCookieCheck: now,
         lastUsedAt: now
       })
-    } else if (result.status === 'success') {
-      const sessionWasChecked = sessionSettings.validateBeforeRun || sessionSettings.validateAfterRun
+    } else if (hasValidSession(result)) {
       this.accounts.update(account.id, {
+        name: syncedName,
         status: 'valid',
-        ...(sessionWasChecked ? { cookieStatus: 'valid' as const, lastCookieCheck: now } : {}),
+        cookie: sessionCookie ?? account.cookie,
+        cookieStatus: 'valid',
+        lastCookieCheck: now,
         lastUsedAt: now
       })
     } else {
-      this.accounts.update(account.id, { lastUsedAt: now })
+      this.accounts.update(account.id, { name: syncedName, lastUsedAt: now })
     }
 
     if (shouldReleasePreflightItem(result)) {

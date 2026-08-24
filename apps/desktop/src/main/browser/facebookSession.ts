@@ -31,6 +31,7 @@ export interface FacebookSessionResult {
   cookieStatus: 'valid' | 'needs_login' | 'error'
   lastCookieCheck: number
   message: string
+  profileName?: string | null
 }
 
 export interface FacebookCookieInput {
@@ -118,6 +119,18 @@ export function parseFacebookCookies(rawCookie: string | null | undefined): Cont
       return { name, value, domain: '.facebook.com', path: '/', secure: true }
     })
     .filter((item): item is ContextCookie => item !== null)
+}
+
+export function storedFacebookCookieUserId(rawCookie: string | null | undefined): string | null {
+  return parseFacebookCookies(rawCookie).find((cookie) => cookie.name === 'c_user')?.value?.trim() || null
+}
+
+export function canUseStoredFacebookCookies(rawCookie: string | null | undefined, expectedUid: string): boolean {
+  const storedUserId = storedFacebookCookieUserId(rawCookie)
+  if (!storedUserId) return false
+  const normalizedExpected = expectedUid.trim()
+  if (!/^\d+$/.test(normalizedExpected)) return true
+  return storedUserId === normalizedExpected
 }
 
 function decodeBase32(secret: string): Buffer {
@@ -393,24 +406,32 @@ export async function validateFacebookSession(context: BrowserContext, page: Pag
   return { state: 'needs_login', message: 'Session Facebook đã hết hoặc chưa đăng nhập.' }
 }
 
+async function navigateFacebookHome(page: Page): Promise<void> {
+  await page.goto('https://www.facebook.com/', {
+    waitUntil: 'domcontentloaded',
+    timeout: 45_000
+  })
+  await page.waitForTimeout(700)
+}
+
 export async function bootstrapFacebookSession(
   context: BrowserContext,
   page: Page,
   account: FacebookSessionAccount,
   locale: FacebookLocale = 'auto'
 ): Promise<FacebookSessionResult> {
+  const storedCookies = canUseStoredFacebookCookies(account.cookie, account.uid)
+    ? parseFacebookCookies(account.cookie)
+    : []
   const existingUserId = await currentFacebookUserId(context).catch(() => null)
-  if (!existingUserId) {
-    const importedCookies = parseFacebookCookies(account.cookie)
-    if (importedCookies.length > 0) await context.addCookies(importedCookies).catch(() => undefined)
+  let storedCookieApplied = false
+
+  if (!existingUserId && storedCookies.length > 0) {
+    await context.addCookies(storedCookies).catch(() => undefined)
+    storedCookieApplied = true
   }
   await applyFacebookLocale(context, locale).catch(() => undefined)
-
-  await page.goto('https://www.facebook.com/', {
-    waitUntil: 'domcontentloaded',
-    timeout: 45_000
-  })
-  await page.waitForTimeout(700)
+  await navigateFacebookHome(page)
 
   let gate = await inspectFacebookSessionGate(context, page)
   if (gate === 'two_factor') {
@@ -422,6 +443,22 @@ export async function bootstrapFacebookSession(
   if (gate === 'valid') {
     return successResult(account.id, context, 'Session Facebook hợp lệ từ persistent profile/cookie.')
   }
+
+  if (!storedCookieApplied && storedCookies.length > 0) {
+    await context.addCookies(storedCookies).catch(() => undefined)
+    await navigateFacebookHome(page)
+    gate = await inspectFacebookSessionGate(context, page)
+    if (gate === 'valid') {
+      return successResult(account.id, context, 'Đã khôi phục session Facebook bằng cookie đã lưu.')
+    }
+    if (gate === 'two_factor') {
+      return completeTwoFactor(context, page, account, 'Đã khôi phục cookie và xác thực 2FA thành công.')
+    }
+    if (gate === 'manual_verification') {
+      return needsLoginResult(account.id, 'checkpoint', 'Cookie đã đưa tới checkpoint/xác minh danh tính; cần xử lý thủ công.')
+    }
+  }
+
   if (gate !== 'login') {
     return needsLoginResult(account.id, 'unknown', 'Facebook chưa xác nhận session; browser được giữ mở để xử lý thủ công.')
   }
@@ -429,7 +466,7 @@ export async function bootstrapFacebookSession(
   const identifier = account.username?.trim() || account.uid.trim()
   const password = account.password?.trim()
   if (!identifier || !password) {
-    return needsLoginResult(account.id, 'login_required', 'Account thiếu UID/UserName hoặc password để tự đăng nhập.')
+    return needsLoginResult(account.id, 'login_required', 'Cookie không khôi phục được session và account thiếu UID/UserName hoặc password để tự đăng nhập.')
   }
 
   try {
