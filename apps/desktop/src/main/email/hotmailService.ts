@@ -24,6 +24,8 @@ function uniqueAccountIds(payload: HotmailBatchPayload): number[] {
   return [...new Set(payload.accountIds.filter((id) => Number.isInteger(id) && id > 0))]
 }
 
+type ResolveEmailBrowserExecutable = (requestedExecutable: string, profileRoot: string) => Promise<string>
+
 export class HotmailService {
   private readonly oauth: MicrosoftOAuthService
   private readonly mail = new MicrosoftGraphMailAdapter()
@@ -35,7 +37,7 @@ export class HotmailService {
     private readonly accounts: AccountRepository,
     private readonly repository: HotmailRepository,
     cipher: EmailSecretCipher,
-    private readonly fallbackBrowserExecutable: () => string | null
+    private readonly resolveBrowserExecutable: ResolveEmailBrowserExecutable
   ) {
     this.oauth = new MicrosoftOAuthService(cipher)
     this.proxyPool = new EmailProxyPool(() => this.repository.getProxySettings())
@@ -60,7 +62,7 @@ export class HotmailService {
     return this.repository.getSettingsView(this.proxyPool.peek()?.display ?? null)
   }
 
-  saveSettings(input: SaveHotmailSettingsInput): HotmailSettingsView {
+  async saveSettings(input: SaveHotmailSettingsInput): Promise<HotmailSettingsView> {
     const normalizedProxyEntries = input.proxyListText === undefined
       ? undefined
       : normalizeEmailProxyLines(input.proxyListText)
@@ -68,7 +70,12 @@ export class HotmailService {
       const effectiveCount = normalizedProxyEntries?.length ?? this.repository.getProxySettings().entries.length
       if (effectiveCount === 0) throw new Error('Random IPv4 cần ít nhất một proxy Email hợp lệ trong pool.')
     }
-    this.repository.saveSettings(input, normalizedProxyEntries)
+
+    const shouldResolveBrowser = Boolean(input.profileRoot.trim() || input.browserExecutable.trim())
+    const browserExecutable = shouldResolveBrowser
+      ? await this.resolveBrowserExecutable(input.browserExecutable, input.profileRoot)
+      : ''
+    this.repository.saveSettings({ ...input, browserExecutable }, normalizedProxyEntries)
     return this.getSettings()
   }
 
@@ -184,8 +191,11 @@ export class HotmailService {
     try {
       const inspection = await inspectEmailProfile(settings.profileRoot, account.uid)
       const attachedExternally = inspection.status === 'running' || inspection.status === 'in_use'
+      const needsLaunchExecutable = inspection.status === 'missing' || inspection.status === 'available'
+      const executable = needsLaunchExecutable
+        ? await this.resolveBrowserExecutable(settings.browserExecutable, settings.profileRoot)
+        : settings.browserExecutable
       const proxy = attachedExternally ? null : this.proxyPool.acquire(accountId)
-      const executable = settings.browserExecutable || this.fallbackBrowserExecutable() || ''
       const result = await this.browser.open(account, settings.profileRoot, executable, proxy)
       if (result.status === 'error' || result.status === 'missing_profile' || result.status === 'profile_in_use') {
         if (!this.browser.isOpen(accountId)) this.proxyPool.release(accountId)
@@ -223,7 +233,7 @@ export class HotmailService {
     if (proxySettings.mode === 'random_ipv4' && !proxy) {
       return { ok: false, proxy: null, publicIp: null, message: 'Pool Random IPv4 chưa có proxy hợp lệ.' }
     }
-    const executable = settings.browserExecutable || this.fallbackBrowserExecutable() || ''
+    const executable = await this.resolveBrowserExecutable(settings.browserExecutable, settings.profileRoot)
     return testEmailProxy(proxy, executable)
   }
 

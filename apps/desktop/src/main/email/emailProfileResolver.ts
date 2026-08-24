@@ -1,4 +1,4 @@
-import { access, readFile, stat } from 'node:fs/promises'
+import { access, mkdir, readFile, stat } from 'node:fs/promises'
 import { request } from 'node:http'
 import { isAbsolute, relative, resolve } from 'node:path'
 import type { HotmailProfileInspection } from '../../shared/hotmail'
@@ -91,6 +91,39 @@ export async function inspectEmailProfile(root: string, uid: string): Promise<Ho
     profileDirectory,
     cdpEndpoint
   }
+}
+
+export async function ensureEmailProfileDirectory(root: string, uid: string): Promise<string> {
+  const normalizedRoot = root.trim()
+  if (!normalizedRoot) throw new Error('Chưa cấu hình Email Profile Root.')
+
+  const profileDirectory = safeProfileDirectory(normalizedRoot, uid)
+  if (!profileDirectory) throw new Error('Email Profile Root hoặc UID không hợp lệ.')
+
+  let rootInfo
+  try {
+    rootInfo = await stat(resolve(normalizedRoot))
+  } catch {
+    throw new Error('Email Profile Root không tồn tại.')
+  }
+  if (!rootInfo.isDirectory()) throw new Error('Email Profile Root không phải thư mục.')
+
+  try {
+    const existing = await stat(profileDirectory)
+    if (!existing.isDirectory()) throw new Error('Đường dẫn profile UID đã tồn tại nhưng không phải thư mục.')
+    return profileDirectory
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+
+  try {
+    await mkdir(profileDirectory)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+    const raced = await stat(profileDirectory).catch(() => null)
+    if (!raced?.isDirectory()) throw new Error('Đường dẫn profile UID đã tồn tại nhưng không phải thư mục.')
+  }
+  return profileDirectory
 }
 
 export function resolveEmailProfileDirectory(root: string, uid: string): string | null {

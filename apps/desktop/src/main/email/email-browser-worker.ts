@@ -40,6 +40,17 @@ function parseCommand(event: unknown): OpenCommand | null {
   return candidate as OpenCommand
 }
 
+function friendlyBrowserError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error)
+  if (/browser context|connectovercdp|cdp/i.test(message)) {
+    return 'Browser Email đang chạy nhưng PAGE-AUTO không attach được qua CDP.'
+  }
+  if (/executable.*(doesn.t exist|not found)|enoent/i.test(message)) {
+    return 'Không tìm thấy file Browser Email đã cấu hình.'
+  }
+  return 'Browser Email không khởi động được. Anh chọn Chrome/Edge/Chromium khác trong Thiết lập Email rồi thử lại.'
+}
+
 async function readCdpEndpoint(profileDirectory: string): Promise<string | null> {
   try {
     const [portText] = (await readFile(join(profileDirectory, 'DevToolsActivePort'), 'utf8')).trim().split(/\r?\n/)
@@ -99,10 +110,13 @@ async function openOutlook(context: BrowserContext): Promise<void> {
 }
 
 async function launchProfile(command: OpenCommand): Promise<BrowserContext> {
+  if (!command.executablePath?.trim()) {
+    throw new Error('Browser executable not found')
+  }
   return await chromium.launchPersistentContext(command.profileDirectory, {
     headless: false,
     viewport: null,
-    ...(command.executablePath ? { executablePath: command.executablePath } : {}),
+    executablePath: command.executablePath,
     ...(command.proxy ? { proxy: command.proxy } : {})
   })
 }
@@ -157,7 +171,7 @@ async function run(): Promise<void> {
                 await openOutlook(launchedContext)
                 result = {
                   type: 'open-result', accountId: command.accountId, status: 'started', attached: false,
-                  proxyManagedExternally: false, message: 'CDP cũ không còn dùng được; đã mở profile trực tiếp theo UID.'
+                  proxyManagedExternally: false, message: 'CDP cũ không còn dùng được; đã mở lại đúng profile Email theo UID.'
                 }
               }
             }
@@ -188,7 +202,7 @@ async function run(): Promise<void> {
       } catch (error) {
         result = {
           type: 'open-result', accountId: command.accountId, status: 'error', attached: false,
-          proxyManagedExternally: false, message: error instanceof Error ? error.message : String(error)
+          proxyManagedExternally: false, message: friendlyBrowserError(error)
         }
       }
       process.parentPort?.postMessage(result)
