@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   absoluteFacebookPostUrl,
   facebookPostKey,
+  groupMyPostedContentUrl,
   isNewFacebookPostHref,
   publishContentFingerprint,
   type PublishBaseline
@@ -30,5 +31,14 @@ describe('strong publish verification helpers', () => {
   it('normalizes content fingerprints and absolute Facebook URLs', () => {
     expect(publishContentFingerprint('  hello   world\nagain ')).toBe('hello world again')
     expect(absoluteFacebookPostUrl('/groups/111/posts/333/')).toBe('https://www.facebook.com/groups/111/posts/333/')
+  })
+
+  it('builds my_posted_content from the current Group UID instead of a fixed UID', () => {
+    expect(groupMyPostedContentUrl('1135978350588987')).toBe(
+      'https://www.facebook.com/groups/1135978350588987/my_posted_content'
+    )
+    expect(groupMyPostedContentUrl(' 1482164882666280 ')).toBe(
+      'https://www.facebook.com/groups/1482164882666280/my_posted_content'
+    )
   })
 })
