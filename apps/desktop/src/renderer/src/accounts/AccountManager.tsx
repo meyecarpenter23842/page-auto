@@ -23,34 +23,41 @@ type GridColumn = {
   width: number
 }
 
+const accountStatusLabels: Record<AccountRecord['status'], string> = {
+  unknown: 'Chưa kiểm tra',
+  valid: 'Hoạt động',
+  needs_login: 'Cần đăng nhập',
+  disabled: 'Đã tắt'
+}
+
 const columns: GridColumn[] = [
-  { id: 'uid', label: 'UID / UserName', defaultVisible: true, width: 160 },
-  { id: 'name', label: 'Tên', defaultVisible: true, width: 150 },
-  { id: 'status', label: 'Status', defaultVisible: true, width: 105 },
-  { id: 'category', label: 'Category', defaultVisible: true, width: 130 },
-  { id: 'cookieStatus', label: 'Cookie status', defaultVisible: true, width: 115 },
+  { id: 'uid', label: 'UID / Tên đăng nhập', defaultVisible: true, width: 160 },
+  { id: 'name', label: 'Tên tài khoản', defaultVisible: true, width: 150 },
+  { id: 'status', label: 'Trạng thái', defaultVisible: true, width: 115 },
+  { id: 'category', label: 'Nhóm', defaultVisible: true, width: 130 },
+  { id: 'cookieStatus', label: 'Trạng thái cookie', defaultVisible: true, width: 130 },
   { id: 'proxy', label: 'Proxy', defaultVisible: true, width: 175 },
-  { id: 'note', label: 'Note', defaultVisible: true, width: 220 },
+  { id: 'note', label: 'Ghi chú', defaultVisible: true, width: 220 },
   { id: 'lastUsedAt', label: 'Lần dùng cuối', defaultVisible: true, width: 145 },
-  { id: 'username', label: 'UserName riêng', defaultVisible: false, width: 150 },
-  { id: 'password', label: 'Password', defaultVisible: false, sensitive: true, width: 145 },
-  { id: 'cookie', label: 'Cookie raw', defaultVisible: false, sensitive: true, width: 210 },
+  { id: 'username', label: 'Tên đăng nhập riêng', defaultVisible: false, width: 155 },
+  { id: 'password', label: 'Mật khẩu', defaultVisible: false, sensitive: true, width: 145 },
+  { id: 'cookie', label: 'Cookie', defaultVisible: false, sensitive: true, width: 210 },
   { id: 'twoFactorSecret', label: '2FA', defaultVisible: false, sensitive: true, width: 135 },
   { id: 'email', label: 'Email', defaultVisible: false, width: 185 },
-  { id: 'emailPassword', label: 'Pass Email', defaultVisible: false, sensitive: true, width: 145 },
-  { id: 'backupEmail', label: 'Backup Email', defaultVisible: false, width: 185 },
-  { id: 'phone', label: 'Phone', defaultVisible: false, width: 130 },
-  { id: 'friendCount', label: 'Friend', defaultVisible: false, width: 90 },
+  { id: 'emailPassword', label: 'Mật khẩu email', defaultVisible: false, sensitive: true, width: 145 },
+  { id: 'backupEmail', label: 'Email dự phòng', defaultVisible: false, width: 185 },
+  { id: 'phone', label: 'Điện thoại', defaultVisible: false, width: 130 },
+  { id: 'friendCount', label: 'Bạn bè', defaultVisible: false, width: 90 },
   { id: 'createdDate', label: 'Ngày tạo', defaultVisible: false, width: 125 },
-  { id: 'userAgent', label: 'UserAgent', defaultVisible: false, width: 250 },
-  { id: 'proxyType', label: 'Proxy Type', defaultVisible: false, width: 105 },
-  { id: 'proxyHost', label: 'Proxy Host', defaultVisible: false, width: 145 },
-  { id: 'proxyPort', label: 'Proxy Port', defaultVisible: false, width: 95 },
-  { id: 'proxyUsername', label: 'Proxy User', defaultVisible: false, width: 135 },
-  { id: 'proxyPassword', label: 'Proxy Pass', defaultVisible: false, sensitive: true, width: 135 },
-  { id: 'lastCookieCheck', label: 'Cookie checked', defaultVisible: false, width: 145 },
-  { id: 'createdAt', label: 'Added at', defaultVisible: false, width: 145 },
-  { id: 'updatedAt', label: 'Updated at', defaultVisible: false, width: 145 }
+  { id: 'userAgent', label: 'User-Agent', defaultVisible: false, width: 250 },
+  { id: 'proxyType', label: 'Loại proxy', defaultVisible: false, width: 105 },
+  { id: 'proxyHost', label: 'Máy chủ proxy', defaultVisible: false, width: 145 },
+  { id: 'proxyPort', label: 'Cổng proxy', defaultVisible: false, width: 95 },
+  { id: 'proxyUsername', label: 'Tài khoản proxy', defaultVisible: false, width: 135 },
+  { id: 'proxyPassword', label: 'Mật khẩu proxy', defaultVisible: false, sensitive: true, width: 135 },
+  { id: 'lastCookieCheck', label: 'Kiểm tra cookie', defaultVisible: false, width: 145 },
+  { id: 'createdAt', label: 'Ngày thêm', defaultVisible: false, width: 145 },
+  { id: 'updatedAt', label: 'Cập nhật lúc', defaultVisible: false, width: 145 }
 ]
 
 const columnById = new Map(columns.map((column) => [column.id, column]))
@@ -61,28 +68,28 @@ const defaultLayout: AccountColumnLayout = {
 }
 
 const importFieldLabels: Record<AccountImportField | 'ignore', string> = {
-  ignore: 'Ignore',
-  uid: 'UID/UserName',
-  username: 'UserName',
-  password: 'Password',
-  name: 'Name',
+  ignore: 'Bỏ qua',
+  uid: 'UID/Tên đăng nhập',
+  username: 'Tên đăng nhập riêng',
+  password: 'Mật khẩu',
+  name: 'Tên tài khoản',
   cookie: 'Cookie',
   twoFactorSecret: '2FA',
   email: 'Email',
-  emailPassword: 'Password Email',
-  backupEmail: 'Backup Email',
-  phone: 'Phone',
+  emailPassword: 'Mật khẩu email',
+  backupEmail: 'Email dự phòng',
+  phone: 'Điện thoại',
   proxy: 'Proxy',
-  proxyType: 'Proxy Type',
-  proxyHost: 'Proxy Host',
-  proxyPort: 'Proxy Port',
-  proxyUsername: 'Proxy Username',
-  proxyPassword: 'Proxy Password',
-  userAgent: 'UserAgent',
-  category: 'Category',
-  note: 'Note',
-  friendCount: 'Friend',
-  createdDate: 'Created Date'
+  proxyType: 'Loại proxy',
+  proxyHost: 'Máy chủ proxy',
+  proxyPort: 'Cổng proxy',
+  proxyUsername: 'Tài khoản proxy',
+  proxyPassword: 'Mật khẩu proxy',
+  userAgent: 'User-Agent',
+  category: 'Nhóm',
+  note: 'Ghi chú',
+  friendCount: 'Bạn bè',
+  createdDate: 'Ngày tạo'
 }
 
 const DEFAULT_CUSTOM_MAPPING: AccountImportMapping = [
@@ -205,46 +212,46 @@ function AccountEditor({ account, onClose, onSaved }: AccountEditorProps) {
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
       <form className="modal account-editor" onSubmit={submit} onMouseDown={(event) => event.stopPropagation()}>
         <div className="modal-header">
-          <div><p className="eyebrow">Account Manager</p><h2>{account ? `Sửa ${account.uid}` : 'Thêm tài khoản'}</h2></div>
+          <div><p className="eyebrow">Quản lý tài khoản</p><h2>{account ? `Sửa ${account.uid}` : 'Thêm tài khoản'}</h2></div>
           <button className="icon-button" type="button" onClick={onClose}>×</button>
         </div>
 
         <div className="form-grid">
-          <label><span>UID / UserName *</span><input required value={draft.uid} onChange={(e) => setField('uid', e.target.value)} /></label>
-          <label><span>UserName riêng</span><input value={draft.username ?? ''} onChange={(e) => setField('username', e.target.value)} /></label>
-          <label><span>Tên hiển thị</span><input value={draft.name ?? ''} onChange={(e) => setField('name', e.target.value)} /></label>
-          <label><span>Status</span><select value={draft.status ?? 'unknown'} onChange={(e) => setField('status', e.target.value as AccountDraft['status'])}>{ACCOUNT_STATUSES.map((status) => <option key={status}>{status}</option>)}</select></label>
-          <label><span>Category</span><input value={draft.category ?? ''} onChange={(e) => setField('category', e.target.value)} /></label>
-          <label><span>Friend</span><input type="number" min="0" value={draft.friendCount ?? ''} onChange={(e) => setField('friendCount', e.target.value === '' ? null : Number(e.target.value))} /></label>
+          <label><span>UID / Tên đăng nhập *</span><input required value={draft.uid} onChange={(e) => setField('uid', e.target.value)} /></label>
+          <label><span>Tên đăng nhập riêng</span><input value={draft.username ?? ''} onChange={(e) => setField('username', e.target.value)} /></label>
+          <label><span>Tên tài khoản</span><input value={draft.name ?? ''} onChange={(e) => setField('name', e.target.value)} /></label>
+          <label><span>Trạng thái</span><select value={draft.status ?? 'unknown'} onChange={(e) => setField('status', e.target.value as AccountDraft['status'])}>{ACCOUNT_STATUSES.map((status) => <option key={status} value={status}>{accountStatusLabels[status]}</option>)}</select></label>
+          <label><span>Nhóm</span><input value={draft.category ?? ''} onChange={(e) => setField('category', e.target.value)} /></label>
+          <label><span>Bạn bè</span><input type="number" min="0" value={draft.friendCount ?? ''} onChange={(e) => setField('friendCount', e.target.value === '' ? null : Number(e.target.value))} /></label>
         </div>
 
-        <div className="form-section-title">Credentials & session</div>
+        <div className="form-section-title">Đăng nhập & phiên</div>
         <div className="form-grid">
-          <label><span>Password</span><input type="password" autoComplete="off" value={draft.password ?? ''} onChange={(e) => setField('password', e.target.value)} /></label>
+          <label><span>Mật khẩu</span><input type="password" autoComplete="off" value={draft.password ?? ''} onChange={(e) => setField('password', e.target.value)} /></label>
           <label><span>2FA</span><input type="password" autoComplete="off" value={draft.twoFactorSecret ?? ''} onChange={(e) => setField('twoFactorSecret', e.target.value)} /></label>
           <label className="span-2"><span>Cookie</span><textarea rows={3} value={draft.cookie ?? ''} onChange={(e) => setField('cookie', e.target.value)} /></label>
-          <label><span>Cookie status</span><input value={draft.cookieStatus ?? ''} onChange={(e) => setField('cookieStatus', e.target.value)} /></label>
-          <label><span>UserAgent</span><input value={draft.userAgent ?? ''} onChange={(e) => setField('userAgent', e.target.value)} /></label>
+          <label><span>Trạng thái cookie</span><input value={draft.cookieStatus ?? ''} onChange={(e) => setField('cookieStatus', e.target.value)} /></label>
+          <label><span>User-Agent</span><input value={draft.userAgent ?? ''} onChange={(e) => setField('userAgent', e.target.value)} /></label>
         </div>
 
-        <div className="form-section-title">Email & contact</div>
+        <div className="form-section-title">Email & liên hệ</div>
         <div className="form-grid">
           <label><span>Email</span><input value={draft.email ?? ''} onChange={(e) => setField('email', e.target.value)} /></label>
-          <label><span>Password Email</span><input type="password" autoComplete="off" value={draft.emailPassword ?? ''} onChange={(e) => setField('emailPassword', e.target.value)} /></label>
-          <label><span>Backup Email</span><input value={draft.backupEmail ?? ''} onChange={(e) => setField('backupEmail', e.target.value)} /></label>
-          <label><span>Phone</span><input value={draft.phone ?? ''} onChange={(e) => setField('phone', e.target.value)} /></label>
+          <label><span>Mật khẩu email</span><input type="password" autoComplete="off" value={draft.emailPassword ?? ''} onChange={(e) => setField('emailPassword', e.target.value)} /></label>
+          <label><span>Email dự phòng</span><input value={draft.backupEmail ?? ''} onChange={(e) => setField('backupEmail', e.target.value)} /></label>
+          <label><span>Điện thoại</span><input value={draft.phone ?? ''} onChange={(e) => setField('phone', e.target.value)} /></label>
         </div>
 
-        <div className="form-section-title">Proxy & metadata</div>
+        <div className="form-section-title">Proxy & thông tin</div>
         <div className="form-grid">
-          <label className="span-2"><span>Proxy raw</span><input value={draft.proxy ?? ''} onChange={(e) => setField('proxy', e.target.value)} placeholder="host:port:user:pass hoặc format riêng" /></label>
-          <label><span>Proxy Type</span><input value={draft.proxyType ?? ''} onChange={(e) => setField('proxyType', e.target.value)} /></label>
-          <label><span>Proxy Host</span><input value={draft.proxyHost ?? ''} onChange={(e) => setField('proxyHost', e.target.value)} /></label>
-          <label><span>Proxy Port</span><input type="number" min="0" max="65535" value={draft.proxyPort ?? ''} onChange={(e) => setField('proxyPort', e.target.value === '' ? null : Number(e.target.value))} /></label>
-          <label><span>Proxy Username</span><input value={draft.proxyUsername ?? ''} onChange={(e) => setField('proxyUsername', e.target.value)} /></label>
-          <label><span>Proxy Password</span><input type="password" autoComplete="off" value={draft.proxyPassword ?? ''} onChange={(e) => setField('proxyPassword', e.target.value)} /></label>
-          <label><span>Ngày tạo</span><input value={draft.createdDate ?? ''} onChange={(e) => setField('createdDate', e.target.value)} placeholder="YYYY-MM-DD hoặc text nguồn" /></label>
-          <label className="span-2"><span>Note</span><textarea rows={3} value={draft.note ?? ''} onChange={(e) => setField('note', e.target.value)} /></label>
+          <label className="span-2"><span>Proxy gốc</span><input value={draft.proxy ?? ''} onChange={(e) => setField('proxy', e.target.value)} placeholder="host:port:user:pass hoặc định dạng riêng" /></label>
+          <label><span>Loại proxy</span><input value={draft.proxyType ?? ''} onChange={(e) => setField('proxyType', e.target.value)} /></label>
+          <label><span>Máy chủ proxy</span><input value={draft.proxyHost ?? ''} onChange={(e) => setField('proxyHost', e.target.value)} /></label>
+          <label><span>Cổng proxy</span><input type="number" min="0" max="65535" value={draft.proxyPort ?? ''} onChange={(e) => setField('proxyPort', e.target.value === '' ? null : Number(e.target.value))} /></label>
+          <label><span>Tài khoản proxy</span><input value={draft.proxyUsername ?? ''} onChange={(e) => setField('proxyUsername', e.target.value)} /></label>
+          <label><span>Mật khẩu proxy</span><input type="password" autoComplete="off" value={draft.proxyPassword ?? ''} onChange={(e) => setField('proxyPassword', e.target.value)} /></label>
+          <label><span>Ngày tạo</span><input value={draft.createdDate ?? ''} onChange={(e) => setField('createdDate', e.target.value)} placeholder="YYYY-MM-DD hoặc dữ liệu nguồn" /></label>
+          <label className="span-2"><span>Ghi chú</span><textarea rows={3} value={draft.note ?? ''} onChange={(e) => setField('note', e.target.value)} /></label>
         </div>
 
         {error ? <div className="inline-error">{error}</div> : null}
@@ -310,7 +317,7 @@ function ImportDialog({ mode, presets, onClose, onImported, onPresetSaved }: Imp
 
   const savePreset = async () => {
     if (!presetName.trim()) {
-      setError('Nhập tên preset trước khi lưu.')
+      setError('Nhập tên mẫu trước khi lưu.')
       return
     }
     try {
@@ -326,17 +333,17 @@ function ImportDialog({ mode, presets, onClose, onImported, onPresetSaved }: Imp
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
       <div className="modal import-modal" onMouseDown={(event) => event.stopPropagation()}>
         <div className="modal-header">
-          <div><p className="eyebrow">Account Import</p><h2>{mode === 'quick' ? 'Import nhanh' : 'Custom Import'}</h2></div>
+          <div><p className="eyebrow">Nhập tài khoản</p><h2>{mode === 'quick' ? 'Nhập nhanh' : 'Nhập tùy chỉnh'}</h2></div>
           <button className="icon-button" type="button" onClick={onClose}>×</button>
         </div>
 
         <div className="import-toolbar-row">
-          <label><span>Delimiter</span><input className="delimiter-input" value={delimiter} maxLength={8} onChange={(e) => setDelimiter(e.target.value)} /></label>
-          <label><span>UID trùng</span><select value={duplicatePolicy} onChange={(e) => setDuplicatePolicy(e.target.value as 'skip' | 'update')}><option value="skip">Skip</option><option value="update">Update existing</option></select></label>
-          {mode === 'custom' ? <span className="mapping-format-hint">Mặc định: UID | Password | 2FA | Cookie | Email | PassEmail | Proxy | UserAgent | Note</span> : null}
+          <label><span>Dấu phân cách</span><input className="delimiter-input" value={delimiter} maxLength={8} onChange={(e) => setDelimiter(e.target.value)} /></label>
+          <label><span>Khi UID trùng</span><select value={duplicatePolicy} onChange={(e) => setDuplicatePolicy(e.target.value as 'skip' | 'update')}><option value="skip">Bỏ qua</option><option value="update">Cập nhật dữ liệu cũ</option></select></label>
+          {mode === 'custom' ? <span className="mapping-format-hint">Mặc định: UID | Mật khẩu | 2FA | Cookie | Email | Mật khẩu email | Proxy | User-Agent | Ghi chú</span> : null}
         </div>
 
-        <label className="paste-area"><span>Paste dữ liệu — mỗi account một dòng</span><textarea rows={8} value={rawText} onChange={(e) => setRawText(e.target.value)} placeholder="100001|password|2fa|cookie|email|passmail|proxy|useragent|note" /></label>
+        <label className="paste-area"><span>Dán dữ liệu — mỗi tài khoản một dòng</span><textarea rows={8} value={rawText} onChange={(e) => setRawText(e.target.value)} placeholder="100001|password|2fa|cookie|email|passmail|proxy|useragent|note" /></label>
 
         <div className="preset-strip">
           {[...BUILTIN_IMPORT_PRESETS.map((preset) => ({ ...preset, id: preset.key })), ...presets].map((preset) => (
@@ -347,7 +354,7 @@ function ImportDialog({ mode, presets, onClose, onImported, onPresetSaved }: Imp
         {mode === 'custom' ? (
           <div className="mapping-panel">
             <div className="mapping-header">
-              <div><strong>Mapping thứ tự cột</strong><span>{sampleValues.length ? `${sampleValues.length} cột dữ liệu · ` : ''}{mapping.length} ô mapping</span></div>
+              <div><strong>Ánh xạ thứ tự cột</strong><span>{sampleValues.length ? `${sampleValues.length} cột dữ liệu · ` : ''}{mapping.length} ô ánh xạ</span></div>
               <div className="mapping-actions">
                 <button className="button secondary compact" type="button" onClick={removeMappingColumn} disabled={mapping.length <= MIN_CUSTOM_MAPPING_COLUMNS}>− Cột</button>
                 <button className="button secondary compact" type="button" onClick={addMappingColumn}>+ Cột</button>
@@ -358,25 +365,25 @@ function ImportDialog({ mode, presets, onClose, onImported, onPresetSaved }: Imp
                 <label key={index}>
                   <span>Cột {index + 1}{samplePreview(sampleValues, index)}</span>
                   <select value={field} onChange={(e) => setMapping((current) => current.map((item, itemIndex) => itemIndex === index ? e.target.value as AccountImportField | 'ignore' : item))}>
-                    <option value="ignore">Ignore</option>
+                    <option value="ignore">Bỏ qua</option>
                     {ACCOUNT_IMPORT_FIELDS.map((item) => <option key={item} value={item}>{importFieldLabels[item]}</option>)}
                   </select>
                 </label>
               ))}
             </div>
             <div className="save-preset-row">
-              <input value={presetName} onChange={(e) => setPresetName(e.target.value)} placeholder="Tên preset custom" />
-              <button className="button secondary" type="button" onClick={() => void savePreset()}>Lưu preset</button>
+              <input value={presetName} onChange={(e) => setPresetName(e.target.value)} placeholder="Tên mẫu tùy chỉnh" />
+              <button className="button secondary" type="button" onClick={() => void savePreset()}>Lưu mẫu</button>
             </div>
           </div>
         ) : (
-          <div className="mapping-summary">Format hiện tại: {mapping.map((field) => importFieldLabels[field]).join(` ${delimiter} `)}</div>
+          <div className="mapping-summary">Định dạng hiện tại: {mapping.map((field) => importFieldLabels[field]).join(` ${delimiter} `)}</div>
         )}
 
         {error ? <div className="inline-error">{error}</div> : null}
         <div className="modal-actions">
           <button className="button secondary" type="button" onClick={onClose}>Hủy</button>
-          <button className="button primary" type="button" disabled={saving || !rawText.trim()} onClick={() => void importNow()}>{saving ? 'Đang import…' : 'Import'}</button>
+          <button className="button primary" type="button" disabled={saving || !rawText.trim()} onClick={() => void importNow()}>{saving ? 'Đang nhập…' : 'Nhập tài khoản'}</button>
         </div>
       </div>
     </div>
@@ -403,7 +410,7 @@ function ColumnManager({ layout, onChange, onClose }: ColumnManagerProps) {
 
   return (
     <div className="column-popover">
-      <div className="column-popover-header"><strong>Column settings</strong><button className="icon-button" type="button" onClick={onClose}>×</button></div>
+      <div className="column-popover-header"><strong>Cài đặt cột</strong><button className="icon-button" type="button" onClick={onClose}>×</button></div>
       <div className="column-list">
         {layout.order.map((id) => {
           const column = columnById.get(id as ColumnId)
@@ -419,7 +426,7 @@ function ColumnManager({ layout, onChange, onClose }: ColumnManagerProps) {
           )
         })}
       </div>
-      <button className="button secondary full-width" type="button" onClick={() => onChange(defaultLayout)}>Reset default</button>
+      <button className="button secondary full-width" type="button" onClick={() => onChange(defaultLayout)}>Khôi phục mặc định</button>
     </div>
   )
 }
@@ -493,9 +500,9 @@ export function AccountManager() {
     : { id, direction: 'asc' })
 
   const deleteSelected = async () => {
-    if (selectedIds.size === 0 || !window.confirm(`Xóa ${selectedIds.size} account đã chọn?`)) return
+    if (selectedIds.size === 0 || !window.confirm(`Xóa ${selectedIds.size} tài khoản đã chọn?`)) return
     const count = await window.pageAuto.deleteAccounts({ ids: [...selectedIds] })
-    setNotice(`Đã xóa ${count} account.`)
+    setNotice(`Đã xóa ${count} tài khoản.`)
     setSelectedIds(new Set())
     await loadAccounts()
   }
@@ -503,10 +510,10 @@ export function AccountManager() {
   const assignCategory = async () => {
     const first = selected[0]
     if (!first) return
-    const category = window.prompt('Category mới cho các account đã chọn:', first.category ?? '')
+    const category = window.prompt('Nhóm mới cho các tài khoản đã chọn:', first.category ?? '')
     if (category === null) return
     for (const account of selected) await window.pageAuto.updateAccount({ id: account.id, patch: { category } })
-    setNotice(`Đã gán category cho ${selected.length} account.`)
+    setNotice(`Đã gán nhóm cho ${selected.length} tài khoản.`)
     await loadAccounts()
   }
 
@@ -514,18 +521,25 @@ export function AccountManager() {
     const account = selected[0]
     if (selected.length !== 1 || !account) return
     const result = await window.pageAuto.openAccountProfile({ accountId: account.id })
-    setNotice(result.status === 'error' ? `Không mở được browser: ${result.message ?? 'unknown error'}` : `Browser profile ${account.uid}: ${result.status}.`)
+    if (result.status === 'error') {
+      setNotice(`Không mở được Chrome: ${result.message ?? 'lỗi không xác định'}`)
+    } else if (result.status === 'already_open') {
+      setNotice(`Chrome của ${account.uid} đang mở; đã yêu cầu kiểm tra lại phiên đăng nhập.`)
+    } else {
+      setNotice(`Đã mở Chrome cho ${account.uid} và bắt đầu kiểm tra phiên đăng nhập.`)
+    }
+    await loadAccounts()
   }
 
   const onImportComplete = async (result: AccountImportResult) => {
     setImportMode(null)
-    setNotice(`Import: +${result.imported}, update ${result.updated}, skip ${result.skipped}${result.errors.length ? `, lỗi ${result.errors.length}` : ''}.`)
+    setNotice(`Nhập dữ liệu: thêm ${result.imported}, cập nhật ${result.updated}, bỏ qua ${result.skipped}${result.errors.length ? `, lỗi ${result.errors.length}` : ''}.`)
     await loadAccounts()
   }
 
   const renderCell = (account: AccountRecord, column: GridColumn) => {
     const value = formatCellValue(account, column)
-    if (column.id === 'status') return <span className={`status-text status-${account.status}`}>{account.status}</span>
+    if (column.id === 'status') return <span className={`status-text status-${account.status}`}>{accountStatusLabels[account.status]}</span>
     if (!column.sensitive || value === '—') return <span title={value}>{value}</span>
     const key = `${account.id}:${column.id}`
     const revealed = revealedSecrets.has(key)
@@ -546,28 +560,28 @@ export function AccountManager() {
       <div className="account-grid-panel">
         <div className="account-toolbar">
           <div className="toolbar-group">
-            <button className="button primary" type="button" onClick={() => setEditorAccount(null)}>+ Add account</button>
-            <button className="button secondary" type="button" onClick={() => setImportMode('quick')}>Import</button>
-            <button className="button secondary" type="button" onClick={() => setImportMode('custom')}>Import Custom</button>
-            <button className="button secondary" type="button" disabled={selected.length !== 1} onClick={() => setEditorAccount(selected[0] ?? null)}>Edit</button>
-            <button className="button danger" type="button" disabled={selectedIds.size === 0} onClick={() => void deleteSelected()}>Delete</button>
+            <button className="button primary" type="button" onClick={() => setEditorAccount(null)}>+ Thêm tài khoản</button>
+            <button className="button secondary" type="button" onClick={() => setImportMode('quick')}>Nhập nhanh</button>
+            <button className="button secondary" type="button" onClick={() => setImportMode('custom')}>Nhập tùy chỉnh</button>
+            <button className="button secondary" type="button" disabled={selected.length !== 1} onClick={() => setEditorAccount(selected[0] ?? null)}>Sửa</button>
+            <button className="button danger" type="button" disabled={selectedIds.size === 0} onClick={() => void deleteSelected()}>Xóa</button>
           </div>
           <div className="toolbar-group">
-            <button className="button secondary" type="button" disabled={selected.length !== 1} onClick={() => void openProfile()}>Open Chrome</button>
-            <button className="button secondary" type="button" disabled title="Session check action chưa nối ở màn này">Check session</button>
-            <button className="button secondary" type="button" disabled={selectedIds.size === 0} onClick={() => void assignCategory()}>Assign Category</button>
+            <button className="button secondary" type="button" disabled={selected.length !== 1} onClick={() => void openProfile()}>Mở Chrome</button>
+            <button className="button secondary" type="button" disabled title="Kiểm tra phiên được thực hiện khi mở Chrome hoặc trước mỗi lượt đăng">Kiểm tra phiên</button>
+            <button className="button secondary" type="button" disabled={selectedIds.size === 0} onClick={() => void assignCategory()}>Gán nhóm</button>
             <div className="column-settings-anchor">
-              <button className="button secondary" type="button" onClick={() => setColumnManagerOpen((value) => !value)}>Columns</button>
+              <button className="button secondary" type="button" onClick={() => setColumnManagerOpen((value) => !value)}>Cột</button>
               {columnManagerOpen ? <ColumnManager layout={layout} onChange={persistLayout} onClose={() => setColumnManagerOpen(false)} /> : null}
             </div>
           </div>
         </div>
 
         <div className="filter-row">
-          <input className="search-input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Tìm UID, username, tên, email, note…" />
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}><option value="all">Tất cả status</option>{ACCOUNT_STATUSES.map((status) => <option key={status} value={status}>{status}</option>)}</select>
-          <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}><option value="">Tất cả category</option>{categories.map((category) => <option key={category}>{category}</option>)}</select>
-          <span className="grid-state">{loading ? 'Đang tải…' : `${sortedAccounts.length} dòng · chọn ${selectedIds.size}`}</span>
+          <input className="search-input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Tìm UID, tên đăng nhập, tên, email, ghi chú…" />
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}><option value="all">Tất cả trạng thái</option>{ACCOUNT_STATUSES.map((status) => <option key={status} value={status}>{accountStatusLabels[status]}</option>)}</select>
+          <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}><option value="">Tất cả nhóm</option>{categories.map((category) => <option key={category}>{category}</option>)}</select>
+          <span className="grid-state">{loading ? 'Đang tải…' : `${sortedAccounts.length} dòng · đã chọn ${selectedIds.size}`}</span>
         </div>
 
         {notice ? <div className="notice-bar"><span>{notice}</span><button type="button" onClick={() => setNotice(null)}>×</button></div> : null}
@@ -585,13 +599,13 @@ export function AccountManager() {
                   {visibleColumns.map((column) => <td key={column.id} style={{ width: layout.widths[column.id], maxWidth: layout.widths[column.id] }}>{renderCell(account, column)}</td>)}
                 </tr>
               ))}
-              {!loading && sortedAccounts.length === 0 ? <tr><td className="empty-grid" colSpan={visibleColumns.length + 1}>Chưa có account phù hợp bộ lọc. Import hoặc thêm account để bắt đầu.</td></tr> : null}
+              {!loading && sortedAccounts.length === 0 ? <tr><td className="empty-grid" colSpan={visibleColumns.length + 1}>Chưa có tài khoản phù hợp bộ lọc. Hãy nhập hoặc thêm tài khoản để bắt đầu.</td></tr> : null}
             </tbody>
           </table>
         </div>
       </div>
 
-      {editorAccount !== undefined ? <AccountEditor account={editorAccount} onClose={() => setEditorAccount(undefined)} onSaved={async () => { setEditorAccount(undefined); setNotice('Đã lưu account.'); await loadAccounts() }} /> : null}
+      {editorAccount !== undefined ? <AccountEditor account={editorAccount} onClose={() => setEditorAccount(undefined)} onSaved={async () => { setEditorAccount(undefined); setNotice('Đã lưu tài khoản.'); await loadAccounts() }} /> : null}
       {importMode ? <ImportDialog mode={importMode} presets={presets} onClose={() => setImportMode(null)} onImported={(result) => void onImportComplete(result)} onPresetSaved={(preset) => setPresets((current) => [...current.filter((item) => item.id !== preset.id), preset].sort((a, b) => a.name.localeCompare(b.name)))} /> : null}
     </section>
   )

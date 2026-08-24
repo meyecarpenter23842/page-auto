@@ -48,6 +48,7 @@ export interface PostingSessionAccount {
   password: string | null
   cookie: string | null
   twoFactorSecret: string | null
+  name: string | null
 }
 
 export interface PostingProxyConfig {
@@ -83,6 +84,9 @@ export interface PostingJobResult {
   currentUrl?: string
   tracePath?: string
   sessionValidation?: PostingSessionValidation
+  accountName?: string
+  /** Main-process only. PostingService strips this before returning through IPC/logging. */
+  sessionCookie?: string
 }
 
 export interface PostingWorkerRequestMessage {

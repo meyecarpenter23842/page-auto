@@ -1,8 +1,26 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { AccountRecord } from '../../../shared/accounts'
 import type { PageTabSummary } from '../../../shared/pageTabs'
+import type { PostingResultStatus } from '../../../shared/posting'
 import type { RotationRuntimeSnapshot } from '../../../shared/rotation'
 import './multiTabRuntime.css'
+
+const runtimeStatusLabels: Record<RotationRuntimeSnapshot['status'], string> = {
+  idle: 'Chưa chạy',
+  starting: 'Đang khởi động',
+  running: 'Đang chạy',
+  paused: 'Tạm dừng',
+  waiting_window: 'Chờ khung giờ',
+  completed: 'Hoàn tất',
+  error: 'Lỗi'
+}
+
+const postingStatusLabels: Record<PostingResultStatus, string> = {
+  success: 'Thành công',
+  failed: 'Lỗi',
+  needs_login: 'Cần đăng nhập',
+  skipped: 'Bỏ qua'
+}
 
 function formatDuration(milliseconds: number): string {
   const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000))
@@ -14,7 +32,7 @@ function formatDuration(milliseconds: number): string {
 
 function formatTime(timestamp: number | null): string {
   if (!timestamp) return '—'
-  return new Date(timestamp).toLocaleString()
+  return new Date(timestamp).toLocaleString('vi-VN')
 }
 
 function canStart(status: RotationRuntimeSnapshot['status']): boolean {
@@ -119,14 +137,14 @@ export function MultiTabRuntimeDashboard({ pageTabId = null, compact = false }: 
     <section className={compact ? 'multi-runtime-shell compact' : 'multi-runtime-shell'}>
       <div className="multi-runtime-heading">
         <div>
-          <p className="eyebrow">Phase 7 · Worker Manager</p>
-          <h2>{compact ? 'Runtime Page hiện tại' : 'Multi Page Runtime'}</h2>
-          {!compact ? <p>Mỗi Page Tab có runtime riêng; nhiều tab chạy song song, account trong từng tab vẫn tuần tự.</p> : null}
+          <p className="eyebrow">Điều phối Page Tab</p>
+          <h2>{compact ? 'Trạng thái Page hiện tại' : 'Trạng thái nhiều Page'}</h2>
+          {!compact ? <p>Mỗi Page Tab có trạng thái riêng; nhiều tab chạy song song, tài khoản trong từng tab vẫn chạy tuần tự.</p> : null}
         </div>
         <div className="multi-runtime-summary">
-          {!compact ? <span><strong>{activeCount}</strong> active</span> : null}
-          {!compact ? <span><strong>{visibleTabs.length}</strong> tabs</span> : null}
-          <button type="button" onClick={() => { void refreshStatic(); void refreshRuntime() }}>Refresh</button>
+          {!compact ? <span><strong>{activeCount}</strong> đang chạy</span> : null}
+          {!compact ? <span><strong>{visibleTabs.length}</strong> tab</span> : null}
+          <button type="button" onClick={() => { void refreshStatic(); void refreshRuntime() }}>Làm mới</button>
         </div>
       </div>
 
@@ -144,54 +162,55 @@ export function MultiTabRuntimeDashboard({ pageTabId = null, compact = false }: 
             : '—'
           const busy = busyTabs.has(tab.id)
           const elapsed = startedAt ? formatDuration(now - startedAt) : '00:00:00'
+          const lastStatus = runtime?.lastResult?.status
 
           return (
             <article className={`multi-runtime-card runtime-${status}`} key={tab.id}>
               <header>
                 <div>
-                  <span className="multi-runtime-status">{status}</span>
+                  <span className="multi-runtime-status">{runtimeStatusLabels[status]}</span>
                   <h3>{tab.name}</h3>
-                  <small>Page UID {tab.pageUid}</small>
+                  <small>UID Page {tab.pageUid}</small>
                 </div>
                 <div className="multi-runtime-actions">
                   <button
                     type="button"
                     disabled={busy || !canStart(status)}
                     onClick={() => void runAction(tab.id, window.pageAuto.startPageTabRotation)}
-                  >Start</button>
+                  >Bắt đầu</button>
                   <button
                     type="button"
                     disabled={busy || !canPause(status)}
                     onClick={() => void runAction(tab.id, window.pageAuto.pausePageTabRotation)}
-                  >Pause</button>
+                  >Tạm dừng</button>
                   <button
                     type="button"
                     disabled={busy || !canResume(status)}
                     onClick={() => void runAction(tab.id, window.pageAuto.resumePageTabRotation)}
-                  >Resume</button>
+                  >Tiếp tục</button>
                 </div>
               </header>
 
               <div className="multi-runtime-metrics">
                 <div><span>Đã đăng</span><strong>{metrics?.success ?? 0}</strong></div>
                 <div><span>Còn lại</span><strong>{metrics?.remaining ?? 0}</strong></div>
-                <div><span>Failed</span><strong>{metrics?.failed ?? 0}</strong></div>
-                <div><span>Progress</span><strong>{metrics?.progressPercent ?? 0}%</strong></div>
+                <div><span>Lỗi</span><strong>{metrics?.failed ?? 0}</strong></div>
+                <div><span>Tiến độ</span><strong>{metrics?.progressPercent ?? 0}%</strong></div>
               </div>
 
               <dl className="multi-runtime-details">
-                <div><dt>Account hiện tại</dt><dd>{currentAccount}</dd></div>
-                <div><dt>Lượt account</dt><dd>{runtime ? `${runtime.slotsCompletedThisTurn}/${runtime.targetSlotsThisTurn}` : '—'}</dd></div>
-                <div><dt>Vòng account</dt><dd>{runtime?.cycle ?? 0}</dd></div>
-                <div><dt>Run ID</dt><dd>{runtime?.runId ?? '—'}</dd></div>
-                <div><dt>Started at</dt><dd>{formatTime(startedAt)}</dd></div>
-                <div><dt>Runtime</dt><dd>{elapsed}</dd></div>
-                <div><dt>Next action</dt><dd>{formatTime(runtime?.nextActionAt ?? null)}</dd></div>
-                <div><dt>Last result</dt><dd>{runtime?.lastResult?.status ?? '—'}</dd></div>
+                <div><dt>Tài khoản hiện tại</dt><dd>{currentAccount}</dd></div>
+                <div><dt>Lượt tài khoản</dt><dd>{runtime ? `${runtime.slotsCompletedThisTurn}/${runtime.targetSlotsThisTurn}` : '—'}</dd></div>
+                <div><dt>Vòng tài khoản</dt><dd>{runtime?.cycle ?? 0}</dd></div>
+                <div><dt>Mã phiên</dt><dd>{runtime?.runId ?? '—'}</dd></div>
+                <div><dt>Bắt đầu lúc</dt><dd>{formatTime(startedAt)}</dd></div>
+                <div><dt>Thời gian chạy</dt><dd>{elapsed}</dd></div>
+                <div><dt>Tác vụ kế tiếp</dt><dd>{formatTime(runtime?.nextActionAt ?? null)}</dd></div>
+                <div><dt>Kết quả gần nhất</dt><dd>{lastStatus ? postingStatusLabels[lastStatus] : '—'}</dd></div>
               </dl>
 
               <footer>
-                <span>{runtime?.message ?? 'Chưa có runtime active.'}</span>
+                <span>{runtime?.message ?? 'Chưa có phiên chạy đang hoạt động.'}</span>
                 <strong>{metrics ? `${metrics.success}/${metrics.total}` : '0/0'}</strong>
               </footer>
             </article>
@@ -199,7 +218,7 @@ export function MultiTabRuntimeDashboard({ pageTabId = null, compact = false }: 
         })}
         {visibleTabs.length === 0 ? <div className="multi-runtime-empty">Chưa có Page Tab để chạy.</div> : null}
       </div>
-      {!compact ? <p className="multi-runtime-note">Runtime đọc cấu hình đã Save trong DB. Chi tiết group/content/image và recovery log sâu được mở rộng ở Phase 8.</p> : null}
+      {!compact ? <p className="multi-runtime-note">Trạng thái chạy dùng cấu hình đã lưu trong cơ sở dữ liệu. Group, nội dung, ảnh và nhật ký chi tiết nằm trong cấu hình từng Page Tab.</p> : null}
     </section>
   )
 }

@@ -2,6 +2,7 @@ import { chromium, type BrowserContext } from 'playwright-core'
 import type { BrowserSettings, SessionSettings } from '../../shared/appSettings'
 import type { PostingProxyConfig } from '../../shared/posting'
 import { inspectFacebookAccountIdentity } from './facebookAccountIdentity'
+import { readFacebookDisplayName } from './facebookProfileInfo'
 import {
   bootstrapFacebookSession,
   type FacebookSessionAccount,
@@ -131,9 +132,14 @@ async function run(): Promise<void> {
         const session = await bootstrapFacebookSession(activeContext, page, command.account, command.session.facebookLocale)
         if (session.status === 'valid') {
           const identity = await inspectFacebookAccountIdentity(activeContext, command.account.uid)
-          result = identity.state === 'mismatch' || identity.state === 'missing'
-            ? identityFailure(command.account.id, identity)
-            : { type: 'session-result', ...session }
+          if (identity.state === 'mismatch' || identity.state === 'missing') {
+            result = identityFailure(command.account.id, identity)
+          } else {
+            const profileName = identity.state === 'match'
+              ? await readFacebookDisplayName(page).catch(() => null)
+              : null
+            result = { type: 'session-result', ...session, ...(profileName ? { profileName } : {}) }
+          }
         } else {
           result = { type: 'session-result', ...session }
         }

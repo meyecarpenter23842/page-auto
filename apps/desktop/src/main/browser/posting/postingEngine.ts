@@ -2,8 +2,8 @@ import { chromium, type BrowserContext, type Locator, type Page } from 'playwrig
 import type { BrowserSettings } from '../../../shared/appSettings'
 import type { PostingJobRequest, PostingJobResult } from '../../../shared/posting'
 import { inspectFacebookAccountIdentity } from '../facebookAccountIdentity'
+import { readFacebookDisplayName } from '../facebookProfileInfo'
 import {
-  applyFacebookLocale,
   bootstrapFacebookSession,
   validateFacebookSession,
   type FacebookSessionResult
@@ -247,6 +247,9 @@ export async function executePostingJob(job: PostingJobRequest): Promise<Posting
   let page: Page | null = null
   let lifetimeTimer: NodeJS.Timeout | null = null
   let traceStarted = false
+  let accountName: string | null = job.sessionAccount.name?.trim() || null
+  let sessionCookie: string | null = null
+  let sessionValidated = false
 
   try {
     await waitForBrowserStartupDelay(job.browser)
@@ -264,9 +267,22 @@ export async function executePostingJob(job: PostingJobRequest): Promise<Posting
     return failure(profileInUse ? 'profile_in_use' : 'browser_launch_failed', profileInUse ? 'Browser profile đang được mở ở process khác.' : message)
   }
 
-  const finish = async (result: PostingJobResult): Promise<PostingJobResult> => page
-    ? finishPostingEvidence(page, job, result, traceStarted)
-    : result
+  const finish = async (result: PostingJobResult): Promise<PostingJobResult> => {
+    let enriched = result
+    if (sessionValidated && !enriched.sessionValidation) {
+      enriched = {
+        ...enriched,
+        sessionValidation: {
+          phase: 'before_run',
+          state: 'valid',
+          message: 'Session Facebook đã được xác minh/phục hồi trước khi thực thi bài đăng.'
+        }
+      }
+    }
+    if (accountName && !enriched.accountName) enriched = { ...enriched, accountName }
+    if (sessionCookie && !enriched.sessionCookie) enriched = { ...enriched, sessionCookie }
+    return page ? finishPostingEvidence(page, job, enriched, traceStarted) : enriched
+  }
 
   try {
     page = context.pages()[0] ?? await context.newPage()
@@ -283,16 +299,18 @@ export async function executePostingJob(job: PostingJobRequest): Promise<Posting
       if (proxyCheck.status === 'failed') return finish(failure('proxy_unavailable', proxyCheck.message))
     }
 
-    if (job.session.validateBeforeRun) {
-      const session = await bootstrapFacebookSession(context, page, job.sessionAccount, job.session.facebookLocale)
-      if (session.status !== 'valid') return finish(beforeRunSessionFailure(session))
-    } else {
-      await applyFacebookLocale(context, job.session.facebookLocale).catch(() => undefined)
-    }
+    const session = await bootstrapFacebookSession(context, page, job.sessionAccount, job.session.facebookLocale)
+    if (session.status !== 'valid') return finish(beforeRunSessionFailure(session))
+    sessionValidated = true
+    sessionCookie = session.cookie
 
     const accountIdentity = await inspectFacebookAccountIdentity(context, job.sessionAccount.uid)
     if (accountIdentity.state === 'mismatch' || accountIdentity.state === 'missing') {
+      sessionValidated = false
       return finish(beforeRunIdentityFailure(accountIdentity.message))
+    }
+    if (!accountName && accountIdentity.state === 'match') {
+      accountName = await readFacebookDisplayName(page).catch(() => null)
     }
 
     const identity = await new PageIdentitySwitcher(page, context, runtimeBrowser).switchTo(job.pageUid)
@@ -322,6 +340,38 @@ export async function executePostingJob(job: PostingJobRequest): Promise<Posting
       })
     }
 
+    if (afterSession.state === 'needs_login') {
+      const recovered = await bootstrapFacebookSession(context, page, job.sessionAccount, job.session.facebookLocale)
+      if (recovered.status === 'valid') {
+        const recoveredIdentity = await inspectFacebookAccountIdentity(context, job.sessionAccount.uid)
+        if (recoveredIdentity.state === 'match' || recoveredIdentity.state === 'unverifiable') {
+          sessionCookie = recovered.cookie ?? sessionCookie
+          sessionValidated = true
+          if (!accountName && recoveredIdentity.state === 'match') {
+            accountName = await readFacebookDisplayName(page).catch(() => null)
+          }
+          return finish({
+            ...confirmed,
+            message: `${confirmed.message} Session vừa hết đã được tự đăng nhập lại.`,
+            sessionValidation: { phase: 'after_run', state: 'valid', message: 'Đã tự phục hồi session sau publish.' }
+          })
+        }
+      }
+
+      sessionValidated = false
+      const verificationRequired = recovered.reason === 'checkpoint'
+      return finish({
+        ...confirmed,
+        message: `${confirmed.message} ${recovered.message}`,
+        sessionValidation: {
+          phase: 'after_run',
+          state: verificationRequired ? 'verification_required' : 'needs_login',
+          message: recovered.message
+        }
+      })
+    }
+
+    sessionValidated = false
     return finish({
       ...confirmed,
       message: `${confirmed.message} ${afterSession.message}`,

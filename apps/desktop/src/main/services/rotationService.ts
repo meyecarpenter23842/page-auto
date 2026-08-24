@@ -1,4 +1,5 @@
 import { DEFAULT_APP_SETTINGS, type NetworkSettings, type SessionSettings } from '../../shared/appSettings'
+import type { PageTabScheduleInput } from '../../shared/pageTabs'
 import type { ExecuteSinglePostingJobPayload, ExecuteSinglePostingJobResult } from '../../shared/posting'
 import type { RotationPageTabPayload, RotationRuntimeSnapshot, RotationRuntimeStatus } from '../../shared/rotation'
 import type { RunDetails, RunSnapshotAccount } from '../../shared/runs'
@@ -88,25 +89,26 @@ export class RotationService {
     private readonly posting: RotationPostingExecutor,
     private readonly clock: RotationClock = defaultClock,
     private readonly getSessionSettings: () => SessionSettings = () => ({ ...DEFAULT_APP_SETTINGS.session }),
-    private readonly getNetworkSettings: () => NetworkSettings = () => ({ ...DEFAULT_APP_SETTINGS.network })
+    private readonly getNetworkSettings: () => NetworkSettings = () => ({ ...DEFAULT_APP_SETTINGS.network }),
+    private readonly getLiveSchedules: (pageTabId: number) => PageTabScheduleInput[] | null = () => null
   ) {}
 
   start(payload: RotationPageTabPayload): RotationRuntimeSnapshot {
     const existing = this.session
     if (existing && !['completed', 'error'].includes(existing.status)) {
       if (existing.pageTabId === payload.pageTabId) return snapshotSession(existing)
-      throw new Error(`Phase 6 chỉ chạy một Page Tab tại một thời điểm. Tab #${existing.pageTabId} đang hoạt động.`)
+      throw new Error(`Page Tab #${existing.pageTabId} đang hoạt động trong bộ điều phối tài khoản.`)
     }
 
     let run = this.runs.getLatestForPageTab(payload.pageTabId)
     if (!run || ['completed', 'stopped', 'failed'].includes(run.run.status)) {
       run = this.runs.createForPageTab(payload.pageTabId)
     } else if (run.run.status === 'running') {
-      throw new Error(`Run #${run.run.id} đang running ngoài Account Rotation. Hãy pause run trước khi Start Rotation.`)
+      throw new Error(`Phiên #${run.run.id} đang chạy ngoài bộ điều phối tài khoản. Hãy tạm dừng phiên trước khi bắt đầu.`)
     }
 
     const accounts = sortedEnabledAccounts(run)
-    if (accounts.length === 0) throw new Error('Page Tab không có account enabled để chạy rotation.')
+    if (accounts.length === 0) throw new Error('Page Tab không có tài khoản được bật để chạy.')
 
     const session: RotationSession = {
       pageTabId: payload.pageTabId,
@@ -118,7 +120,7 @@ export class RotationService {
       targetSlotsThisTurn: 0,
       cycle: 0,
       nextActionAt: null,
-      message: 'Đang khởi động account rotation.',
+      message: 'Đang khởi động vòng chạy tài khoản.',
       lastResult: null,
       run,
       manualPaused: false,
@@ -154,7 +156,7 @@ export class RotationService {
       targetSlotsThisTurn: 0,
       cycle: 0,
       nextActionAt: null,
-      message: run?.run.status === 'running' ? `Run #${run.run.id} đang running ngoài Account Rotation.` : null,
+      message: run?.run.status === 'running' ? `Phiên #${run.run.id} đang chạy ngoài bộ điều phối tài khoản.` : null,
       lastResult: null,
       run
     }
@@ -165,7 +167,7 @@ export class RotationService {
     if (session.status === 'completed' || session.status === 'error') return snapshotSession(session)
     session.manualPaused = true
     session.status = 'paused'
-    session.message = 'Đã pause thủ công; job đang chạy (nếu có) sẽ hoàn tất trước khi dừng lượt tiếp theo.'
+    session.message = 'Đã tạm dừng thủ công; tác vụ đang chạy (nếu có) sẽ hoàn tất trước khi dừng lượt tiếp theo.'
     session.nextActionAt = null
     if (session.run.run.status === 'running' || session.run.run.status === 'created') {
       session.run = this.runs.pause(session.runId)
@@ -176,19 +178,21 @@ export class RotationService {
   resume(payload: RotationPageTabPayload): RotationRuntimeSnapshot {
     const session = this.requireSession(payload.pageTabId)
     if (session.status === 'completed') return snapshotSession(session)
-    if (session.status === 'error') throw new Error('Rotation đang error; hãy Start lại sau khi xử lý nguyên nhân.')
+    if (session.status === 'error') throw new Error('Vòng chạy đang lỗi; hãy bắt đầu lại sau khi xử lý nguyên nhân.')
 
     session.manualPaused = false
-    session.message = 'Đang resume account rotation.'
-    if (isWithinSchedule(session.run.run.snapshot.schedules, this.clock.now())) {
+    session.message = 'Đang tiếp tục vòng chạy tài khoản.'
+    const schedules = this.schedulesFor(session)
+    if (isWithinSchedule(schedules, this.clock.now())) {
       if (session.run.run.status !== 'running') session.run = this.runs.resume(session.runId)
       session.status = 'running'
+      session.nextActionAt = null
     } else {
       if (session.run.run.status === 'running' || session.run.run.status === 'created') {
         session.run = this.runs.pause(session.runId)
       }
       session.status = 'waiting_window'
-      session.nextActionAt = nextScheduleStart(session.run.run.snapshot.schedules, this.clock.now())?.getTime() ?? null
+      session.nextActionAt = nextScheduleStart(schedules, this.clock.now())?.getTime() ?? null
     }
     return snapshotSession(session)
   }
@@ -211,9 +215,13 @@ export class RotationService {
 
   private requireSession(pageTabId: number): RotationSession {
     if (!this.session || this.session.pageTabId !== pageTabId) {
-      throw new Error(`Page Tab #${pageTabId} chưa có Account Rotation đang hoạt động.`)
+      throw new Error(`Page Tab #${pageTabId} chưa có vòng chạy tài khoản đang hoạt động.`)
     }
     return this.session
+  }
+
+  private schedulesFor(session: RotationSession): PageTabScheduleInput[] {
+    return this.getLiveSchedules(session.pageTabId) ?? session.run.run.snapshot.schedules
   }
 
   private pauseForSessionFailure(session: RotationSession, accountId: number, kind: 'session_expired' | 'checkpoint'): void {
@@ -221,8 +229,8 @@ export class RotationService {
     session.status = 'paused'
     session.nextActionAt = null
     session.message = kind === 'checkpoint'
-      ? `Account #${accountId} cần checkpoint/xác minh thủ công. Đã pause Page Tab theo chính sách.`
-      : `Account #${accountId} hết session/cần đăng nhập lại. Đã pause Page Tab theo chính sách.`
+      ? `Tài khoản #${accountId} cần checkpoint/xác minh thủ công. Đã tạm dừng Page Tab theo chính sách.`
+      : `Tài khoản #${accountId} chưa thể tự phục hồi đăng nhập. Đã tạm dừng Page Tab theo chính sách.`
     if (session.run.run.status === 'running' || session.run.run.status === 'created') {
       session.run = this.runs.pause(session.runId)
     }
@@ -232,7 +240,7 @@ export class RotationService {
     session.manualPaused = true
     session.status = 'paused'
     session.nextActionAt = null
-    session.message = `Proxy của account #${accountId} không sẵn sàng. Đã pause Page Tab theo chính sách mạng.`
+    session.message = `Proxy của tài khoản #${accountId} không sẵn sàng. Đã tạm dừng Page Tab theo chính sách mạng.`
     if (session.run.run.status === 'running' || session.run.run.status === 'created') {
       session.run = this.runs.pause(session.runId)
     }
@@ -248,23 +256,23 @@ export class RotationService {
       if (!ready) return
 
       const current = this.runs.get(session.runId)
-      if (!current) throw new Error(`Không tìm thấy run #${session.runId}.`)
+      if (!current) throw new Error(`Không tìm thấy phiên #${session.runId}.`)
       session.run = current
       if (current.run.status === 'completed' || current.metrics.remaining === 0) {
         session.status = 'completed'
-        session.message = 'Run đã hoàn tất toàn bộ queue.'
+        session.message = 'Phiên chạy đã hoàn tất toàn bộ hàng chờ.'
         session.nextActionAt = null
         return
       }
 
       const account = accounts[accountIndex]
-      if (!account) throw new Error('Không tìm thấy account rotation tại vị trí hiện tại.')
+      if (!account) throw new Error('Không tìm thấy tài khoản tại vị trí hiện tại trong vòng chạy.')
       const targetSlots = account.postsPerTurn ?? current.run.snapshot.rotation.postsPerAccount
       session.currentAccountId = account.accountId
       session.currentAccountIndex = accountIndex
       session.slotsCompletedThisTurn = 0
       session.targetSlotsThisTurn = targetSlots
-      session.message = `Account #${account.accountId}: lượt ${targetSlots} bài.`
+      session.message = `Tài khoản #${account.accountId}: lượt ${targetSlots} bài.`
 
       let usedSlot = false
       let leaveAccountEarly = false
@@ -285,7 +293,7 @@ export class RotationService {
             break
           }
           if (networkDecision?.action === 'switch_account') {
-            session.message = `Proxy account #${account.accountId} lỗi; chuyển account kế tiếp theo chính sách mạng.`
+            session.message = `Proxy của tài khoản #${account.accountId} lỗi; chuyển sang tài khoản kế tiếp theo chính sách mạng.`
             leaveAccountEarly = true
             break
           }
@@ -296,14 +304,14 @@ export class RotationService {
           }
           if (result.result.code === 'no_pending_item' || result.run.run.status === 'completed' || result.run.metrics.remaining === 0) {
             session.status = 'completed'
-            session.message = 'Run đã hết pending item.'
+            session.message = 'Phiên chạy không còn Group chờ xử lý.'
             session.nextActionAt = null
             return
           }
           if (isAccountUnavailable(result)) {
             leaveAccountEarly = true
             if (sessionDecision) {
-              session.message = `Account #${account.accountId} cần login/xác minh; chuyển account kế tiếp theo chính sách.`
+              session.message = `Tài khoản #${account.accountId} chưa thể đăng nhập/xác minh; chuyển sang tài khoản kế tiếp theo chính sách.`
             }
             break
           }
@@ -317,7 +325,7 @@ export class RotationService {
 
         if (result.run.run.status === 'completed' || result.run.metrics.remaining === 0) {
           session.status = 'completed'
-          session.message = 'Run đã hoàn tất toàn bộ queue.'
+          session.message = 'Phiên chạy đã hoàn tất toàn bộ hàng chờ.'
           session.nextActionAt = null
           return
         }
@@ -327,7 +335,7 @@ export class RotationService {
           if (sessionDecision.action === 'stop') {
             this.pauseForSessionFailure(session, account.accountId, sessionDecision.kind)
           } else {
-            session.message = `Account #${account.accountId} cần login/xác minh; chuyển account kế tiếp theo chính sách.`
+            session.message = `Tài khoản #${account.accountId} chưa thể đăng nhập/xác minh; chuyển sang tài khoản kế tiếp theo chính sách.`
           }
           break
         }
@@ -337,7 +345,7 @@ export class RotationService {
             session,
             current.run.snapshot.rotation.postDelayMinSeconds,
             current.run.snapshot.rotation.postDelayMaxSeconds,
-            'Delay giữa bài'
+            'Chờ giữa các bài'
           )
         }
       }
@@ -348,7 +356,7 @@ export class RotationService {
       if (unavailableStreak >= accounts.length) {
         session.manualPaused = true
         session.status = 'paused'
-        session.message = 'Không còn account khả dụng trong vòng hiện tại. Đã pause để người vận hành xử lý account.'
+        session.message = 'Không còn tài khoản khả dụng trong vòng hiện tại. Đã tạm dừng để người vận hành xử lý.'
         session.nextActionAt = null
         if (session.run.run.status === 'running' || session.run.run.status === 'created') {
           session.run = this.runs.pause(session.runId)
@@ -368,14 +376,14 @@ export class RotationService {
             session,
             rotation.accountDelayMinSeconds,
             rotation.accountDelayMaxSeconds,
-            'Delay đổi account'
+            'Chờ đổi tài khoản'
           )
         } else {
           await this.waitConfiguredDelay(
             session,
             rotation.postDelayMinSeconds,
             rotation.postDelayMaxSeconds,
-            'Delay giữa bài'
+            'Chờ giữa các bài'
           )
         }
       }
@@ -395,16 +403,17 @@ export class RotationService {
       }
 
       const now = this.clock.now()
-      if (!isWithinSchedule(session.run.run.snapshot.schedules, now)) {
+      const schedules = this.schedulesFor(session)
+      if (!isWithinSchedule(schedules, now)) {
         if (session.run.run.status === 'running' || session.run.run.status === 'created') {
           session.run = this.runs.pause(session.runId)
         }
-        const next = nextScheduleStart(session.run.run.snapshot.schedules, now)
+        const next = nextScheduleStart(schedules, now)
         session.status = 'waiting_window'
         session.nextActionAt = next?.getTime() ?? null
         session.message = next
-          ? `Ngoài schedule window; chờ đến ${next.toLocaleString()}.`
-          : 'Ngoài schedule window.'
+          ? `Ngoài khung giờ chạy; chờ đến ${next.toLocaleString()}.`
+          : 'Ngoài khung giờ chạy.'
         const waitMs = next ? Math.max(250, Math.min(30_000, next.getTime() - now.getTime())) : 30_000
         await this.clock.sleep(waitMs)
         continue

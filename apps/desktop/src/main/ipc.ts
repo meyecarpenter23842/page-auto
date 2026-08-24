@@ -69,7 +69,9 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
   const browserProfiles = new BrowserProfileManager(options.dataDirectory, (session) => {
     const current = accounts.getById(session.accountId)
     if (!current) return
+    const profileName = session.status === 'valid' ? session.profileName?.trim() || null : null
     accounts.update(session.accountId, {
+      name: profileName ?? current.name,
       status: session.status === 'valid' || session.status === 'needs_login' ? session.status : current.status,
       cookie: session.status === 'valid' && session.cookie ? session.cookie : current.cookie,
       cookieStatus: session.cookieStatus,
@@ -108,7 +110,8 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
       coordinatedPosting,
       undefined,
       () => appSettings.get().session,
-      () => appSettings.get().network
+      () => appSettings.get().network,
+      (pageTabId) => pageTabs.get(pageTabId)?.schedules ?? null
     ),
     () => appSettings.get().runtime.maxActivePageTabs
   )

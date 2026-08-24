@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { PageTabScheduleInput } from '../../shared/pageTabs'
 import type { ExecuteSinglePostingJobResult } from '../../shared/posting'
 import type { RunDetails, RunItem } from '../../shared/runs'
 import { RotationService, type RotationRunStore } from './rotationService'
@@ -176,5 +177,40 @@ describe('RotationService', () => {
     expect(store.pauseCalls).toBeGreaterThan(0)
     expect(store.resumeCalls).toBe(1)
     expect(service.status({ pageTabId: 10 }).status).toBe('completed')
+  })
+
+  it('uses the latest Page Tab schedule on Resume instead of a stale run snapshot', () => {
+    const store = new FakeRunStore()
+    store.details = makeRun(1)
+    store.details.run.snapshot.accounts = [{ accountId: 101, enabled: true, sortOrder: 0, postsPerTurn: 1 }]
+    store.details.run.snapshot.schedules = [{ dayOfWeek: 1, startMinute: 600, endMinute: 660, enabled: true, sortOrder: 0 }]
+
+    const liveSchedules: PageTabScheduleInput[] = [
+      { dayOfWeek: 1, startMinute: 460, endMinute: 600, enabled: true, sortOrder: 0 }
+    ]
+    const posting = {
+      executeSingle: async (): Promise<ExecuteSinglePostingJobResult> => new Promise(() => undefined)
+    }
+    const service = new RotationService(
+      store,
+      posting,
+      {
+        now: () => new Date(2026, 7, 24, 7, 50),
+        random: () => 0,
+        sleep: async () => new Promise(() => undefined)
+      },
+      undefined,
+      undefined,
+      () => liveSchedules
+    )
+
+    service.start({ pageTabId: 10 })
+    const paused = service.pause({ pageTabId: 10 })
+    expect(paused.status).toBe('paused')
+
+    const resumed = service.resume({ pageTabId: 10 })
+    expect(resumed.status).toBe('running')
+    expect(resumed.nextActionAt).toBeNull()
+    service.dispose()
   })
 })
