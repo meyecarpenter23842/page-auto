@@ -3,6 +3,7 @@ import { dirname } from 'node:path'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { appSettings } from './schema'
+import { HOTMAIL_SCHEMA_VERSION, applyHotmailMigration } from './hotmailMigration'
 import { latestSchemaVersion, migrations } from './migrations'
 
 export interface DatabaseRuntime {
@@ -51,19 +52,20 @@ export function initializeDatabase(databaseFile: string): DatabaseRuntime {
   })
 
   applyPendingMigrations()
+  applyHotmailMigration(client)
 
   const orm = drizzle(client)
   orm
     .insert(appSettings)
     .values({
       key: 'schema_version',
-      value: String(latestSchemaVersion),
+      value: String(Math.max(latestSchemaVersion, HOTMAIL_SCHEMA_VERSION)),
       updatedAt: Date.now()
     })
     .onConflictDoUpdate({
       target: appSettings.key,
       set: {
-        value: String(latestSchemaVersion),
+        value: String(Math.max(latestSchemaVersion, HOTMAIL_SCHEMA_VERSION)),
         updatedAt: Date.now()
       }
     })

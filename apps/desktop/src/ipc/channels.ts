@@ -19,6 +19,18 @@ import type {
   RetryRunItemPayload,
   RetryRunItemResult
 } from '../shared/executionLogs'
+import type {
+  HotmailAccountPayload,
+  HotmailBatchPayload,
+  HotmailBatchResult,
+  HotmailBrowserOpenResult,
+  HotmailDashboardRow,
+  HotmailOAuthStartResult,
+  HotmailProxyStatus,
+  HotmailProxyTestResult,
+  HotmailSettingsView,
+  SaveHotmailSettingsInput
+} from '../shared/hotmail'
 import type { LogCleanupResult } from '../shared/loggingMaintenance'
 import type {
   CreatePageTabInput,
@@ -48,6 +60,18 @@ export const IPC_CHANNELS = {
   accountColumnLayoutGet: 'accounts:columns:get',
   accountColumnLayoutSave: 'accounts:columns:save',
   accountOpenProfile: 'accounts:open-profile',
+  hotmailDashboardList: 'hotmail:dashboard:list',
+  hotmailSettingsGet: 'hotmail:settings:get',
+  hotmailSettingsSave: 'hotmail:settings:save',
+  hotmailPickProfileRoot: 'hotmail:profile-root:pick',
+  hotmailPickBrowserExecutable: 'hotmail:browser-executable:pick',
+  hotmailOAuthStart: 'hotmail:oauth:start',
+  hotmailCodesGet: 'hotmail:codes:get',
+  hotmailCheck: 'hotmail:check',
+  hotmailOpen: 'hotmail:open',
+  hotmailProxyStatus: 'hotmail:proxy:status',
+  hotmailProxyRotate: 'hotmail:proxy:rotate',
+  hotmailProxyTest: 'hotmail:proxy:test',
   pageTabsList: 'page-tabs:list',
   pageTabsGet: 'page-tabs:get',
   pageTabsCreate: 'page-tabs:create',
@@ -111,6 +135,18 @@ export interface PageAutoIpcContract {
   getAccountColumnLayout: () => Promise<AccountColumnLayout | null>
   saveAccountColumnLayout: (payload: AccountColumnLayoutPayload) => Promise<void>
   openAccountProfile: (payload: AccountOpenProfilePayload) => Promise<BrowserProfileResult>
+  listHotmailDashboard: () => Promise<HotmailDashboardRow[]>
+  getHotmailSettings: () => Promise<HotmailSettingsView>
+  saveHotmailSettings: (input: SaveHotmailSettingsInput) => Promise<HotmailSettingsView>
+  pickHotmailProfileRoot: () => Promise<string | null>
+  pickHotmailBrowserExecutable: () => Promise<string | null>
+  startHotmailOAuth: (payload: HotmailAccountPayload) => Promise<HotmailOAuthStartResult>
+  getHotmailCodes: (payload: HotmailBatchPayload) => Promise<HotmailBatchResult>
+  checkHotmail: (payload: HotmailBatchPayload) => Promise<HotmailBatchResult>
+  openHotmail: (payload: HotmailAccountPayload) => Promise<HotmailBrowserOpenResult>
+  getHotmailProxyStatus: () => Promise<HotmailProxyStatus>
+  rotateHotmailProxy: () => Promise<HotmailProxyStatus>
+  testHotmailProxy: () => Promise<HotmailProxyTestResult>
   listPageTabs: () => Promise<PageTabSummary[]>
   getPageTab: (payload: PageTabIdPayload) => Promise<PageTabConfig | null>
   createPageTab: (input: CreatePageTabInput) => Promise<PageTabConfig>

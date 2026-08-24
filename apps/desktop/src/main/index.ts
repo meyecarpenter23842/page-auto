@@ -1,6 +1,7 @@
 import { app, BrowserWindow } from 'electron'
 import { join } from 'node:path'
 import { initializeDatabase, type DatabaseRuntime } from './database'
+import { registerHotmailIpcHandlers, type HotmailIpcRuntime } from './hotmailIpc'
 import { registerIpcHandlers, type IpcRuntime } from './ipc'
 import { createLogger } from './logger'
 import { registerPostLibraryIpcHandlers, type PostLibraryIpcRuntime } from './postLibraryIpc'
@@ -9,6 +10,7 @@ import { ensureDataDirectoryLayout, resolveDataDirectory } from './services/port
 let mainWindow: BrowserWindow | null = null
 let databaseRuntime: DatabaseRuntime | null = null
 let ipcRuntime: IpcRuntime | null = null
+let hotmailIpcRuntime: HotmailIpcRuntime | null = null
 let postLibraryIpcRuntime: PostLibraryIpcRuntime | null = null
 
 function resolveWindowIcon(): string {
@@ -60,6 +62,7 @@ app.whenReady().then(() => {
   try {
     databaseRuntime = initializeDatabase(databaseFile)
     ipcRuntime = registerIpcHandlers({ database: databaseRuntime.client, dataDirectory })
+    hotmailIpcRuntime = registerHotmailIpcHandlers(databaseRuntime.client)
     postLibraryIpcRuntime = registerPostLibraryIpcHandlers(databaseRuntime.client)
     logger.info('Application initialized', { databaseFile, dataDirectory, packaged: app.isPackaged, version: app.getVersion() })
 
@@ -71,6 +74,8 @@ app.whenReady().then(() => {
     mainWindow = createMainWindow()
   } catch (error) {
     logger.error('Application initialization failed', { error: error instanceof Error ? error.message : String(error) })
+    hotmailIpcRuntime?.dispose()
+    hotmailIpcRuntime = null
     postLibraryIpcRuntime?.dispose()
     postLibraryIpcRuntime = null
     ipcRuntime?.dispose()
@@ -86,6 +91,8 @@ app.whenReady().then(() => {
 })
 
 app.on('before-quit', () => {
+  hotmailIpcRuntime?.dispose()
+  hotmailIpcRuntime = null
   postLibraryIpcRuntime?.dispose()
   postLibraryIpcRuntime = null
   ipcRuntime?.dispose()
