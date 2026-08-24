@@ -1,10 +1,12 @@
 import type Database from 'better-sqlite3'
 import {
+  ACCOUNT_ORDER_MODES,
   CONTENT_MODES,
   DEFAULT_PAGE_TAB_IMAGE,
   DEFAULT_PAGE_TAB_ROTATION,
   IMAGE_MODES,
   MISSING_IMAGE_POLICIES,
+  type AccountOrderMode,
   type ContentMode,
   type CreatePageTabInput,
   type ImageMode,
@@ -28,6 +30,7 @@ interface PageTabRow {
   postDelayMaxSeconds: number
   accountDelayMinSeconds: number
   accountDelayMaxSeconds: number
+  accountOrderMode: string
   createdAt: number
   updatedAt: number
 }
@@ -82,7 +85,11 @@ function normalizeConfig(input: PageTabSaveInput): PageTabSaveInput {
   const postDelayMaxSeconds = nonNegativeInteger(input.rotation.postDelayMaxSeconds, 'Delay bài tối đa')
   const accountDelayMinSeconds = nonNegativeInteger(input.rotation.accountDelayMinSeconds, 'Delay account tối thiểu')
   const accountDelayMaxSeconds = nonNegativeInteger(input.rotation.accountDelayMaxSeconds, 'Delay account tối đa')
+  const accountOrderMode = input.rotation.accountOrderMode ?? 'sequential'
 
+  if (!ACCOUNT_ORDER_MODES.includes(accountOrderMode)) {
+    throw new Error('Chế độ thứ tự tài khoản không hợp lệ.')
+  }
   if (postDelayMinSeconds > postDelayMaxSeconds) {
     throw new Error('Delay bài tối thiểu không được lớn hơn tối đa.')
   }
@@ -129,6 +136,19 @@ function normalizeConfig(input: PageTabSaveInput): PageTabSaveInput {
     }
   })
 
+  for (let day = 0; day <= 6; day += 1) {
+    const enabledForDay = schedules
+      .filter((schedule) => schedule.enabled && schedule.dayOfWeek === day)
+      .sort((a, b) => a.startMinute - b.startMinute || a.endMinute - b.endMinute)
+    for (let index = 1; index < enabledForDay.length; index += 1) {
+      const previous = enabledForDay[index - 1]
+      const current = enabledForDay[index]
+      if (previous && current && current.startMinute < previous.endMinute) {
+        throw new Error('Các khung giờ bật trong cùng ngày không được chồng lấn.')
+      }
+    }
+  }
+
   if (!CONTENT_MODES.includes(input.contentMode)) {
     throw new Error('Content mode không hợp lệ.')
   }
@@ -147,7 +167,8 @@ function normalizeConfig(input: PageTabSaveInput): PageTabSaveInput {
       postDelayMinSeconds,
       postDelayMaxSeconds,
       accountDelayMinSeconds,
-      accountDelayMaxSeconds
+      accountDelayMaxSeconds,
+      accountOrderMode
     },
     accounts,
     schedules,
@@ -174,6 +195,7 @@ function toPageTabRow(row: Record<string, unknown>): PageTabRow {
     postDelayMaxSeconds: Number(row.postDelayMaxSeconds),
     accountDelayMinSeconds: Number(row.accountDelayMinSeconds),
     accountDelayMaxSeconds: Number(row.accountDelayMaxSeconds),
+    accountOrderMode: String(row.accountOrderMode ?? 'sequential'),
     createdAt: Number(row.createdAt),
     updatedAt: Number(row.updatedAt)
   }
@@ -225,6 +247,7 @@ export class PageTabRepository {
         post_delay_max_seconds AS postDelayMaxSeconds,
         account_delay_min_seconds AS accountDelayMinSeconds,
         account_delay_max_seconds AS accountDelayMaxSeconds,
+        account_order_mode AS accountOrderMode,
         created_at AS createdAt,
         updated_at AS updatedAt
       FROM page_tabs
@@ -315,7 +338,10 @@ export class PageTabRepository {
         postDelayMinSeconds: tab.postDelayMinSeconds,
         postDelayMaxSeconds: tab.postDelayMaxSeconds,
         accountDelayMinSeconds: tab.accountDelayMinSeconds,
-        accountDelayMaxSeconds: tab.accountDelayMaxSeconds
+        accountDelayMaxSeconds: tab.accountDelayMaxSeconds,
+        accountOrderMode: ACCOUNT_ORDER_MODES.includes(tab.accountOrderMode as AccountOrderMode)
+          ? tab.accountOrderMode as AccountOrderMode
+          : 'sequential'
       },
       accounts: accounts.map((item): PageTabAccountRef => ({
         accountId: Number(item.accountId),
@@ -355,8 +381,8 @@ export class PageTabRepository {
           name, page_uid, status, posts_per_account,
           post_delay_min_seconds, post_delay_max_seconds,
           account_delay_min_seconds, account_delay_max_seconds,
-          created_at, updated_at
-        ) VALUES (?, ?, 'idle', ?, ?, ?, ?, ?, ?, ?)
+          account_order_mode, created_at, updated_at
+        ) VALUES (?, ?, 'idle', ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         name,
         pageUid,
@@ -365,6 +391,7 @@ export class PageTabRepository {
         DEFAULT_PAGE_TAB_ROTATION.postDelayMaxSeconds,
         DEFAULT_PAGE_TAB_ROTATION.accountDelayMinSeconds,
         DEFAULT_PAGE_TAB_ROTATION.accountDelayMaxSeconds,
+        DEFAULT_PAGE_TAB_ROTATION.accountOrderMode ?? 'sequential',
         now,
         now
       )
@@ -410,6 +437,7 @@ export class PageTabRepository {
           post_delay_max_seconds = ?,
           account_delay_min_seconds = ?,
           account_delay_max_seconds = ?,
+          account_order_mode = ?,
           updated_at = ?
         WHERE id = ?
       `).run(
@@ -420,6 +448,7 @@ export class PageTabRepository {
         config.rotation.postDelayMaxSeconds,
         config.rotation.accountDelayMinSeconds,
         config.rotation.accountDelayMaxSeconds,
+        config.rotation.accountOrderMode ?? 'sequential',
         now,
         id
       )

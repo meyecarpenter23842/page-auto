@@ -271,6 +271,13 @@ export const migrations: Migration[] = [
 
       CREATE INDEX IF NOT EXISTS idx_page_tab_posts_order ON page_tab_posts(page_tab_id, sort_order, id);
     `
+  },
+  {
+    version: 7,
+    name: 'page_tab_account_order_mode',
+    sql: `
+      ALTER TABLE page_tabs ADD COLUMN account_order_mode TEXT NOT NULL DEFAULT 'sequential';
+    `
   }
 ]
 

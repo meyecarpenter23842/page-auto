@@ -13,6 +13,9 @@ export type MissingImagePolicy = (typeof MISSING_IMAGE_POLICIES)[number]
 export const POST_SELECTION_MODES = ['sequential', 'random'] as const
 export type PostSelectionMode = (typeof POST_SELECTION_MODES)[number]
 
+export const ACCOUNT_ORDER_MODES = ['sequential', 'random'] as const
+export type AccountOrderMode = (typeof ACCOUNT_ORDER_MODES)[number]
+
 export function parsePostVariantText(value: string): string[] {
   const variants: string[] = []
   let buffer = ''
@@ -56,6 +59,8 @@ export interface PageTabRotationConfig {
   postDelayMaxSeconds: number
   accountDelayMinSeconds: number
   accountDelayMaxSeconds: number
+  /** Backward compatible for snapshots/configs created before account-order support. */
+  accountOrderMode?: AccountOrderMode
 }
 
 export interface PageTabAccountInput {
@@ -177,7 +182,8 @@ export const DEFAULT_PAGE_TAB_ROTATION: PageTabRotationConfig = {
   postDelayMinSeconds: 180,
   postDelayMaxSeconds: 300,
   accountDelayMinSeconds: 600,
-  accountDelayMaxSeconds: 900
+  accountDelayMaxSeconds: 900,
+  accountOrderMode: 'sequential'
 }
 
 export const DEFAULT_PAGE_TAB_IMAGE: PageTabImageConfig = {
