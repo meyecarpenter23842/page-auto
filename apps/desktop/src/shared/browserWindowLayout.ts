@@ -4,6 +4,18 @@ export const BROWSER_WINDOW_LAYOUT_STORAGE_KEY = 'settings.browser-window-layout
 export const BROWSER_TILE_LAYOUTS = ['horizontal', 'vertical', 'grid'] as const
 export type BrowserTileLayout = (typeof BROWSER_TILE_LAYOUTS)[number]
 
+const MAX_SQUARE_SIDE = 8
+const MAX_TILE_COUNT = MAX_SQUARE_SIDE * MAX_SQUARE_SIDE
+const MAX_GRID_COLUMNS = MAX_SQUARE_SIDE
+const TILE_GAP_PX = 4
+const MIN_RENDER_SCALE = 0.001
+const OVERFLOW_CASCADE_STEP_PX = 24
+const OVERFLOW_CASCADE_STEPS = 4
+/** Chrome desktop currently clamps normal browser windows to roughly 500px minimum width. */
+export const CHROME_MIN_COMPACT_OUTER_SIDE_PX = 500
+export const DEFAULT_COMPACT_OUTER_SIDE_PX = 500
+export const MAX_COMPACT_OUTER_SIDE_PX = 1600
+
 export interface BrowserWindowLayoutSettings {
   enabled: boolean
   tileLayout: BrowserTileLayout
@@ -12,11 +24,9 @@ export interface BrowserWindowLayoutSettings {
   rowCount: number
   minimumCapacity: number
   targetDisplayId: number | null
+  /** Physical square side requested for each compact Chrome window. Optional for stored-layout compatibility. */
+  tileSidePx?: number
 }
-
-const MAX_SQUARE_SIDE = 8
-const MAX_TILE_COUNT = MAX_SQUARE_SIDE * MAX_SQUARE_SIDE
-const MAX_GRID_COLUMNS = MAX_SQUARE_SIDE
 
 export const DEFAULT_BROWSER_WINDOW_LAYOUT: Readonly<BrowserWindowLayoutSettings> = {
   enabled: false,
@@ -25,7 +35,8 @@ export const DEFAULT_BROWSER_WINDOW_LAYOUT: Readonly<BrowserWindowLayoutSettings
   gridColumns: 2,
   rowCount: 2,
   minimumCapacity: 1,
-  targetDisplayId: null
+  targetDisplayId: null,
+  tileSidePx: DEFAULT_COMPACT_OUTER_SIDE_PX
 }
 
 export interface BrowserWorkArea {
@@ -73,18 +84,25 @@ export interface BrowserTileGrid {
   capacity: number
 }
 
-const TILE_GAP_PX = 4
-const MIN_RENDER_SCALE = 0.001
-/** Chrome desktop currently clamps normal browser windows to roughly 500px minimum width. */
-export const CHROME_MIN_COMPACT_OUTER_SIDE_PX = 500
-
 function clampInteger(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min
   return Math.min(max, Math.max(min, Math.floor(value)))
 }
 
+function clampPosition(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value))
+}
+
 export function cloneDefaultBrowserWindowLayout(): BrowserWindowLayoutSettings {
   return { ...DEFAULT_BROWSER_WINDOW_LAYOUT }
+}
+
+export function compactBrowserTileSidePx(settings: BrowserWindowLayoutSettings): number {
+  return clampInteger(
+    settings.tileSidePx ?? DEFAULT_COMPACT_OUTER_SIDE_PX,
+    CHROME_MIN_COMPACT_OUTER_SIDE_PX,
+    MAX_COMPACT_OUTER_SIDE_PX
+  )
 }
 
 export function assertValidBrowserWindowLayoutSettings(value: BrowserWindowLayoutSettings): void {
@@ -105,6 +123,13 @@ export function assertValidBrowserWindowLayoutSettings(value: BrowserWindowLayou
   if (value.targetDisplayId !== null && !Number.isInteger(value.targetDisplayId)) {
     throw new Error('Màn hình đích không hợp lệ.')
   }
+  if (value.tileSidePx !== undefined && (
+    !Number.isInteger(value.tileSidePx)
+    || value.tileSidePx < CHROME_MIN_COMPACT_OUTER_SIDE_PX
+    || value.tileSidePx > MAX_COMPACT_OUTER_SIDE_PX
+  )) {
+    throw new Error(`Kích thước Chrome phải từ ${CHROME_MIN_COMPACT_OUTER_SIDE_PX} đến ${MAX_COMPACT_OUTER_SIDE_PX}px.`)
+  }
 }
 
 function assertStoredNumberInRange(value: number | undefined, min: number, max: number): void {
@@ -119,9 +144,6 @@ function squareSideForCapacity(capacity: number): number {
 function migratedRows(parsed: Partial<BrowserWindowLayoutSettings>): number {
   const capacity = clampInteger(parsed.tileCount ?? DEFAULT_BROWSER_WINDOW_LAYOUT.tileCount, 1, MAX_TILE_COUNT)
 
-  // Releases before square-grid mode persisted rowCount for horizontal/vertical
-  // layouts too. Their rowCount describes the old one-axis layout, not the new
-  // square side, so preserve capacity by deriving the smallest N x N that fits it.
   if (parsed.tileLayout === 'horizontal' || parsed.tileLayout === 'vertical') {
     return squareSideForCapacity(capacity)
   }
@@ -144,6 +166,7 @@ export function parseStoredBrowserWindowLayout(raw: string | undefined): Browser
     assertStoredNumberInRange(parsed.gridColumns, 1, MAX_GRID_COLUMNS)
     assertStoredNumberInRange(parsed.rowCount, 1, MAX_SQUARE_SIDE)
     assertStoredNumberInRange(parsed.minimumCapacity, 1, MAX_TILE_COUNT)
+    assertStoredNumberInRange(parsed.tileSidePx, CHROME_MIN_COMPACT_OUTER_SIDE_PX, MAX_COMPACT_OUTER_SIDE_PX)
 
     const nextRows = migratedRows(parsed)
     const next: BrowserWindowLayoutSettings = {
@@ -153,7 +176,8 @@ export function parseStoredBrowserWindowLayout(raw: string | undefined): Browser
       rowCount: nextRows,
       gridColumns: nextRows,
       tileCount: nextRows * nextRows,
-      minimumCapacity: nextRows * nextRows
+      minimumCapacity: nextRows * nextRows,
+      tileSidePx: parsed.tileSidePx ?? DEFAULT_COMPACT_OUTER_SIDE_PX
     }
     assertValidBrowserWindowLayoutSettings(next)
     return next
@@ -176,24 +200,20 @@ export function browserTileGrid(settings: BrowserWindowLayoutSettings): BrowserT
   }
 }
 
-/** Requested FPlus-style rule: choosing N vertical rows means N × N before runtime limits. */
+/** Compatibility helper for the previous N×N configuration model. */
 export function squareBrowserTileGrid(settings: BrowserWindowLayoutSettings): BrowserTileGrid {
   const side = clampInteger(settings.rowCount, 1, MAX_SQUARE_SIDE)
   return { columns: side, rows: side, capacity: side * side }
 }
 
-/**
- * Normal Chrome windows on Windows cannot be shrunk below roughly 500px width.
- * A nominal 4×4 grid on a 1080p display therefore asks for ~250×250 windows, but
- * Chrome silently clamps only the width and produces ~500×250 rectangles. Limit
- * the real square grid before placement so width and height remain equal in reality.
- */
+/** Compatibility helper retained for old tests/config migration. */
 export function maximumTrueSquareRows(display: BrowserDisplayInfo): number {
   const widthRows = Math.floor((Math.max(1, display.workArea.width) + TILE_GAP_PX) / (CHROME_MIN_COMPACT_OUTER_SIDE_PX + TILE_GAP_PX))
   const heightRows = Math.floor((Math.max(1, display.workArea.height) + TILE_GAP_PX) / (CHROME_MIN_COMPACT_OUTER_SIDE_PX + TILE_GAP_PX))
   return clampInteger(Math.min(widthRows, heightRows), 1, MAX_SQUARE_SIDE)
 }
 
+/** Compatibility helper retained for old callers; new physical placement uses rectangular packing by tile side. */
 export function effectiveSquareBrowserTileGrid(
   settings: BrowserWindowLayoutSettings,
   display: BrowserDisplayInfo
@@ -235,6 +255,38 @@ export function withAutoBalancedBrowserRows(
   return withSquareBrowserRows(settings, rows)
 }
 
+export function withCompactBrowserTileSide(
+  settings: BrowserWindowLayoutSettings,
+  sidePx: number
+): BrowserWindowLayoutSettings {
+  return {
+    ...settings,
+    tileSidePx: clampInteger(sidePx, CHROME_MIN_COMPACT_OUTER_SIDE_PX, MAX_COMPACT_OUTER_SIDE_PX)
+  }
+}
+
+export function effectiveBrowserTileSidePx(
+  settings: BrowserWindowLayoutSettings,
+  display: BrowserDisplayInfo
+): number {
+  const requested = compactBrowserTileSidePx(settings)
+  return Math.max(1, Math.min(requested, Math.max(1, display.workArea.width), Math.max(1, display.workArea.height)))
+}
+
+/**
+ * Pack physical square Chrome windows into the rectangular monitor work area.
+ * The window remains square; only the number of columns/rows follows the display shape.
+ */
+export function rectangularBrowserTileGrid(
+  settings: BrowserWindowLayoutSettings,
+  display: BrowserDisplayInfo
+): BrowserTileGrid {
+  const side = effectiveBrowserTileSidePx(settings, display)
+  const columns = Math.max(1, Math.floor((Math.max(1, display.workArea.width) + TILE_GAP_PX) / (side + TILE_GAP_PX)))
+  const rows = Math.max(1, Math.floor((Math.max(1, display.workArea.height) + TILE_GAP_PX) / (side + TILE_GAP_PX)))
+  return { columns, rows, capacity: columns * rows }
+}
+
 export function compactBrowserSlotAssignments(assignments: readonly BrowserSlotAssignment[]): BrowserSlotAssignment[] {
   return [...assignments]
     .sort((a, b) => a.slotIndex - b.slotIndex || a.accountId - b.accountId)
@@ -253,9 +305,9 @@ export function compactContentScale(
 }
 
 /**
- * Compact windows are physically square. Runtime first limits N so the requested
- * square is not below Chrome's own minimum outer width, then chooses the largest
- * square side that fits that effective N × N grid and centers it on the display.
+ * Compact windows use a fixed physical square side and rectangular packing. When the
+ * visible layer is full, later browsers reuse deterministic slots with an inward
+ * cascade offset instead of returning null and letting Chrome open at a random/default size.
  */
 export function computeBrowserWindowPlacement(
   layout: BrowserWindowLayoutSettings,
@@ -264,27 +316,43 @@ export function computeBrowserWindowPlacement(
   slotIndex: number
 ): BrowserWindowPlacement | null {
   if (!layout.enabled) return null
+  if (!Number.isInteger(slotIndex) || slotIndex < 0) return null
 
-  const grid = effectiveSquareBrowserTileGrid(layout, display)
-  if (!Number.isInteger(slotIndex) || slotIndex < 0 || slotIndex >= grid.capacity) return null
+  const grid = rectangularBrowserTileGrid(layout, display)
+  const side = effectiveBrowserTileSidePx(layout, display)
+  const visibleSlotIndex = slotIndex % grid.capacity
+  const layerIndex = Math.floor(slotIndex / grid.capacity)
 
   const gapX = TILE_GAP_PX * Math.max(0, grid.columns - 1)
   const gapY = TILE_GAP_PX * Math.max(0, grid.rows - 1)
-  const usableWidth = Math.max(1, display.workArea.width - gapX)
-  const usableHeight = Math.max(1, display.workArea.height - gapY)
-  const side = Math.max(1, Math.floor(Math.min(usableWidth / grid.columns, usableHeight / grid.rows)))
   const gridWidth = side * grid.columns + gapX
   const gridHeight = side * grid.rows + gapY
   const originX = display.workArea.x + Math.max(0, Math.floor((display.workArea.width - gridWidth) / 2))
   const originY = display.workArea.y + Math.max(0, Math.floor((display.workArea.height - gridHeight) / 2))
-  const column = slotIndex % grid.columns
-  const row = Math.floor(slotIndex / grid.columns)
+  const column = visibleSlotIndex % grid.columns
+  const row = Math.floor(visibleSlotIndex / grid.columns)
+  const baseX = originX + column * (side + TILE_GAP_PX)
+  const baseY = originY + row * (side + TILE_GAP_PX)
+
+  let x = baseX
+  let y = baseY
+  if (layerIndex > 0) {
+    const cascadeStep = ((layerIndex - 1) % OVERFLOW_CASCADE_STEPS + 1) * OVERFLOW_CASCADE_STEP_PX
+    const directionX = column === grid.columns - 1 ? -1 : 1
+    const directionY = row === grid.rows - 1 ? -1 : 1
+    const minX = display.workArea.x
+    const minY = display.workArea.y
+    const maxX = display.workArea.x + Math.max(0, display.workArea.width - side)
+    const maxY = display.workArea.y + Math.max(0, display.workArea.height - side)
+    x = clampPosition(baseX + directionX * cascadeStep, minX, maxX)
+    y = clampPosition(baseY + directionY * cascadeStep, minY, maxY)
+  }
 
   return {
     displayId: display.id,
     slotIndex,
-    x: originX + column * (side + TILE_GAP_PX),
-    y: originY + row * (side + TILE_GAP_PX),
+    x,
+    y,
     width: side,
     height: side,
     contentScale: compactContentScale(browser, side, side),

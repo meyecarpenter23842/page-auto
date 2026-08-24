@@ -7,7 +7,6 @@ import { DEFAULT_APP_SETTINGS } from '../../shared/appSettings'
 import {
   DEFAULT_BROWSER_WINDOW_LAYOUT,
   computeBrowserWindowPlacement,
-  withSquareBrowserRows,
   type BrowserDisplayInfo
 } from '../../shared/browserWindowLayout'
 import { applyBrowserWindowPlacement, buildBrowserLaunchOptions, watchForManualBrowserResize } from './browserRuntime'
@@ -24,29 +23,46 @@ const ciDisplay: BrowserDisplayInfo = {
   workArea: { x: 100, y: 40, width: 1920, height: 1040 }
 }
 
-const requestedFourByFour = withSquareBrowserRows(
-  { ...DEFAULT_BROWSER_WINDOW_LAYOUT, enabled: true },
-  4
-)
-const placement = computeBrowserWindowPlacement(
-  requestedFourByFour,
+const compactLayout = {
+  ...DEFAULT_BROWSER_WINDOW_LAYOUT,
+  enabled: true,
+  tileSidePx: 500
+}
+const firstPlacement = computeBrowserWindowPlacement(
+  compactLayout,
   { ...DEFAULT_APP_SETTINGS.browser, windowWidth: 1280, windowHeight: 800 },
   ciDisplay,
   0
 )
-if (!placement) throw new Error('Expected a real compact placement for CI.')
+const fifthPlacement = computeBrowserWindowPlacement(
+  compactLayout,
+  { ...DEFAULT_APP_SETTINGS.browser, windowWidth: 1280, windowHeight: 800 },
+  ciDisplay,
+  4
+)
+const sixthPlacement = computeBrowserWindowPlacement(
+  compactLayout,
+  { ...DEFAULT_APP_SETTINGS.browser, windowWidth: 1280, windowHeight: 800 },
+  ciDisplay,
+  5
+)
+if (!firstPlacement || !fifthPlacement || !sixthPlacement) throw new Error('Expected six real compact placements for CI.')
 
 realChromeDescribe('browserRuntime real Chrome on Windows', () => {
-  it('keeps real Chrome square above its minimum width, removes the automation infobar switch, and preserves webdriver state', async () => {
+  it('keeps the sixth Chrome square, removes warning switches, and preserves webdriver state', async () => {
     const profileDirectory = await mkdtemp(join(tmpdir(), 'page-auto-compact-chrome-'))
     let context: BrowserContext | null = null
     let controlSession: CDPSession | null = null
     let stopResizeWatch: (() => void) | null = null
 
     try {
+      expect(firstPlacement).toMatchObject({ slotIndex: 0, width: 500, height: 500 })
+      expect(fifthPlacement).toMatchObject({ slotIndex: 4, width: 500, height: 500 })
+      expect(sixthPlacement).toMatchObject({ slotIndex: 5, width: 500, height: 500 })
+
       const launchShape = buildBrowserLaunchOptions(
         { ...DEFAULT_APP_SETTINGS.browser, executablePath: null },
-        placement
+        sixthPlacement
       )
       context = await chromium.launchPersistentContext(profileDirectory, {
         ...launchShape,
@@ -59,34 +75,31 @@ realChromeDescribe('browserRuntime real Chrome on Windows', () => {
       })
       const page = context.pages()[0] ?? await context.newPage()
 
-      // The Chrome infobar is tied to --enable-automation. Verify the actual Windows
-      // process command line, not only the option-builder unit test.
       await page.goto('chrome://version')
       const commandLine = await page.locator('#command_line').textContent()
       expect(commandLine ?? '').not.toContain('--enable-automation')
+      expect(commandLine ?? '').not.toContain('--no-sandbox')
       expect(commandLine ?? '').toContain('--remote-debugging-port=0')
 
       await page.goto('about:blank')
       expect(await page.evaluate(() => navigator.webdriver)).toBe(true)
       await page.setContent('<main style="width:100%;min-height:1600px">compact-smoke</main>')
-      await applyBrowserWindowPlacement(context, page, placement)
+      await applyBrowserWindowPlacement(context, page, sixthPlacement)
 
       controlSession = await context.newCDPSession(page)
       const target = await controlSession.send('Browser.getWindowForTarget') as { windowId: number }
       const placedBounds = await controlSession.send('Browser.getWindowBounds', { windowId: target.windowId }) as {
         bounds: { width?: number; height?: number }
       }
-      expect(placement.width).toBe(518)
-      expect(placement.height).toBe(518)
-      expect(Math.abs((placedBounds.bounds.width ?? 0) - placement.width)).toBeLessThanOrEqual(2)
-      expect(Math.abs((placedBounds.bounds.height ?? 0) - placement.height)).toBeLessThanOrEqual(2)
+      expect(Math.abs((placedBounds.bounds.width ?? 0) - sixthPlacement.width)).toBeLessThanOrEqual(2)
+      expect(Math.abs((placedBounds.bounds.height ?? 0) - sixthPlacement.height)).toBeLessThanOrEqual(2)
       expect(Math.abs((placedBounds.bounds.width ?? 0) - (placedBounds.bounds.height ?? 0))).toBeLessThanOrEqual(2)
 
       const compactViewport = await page.evaluate(() => ({
         width: window.innerWidth,
         height: window.innerHeight
       }))
-      expect(compactViewport.width).toBe(placement.viewportWidth)
+      expect(compactViewport.width).toBe(sixthPlacement.viewportWidth)
       expect(compactViewport.height).toBeGreaterThan(600)
 
       let detached = false
@@ -94,7 +107,7 @@ realChromeDescribe('browserRuntime real Chrome on Windows', () => {
         context,
         () => { detached = true },
         100,
-        { width: placement.width, height: placement.height }
+        { width: sixthPlacement.width, height: sixthPlacement.height }
       )
 
       await page.waitForTimeout(1_000)
@@ -109,9 +122,6 @@ realChromeDescribe('browserRuntime real Chrome on Windows', () => {
       while (!detached && Date.now() < deadline) await page.waitForTimeout(100)
       expect(detached).toBe(true)
 
-      // Chrome can report the old emulated viewport for a short moment after CDP clears
-      // device metrics. Wait for native reflow, then assert against the physical window
-      // that we resized to instead of assuming native width can never equal 1280.
       let nativeViewport = await page.evaluate(() => ({
         width: window.innerWidth,
         height: window.innerHeight

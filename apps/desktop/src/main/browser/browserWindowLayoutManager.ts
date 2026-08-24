@@ -3,6 +3,7 @@ import type { BrowserSettings } from '../../shared/appSettings'
 import {
   compactBrowserSlotAssignments,
   computeBrowserWindowPlacement,
+  rectangularBrowserTileGrid,
   type BrowserDisplayInfo,
   type BrowserWindowLayoutSettings,
   type BrowserWindowPlacement
@@ -88,11 +89,12 @@ export class BrowserWindowLayoutManager {
     }
 
     const display = this.resolveDisplay(layout)
+    const visibleCapacity = rectangularBrowserTileGrid(layout, display).capacity
     let overflowCount = 0
     for (const assignment of normalized) {
+      if (assignment.slotIndex >= visibleCapacity) overflowCount += 1
       const placement = computeBrowserWindowPlacement(layout, browser, display, assignment.slotIndex)
       if (placement) placements.set(assignment.accountId, placement)
-      else overflowCount += 1
     }
     return { placements, overflowCount }
   }

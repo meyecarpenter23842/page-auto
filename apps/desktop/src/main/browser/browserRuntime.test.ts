@@ -16,9 +16,9 @@ const placement: BrowserWindowPlacement = {
   slotIndex: 2,
   x: 640,
   y: 0,
-  width: 320,
-  height: 200,
-  contentScale: 0.25,
+  width: 500,
+  height: 500,
+  contentScale: 0.391,
   viewportWidth: 1280,
   viewportHeight: 800
 }
@@ -48,7 +48,7 @@ describe('buildBrowserLaunchOptions', () => {
     expect(options.args).toContain('--mute-audio')
     expect(options.args).toContain('--disable-gpu')
     expect(options.args).toContain('--no-default-browser-check')
-    expect(options.ignoreDefaultArgs).toEqual(['--enable-automation'])
+    expect(options.ignoreDefaultArgs).toEqual(['--enable-automation', '--no-sandbox'])
   })
 
   it('launches a compact browser in the computed slot and keeps it visible', () => {
@@ -56,10 +56,11 @@ describe('buildBrowserLaunchOptions', () => {
       { ...DEFAULT_APP_SETTINGS.browser, mode: 'minimized' },
       placement
     )
-    expect(options.args).toContain('--window-size=320,200')
+    expect(options.args).toContain('--window-size=500,500')
     expect(options.args).toContain('--window-position=640,0')
     expect(options.args).not.toContain('--start-minimized')
     expect(options.ignoreDefaultArgs).toContain('--enable-automation')
+    expect(options.ignoreDefaultArgs).toContain('--no-sandbox')
   })
 
   it('keeps desktop width while fitting logical height to the real Chrome inner area', () => {
