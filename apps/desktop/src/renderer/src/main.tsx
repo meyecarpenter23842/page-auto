@@ -4,6 +4,7 @@ import { App } from './App'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import './styles.css'
 import './iconMapping.css'
+import './page-tabs/postLibraryModalLayout.css'
 
 const root = document.getElementById('root')
 
