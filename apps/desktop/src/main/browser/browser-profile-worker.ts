@@ -16,8 +16,10 @@ import {
   applyBrowserPlacementToContext,
   applyBrowserWindowPlacement,
   buildBrowserLaunchOptions,
-  waitForBrowserStartupDelay
+  waitForBrowserStartupDelay,
+  watchForManualBrowserResize
 } from './browserRuntime'
+import { runWithResizeWatcherPaused } from './resizeWatchGuard'
 
 interface BrowserLaunchConfig {
   proxy?: PostingProxyConfig
@@ -142,11 +144,31 @@ async function run(): Promise<void> {
   let context: BrowserContext | null = null
   let cdpEndpoint: string | null = null
   let activePlacement: BrowserWindowPlacement | null = null
+  let manualResizeDetached = false
+  let stopResizeWatch: (() => void) | null = null
   let lifetimeTimer: NodeJS.Timeout | null = null
   let closing = false
   let queue = Promise.resolve()
 
+  const stopWatchingResize = (): void => {
+    stopResizeWatch?.()
+    stopResizeWatch = null
+  }
+
+  const armResizeWatch = (): void => {
+    stopWatchingResize()
+    const activeContext = context
+    if (!activeContext || !activePlacement || manualResizeDetached) return
+    stopResizeWatch = watchForManualBrowserResize(activeContext, () => {
+      if (context !== activeContext) return
+      manualResizeDetached = true
+      activePlacement = null
+      stopResizeWatch = null
+    })
+  }
+
   const closeBrowserAndExit = async (): Promise<void> => {
+    stopWatchingResize()
     if (lifetimeTimer) {
       clearTimeout(lifetimeTimer)
       lifetimeTimer = null
@@ -155,18 +177,28 @@ async function run(): Promise<void> {
     context = null
     cdpEndpoint = null
     activePlacement = null
+    manualResizeDetached = false
     if (activeContext) await activeContext.close().catch(() => undefined)
     setTimeout(() => process.exit(0), 25)
   }
 
   const ensureContext = async (command: BootstrapCommand): Promise<BrowserContext> => {
-    activePlacement = command.placement
     if (context) {
+      const activeContext = context
+      if (!manualResizeDetached) {
+        activePlacement = command.placement
+        await runWithResizeWatcherPaused(
+          stopWatchingResize,
+          () => applyBrowserPlacementToContext(activeContext, activePlacement),
+          armResizeWatch
+        )
+      }
       if (!cdpEndpoint) cdpEndpoint = await resolveCdpEndpoint(profileDirectory)
-      await applyBrowserPlacementToContext(context, activePlacement)
-      return context
+      return activeContext
     }
 
+    manualResizeDetached = false
+    activePlacement = command.placement
     await waitForBrowserStartupDelay(command.browser)
     const launchShape = buildBrowserLaunchOptions(command.browser, activePlacement)
     await rm(join(profileDirectory, 'DevToolsActivePort'), { force: true }).catch(() => undefined)
@@ -191,7 +223,11 @@ async function run(): Promise<void> {
     const opened = await chromium.launchPersistentContext(profileDirectory, launchOptions)
     await applyBrowserContextSettings(opened, command.browser)
     context = opened
-    await applyBrowserPlacementToContext(opened, activePlacement)
+    await runWithResizeWatcherPaused(
+      stopWatchingResize,
+      () => applyBrowserPlacementToContext(opened, activePlacement),
+      armResizeWatch
+    )
     opened.on('page', (page) => {
       void applyBrowserWindowPlacement(opened, page, activePlacement).catch(() => undefined)
     })
@@ -203,9 +239,11 @@ async function run(): Promise<void> {
     }, command.browser.maxLifetimeMinutes * 60_000)
 
     opened.once('close', () => {
+      stopWatchingResize()
       context = null
       cdpEndpoint = null
       activePlacement = null
+      manualResizeDetached = false
       if (lifetimeTimer) {
         clearTimeout(lifetimeTimer)
         lifetimeTimer = null
@@ -229,9 +267,18 @@ async function run(): Promise<void> {
 
     const retile = retileCommandFromMessage(event)
     if (retile && !closing) {
-      activePlacement = retile.placement
+      const placement = retile.placement
       queue = queue.then(async () => {
-        if (context) await applyBrowserPlacementToContext(context, activePlacement)
+        manualResizeDetached = false
+        activePlacement = placement
+        const activeContext = context
+        if (activeContext) {
+          await runWithResizeWatcherPaused(
+            stopWatchingResize,
+            () => applyBrowserPlacementToContext(activeContext, activePlacement),
+            armResizeWatch
+          )
+        }
       })
       return
     }
@@ -253,7 +300,9 @@ async function run(): Promise<void> {
         }
 
         const page = activeContext.pages()[0] ?? await activeContext.newPage()
-        await applyBrowserWindowPlacement(activeContext, page, activePlacement).catch(() => undefined)
+        if (!manualResizeDetached) {
+          await applyBrowserWindowPlacement(activeContext, page, activePlacement).catch(() => undefined)
+        }
         const session = await bootstrapFacebookSession(activeContext, page, command.account, command.session.facebookLocale)
         if (session.status === 'valid') {
           const identity = await inspectFacebookAccountIdentity(activeContext, command.account.uid)

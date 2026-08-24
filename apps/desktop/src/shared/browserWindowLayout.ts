@@ -14,6 +14,10 @@ export interface BrowserWindowLayoutSettings {
   targetDisplayId: number | null
 }
 
+const MAX_SQUARE_SIDE = 8
+const MAX_TILE_COUNT = MAX_SQUARE_SIDE * MAX_SQUARE_SIDE
+const MAX_GRID_COLUMNS = MAX_SQUARE_SIDE
+
 export const DEFAULT_BROWSER_WINDOW_LAYOUT: Readonly<BrowserWindowLayoutSettings> = {
   enabled: false,
   tileLayout: 'grid',
@@ -71,9 +75,6 @@ export interface BrowserTileGrid {
 
 const TILE_GAP_PX = 4
 const MIN_RENDER_SCALE = 0.001
-const MAX_TILE_COUNT = 32
-const MAX_GRID_COLUMNS = 16
-const CHROME_FRAME_HEIGHT_ESTIMATE_PX = 96
 
 function clampInteger(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min
@@ -93,8 +94,8 @@ export function assertValidBrowserWindowLayoutSettings(value: BrowserWindowLayou
   if (!Number.isInteger(value.gridColumns) || value.gridColumns < 1 || value.gridColumns > MAX_GRID_COLUMNS) {
     throw new Error(`Số cột Grid phải từ 1 đến ${MAX_GRID_COLUMNS}.`)
   }
-  if (!Number.isInteger(value.rowCount) || value.rowCount < 1 || value.rowCount > MAX_TILE_COUNT) {
-    throw new Error(`Số hàng dọc phải từ 1 đến ${MAX_TILE_COUNT}.`)
+  if (!Number.isInteger(value.rowCount) || value.rowCount < 1 || value.rowCount > MAX_SQUARE_SIDE) {
+    throw new Error(`Số hàng dọc phải từ 1 đến ${MAX_SQUARE_SIDE}.`)
   }
   if (!Number.isInteger(value.minimumCapacity) || value.minimumCapacity < 1 || value.minimumCapacity > MAX_TILE_COUNT) {
     throw new Error(`Sức chứa tối thiểu phải từ 1 đến ${MAX_TILE_COUNT}.`)
@@ -104,25 +105,53 @@ export function assertValidBrowserWindowLayoutSettings(value: BrowserWindowLayou
   }
 }
 
-function legacyRows(parsed: Partial<BrowserWindowLayoutSettings>): number {
+function assertStoredNumberInRange(value: number | undefined, min: number, max: number): void {
+  if (value === undefined) return
+  if (!Number.isInteger(value) || value < min || value > max) throw new Error('Stored browser layout is out of range.')
+}
+
+function squareSideForCapacity(capacity: number): number {
+  return Math.min(MAX_SQUARE_SIDE, Math.max(1, Math.ceil(Math.sqrt(capacity))))
+}
+
+function migratedRows(parsed: Partial<BrowserWindowLayoutSettings>): number {
   const capacity = clampInteger(parsed.tileCount ?? DEFAULT_BROWSER_WINDOW_LAYOUT.tileCount, 1, MAX_TILE_COUNT)
-  if (parsed.tileLayout === 'vertical') return capacity
-  if (parsed.tileLayout === 'horizontal') return 1
-  const columns = clampInteger(parsed.gridColumns ?? DEFAULT_BROWSER_WINDOW_LAYOUT.gridColumns, 1, Math.min(MAX_GRID_COLUMNS, capacity))
-  return Math.ceil(capacity / columns)
+
+  // Releases before square-grid mode persisted rowCount for horizontal/vertical
+  // layouts too. Their rowCount describes the old one-axis layout, not the new
+  // square side, so preserve capacity by deriving the smallest N x N that fits it.
+  if (parsed.tileLayout === 'horizontal' || parsed.tileLayout === 'vertical') {
+    return squareSideForCapacity(capacity)
+  }
+
+  if (parsed.rowCount !== undefined) return parsed.rowCount
+
+  const columns = clampInteger(
+    parsed.gridColumns ?? DEFAULT_BROWSER_WINDOW_LAYOUT.gridColumns,
+    1,
+    Math.min(MAX_GRID_COLUMNS, capacity)
+  )
+  return Math.min(MAX_SQUARE_SIDE, Math.ceil(capacity / columns))
 }
 
 export function parseStoredBrowserWindowLayout(raw: string | undefined): BrowserWindowLayoutSettings {
   if (!raw) return cloneDefaultBrowserWindowLayout()
   try {
     const parsed = JSON.parse(raw) as Partial<BrowserWindowLayoutSettings>
+    assertStoredNumberInRange(parsed.tileCount, 1, MAX_TILE_COUNT)
+    assertStoredNumberInRange(parsed.gridColumns, 1, MAX_GRID_COLUMNS)
+    assertStoredNumberInRange(parsed.rowCount, 1, MAX_SQUARE_SIDE)
+    assertStoredNumberInRange(parsed.minimumCapacity, 1, MAX_TILE_COUNT)
+
+    const nextRows = migratedRows(parsed)
     const next: BrowserWindowLayoutSettings = {
       ...cloneDefaultBrowserWindowLayout(),
       ...parsed,
-      rowCount: parsed.rowCount === undefined ? legacyRows(parsed) : parsed.rowCount,
-      minimumCapacity: parsed.minimumCapacity === undefined
-        ? clampInteger(parsed.tileCount ?? 1, 1, MAX_TILE_COUNT)
-        : parsed.minimumCapacity
+      tileLayout: 'grid',
+      rowCount: nextRows,
+      gridColumns: nextRows,
+      tileCount: nextRows * nextRows,
+      minimumCapacity: nextRows * nextRows
     }
     assertValidBrowserWindowLayoutSettings(next)
     return next
@@ -145,51 +174,42 @@ export function browserTileGrid(settings: BrowserWindowLayoutSettings): BrowserT
   }
 }
 
-/**
- * Users choose only the vertical row count. The horizontal count is derived from
- * the target monitor so each Chrome tile stays close to a pleasant desktop-browser
- * aspect ratio. This is recomputed at runtime, so changing monitor/DPI does not
- * require the user to calculate columns again. minimumCapacity only protects a
- * legacy saved layout until the user explicitly chooses a new row count.
- */
-export function autoBalancedBrowserTileGrid(
-  settings: BrowserWindowLayoutSettings,
-  browser: BrowserSettings,
-  display: BrowserDisplayInfo
-): BrowserTileGrid {
-  const rows = clampInteger(settings.rowCount, 1, MAX_TILE_COUNT)
-  const maxColumns = Math.max(1, Math.floor(MAX_TILE_COUNT / rows))
-  const minColumns = Math.min(maxColumns, Math.max(1, Math.ceil(settings.minimumCapacity / rows)))
-  const targetAspect = Math.max(0.2, browser.windowWidth / Math.max(1, browser.windowHeight + CHROME_FRAME_HEIGHT_ESTIMATE_PX))
-  const gapY = TILE_GAP_PX * Math.max(0, rows - 1)
-  const slotHeight = Math.max(1, Math.floor((display.workArea.height - gapY) / rows))
-
-  let bestColumns = minColumns
-  let bestScore = Number.POSITIVE_INFINITY
-  for (let columns = minColumns; columns <= maxColumns; columns += 1) {
-    const gapX = TILE_GAP_PX * Math.max(0, columns - 1)
-    const slotWidth = Math.max(1, Math.floor((display.workArea.width - gapX) / columns))
-    const aspect = slotWidth / slotHeight
-    const score = Math.abs(Math.log(aspect / targetAspect))
-    if (score < bestScore - 1e-9) {
-      bestScore = score
-      bestColumns = columns
-    }
-  }
-
-  return { columns: bestColumns, rows, capacity: bestColumns * rows }
+/** FPlus-style compact rule: choosing N vertical rows always produces an N × N grid. */
+export function squareBrowserTileGrid(settings: BrowserWindowLayoutSettings): BrowserTileGrid {
+  const side = clampInteger(settings.rowCount, 1, MAX_SQUARE_SIDE)
+  return { columns: side, rows: side, capacity: side * side }
 }
 
+/** Compatibility alias for code/config introduced by the previous auto-balance implementation. */
+export function autoBalancedBrowserTileGrid(
+  settings: BrowserWindowLayoutSettings,
+  _browser: BrowserSettings,
+  _display: BrowserDisplayInfo
+): BrowserTileGrid {
+  return squareBrowserTileGrid(settings)
+}
+
+export function withSquareBrowserRows(
+  settings: BrowserWindowLayoutSettings,
+  rows: number
+): BrowserWindowLayoutSettings {
+  const side = clampInteger(rows, 1, MAX_SQUARE_SIDE)
+  return {
+    ...settings,
+    tileLayout: 'grid',
+    rowCount: side,
+    gridColumns: side,
+    tileCount: side * side,
+    minimumCapacity: side * side
+  }
+}
+
+/** Compatibility alias for the previous helper name. */
 export function withAutoBalancedBrowserRows(
   settings: BrowserWindowLayoutSettings,
   rows: number
 ): BrowserWindowLayoutSettings {
-  return {
-    ...settings,
-    tileLayout: 'grid',
-    rowCount: clampInteger(rows, 1, MAX_TILE_COUNT),
-    minimumCapacity: 1
-  }
+  return withSquareBrowserRows(settings, rows)
 }
 
 export function compactBrowserSlotAssignments(assignments: readonly BrowserSlotAssignment[]): BrowserSlotAssignment[] {
@@ -217,7 +237,7 @@ export function computeBrowserWindowPlacement(
 ): BrowserWindowPlacement | null {
   if (!layout.enabled) return null
 
-  const grid = autoBalancedBrowserTileGrid(layout, browser, display)
+  const grid = squareBrowserTileGrid(layout)
   if (!Number.isInteger(slotIndex) || slotIndex < 0 || slotIndex >= grid.capacity) return null
 
   const gapX = TILE_GAP_PX * Math.max(0, grid.columns - 1)

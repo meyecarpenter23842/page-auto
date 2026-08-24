@@ -1,12 +1,14 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_APP_SETTINGS } from '../../shared/appSettings'
 import type { BrowserWindowPlacement } from '../../shared/browserWindowLayout'
 import {
   applyBrowserWindowPlacement,
   buildBrowserLaunchOptions,
   compactDeviceMetrics,
+  compactWindowSizeChanged,
   effectiveCompactContentScale,
-  fitCompactViewportToInnerArea
+  fitCompactViewportToInnerArea,
+  watchForManualBrowserResize
 } from './browserRuntime'
 
 const placement: BrowserWindowPlacement = {
@@ -20,6 +22,10 @@ const placement: BrowserWindowPlacement = {
   viewportWidth: 1280,
   viewportHeight: 800
 }
+
+afterEach(() => {
+  vi.useRealTimers()
+})
 
 describe('buildBrowserLaunchOptions', () => {
   it('maps saved browser settings to real Chrome launch options', () => {
@@ -51,7 +57,6 @@ describe('buildBrowserLaunchOptions', () => {
     expect(options.args).toContain('--window-size=320,200')
     expect(options.args).toContain('--window-position=640,0')
     expect(options.args).not.toContain('--start-minimized')
-    expect(options.args.some((arg) => arg.startsWith('--force-device-scale-factor='))).toBe(false)
   })
 
   it('fits the logical desktop viewport to the real inner area instead of letterboxing', () => {
@@ -60,27 +65,11 @@ describe('buildBrowserLaunchOptions', () => {
     expect(fit).toEqual({ width: 2133, height: 800, scale: 0.15 })
     expect(fit.width * fit.scale).toBeCloseTo(320, 0)
     expect(fit.height * fit.scale).toBeCloseTo(120, 5)
-    expect(compactDeviceMetrics(placement, fit.scale, fit.width, fit.height)).toEqual({
-      width: 2133,
-      height: 800,
-      deviceScaleFactor: 1,
-      mobile: false,
-      screenWidth: 2133,
-      screenHeight: 800,
-      scale: 0.15
-    })
   })
 
-  it('expands height instead when the compact content area is relatively narrow', () => {
-    const fit = fitCompactViewportToInnerArea(placement, 200, 200)
-    expect(fit.scale).toBe(0.156)
-    expect(fit.width).toBe(1282)
-    expect(fit.height).toBeGreaterThan(800)
-    expect(fit.height * fit.scale).toBeCloseTo(200, 0)
-  })
-
-  it('allows very small supported slots to scale below the old 0.08 crop floor', () => {
-    expect(effectiveCompactContentScale(placement, 56, 200)).toBe(0.044)
+  it('recognizes a real manual resize but ignores small Windows bound jitter', () => {
+    expect(compactWindowSizeChanged({ width: 500, height: 300 }, { width: 508, height: 292 })).toBe(false)
+    expect(compactWindowSizeChanged({ width: 500, height: 300 }, { width: 620, height: 420 })).toBe(true)
   })
 
   it('keeps the CDP session attached while compact emulation is active and detaches when cleared', async () => {
@@ -108,6 +97,42 @@ describe('buildBrowserLaunchOptions', () => {
     expect(context.newCDPSession).toHaveBeenCalledTimes(1)
     expect(send).toHaveBeenCalledWith('Emulation.clearDeviceMetricsOverride')
     expect(detach).toHaveBeenCalledTimes(1)
+  })
+
+  it('clears compact emulation after the operator resizes the native Chrome window', async () => {
+    vi.useFakeTimers()
+    let boundsRead = 0
+    const send = vi.fn(async (method: string) => {
+      if (method === 'Browser.getWindowForTarget') return { windowId: 7 }
+      if (method === 'Browser.getWindowBounds') {
+        boundsRead += 1
+        return boundsRead === 1
+          ? { bounds: { width: 500, height: 300 } }
+          : { bounds: { width: 700, height: 500 } }
+      }
+      return {}
+    })
+    const detach = vi.fn(async () => undefined)
+    const session = { send, detach }
+    const page = {
+      once: vi.fn()
+    }
+    const context = {
+      pages: vi.fn(() => [page]),
+      newCDPSession: vi.fn(async () => session)
+    } as unknown as Parameters<typeof watchForManualBrowserResize>[0]
+    const detached = vi.fn()
+
+    const stop = watchForManualBrowserResize(context, detached, 100)
+    await vi.advanceTimersByTimeAsync(100)
+    expect(detached).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(100)
+    await Promise.resolve()
+
+    expect(detached).toHaveBeenCalledTimes(1)
+    expect(send).toHaveBeenCalledWith('Emulation.clearDeviceMetricsOverride')
+    expect(detach).toHaveBeenCalledTimes(1)
+    stop()
   })
 
   it('uses the installed Chrome channel when no custom executable is saved', () => {

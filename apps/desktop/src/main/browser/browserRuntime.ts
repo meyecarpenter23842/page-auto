@@ -26,8 +26,15 @@ export interface CompactViewportFit {
   scale: number
 }
 
+export interface BrowserOuterSize {
+  width: number
+  height: number
+}
+
 const MIN_COMPACT_SCALE = 0.001
+const MANUAL_RESIZE_TOLERANCE_PX = 12
 const compactSessions = new WeakMap<Page, CDPSession>()
+const placementQueues = new WeakMap<BrowserContext, Promise<void>>()
 
 async function compactSessionFor(context: BrowserContext, page: Page): Promise<CDPSession> {
   const existing = compactSessions.get(page)
@@ -61,8 +68,7 @@ export function effectiveCompactContentScale(
 
 /**
  * Keep at least the configured desktop viewport, but expand the logical viewport on
- * the axis that would otherwise leave empty letterbox space. This makes the rendered
- * Facebook page fill the real Chrome content area while preserving desktop breakpoints.
+ * the axis that would otherwise leave empty letterbox space.
  */
 export function fitCompactViewportToInnerArea(
   placement: BrowserWindowPlacement,
@@ -93,6 +99,77 @@ export function compactDeviceMetrics(
     screenWidth: viewportWidth,
     screenHeight: viewportHeight,
     scale: actualScale
+  }
+}
+
+export function compactWindowSizeChanged(
+  baseline: BrowserOuterSize,
+  current: BrowserOuterSize,
+  tolerancePx: number = MANUAL_RESIZE_TOLERANCE_PX
+): boolean {
+  return Math.abs(current.width - baseline.width) > tolerancePx
+    || Math.abs(current.height - baseline.height) > tolerancePx
+}
+
+async function readBrowserOuterSize(context: BrowserContext, page: Page): Promise<BrowserOuterSize | null> {
+  const session = await compactSessionFor(context, page)
+  const targetWindow = await session.send('Browser.getWindowForTarget').catch(() => null) as { windowId?: number } | null
+  if (targetWindow?.windowId === undefined) return null
+  const result = await session.send('Browser.getWindowBounds', { windowId: targetWindow.windowId }).catch(() => null) as {
+    bounds?: { width?: number; height?: number }
+  } | null
+  const width = result?.bounds?.width
+  const height = result?.bounds?.height
+  if (typeof width !== 'number' || typeof height !== 'number') return null
+  return { width, height }
+}
+
+/**
+ * Compact is an arranged state, not a permanent lock. Once the operator resizes a
+ * Chrome window by hand, clear device emulation for that browser so native Chrome
+ * reflows to the new size instead of keeping a stale compact viewport and showing
+ * blank space. Explicit "Sắp xếp lại Chrome" can enable compact again later.
+ */
+export function watchForManualBrowserResize(
+  context: BrowserContext,
+  onDetached: () => void,
+  intervalMs: number = 350
+): () => void {
+  let stopped = false
+  let cancelled = false
+  let busy = false
+  let baseline: BrowserOuterSize | null = null
+
+  const timer = setInterval(() => {
+    if (stopped || cancelled || busy) return
+    busy = true
+    void (async () => {
+      const page = context.pages()[0]
+      if (!page) return
+      const current = await readBrowserOuterSize(context, page).catch(() => null)
+      if (cancelled || !current) return
+      if (!baseline) {
+        baseline = current
+        return
+      }
+      if (!compactWindowSizeChanged(baseline, current)) return
+
+      stopped = true
+      clearInterval(timer)
+      if (cancelled) return
+      await applyBrowserPlacementToContext(context, null).catch(() => undefined)
+      if (!cancelled) onDetached()
+    })().finally(() => {
+      busy = false
+    })
+  }, Math.max(100, intervalMs))
+  timer.unref?.()
+
+  return () => {
+    cancelled = true
+    if (stopped) return
+    stopped = true
+    clearInterval(timer)
   }
 }
 
@@ -196,8 +273,17 @@ export async function applyBrowserPlacementToContext(
   context: BrowserContext,
   placement: BrowserWindowPlacement | null
 ): Promise<void> {
-  for (const page of context.pages()) {
-    await applyBrowserWindowPlacement(context, page, placement).catch(() => undefined)
+  const previous = placementQueues.get(context) ?? Promise.resolve()
+  const next = previous.catch(() => undefined).then(async () => {
+    for (const page of context.pages()) {
+      await applyBrowserWindowPlacement(context, page, placement).catch(() => undefined)
+    }
+  })
+  placementQueues.set(context, next)
+  try {
+    await next
+  } finally {
+    if (placementQueues.get(context) === next) placementQueues.delete(context)
   }
 }
 
