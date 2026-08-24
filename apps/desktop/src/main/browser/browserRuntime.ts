@@ -1,5 +1,6 @@
-import type { BrowserContext } from 'playwright-core'
+import type { BrowserContext, Page } from 'playwright-core'
 import type { BrowserSettings } from '../../shared/appSettings'
+import type { BrowserWindowPlacement } from '../../shared/browserWindowLayout'
 
 export interface BrowserLaunchShape {
   headless: false
@@ -9,9 +10,19 @@ export interface BrowserLaunchShape {
   channel?: 'chrome'
 }
 
-export function buildBrowserLaunchOptions(settings: BrowserSettings): BrowserLaunchShape {
+export function buildBrowserLaunchOptions(
+  settings: BrowserSettings,
+  placement: BrowserWindowPlacement | null = null
+): BrowserLaunchShape {
   const executablePath = settings.executablePath?.trim()
-  const args = [`--window-size=${settings.windowWidth},${settings.windowHeight}`]
+  const args = placement
+    ? [
+        `--window-size=${placement.width},${placement.height}`,
+        `--window-position=${placement.x},${placement.y}`,
+        `--force-device-scale-factor=${placement.contentScale}`,
+        '--high-dpi-support=1'
+      ]
+    : [`--window-size=${settings.windowWidth},${settings.windowHeight}`]
 
   if (settings.mode === 'minimized') args.push('--start-minimized')
   if (settings.muteAudio) args.push('--mute-audio')
@@ -40,6 +51,61 @@ export async function applyBrowserContextSettings(
       }
       await route.continue().catch(() => undefined)
     })
+  }
+}
+
+/**
+ * Compact mode keeps the Facebook layout at the configured desktop viewport while
+ * the real Chrome window is physically tiled much smaller. deviceScaleFactor makes
+ * the rendered page shrink with the window instead of exposing only a cropped corner.
+ */
+export async function applyBrowserWindowPlacement(
+  context: BrowserContext,
+  page: Page,
+  placement: BrowserWindowPlacement | null
+): Promise<void> {
+  const session = await context.newCDPSession(page)
+  try {
+    if (!placement) {
+      await session.send('Emulation.clearDeviceMetricsOverride').catch(() => undefined)
+      return
+    }
+
+    const targetWindow = await session.send('Browser.getWindowForTarget').catch(() => null) as { windowId?: number } | null
+    if (targetWindow?.windowId !== undefined) {
+      await session.send('Browser.setWindowBounds', {
+        windowId: targetWindow.windowId,
+        bounds: {
+          left: placement.x,
+          top: placement.y,
+          width: placement.width,
+          height: placement.height,
+          windowState: 'normal'
+        }
+      }).catch(() => undefined)
+    }
+
+    await session.send('Emulation.setDeviceMetricsOverride', {
+      width: placement.viewportWidth,
+      height: placement.viewportHeight,
+      deviceScaleFactor: placement.contentScale,
+      mobile: false,
+      screenWidth: placement.viewportWidth,
+      screenHeight: placement.viewportHeight,
+      positionX: 0,
+      positionY: 0
+    })
+  } finally {
+    await session.detach().catch(() => undefined)
+  }
+}
+
+export async function applyBrowserPlacementToContext(
+  context: BrowserContext,
+  placement: BrowserWindowPlacement | null
+): Promise<void> {
+  for (const page of context.pages()) {
+    await applyBrowserWindowPlacement(context, page, placement).catch(() => undefined)
   }
 }
 
