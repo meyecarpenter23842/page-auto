@@ -12,7 +12,12 @@ import { applyBrowserContextSettings, buildBrowserLaunchOptions, waitForBrowserS
 import { effectiveNavigationTimeoutMs, probeFacebookThroughProxy } from '../proxyPreflight'
 import { activeFacebookProfileId, detectFacebookAccessBlock } from './pageState'
 import { finishPostingEvidence, startPostingTrace } from './postingEvidence'
-import { pollForReady, readinessAttempts } from './postingReadiness'
+import {
+  isMediaAttachmentReady,
+  pollForReady,
+  readinessAttempts,
+  type MediaReadinessSnapshot
+} from './postingReadiness'
 import {
   capturePublishBaseline,
   findNewPublishedPost,
@@ -23,11 +28,11 @@ import {
 
 type PostingCode = NonNullable<PostingJobResult['code']>
 
-const ACTION_SETTLE_MS = 700
+const ACTION_SETTLE_MS = 850
 const READINESS_POLL_MS = 250
-const COMPOSER_READY_TIMEOUT_MS = 12_000
+const COMPOSER_READY_TIMEOUT_MS = 18_000
 const CONTENT_READY_TIMEOUT_MS = 3_000
-const MEDIA_READY_TIMEOUT_MS = 12_000
+const MEDIA_READY_TIMEOUT_MS = 20_000
 const PUBLISH_READY_TIMEOUT_MS = 20_000
 
 function failure(code: PostingCode, message: string): PostingJobResult {
@@ -115,7 +120,7 @@ async function settlePage(page: Page, settings: BrowserSettings): Promise<void> 
 }
 
 function normalizeComposerText(value: string): string {
-  return value.replace(/\s+/g, ' ').trim()
+  return value.replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/\s+/g, ' ').trim()
 }
 
 async function composerContainsText(textbox: Locator, content: string): Promise<boolean> {
@@ -205,39 +210,47 @@ export class ComposerDetector {
     ])
   }
 
+  private async isComposerSurface(dialog: Locator): Promise<boolean> {
+    const titleOrPlaceholder = await firstVisibleMatch([
+      dialog.getByRole('heading', { name: /create post|tạo bài viết/i }),
+      dialog.getByText(/create a public post|write something|what'?s on your mind|bạn viết gì|bạn đang nghĩ gì|tạo bài viết công khai/i)
+    ])
+    if (titleOrPlaceholder) return true
+
+    const publishButton = await firstVisibleMatch([
+      dialog.getByRole('button', { name: /^(post|đăng)$/i })
+    ])
+    if (!publishButton) return false
+
+    return Boolean(await firstVisibleMatch([
+      dialog.getByRole('button', { name: /photo\s*\/?\s*video|photo|video|ảnh/i }),
+      dialog.getByText(/photo\s*\/?\s*video|ảnh\s*\/?\s*video/i)
+    ]))
+  }
+
   private async findComposerDialog(): Promise<Locator | null> {
-    const dialogs = this.page.getByRole('dialog')
+    const dialogs = this.page.locator('[role="dialog"], [aria-modal="true"]')
     const count = await dialogs.count().catch(() => 0)
     for (let index = count - 1; index >= 0; index -= 1) {
       const dialog = dialogs.nth(index)
       if (!await dialog.isVisible().catch(() => false)) continue
-      const signal = await firstVisibleMatch([
-        dialog.getByRole('heading', { name: /create post|tạo bài viết/i }),
-        dialog.getByText(/create a public post|write something|bạn viết gì|tạo bài viết công khai/i)
-      ])
-      if (signal) return dialog
+      if (await this.isComposerSurface(dialog)) return dialog
     }
     return null
   }
 
   private async findOpenComposer(): Promise<ComposerHandle | null> {
     const dialog = await this.findComposerDialog()
-    if (dialog) {
-      const textbox = await this.findTextbox(dialog)
-      if (textbox) return { container: dialog, textbox }
-    }
-
-    const textbox = await this.findTextbox(this.page.locator('body'))
-    if (!textbox) return null
-    const container = textbox.locator('xpath=ancestor::*[@role="dialog"][1]')
-    return await container.isVisible().catch(() => false) ? { container, textbox } : null
+    if (!dialog) return null
+    const textbox = await this.findTextbox(dialog)
+    return textbox ? { container: dialog, textbox } : null
   }
 
   private async focusComposerPlaceholder(): Promise<boolean> {
     const dialog = await this.findComposerDialog()
     if (!dialog) return false
     const placeholder = await firstVisibleMatch([
-      dialog.getByText(/create a public post|write something|bạn viết gì|tạo bài viết công khai/i),
+      dialog.getByText(/create a public post|write something|what'?s on your mind|bạn viết gì|bạn đang nghĩ gì|tạo bài viết công khai/i),
       dialog.locator('[data-lexical-editor="true"]'),
       dialog.locator('[contenteditable="true"]')
     ])
@@ -249,26 +262,25 @@ export class ComposerDetector {
     const existing = await this.findOpenComposer()
     if (existing) return existing
 
-    const alreadyOpen = await this.findComposerDialog()
-    if (!alreadyOpen) {
+    if (!await this.findComposerDialog()) {
+      const triggerPattern = /write something|what'?s on your mind|create post|create a public post|bạn viết gì|bạn đang nghĩ gì|tạo bài viết|tạo bài viết công khai/i
       const trigger = await firstVisibleMatch([
-        this.page.getByRole('button', { name: /write something|bạn viết gì|create post|tạo bài viết|create a public post|tạo bài viết công khai/i }),
-        this.page.getByText(/write something|bạn viết gì|create a public post|tạo bài viết công khai/i)
+        this.page.getByRole('button', { name: triggerPattern }),
+        this.page.locator('[role="button"]').filter({ hasText: triggerPattern }),
+        this.page.getByText(triggerPattern)
       ])
       if (!trigger) return null
-      await trigger.click({ timeout: 15_000 }).catch(() => undefined)
+      if (!await trigger.click({ timeout: 15_000 }).then(() => true).catch(() => false)) return null
       await settleAction(this.page)
     }
 
     let probeCount = 0
-    let focusTried = false
     return pollPage(this.page, COMPOSER_READY_TIMEOUT_MS, async () => {
       const handle = await this.findOpenComposer()
       if (handle) return handle
 
       probeCount += 1
-      if (!focusTried && probeCount >= 6) {
-        focusTried = true
+      if (probeCount === 6 || (probeCount > 6 && (probeCount - 6) % 8 === 0)) {
         if (await this.focusComposerPlaceholder()) await settleAction(this.page)
       }
       return null
@@ -330,34 +342,26 @@ export class MediaUploader {
     return false
   }
 
-  private async selectedFileCount(container: Locator): Promise<number> {
-    const countFiles = async (inputs: Locator): Promise<number> => inputs.evaluateAll((elements) => {
-      let max = 0
-      for (const element of elements) {
-        const files = (element as HTMLInputElement).files?.length ?? 0
-        if (files > max) max = files
-      }
-      return max
-    }).catch(() => 0)
-
-    return Math.max(
-      await countFiles(container.locator('input[type="file"]')),
-      await countFiles(this.page.locator('input[type="file"]'))
-    )
-  }
-
-  private async mediaMarkerCount(container: Locator): Promise<number> {
+  private async mediaSnapshot(container: Locator): Promise<MediaReadinessSnapshot> {
     const previews = container.locator('img[src^="blob:"], img[src*="scontent"], img[src*="fbcdn"]')
     const removeControls = container.getByRole('button', { name: /remove (photo|image)|xóa (ảnh|hình)|gỡ (ảnh|hình)/i })
-    return await visibleCount(previews) + await visibleCount(removeControls)
+    const busyMarkers = container.locator('[role="progressbar"], [aria-busy="true"]')
+    const busyText = container.getByText(/uploading|processing|đang tải|đang xử lý/i)
+    return {
+      previewCount: await visibleCount(previews),
+      removeControlCount: await visibleCount(removeControls),
+      busyCount: await visibleCount(busyMarkers) + await visibleCount(busyText)
+    }
   }
 
-  private async waitForMediaReady(container: Locator, expectedCount: number, baselineMarkers: number): Promise<boolean> {
+  private async waitForMediaReady(
+    container: Locator,
+    expectedCount: number,
+    baseline: MediaReadinessSnapshot
+  ): Promise<boolean> {
     const ready = await pollPage(this.page, MEDIA_READY_TIMEOUT_MS, async () => {
-      const markers = await this.mediaMarkerCount(container)
-      if (markers > baselineMarkers) return true
-      const selectedFiles = await this.selectedFileCount(container)
-      return selectedFiles >= expectedCount ? true : null
+      const current = await this.mediaSnapshot(container)
+      return isMediaAttachmentReady(baseline, current, expectedCount) ? true : null
     })
     if (!ready) return false
     await settleAction(this.page)
@@ -368,12 +372,12 @@ export class MediaUploader {
     if (imagePaths.length === 0) return { status: 'success', message: 'Job không có ảnh cần upload.' }
 
     try {
-      const baselineMarkers = await this.mediaMarkerCount(container)
+      const baseline = await this.mediaSnapshot(container)
       if (await this.setInputFiles(container, imagePaths)) {
-        if (!await this.waitForMediaReady(container, imagePaths.length, baselineMarkers)) {
-          return failure('media_failed', 'Đã chọn ảnh nhưng Facebook chưa xác nhận media sẵn sàng trong composer.')
+        if (!await this.waitForMediaReady(container, imagePaths.length, baseline)) {
+          return failure('media_failed', 'Đã chọn ảnh nhưng Facebook chưa render đủ media đã xử lý trong composer.')
         }
-        return { status: 'success', message: `Đã chọn và chờ ${imagePaths.length} ảnh sẵn sàng.` }
+        return { status: 'success', message: `Đã chọn và xác nhận ${imagePaths.length} ảnh sẵn sàng.` }
       }
 
       const mediaButton = await firstVisibleMatch([
@@ -389,19 +393,19 @@ export class MediaUploader {
       const chooser = await chooserPromise
       if (chooser) {
         await chooser.setFiles(imagePaths)
-        if (!await this.waitForMediaReady(container, imagePaths.length, baselineMarkers)) {
-          return failure('media_failed', 'Đã chọn ảnh qua file chooser nhưng Facebook chưa xác nhận media sẵn sàng.')
+        if (!await this.waitForMediaReady(container, imagePaths.length, baseline)) {
+          return failure('media_failed', 'Đã chọn ảnh qua file chooser nhưng Facebook chưa render đủ media đã xử lý.')
         }
-        return { status: 'success', message: `Đã chọn và chờ ${imagePaths.length} ảnh qua file chooser.` }
+        return { status: 'success', message: `Đã chọn và xác nhận ${imagePaths.length} ảnh qua file chooser.` }
       }
 
       if (!await this.setInputFiles(container, imagePaths)) {
         return failure('media_failed', 'Đã mở Photo/Video nhưng không tìm thấy file chooser hoặc file input.')
       }
-      if (!await this.waitForMediaReady(container, imagePaths.length, baselineMarkers)) {
-        return failure('media_failed', 'Đã chọn ảnh sau khi mở Photo/Video nhưng Facebook chưa xác nhận media sẵn sàng.')
+      if (!await this.waitForMediaReady(container, imagePaths.length, baseline)) {
+        return failure('media_failed', 'Đã chọn ảnh sau khi mở Photo/Video nhưng Facebook chưa render đủ media đã xử lý.')
       }
-      return { status: 'success', message: `Đã chọn và chờ ${imagePaths.length} ảnh sau khi mở Photo/Video.` }
+      return { status: 'success', message: `Đã chọn và xác nhận ${imagePaths.length} ảnh sau khi mở Photo/Video.` }
     } catch (error) {
       return failure('media_failed', error instanceof Error ? error.message : String(error))
     }
@@ -494,9 +498,10 @@ export class PublishResultDetector {
   }
 
   async detect(container: Locator, content: string, baseline: PublishBaseline): Promise<PostingJobResult> {
-    const deadline = Date.now() + 30_000
+    const deadline = Date.now() + 45_000
     let verificationOpened = false
     let nextRefreshAt = 0
+    let composerClosedAt: number | null = null
     let sawSuccessToast = false
 
     while (Date.now() < deadline) {
@@ -504,11 +509,33 @@ export class PublishResultDetector {
       if (blocked === 'login_required') return failure('needs_login', 'Facebook yêu cầu đăng nhập lại sau publish.')
       if (blocked === 'verification_required') return failure('verification_required', 'Facebook yêu cầu checkpoint/xác minh sau publish.')
 
-      const successToast = this.page.getByText(/your post is now published|your post was shared|bài viết của bạn.*(?:đã được đăng|đã được chia sẻ|đã chia sẻ)/i).first()
+      const pendingToast = this.page.getByText(
+        /your post.*(?:submitted for approval|pending approval)|post.*(?:submitted for approval|pending approval)|bài viết của bạn.*(?:đã được gửi.*phê duyệt|đang chờ phê duyệt)/i
+      ).first()
+      if (await pendingToast.isVisible().catch(() => false)) {
+        return {
+          status: 'success',
+          message: 'Facebook xác nhận bài đã được gửi và đang chờ phê duyệt.'
+        }
+      }
+
+      const successToast = this.page.getByText(
+        /your post is now published|your post was shared|post published|post shared|bài viết của bạn.*(?:đã được đăng|đã được chia sẻ|đã chia sẻ)/i
+      ).first()
       if (await successToast.isVisible().catch(() => false)) sawSuccessToast = true
 
       const composerClosed = !await container.isVisible().catch(() => false)
-      if (composerClosed && !verificationOpened) {
+      if (composerClosed && composerClosedAt === null) composerClosedAt = Date.now()
+      if (!composerClosed) composerClosedAt = null
+
+      if (composerClosed && sawSuccessToast) {
+        return {
+          status: 'success',
+          message: 'Facebook xác nhận publish thành công và composer đã đóng.'
+        }
+      }
+
+      if (composerClosed && !verificationOpened && composerClosedAt !== null && Date.now() - composerClosedAt >= 2_000) {
         const verificationFailure = await this.openVerificationPage()
         if (verificationFailure) return verificationFailure
         verificationOpened = true
@@ -516,11 +543,13 @@ export class PublishResultDetector {
       }
 
       if (verificationOpened) {
-        const publishedPost = await findNewPublishedPost(this.page, content, baseline).catch(() => null)
+        const publishedPost = await findNewPublishedPost(this.page, content, baseline, sawSuccessToast).catch(() => null)
         if (publishedPost) {
           return {
             status: 'success',
-            message: 'Đã xác minh post mới trong trang my_posted_content của đúng Group.',
+            message: sawSuccessToast
+              ? 'Đã xác minh post mới theo Facebook success signal và post key mới trong đúng Group.'
+              : 'Đã xác minh post mới theo content + post key mới trong my_posted_content của đúng Group.',
             publishedUrl: publishedPost.publishedUrl
           }
         }
@@ -537,8 +566,8 @@ export class PublishResultDetector {
     return failure(
       'publish_unconfirmed',
       sawSuccessToast
-        ? 'Facebook đã báo publish nhưng chưa tìm thấy bài mới trong my_posted_content; run item chưa được consume success để tránh đăng trùng.'
-        : 'Đã bấm Đăng nhưng chưa xác minh được bài mới trong my_posted_content; run item không được consume success.'
+        ? 'Facebook có success signal nhưng chưa có đủ bằng chứng ổn định sau publish; run item chưa được consume để tránh đăng trùng.'
+        : 'Đã bấm Đăng nhưng chưa xác minh được success signal hoặc post mới trong đúng Group; run item không được consume success.'
     )
   }
 }
