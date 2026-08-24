@@ -14,6 +14,7 @@ import type {
 } from '../../shared/posting'
 import { BrowserWindowLayoutManager } from './browserWindowLayoutManager'
 import { getManagedBrowserEndpoint } from './managedBrowserRegistry'
+import { shouldRetainPostingBrowserForManualSession } from './postingWorkerLifecycle'
 import { BrowserLaunchGate } from './runtimeLaunchGate'
 
 const MANAGED_CDP_ARG_PREFIX = '--page-auto-managed-cdp='
@@ -32,6 +33,7 @@ interface AccountWorkerEntry {
   ready: boolean
   pending: PendingJob | null
   shuttingDown: boolean
+  retainForManualSession: boolean
 }
 
 function diagnostic(job: PostingJobRequest, message: string): void {
@@ -76,7 +78,9 @@ export class PostingWorkerManager {
         }
       }
     } else {
-      diagnostic(runtimeJob, 'reuse posting worker hiện có')
+      diagnostic(runtimeJob, entry.retainForManualSession
+        ? 'reuse browser được giữ để phục hồi session thủ công'
+        : 'reuse posting worker hiện có')
     }
 
     if (entry.pending) {
@@ -117,6 +121,10 @@ export class PostingWorkerManager {
     }
     if (entry.pending) {
       throw new Error(`Không thể đóng Chrome account #${accountId} khi posting job vẫn đang chạy.`)
+    }
+    if (entry.retainForManualSession) {
+      accountDiagnostic(accountId, 'KEEP account browser → cần login/checkpoint thủ công; không shutdown persistent browser')
+      return
     }
 
     accountDiagnostic(accountId, 'RELEASE account turn → shutdown worker/browser')
@@ -204,7 +212,8 @@ export class PostingWorkerManager {
       process: worker,
       ready: false,
       pending: null,
-      shuttingDown: false
+      shuttingDown: false,
+      retainForManualSession: false
     }
     this.workers.set(job.accountId, entry)
     diagnostic(job, managedEndpoint ? 'spawn worker + attach Chrome managed' : 'spawn worker + sẽ mở persistent Chrome')
@@ -223,7 +232,11 @@ export class PostingWorkerManager {
         if (!pending) return
         clearTimeout(pending.timer)
         entry.pending = null
-        diagnostic(pending.job, `RESULT status=${message.result.status} code=${message.result.code ?? 'none'} — ${message.result.message}`)
+        entry.retainForManualSession = shouldRetainPostingBrowserForManualSession(message.result)
+        diagnostic(
+          pending.job,
+          `RESULT status=${message.result.status} code=${message.result.code ?? 'none'} — ${message.result.message}${entry.retainForManualSession ? ' [browser retained for manual session]' : ''}`
+        )
         pending.resolve(message.result)
       }
     })
