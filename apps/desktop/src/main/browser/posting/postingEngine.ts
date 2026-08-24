@@ -222,7 +222,7 @@ export class PublishResultDetector {
       const blocked = await detectFacebookAccessBlock(this.page)
       if (blocked === 'login_required') return failure('needs_login', 'Facebook yêu cầu đăng nhập lại sau publish.')
       if (blocked === 'verification_required') return failure('verification_required', 'Facebook yêu cầu checkpoint/xác minh sau publish.')
-      const successToast = this.page.getByText(/your post is now published|your post was shared|bài viết của bạn.*đã được đăng|đã đăng bài/i).first()
+      const successToast = this.page.getByText(/your post is now published|your post was shared|bài viết của bạn.*(?:đã được đăng|đã được chia sẻ|đã chia sẻ)/i).first()
       if (await successToast.isVisible().catch(() => false)) return { status: 'success', message: 'Facebook hiển thị trạng thái publish thành công.' }
 
       const composerClosed = !await container.isVisible().catch(() => false)
