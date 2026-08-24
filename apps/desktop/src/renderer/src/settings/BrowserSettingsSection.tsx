@@ -5,9 +5,10 @@ import type { BrowserExecutableResult, BrowserTestResult } from '../../../shared
 import {
   CHROME_MIN_COMPACT_OUTER_SIDE_PX,
   DEFAULT_BROWSER_WINDOW_LAYOUT,
-  effectiveSquareBrowserTileGrid,
-  squareBrowserTileGrid,
-  withSquareBrowserRows,
+  DEFAULT_COMPACT_OUTER_SIDE_PX,
+  MAX_COMPACT_OUTER_SIDE_PX,
+  rectangularBrowserTileGrid,
+  withCompactBrowserTileSide,
   type BrowserDisplayInfo,
   type BrowserWindowLayoutSettings
 } from '../../../shared/browserWindowLayout'
@@ -36,7 +37,6 @@ export function BrowserSettingsSection({ appInfo }: BrowserSettingsSectionProps)
     && (JSON.stringify(saved) !== JSON.stringify(draft) || JSON.stringify(savedLayout) !== JSON.stringify(layout))
   ), [draft, layout, saved, savedLayout])
 
-  const requestedGrid = useMemo(() => layout ? squareBrowserTileGrid(layout) : null, [layout])
   const previewDisplay = useMemo(() => {
     if (!layout) return null
     if (layout.targetDisplayId !== null) {
@@ -46,10 +46,10 @@ export function BrowserSettingsSection({ appInfo }: BrowserSettingsSectionProps)
     return displays.find((display) => display.isPrimary) ?? displays[0] ?? null
   }, [displays, layout])
   const grid = useMemo(() => {
-    if (!layout) return null
-    return previewDisplay ? effectiveSquareBrowserTileGrid(layout, previewDisplay) : squareBrowserTileGrid(layout)
+    if (!layout || !previewDisplay) return null
+    return rectangularBrowserTileGrid(layout, previewDisplay)
   }, [layout, previewDisplay])
-  const compactLimited = Boolean(requestedGrid && grid && requestedGrid.rows !== grid.rows)
+  const tileSidePx = layout?.tileSidePx ?? DEFAULT_COMPACT_OUTER_SIDE_PX
 
   useEffect(() => {
     void Promise.all([
@@ -77,8 +77,8 @@ export function BrowserSettingsSection({ appInfo }: BrowserSettingsSectionProps)
     setFeedback(null)
   }
 
-  const updateRows = (rows: number) => {
-    setLayout((current) => current ? withSquareBrowserRows(current, rows) : current)
+  const updateTileSide = (sidePx: number) => {
+    setLayout((current) => current ? withCompactBrowserTileSide(current, sidePx) : current)
     setFeedback(null)
   }
 
@@ -134,9 +134,9 @@ export function BrowserSettingsSection({ appInfo }: BrowserSettingsSectionProps)
 
   if (!draft || !layout) return <div className="settings-empty">Đang đọc cài đặt trình duyệt...</div>
 
-  const compactSummary = compactLimited && requestedGrid && grid
-    ? `Đã chọn ${requestedGrid.rows}×${requestedGrid.columns}, nhưng màn hình này chỉ xếp vuông thật ${grid.rows}×${grid.columns}. Chrome desktop không thể nhỏ hơn khoảng ${CHROME_MIN_COMPACT_OUTER_SIDE_PX}px chiều ngang.`
-    : (grid ? `${grid.rows} hàng dọc = ${grid.columns} cột × ${grid.rows} hàng, sức chứa ${grid.capacity} Chrome.` : '')
+  const compactSummary = grid
+    ? `${tileSidePx}px · ${grid.columns} cột × ${grid.rows} hàng · ${grid.capacity} Chrome/lớp. Vượt sức chứa sẽ xếp lớp lệch vị trí ổn định.`
+    : `${tileSidePx}px · sức chứa được tính theo màn hình đích khi mở Chrome.`
 
   return <div className="settings-section settings-section-with-actions">
     <div className="settings-section-content"><div className="browser-section">
@@ -147,11 +147,11 @@ export function BrowserSettingsSection({ appInfo }: BrowserSettingsSectionProps)
         <div className="field"><span>Khung automation</span><div className="test-result ok">Desktop ổn định · tự scale</div></div>
         <div className="field"><span>Kết quả kiểm tra</span><div className={`test-result ${test?.status === 'success' ? 'ok' : test ? 'bad' : ''}`}>{test ? (test.status === 'success' ? `Hoạt động · ${test.launchDurationMs ?? 0} ms` : 'Không mở được') : 'Chưa kiểm tra'}</div></div>
 
-        <label className="toggle-card span-3"><div><strong>Compact / xếp nhiều Chrome</strong><small>Chọn N hàng dọc. App giữ cửa sổ vuông thật; nếu N×N khiến Chrome nhỏ hơn minimum width của chính Chrome, runtime tự hạ N thay vì để Chrome tự bẹt ngang.</small></div><input type="checkbox" checked={layout.enabled} onChange={(event) => { updateLayout('enabled', event.target.checked); if (event.target.checked) update('mode', 'visible') }} /></label>
+        <label className="toggle-card span-3"><div><strong>Compact / xếp nhiều Chrome</strong><small>Chọn kích thước ô vuông. App tự xếp số cột × hàng theo working area thật của màn hình; không ép lưới N×N.</small></div><input type="checkbox" checked={layout.enabled} onChange={(event) => { updateLayout('enabled', event.target.checked); if (event.target.checked) update('mode', 'visible') }} /></label>
         {layout.enabled && <>
-          <label className="number-field"><span>Số hàng dọc yêu cầu</span><div><input type="number" min="1" max="8" value={layout.rowCount} onChange={(event) => updateRows(Math.max(1, Math.min(8, Number(event.target.value) || 1)))} /><em>hàng</em></div></label>
-          <div className="field"><span>Bố cục thực tế</span><div className="test-result ok">{grid ? `${grid.columns} cột × ${grid.rows} hàng${compactLimited ? ' · giới hạn Chrome' : ''}` : '—'}</div></div>
-          <div className="field"><span>Sức chứa thực tế</span><div className="test-result ok">{grid ? `${grid.capacity} Chrome` : '—'}</div></div>
+          <label className="number-field"><span>Kích thước Chrome</span><div><input type="number" min={CHROME_MIN_COMPACT_OUTER_SIDE_PX} max={MAX_COMPACT_OUTER_SIDE_PX} step="50" value={tileSidePx} onChange={(event) => updateTileSide(Number(event.target.value) || DEFAULT_COMPACT_OUTER_SIDE_PX)} /><em>px</em></div></label>
+          <div className="field"><span>Bố cục thực tế</span><div className="test-result ok">{grid ? `${grid.columns} cột × ${grid.rows} hàng` : 'Theo màn hình đích'}</div></div>
+          <div className="field"><span>Sức chứa/lớp</span><div className="test-result ok">{grid ? `${grid.capacity} Chrome` : 'Tự tính khi mở'}</div></div>
           <label className="field span-2"><span>Màn hình đích</span><select value={layout.targetDisplayId ?? ''} onChange={(event) => updateLayout('targetDisplayId', event.target.value ? Number(event.target.value) : null)}><option value="">Màn hình tại vị trí chuột</option>{displays.map((display) => <option key={display.id} value={display.id}>{display.label}{display.isPrimary ? ' · Chính' : ''}</option>)}</select></label>
           <div className="field"><span>Chrome đang mở</span><button type="button" className="settings-button" disabled={busy !== null || dirty} onClick={() => void retile()}>{busy === 'retile' ? 'Đang xếp...' : 'Sắp xếp lại Chrome'}</button></div>
         </>}

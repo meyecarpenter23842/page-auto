@@ -57,11 +57,6 @@ async function releaseCompactSession(page: Page, session: CDPSession): Promise<v
   await session.detach().catch(() => undefined)
 }
 
-/**
- * Keep Facebook at the configured desktop width and scale that width into the real
- * Chrome content area. Height follows the real inner-area aspect ratio instead of
- * shrinking the whole page to satisfy the much shorter browser content height.
- */
 export function effectiveCompactContentScale(
   placement: BrowserWindowPlacement,
   innerWidth: number,
@@ -72,12 +67,6 @@ export function effectiveCompactContentScale(
   return Math.max(MIN_COMPACT_SCALE, Math.round(scale * 1000) / 1000)
 }
 
-/**
- * Anchor compact content to a desktop-class logical width, then derive logical
- * height from the real Chrome inner area. This fills the tile without letterboxing,
- * avoids a huge ultra-wide viewport that makes Facebook tiny, and lets the page
- * scroll vertically instead of cropping a corner.
- */
 export function fitCompactViewportToInnerArea(
   placement: BrowserWindowPlacement,
   innerWidth: number,
@@ -132,16 +121,6 @@ async function readBrowserOuterSize(context: BrowserContext, page: Page): Promis
   return { width, height }
 }
 
-/**
- * Compact is an arranged state, not a permanent lock. Once the operator resizes a
- * Chrome window by hand, clear device emulation for that browser so native Chrome
- * reflows to the new size instead of keeping a stale compact viewport and showing
- * blank space. Explicit "Sắp xếp lại Chrome" can enable compact again later.
- *
- * expectedSize is supplied after a programmatic tile/retile. The watcher first lets
- * Windows settle onto that target so a transient post-retile bound cannot be mistaken
- * for a manual drag and immediately detach compact mode.
- */
 export function watchForManualBrowserResize(
   context: BrowserContext,
   onDetached: () => void,
@@ -174,9 +153,6 @@ export function watchForManualBrowserResize(
         }
         settleReadsRemaining -= 1
         if (settleReadsRemaining > 0) return
-
-        // Some Windows/Chrome frame combinations settle a few pixels away from the
-        // requested outer bounds. Accept the stable result, then watch from there.
         baseline = current
         settlingToExpected = false
         return
@@ -219,10 +195,9 @@ export function buildBrowserLaunchOptions(
       ]
     : [`--window-size=${settings.windowWidth},${settings.windowHeight}`]
 
-  // The Chrome automation infobar is triggered by Playwright's default
-  // --enable-automation switch. Ignore only that UI-facing switch. Profile workers
-  // still launch with --remote-debugging-port=0, which keeps navigator.webdriver=true,
-  // so this is not an anti-detection mode and Facebook still sees an automated browser.
+  // Remove only UI/security-problematic Playwright defaults: --enable-automation
+  // shows the automation infobar and --no-sandbox disables Chrome's normal Windows
+  // sandbox. Remote debugging stays enabled, so this is not stealth/evasion behavior.
   args.push('--no-default-browser-check')
 
   if (!placement && settings.mode === 'minimized') args.push('--start-minimized')
@@ -233,7 +208,7 @@ export function buildBrowserLaunchOptions(
     headless: false,
     args,
     timeout: settings.startupTimeoutMs,
-    ignoreDefaultArgs: ['--enable-automation'],
+    ignoreDefaultArgs: ['--enable-automation', '--no-sandbox'],
     ...(executablePath ? { executablePath } : { channel: 'chrome' as const })
   }
 }
@@ -256,11 +231,6 @@ export async function applyBrowserContextSettings(
   }
 }
 
-/**
- * Compact mode keeps a desktop-class logical width while the real Chrome window is
- * physically smaller. The CDP session stays attached while device emulation is active.
- * Logical height follows the measured Chrome content area so the page fills the tile.
- */
 export async function applyBrowserWindowPlacement(
   context: BrowserContext,
   page: Page,
