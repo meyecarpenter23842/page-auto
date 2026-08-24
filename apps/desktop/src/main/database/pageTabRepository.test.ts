@@ -38,7 +38,8 @@ describe('PageTabRepository', () => {
         postDelayMinSeconds: 180,
         postDelayMaxSeconds: 300,
         accountDelayMinSeconds: 600,
-        accountDelayMaxSeconds: 900
+        accountDelayMaxSeconds: 900,
+        accountOrderMode: 'random'
       },
       accounts: [
         { accountId: second.id, enabled: true, sortOrder: 0, postsPerTurn: 3 },
@@ -59,6 +60,9 @@ describe('PageTabRepository', () => {
       }
     })
 
+    expect(saved.rotation.accountOrderMode).toBe('random')
+    expect(saved.rotation.postsPerAccount).toBe(5)
+    expect(saved.accounts[0]?.postsPerTurn).toBe(3)
     expect(saved.accounts.map((item) => item.uid)).toEqual(['10002', '10001'])
     expect(saved.accounts.map((item) => item.enabled)).toEqual([true, false])
     expect(saved.schedules).toHaveLength(2)
@@ -93,7 +97,8 @@ describe('PageTabRepository', () => {
         postDelayMinSeconds: 60,
         postDelayMaxSeconds: 90,
         accountDelayMinSeconds: 120,
-        accountDelayMaxSeconds: 180
+        accountDelayMaxSeconds: 180,
+        accountOrderMode: 'random'
       },
       accounts: [{ accountId: account.id, enabled: true, sortOrder: 0, postsPerTurn: null }],
       schedules: [{ dayOfWeek: 2, startMinute: 540, endMinute: 720, enabled: true, sortOrder: 0 }],
@@ -107,6 +112,7 @@ describe('PageTabRepository', () => {
     expect(copy.id).not.toBe(original.id)
     expect(copy.name).toBe('Page A Copy')
     expect(copy.pageUid).toBe('90001')
+    expect(copy.rotation.accountOrderMode).toBe('random')
     expect(copy.accounts.map((item) => item.accountId)).toEqual([account.id])
     expect(copy.groupUids).toEqual(['g1', 'g2'])
     expect(copy.contents).toEqual(['hello'])
@@ -155,7 +161,7 @@ describe('PageTabRepository', () => {
     runtime.close()
   })
 
-  it('rejects invalid delay windows and missing account references', () => {
+  it('rejects invalid delay windows, account order modes and missing account references', () => {
     const runtime = createRuntime()
     const tabs = new PageTabRepository(runtime.client)
     const tab = tabs.create({ name: 'Page A', pageUid: '90001' })
@@ -177,6 +183,25 @@ describe('PageTabRepository', () => {
       contents: [],
       image: { folderPath: '', mode: 'sequential', imagesPerPost: 1, missingPolicy: 'text_only' }
     })).toThrow('Delay bài tối thiểu')
+
+    expect(() => tabs.update(tab.id, {
+      name: 'Page A',
+      pageUid: '90001',
+      rotation: {
+        postsPerAccount: 1,
+        postDelayMinSeconds: 1,
+        postDelayMaxSeconds: 2,
+        accountDelayMinSeconds: 1,
+        accountDelayMaxSeconds: 2,
+        accountOrderMode: 'bad' as 'random'
+      },
+      accounts: [],
+      schedules: [],
+      groupUids: [],
+      contentMode: 'sequential',
+      contents: [],
+      image: { folderPath: '', mode: 'sequential', imagesPerPost: 1, missingPolicy: 'text_only' }
+    })).toThrow('Chế độ thứ tự tài khoản')
 
     expect(() => tabs.update(tab.id, {
       name: 'Page A',

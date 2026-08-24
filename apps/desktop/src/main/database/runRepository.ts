@@ -32,6 +32,11 @@ interface GroupSourceRow {
   sortOrder: number
 }
 
+export interface RunRotationState {
+  activeDateKey: string | null
+  completedWindowKey: string | null
+}
+
 function parseSnapshot(value: string): RunSnapshot {
   const parsed = JSON.parse(value) as RunSnapshot
   if (parsed.version !== 1 || !Number.isInteger(parsed.pageTabId) || !Array.isArray(parsed.accounts)) {
@@ -209,6 +214,35 @@ export class RunRepository {
       LIMIT 1
     `).get(pageTabId) as { id: number } | undefined
     return row ? this.get(row.id) : null
+  }
+
+  getRotationState(runId: number): RunRotationState | null {
+    const row = this.client.prepare(`
+      SELECT payload_json AS payloadJson
+      FROM run_events
+      WHERE run_id = ? AND event_type = 'rotation_state'
+      ORDER BY id DESC
+      LIMIT 1
+    `).get(runId) as { payloadJson: string | null } | undefined
+
+    if (!row?.payloadJson) return null
+    try {
+      const parsed = JSON.parse(row.payloadJson) as Record<string, unknown>
+      return {
+        activeDateKey: typeof parsed.activeDateKey === 'string' ? parsed.activeDateKey : null,
+        completedWindowKey: typeof parsed.completedWindowKey === 'string' ? parsed.completedWindowKey : null
+      }
+    } catch {
+      return null
+    }
+  }
+
+  saveRotationState(runId: number, state: RunRotationState): void {
+    this.requireRun(runId)
+    this.addEvent(runId, 'rotation_state', {
+      activeDateKey: state.activeDateKey,
+      completedWindowKey: state.completedWindowKey
+    }, Date.now())
   }
 
   listItems(runId: number): RunItem[] {
