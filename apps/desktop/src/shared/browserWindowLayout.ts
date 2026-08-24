@@ -14,7 +14,7 @@ export interface BrowserWindowLayoutSettings {
 
 export const DEFAULT_BROWSER_WINDOW_LAYOUT: Readonly<BrowserWindowLayoutSettings> = {
   enabled: false,
-  tileLayout: 'horizontal',
+  tileLayout: 'grid',
   tileCount: 4,
   gridColumns: 2,
   targetDisplayId: null
@@ -61,6 +61,8 @@ export interface BrowserSlotAssignment {
 
 const TILE_GAP_PX = 4
 const MIN_RENDER_SCALE = 0.001
+const MAX_TILE_COUNT = 32
+const MAX_GRID_COLUMNS = 16
 
 function clampInteger(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min
@@ -74,11 +76,11 @@ export function cloneDefaultBrowserWindowLayout(): BrowserWindowLayoutSettings {
 export function assertValidBrowserWindowLayoutSettings(value: BrowserWindowLayoutSettings): void {
   if (typeof value.enabled !== 'boolean') throw new Error('browserWindowLayout.enabled phải là boolean.')
   if (!BROWSER_TILE_LAYOUTS.includes(value.tileLayout)) throw new Error('Kiểu chia cửa sổ Chrome không hợp lệ.')
-  if (!Number.isInteger(value.tileCount) || value.tileCount < 1 || value.tileCount > 32) {
-    throw new Error('Số ô Chrome phải từ 1 đến 32.')
+  if (!Number.isInteger(value.tileCount) || value.tileCount < 1 || value.tileCount > MAX_TILE_COUNT) {
+    throw new Error(`Số ô Chrome phải từ 1 đến ${MAX_TILE_COUNT}.`)
   }
-  if (!Number.isInteger(value.gridColumns) || value.gridColumns < 1 || value.gridColumns > 16) {
-    throw new Error('Số cột Grid phải từ 1 đến 16.')
+  if (!Number.isInteger(value.gridColumns) || value.gridColumns < 1 || value.gridColumns > MAX_GRID_COLUMNS) {
+    throw new Error(`Số cột Grid phải từ 1 đến ${MAX_GRID_COLUMNS}.`)
   }
   if (value.targetDisplayId !== null && !Number.isInteger(value.targetDisplayId)) {
     throw new Error('Màn hình đích không hợp lệ.')
@@ -101,15 +103,37 @@ export function parseStoredBrowserWindowLayout(raw: string | undefined): Browser
 }
 
 export function browserTileGrid(settings: BrowserWindowLayoutSettings): { columns: number; rows: number; capacity: number } {
-  const capacity = clampInteger(settings.tileCount, 1, 32)
+  const capacity = clampInteger(settings.tileCount, 1, MAX_TILE_COUNT)
   if (settings.tileLayout === 'horizontal') return { columns: capacity, rows: 1, capacity }
   if (settings.tileLayout === 'vertical') return { columns: 1, rows: capacity, capacity }
 
-  const columns = clampInteger(settings.gridColumns, 1, capacity)
+  const columns = clampInteger(settings.gridColumns, 1, Math.min(MAX_GRID_COLUMNS, capacity))
   return {
     columns,
     rows: Math.ceil(capacity / columns),
     capacity
+  }
+}
+
+/**
+ * Compact UI is two-dimensional: users choose columns x rows. Legacy horizontal/
+ * vertical settings are still readable, but any dimension edit upgrades the saved
+ * layout to a real grid so both the physical Chrome window and Facebook content
+ * shrink in both directions.
+ */
+export function withBrowserGridDimensions(
+  settings: BrowserWindowLayoutSettings,
+  columns: number,
+  rows: number
+): BrowserWindowLayoutSettings {
+  const nextColumns = clampInteger(columns, 1, MAX_GRID_COLUMNS)
+  const maxRows = Math.max(1, Math.floor(MAX_TILE_COUNT / nextColumns))
+  const nextRows = clampInteger(rows, 1, maxRows)
+  return {
+    ...settings,
+    tileLayout: 'grid',
+    gridColumns: nextColumns,
+    tileCount: nextColumns * nextRows
   }
 }
 
