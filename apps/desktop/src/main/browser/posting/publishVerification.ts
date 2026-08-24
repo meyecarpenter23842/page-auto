@@ -21,6 +21,11 @@ function normalizeText(value: string): string {
   return value.replace(/\s+/g, ' ').trim()
 }
 
+export function groupMyPostedContentUrl(groupUid: string): string {
+  const normalized = groupUid.trim()
+  return `https://www.facebook.com/groups/${encodeURIComponent(normalized)}/my_posted_content`
+}
+
 export function publishContentFingerprint(content: string): string {
   return normalizeText(content).slice(0, 80)
 }
