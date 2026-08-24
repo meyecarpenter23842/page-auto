@@ -47,6 +47,8 @@ describe('buildBrowserLaunchOptions', () => {
     expect(options.args).toContain('--window-size=1440,900')
     expect(options.args).toContain('--mute-audio')
     expect(options.args).toContain('--disable-gpu')
+    expect(options.args).toContain('--no-default-browser-check')
+    expect(options.ignoreDefaultArgs).toEqual(['--enable-automation'])
   })
 
   it('launches a compact browser in the computed slot and keeps it visible', () => {
@@ -57,6 +59,7 @@ describe('buildBrowserLaunchOptions', () => {
     expect(options.args).toContain('--window-size=320,200')
     expect(options.args).toContain('--window-position=640,0')
     expect(options.args).not.toContain('--start-minimized')
+    expect(options.ignoreDefaultArgs).toContain('--enable-automation')
   })
 
   it('keeps desktop width while fitting logical height to the real Chrome inner area', () => {
