@@ -1,10 +1,13 @@
 import type { PostingWorkerRequestMessage } from '../../shared/posting'
-import { executePostingJob } from './posting/postingEngine'
+import { installManagedBrowserReuse } from './managedBrowserBridge'
 
 const parentPort = process.parentPort
 if (!parentPort) {
   throw new Error('Posting worker phải chạy dưới Electron utilityProcess.')
 }
+
+installManagedBrowserReuse()
+const postingEngine = import('./posting/postingEngine')
 
 parentPort.once('message', (event) => {
   const message = event.data as PostingWorkerRequestMessage
@@ -16,7 +19,8 @@ parentPort.once('message', (event) => {
     return
   }
 
-  void executePostingJob(message.job)
+  void postingEngine
+    .then(({ executePostingJob }) => executePostingJob(message.job))
     .then((result) => parentPort.postMessage({ type: 'result', result }))
     .catch((error) => parentPort.postMessage({
       type: 'result',
