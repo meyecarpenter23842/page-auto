@@ -1,4 +1,5 @@
 import { access, readFile, stat } from 'node:fs/promises'
+import { request } from 'node:http'
 import { isAbsolute, relative, resolve } from 'node:path'
 import type { HotmailProfileInspection } from '../../shared/hotmail'
 
@@ -25,6 +26,32 @@ async function readCdpEndpoint(profileDirectory: string): Promise<string | null>
   } catch {
     return null
   }
+}
+
+export async function probeCdpEndpoint(endpoint: string, timeoutMs = 650): Promise<boolean> {
+  return await new Promise<boolean>((resolveProbe) => {
+    let settled = false
+    const finish = (value: boolean) => {
+      if (settled) return
+      settled = true
+      resolveProbe(value)
+    }
+    try {
+      const url = new URL('/json/version', endpoint)
+      const req = request(url, { method: 'GET', timeout: timeoutMs }, (response) => {
+        response.resume()
+        finish((response.statusCode ?? 500) >= 200 && (response.statusCode ?? 500) < 500)
+      })
+      req.once('timeout', () => {
+        req.destroy()
+        finish(false)
+      })
+      req.once('error', () => finish(false))
+      req.end()
+    } catch {
+      finish(false)
+    }
+  })
 }
 
 async function hasProfileLock(profileDirectory: string): Promise<boolean> {
@@ -56,7 +83,8 @@ export async function inspectEmailProfile(root: string, uid: string): Promise<Ho
     return { status: 'missing', profileDirectory, cdpEndpoint: null }
   }
 
-  const cdpEndpoint = await readCdpEndpoint(profileDirectory)
+  const candidateEndpoint = await readCdpEndpoint(profileDirectory)
+  const cdpEndpoint = candidateEndpoint && await probeCdpEndpoint(candidateEndpoint) ? candidateEndpoint : null
   const locked = !cdpEndpoint && await hasProfileLock(profileDirectory)
   return {
     status: cdpEndpoint ? 'running' : locked ? 'in_use' : 'available',
