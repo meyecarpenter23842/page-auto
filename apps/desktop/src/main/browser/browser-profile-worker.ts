@@ -1,3 +1,5 @@
+import { readFile, rm } from 'node:fs/promises'
+import { join } from 'node:path'
 import { chromium, type BrowserContext } from 'playwright-core'
 import type { BrowserSettings, SessionSettings } from '../../shared/appSettings'
 import type { PostingProxyConfig } from '../../shared/posting'
@@ -25,6 +27,7 @@ interface BootstrapCommand {
 
 interface SessionResultMessage extends FacebookSessionResult {
   type: 'session-result'
+  cdpEndpoint?: string
 }
 
 interface BrowserClosedMessage {
@@ -70,21 +73,47 @@ function commandFromMessage(event: unknown): BootstrapCommand | null {
   return candidate as BootstrapCommand
 }
 
+async function resolveCdpEndpoint(profileDirectory: string): Promise<string | null> {
+  const portFile = join(profileDirectory, 'DevToolsActivePort')
+  const deadline = Date.now() + 5_000
+  while (Date.now() < deadline) {
+    try {
+      const [portText] = (await readFile(portFile, 'utf8')).trim().split(/\r?\n/)
+      if (portText && /^\d+$/.test(portText)) return `http://127.0.0.1:${portText}`
+    } catch {
+      // Chrome writes DevToolsActivePort shortly after launch.
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 100))
+  }
+  return null
+}
+
 async function run(): Promise<void> {
   const profileDirectory = process.argv[2]
   if (!profileDirectory) throw new Error('Missing browser profile directory.')
 
   let context: BrowserContext | null = null
+  let cdpEndpoint: string | null = null
   let lifetimeTimer: NodeJS.Timeout | null = null
   let closing = false
   let queue = Promise.resolve()
 
   const ensureContext = async (command: BootstrapCommand): Promise<BrowserContext> => {
-    if (context) return context
+    if (context) {
+      if (!cdpEndpoint) cdpEndpoint = await resolveCdpEndpoint(profileDirectory)
+      return context
+    }
 
     await waitForBrowserStartupDelay(command.browser)
+    const launchShape = buildBrowserLaunchOptions(command.browser)
+    await rm(join(profileDirectory, 'DevToolsActivePort'), { force: true }).catch(() => undefined)
     const launchOptions: NonNullable<Parameters<typeof chromium.launchPersistentContext>[1]> = {
-      ...buildBrowserLaunchOptions(command.browser),
+      ...launchShape,
+      args: [
+        ...launchShape.args,
+        '--remote-debugging-address=127.0.0.1',
+        '--remote-debugging-port=0'
+      ],
       viewport: null,
       ...(command.launch?.userAgent ? { userAgent: command.launch.userAgent } : {})
     }
@@ -99,6 +128,7 @@ async function run(): Promise<void> {
     const opened = await chromium.launchPersistentContext(profileDirectory, launchOptions)
     await applyBrowserContextSettings(opened, command.browser)
     context = opened
+    cdpEndpoint = await resolveCdpEndpoint(profileDirectory)
 
     if (lifetimeTimer) clearTimeout(lifetimeTimer)
     lifetimeTimer = setTimeout(() => {
@@ -107,6 +137,7 @@ async function run(): Promise<void> {
 
     opened.once('close', () => {
       context = null
+      cdpEndpoint = null
       if (lifetimeTimer) {
         clearTimeout(lifetimeTimer)
         lifetimeTimer = null
@@ -146,7 +177,10 @@ async function run(): Promise<void> {
       } catch (error) {
         result = sessionError(command.account.id, error)
       }
-      process.parentPort?.postMessage(result)
+      process.parentPort?.postMessage({
+        ...result,
+        ...(cdpEndpoint ? { cdpEndpoint } : {})
+      })
     })
   })
 }

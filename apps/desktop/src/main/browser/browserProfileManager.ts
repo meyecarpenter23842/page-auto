@@ -4,10 +4,16 @@ import { utilityProcess, type UtilityProcess } from 'electron'
 import type { AccountRecord, BrowserProfileResult } from '../../shared/accounts'
 import { DEFAULT_APP_SETTINGS, type BrowserSettings, type SessionSettings } from '../../shared/appSettings'
 import type { FacebookSessionAccount, FacebookSessionResult } from './facebookSession'
+import {
+  clearAllManagedBrowserEndpoints,
+  clearManagedBrowserEndpoint,
+  setManagedBrowserEndpoint
+} from './managedBrowserRegistry'
 import { resolveAccountProxyState } from './proxyConfig'
 
 interface SessionResultMessage extends FacebookSessionResult {
   type: 'session-result'
+  cdpEndpoint?: string
 }
 
 interface BrowserClosedMessage {
@@ -89,6 +95,7 @@ export class BrowserProfileManager {
     }
     if (existing) this.workers.delete(account.id)
 
+    clearManagedBrowserEndpoint(account.id)
     mkdirSync(profileDirectory, { recursive: true })
 
     try {
@@ -102,6 +109,7 @@ export class BrowserProfileManager {
       worker.on('message', (message) => this.handleMessage(account.id, entry, message))
       worker.once('exit', (code) => {
         entry.closing = true
+        clearManagedBrowserEndpoint(account.id)
         if (entry.pending) {
           clearTimeout(entry.pending.timer)
           entry.pending.resolve({
@@ -121,6 +129,7 @@ export class BrowserProfileManager {
       })
     } catch (error) {
       this.workers.delete(account.id)
+      clearManagedBrowserEndpoint(account.id)
       return {
         status: 'error',
         profileDirectory,
@@ -135,6 +144,7 @@ export class BrowserProfileManager {
       entry.process.kill()
     }
     this.workers.clear()
+    clearAllManagedBrowserEndpoints()
   }
 
   private bootstrap(
@@ -197,6 +207,7 @@ export class BrowserProfileManager {
   private handleMessage(accountId: number, entry: BrowserWorkerEntry, message: unknown): void {
     if (isBrowserClosedMessage(message)) {
       entry.closing = true
+      clearManagedBrowserEndpoint(accountId)
       const pending = entry.pending
       if (pending) {
         clearTimeout(pending.timer)
@@ -212,6 +223,7 @@ export class BrowserProfileManager {
     }
 
     if (!isSessionResultMessage(message) || message.accountId !== accountId) return
+    if (message.cdpEndpoint) setManagedBrowserEndpoint(accountId, message.cdpEndpoint)
     this.onSessionResult?.(message)
 
     const pending = entry.pending

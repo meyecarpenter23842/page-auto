@@ -7,7 +7,10 @@ import type {
   PostingWorkerMessage,
   PostingWorkerRequestMessage
 } from '../../shared/posting'
+import { getManagedBrowserEndpoint } from './managedBrowserRegistry'
 import { BrowserLaunchGate } from './runtimeLaunchGate'
+
+const MANAGED_CDP_ARG_PREFIX = '--page-auto-managed-cdp='
 
 export class PostingWorkerManager {
   private readonly workers = new Set<UtilityProcess>()
@@ -22,7 +25,9 @@ export class PostingWorkerManager {
     await this.launchGate.wait(runtime.browserLaunchSpacingMs)
 
     return new Promise((resolve) => {
-      const worker = utilityProcess.fork(join(__dirname, 'posting-worker.js'), [], {
+      const managedEndpoint = getManagedBrowserEndpoint(job.accountId)
+      const workerArgs = managedEndpoint ? [`${MANAGED_CDP_ARG_PREFIX}${managedEndpoint}`] : []
+      const worker = utilityProcess.fork(join(__dirname, 'posting-worker.js'), workerArgs, {
         serviceName: `PAGE-AUTO posting run ${job.runId} item ${job.itemId}`
       })
       this.workers.add(worker)
