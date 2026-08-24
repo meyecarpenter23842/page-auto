@@ -13,29 +13,26 @@ export interface ParsedAccountImport {
 }
 
 function parseNumericValue(field: AccountImportField, value: string): number | null | string {
-  if (!numericFields.has(field)) {
-    return value
-  }
-
-  if (value === '') {
-    return null
-  }
+  if (!numericFields.has(field)) return value
+  if (value === '') return null
 
   const parsed = Number.parseInt(value, 10)
   return Number.isFinite(parsed) ? parsed : value
 }
 
+export function resolveImportOperation(request: AccountImportRequest): 'insert' | 'update' {
+  return request.operation ?? (request.duplicatePolicy === 'update' ? 'update' : 'insert')
+}
+
 export function parseAccountImport(request: AccountImportRequest): ParsedAccountImport {
   const delimiter = request.delimiter || '|'
+  const operation = resolveImportOperation(request)
   const errors: AccountImportIssue[] = []
   const accounts: AccountDraft[] = []
   const seenUids = new Set<string>()
 
   if (delimiter.length > 8) {
-    return {
-      accounts: [],
-      errors: [{ line: 0, message: 'Delimiter quá dài.' }]
-    }
+    return { accounts: [], errors: [{ line: 0, message: 'Delimiter quá dài.' }] }
   }
 
   const lines = request.rawText.split(/\r?\n/)
@@ -43,28 +40,38 @@ export function parseAccountImport(request: AccountImportRequest): ParsedAccount
   for (let index = 0; index < lines.length; index += 1) {
     const rawLine = lines[index] ?? ''
     const lineNumber = index + 1
+    if (!rawLine.trim()) continue
 
-    if (!rawLine.trim()) {
-      continue
-    }
-
-    const values = rawLine.split(delimiter).map((value) => value.trim())
+    // String.split preserves explicit empty cells and trailing delimiters.
+    const values = rawLine.split(delimiter)
     const draft: Partial<AccountDraft> = {}
     let invalidNumericField: AccountImportField | null = null
 
     request.mapping.forEach((field, columnIndex) => {
-      if (field === 'ignore') {
-        return
-      }
+      if (field === 'ignore') return
 
-      const rawValue = values[columnIndex] ?? ''
+      // A missing column means "not supplied". It must not clear an existing
+      // value during batch update. An explicitly present empty cell is handled
+      // separately below.
+      const sourceValue = values[columnIndex]
+      if (sourceValue === undefined) return
+
+      const rawValue = sourceValue.trim()
       const parsedValue = parseNumericValue(field, rawValue)
       if (numericFields.has(field) && typeof parsedValue === 'string' && parsedValue !== '') {
         invalidNumericField = field
         return
       }
 
-      if (parsedValue === '') {
+      if (field === 'uid') {
+        if (rawValue !== '') draft.uid = rawValue
+        return
+      }
+
+      if (rawValue === '') {
+        if (operation === 'update') {
+          ;(draft as Record<string, unknown>)[field] = null
+        }
         return
       }
 
@@ -72,10 +79,7 @@ export function parseAccountImport(request: AccountImportRequest): ParsedAccount
     })
 
     if (invalidNumericField) {
-      errors.push({
-        line: lineNumber,
-        message: `${invalidNumericField} phải là số.`
-      })
+      errors.push({ line: lineNumber, message: `${invalidNumericField} phải là số.` })
       continue
     }
 
