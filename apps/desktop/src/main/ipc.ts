@@ -273,7 +273,7 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
     if (!filePath) return { canceled: true, filePath: null, accountsCreated: 0, pageTabsCreated: 0, pageTabsUpdated: 0, importPresetsRestored: 0, columnLayoutRestored: false, message: 'Đã hủy restore backup.' }
     const fileStat = await stat(filePath)
     if (fileStat.size > MAX_BACKUP_FILE_BYTES) throw new Error('File backup lớn hơn giới hạn 20 MB.')
-    return configBackup.restoreFromJson(await readFile(result.filePath, 'utf8'), result.filePath)
+    return configBackup.restoreFromJson(await readFile(filePath, 'utf8'), filePath)
   })
 
   return {
