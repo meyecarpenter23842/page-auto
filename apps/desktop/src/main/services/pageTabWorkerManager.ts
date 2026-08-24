@@ -19,6 +19,10 @@ function isActiveStatus(status: RotationRuntimeStatus): boolean {
   return status === 'starting' || status === 'running' || status === 'waiting_window'
 }
 
+function diagnostic(pageTabId: number, message: string): void {
+  console.info(`[PAGE-AUTO scheduler] tab=${pageTabId} ${message}`)
+}
+
 export class PageTabWorkerManager {
   private readonly controllers = new Map<number, PageTabRotationController>()
 
@@ -36,29 +40,59 @@ export class PageTabWorkerManager {
   }
 
   start(payload: RotationPageTabPayload): RotationRuntimeSnapshot {
-    this.assertCapacity(payload.pageTabId)
-    return this.getOrCreate(payload.pageTabId).start(payload)
+    diagnostic(payload.pageTabId, 'START requested')
+    try {
+      this.assertCapacity(payload.pageTabId)
+      const snapshot = this.getOrCreate(payload.pageTabId).start(payload)
+      diagnostic(payload.pageTabId, `START accepted status=${snapshot.status} run=${snapshot.runId ?? 'none'}`)
+      return snapshot
+    } catch (error) {
+      diagnostic(payload.pageTabId, `START rejected type=${error instanceof Error ? error.name : typeof error}`)
+      throw error
+    }
   }
 
   pause(payload: RotationPageTabPayload): RotationRuntimeSnapshot {
-    return this.getOrCreate(payload.pageTabId).pause(payload)
+    diagnostic(payload.pageTabId, 'PAUSE requested')
+    try {
+      const snapshot = this.getOrCreate(payload.pageTabId).pause(payload)
+      diagnostic(payload.pageTabId, `PAUSE accepted status=${snapshot.status} run=${snapshot.runId ?? 'none'}`)
+      return snapshot
+    } catch (error) {
+      diagnostic(payload.pageTabId, `PAUSE rejected type=${error instanceof Error ? error.name : typeof error}`)
+      throw error
+    }
   }
 
   resume(payload: RotationPageTabPayload): RotationRuntimeSnapshot {
+    diagnostic(payload.pageTabId, 'RESUME requested')
     this.assertCapacity(payload.pageTabId)
     const controller = this.getOrCreate(payload.pageTabId)
     const current = controller.status(payload)
+    diagnostic(payload.pageTabId, `RESUME current status=${current.status} run=${current.runId ?? 'none'}`)
 
     // Resume is the operator's "run this tab again" action. A completed run has no
     // pending items left, so create a fresh run from the current Page Tab config and
     // original Group Set instead of silently returning `completed` forever.
-    if (current.status === 'completed') return controller.start(payload)
+    if (current.status === 'completed') {
+      const snapshot = controller.start(payload)
+      diagnostic(payload.pageTabId, `RESUME created fresh run status=${snapshot.status} run=${snapshot.runId ?? 'none'}`)
+      return snapshot
+    }
 
     try {
-      return controller.resume(payload)
+      const snapshot = controller.resume(payload)
+      diagnostic(payload.pageTabId, `RESUME accepted status=${snapshot.status} run=${snapshot.runId ?? 'none'}`)
+      return snapshot
     } catch (error) {
-      if (!isMissingRotationSession(error)) throw error
-      return controller.start(payload)
+      if (!isMissingRotationSession(error)) {
+        diagnostic(payload.pageTabId, `RESUME rejected type=${error instanceof Error ? error.name : typeof error}`)
+        throw error
+      }
+      diagnostic(payload.pageTabId, 'RESUME missing runtime session; falling back to START')
+      const snapshot = controller.start(payload)
+      diagnostic(payload.pageTabId, `RESUME fallback START status=${snapshot.status} run=${snapshot.runId ?? 'none'}`)
+      return snapshot
     }
   }
 
