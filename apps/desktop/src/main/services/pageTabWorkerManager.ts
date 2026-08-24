@@ -96,13 +96,25 @@ export class PageTabWorkerManager {
 
   stop(payload: RotationPageTabPayload): RotationRuntimeSnapshot {
     diagnostic(payload.pageTabId, 'STOP requested')
+    const controller = this.getOrCreate(payload.pageTabId)
     try {
-      const snapshot = this.getOrCreate(payload.pageTabId).stop(payload)
+      const snapshot = controller.stop(payload)
       diagnostic(payload.pageTabId, `STOP accepted status=${snapshot.status} run=${snapshot.runId ?? 'none'}`)
       return snapshot
     } catch (error) {
-      diagnostic(payload.pageTabId, `STOP rejected type=${error instanceof Error ? error.name : typeof error}`)
-      throw error
+      if (!isMissingRotationSession(error)) {
+        diagnostic(payload.pageTabId, `STOP rejected type=${error instanceof Error ? error.name : typeof error}`)
+        throw error
+      }
+
+      // After an app restart a paused DB run may exist without an in-memory
+      // RotationService session. Resume restores that session synchronously up to
+      // the first scheduler await; Stop immediately marks it before posting can run.
+      diagnostic(payload.pageTabId, 'STOP missing runtime session; restoring paused run before STOP')
+      controller.resume(payload)
+      const snapshot = controller.stop(payload)
+      diagnostic(payload.pageTabId, `STOP restored session status=${snapshot.status} run=${snapshot.runId ?? 'none'}`)
+      return snapshot
     }
   }
 
