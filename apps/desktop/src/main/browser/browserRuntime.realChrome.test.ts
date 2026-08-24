@@ -109,13 +109,25 @@ realChromeDescribe('browserRuntime real Chrome on Windows', () => {
       while (!detached && Date.now() < deadline) await page.waitForTimeout(100)
       expect(detached).toBe(true)
 
-      const nativeViewport = await page.evaluate(() => ({
+      // Chrome can report the old emulated viewport for a short moment after CDP clears
+      // device metrics. Wait for native reflow, then assert against the physical window
+      // that we resized to instead of assuming native width can never equal 1280.
+      let nativeViewport = await page.evaluate(() => ({
         width: window.innerWidth,
         height: window.innerHeight
       }))
-      expect(nativeViewport.width).not.toBe(placement.viewportWidth)
+      const nativeDeadline = Date.now() + 5_000
+      while ((nativeViewport.width > 1000 || nativeViewport.height > 700) && Date.now() < nativeDeadline) {
+        await page.waitForTimeout(100)
+        nativeViewport = await page.evaluate(() => ({
+          width: window.innerWidth,
+          height: window.innerHeight
+        }))
+      }
       expect(nativeViewport.width).toBeGreaterThan(800)
+      expect(nativeViewport.width).toBeLessThanOrEqual(1000)
       expect(nativeViewport.height).toBeGreaterThan(400)
+      expect(nativeViewport.height).toBeLessThanOrEqual(700)
     } finally {
       stopResizeWatch?.()
       await controlSession?.detach().catch(() => undefined)
