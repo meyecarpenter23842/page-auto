@@ -8,7 +8,9 @@ import {
   type ConfigBackupRestoreResult,
   type ConfigBackupSummary
 } from '../../shared/configBackup'
+import { POST_SELECTION_MODES, type PageTabPostInput } from '../../shared/pageTabs'
 import { AccountRepository } from '../database/accountRepository'
+import { PageTabPostRepository } from '../database/pageTabPostRepository'
 import { PageTabRepository } from '../database/pageTabRepository'
 
 const SECRET_EXCLUDES = [
@@ -42,6 +44,27 @@ function isColumnLayout(value: unknown): value is AccountColumnLayout {
     && Object.values(value.widths).every((item) => typeof item === 'number' && Number.isFinite(item))
 }
 
+function isPostInput(value: unknown): value is PageTabPostInput {
+  if (!isRecord(value) || typeof value.name !== 'string' || typeof value.enabled !== 'boolean') return false
+  if (typeof value.sortOrder !== 'number' || !Number.isInteger(value.sortOrder) || !Array.isArray(value.variants) || !value.variants.every((item) => typeof item === 'string')) return false
+  if (!isRecord(value.image)) return false
+  return typeof value.image.folderPath === 'string'
+    && typeof value.image.mode === 'string'
+    && typeof value.image.imagesPerPost === 'number'
+    && typeof value.image.missingPolicy === 'string'
+}
+
+function validateOptionalPostLibrary(tab: Record<string, unknown>): void {
+  if (tab.postLibrary === undefined) return
+  if (!isRecord(tab.postLibrary)
+    || typeof tab.postLibrary.mode !== 'string'
+    || !POST_SELECTION_MODES.includes(tab.postLibrary.mode as (typeof POST_SELECTION_MODES)[number])
+    || !Array.isArray(tab.postLibrary.posts)
+    || !tab.postLibrary.posts.every(isPostInput)) {
+    throw new Error('Post Library trong backup không hợp lệ.')
+  }
+}
+
 function parseBackup(rawText: string): ConfigBackupPayload {
   let parsed: unknown
   try {
@@ -65,6 +88,9 @@ function parseBackup(rawText: string): ConfigBackupPayload {
       throw new Error('Import preset trong backup không hợp lệ.')
     }
   }
+  for (const tab of parsed.pageTabs) {
+    if (isRecord(tab)) validateOptionalPostLibrary(tab)
+  }
 
   return parsed as unknown as ConfigBackupPayload
 }
@@ -81,10 +107,12 @@ function summary(payload: ConfigBackupPayload): ConfigBackupSummary {
 export class ConfigBackupService {
   private readonly accounts: AccountRepository
   private readonly pageTabs: PageTabRepository
+  private readonly posts: PageTabPostRepository
 
   constructor(private readonly client: Database.Database) {
     this.accounts = new AccountRepository(client)
     this.pageTabs = new PageTabRepository(client)
+    this.posts = new PageTabPostRepository(client)
   }
 
   createPayload(appVersion: string): ConfigBackupPayload {
@@ -97,6 +125,7 @@ export class ConfigBackupService {
     const pageTabs = this.pageTabs.list().map((tabSummary): ConfigBackupPageTab => {
       const tab = this.pageTabs.get(tabSummary.id)
       if (!tab) throw new Error(`Không thể đọc Page Tab #${tabSummary.id} để backup.`)
+      const postLibrary = this.posts.get(tab.id)
       return {
         name: tab.name,
         pageUid: tab.pageUid,
@@ -117,7 +146,17 @@ export class ConfigBackupService {
         groupUids: [...tab.groupUids],
         contentMode: tab.contentMode,
         contents: [...tab.contents],
-        image: { ...tab.image }
+        image: { ...tab.image },
+        postLibrary: {
+          mode: postLibrary.mode,
+          posts: postLibrary.posts.map((post, index) => ({
+            name: post.name,
+            enabled: post.enabled,
+            sortOrder: index,
+            variants: [...post.variants],
+            image: { ...post.image }
+          }))
+        }
       }
     })
 
@@ -239,6 +278,21 @@ export class ConfigBackupService {
           contents: [...tab.contents],
           image: { ...tab.image }
         })
+
+        if (tab.postLibrary) {
+          this.posts.save({
+            pageTabId: targetId,
+            mode: tab.postLibrary.mode,
+            posts: tab.postLibrary.posts.map((post, index) => ({
+              name: post.name,
+              enabled: post.enabled,
+              sortOrder: index,
+              variants: [...post.variants],
+              image: { ...post.image }
+            }))
+          })
+        }
+
         const knownIndex = knownTabs.findIndex((item) => item.id === updated.id)
         if (knownIndex >= 0) knownTabs[knownIndex] = { id: updated.id, name: updated.name, pageUid: updated.pageUid }
       }

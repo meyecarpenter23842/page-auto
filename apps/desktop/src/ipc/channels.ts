@@ -25,8 +25,10 @@ import type {
   ImageFolderInspection,
   PageTabConfig,
   PageTabIdPayload,
+  PageTabPostLibrary,
   PageTabSummary,
   PickTextFileResult,
+  SavePageTabPostLibraryInput,
   UpdatePageTabPayload
 } from '../shared/pageTabs'
 import type { ExecuteSinglePostingJobPayload, ExecuteSinglePostingJobResult } from '../shared/posting'
@@ -52,6 +54,8 @@ export const IPC_CHANNELS = {
   pageTabsUpdate: 'page-tabs:update',
   pageTabsDelete: 'page-tabs:delete',
   pageTabsDuplicate: 'page-tabs:duplicate',
+  pageTabsPostLibraryGet: 'page-tabs:post-library:get',
+  pageTabsPostLibrarySave: 'page-tabs:post-library:save',
   pageTabsPickImageFolder: 'page-tabs:pick-image-folder',
   pageTabsInspectImageFolder: 'page-tabs:inspect-image-folder',
   pageTabsPickTextFile: 'page-tabs:pick-text-file',
@@ -113,6 +117,8 @@ export interface PageAutoIpcContract {
   updatePageTab: (payload: UpdatePageTabPayload) => Promise<PageTabConfig>
   deletePageTab: (payload: PageTabIdPayload) => Promise<boolean>
   duplicatePageTab: (payload: PageTabIdPayload) => Promise<PageTabConfig>
+  getPageTabPostLibrary: (payload: PageTabIdPayload) => Promise<PageTabPostLibrary>
+  savePageTabPostLibrary: (payload: SavePageTabPostLibraryInput) => Promise<PageTabPostLibrary>
   pickPageTabImageFolder: () => Promise<string | null>
   inspectPageTabImageFolder: (folderPath: string) => Promise<ImageFolderInspection>
   pickPageTabTextFile: () => Promise<PickTextFileResult | null>

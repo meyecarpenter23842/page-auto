@@ -62,6 +62,7 @@ export const pageTabs = sqliteTable('page_tabs', {
   postDelayMaxSeconds: integer('post_delay_max_seconds').notNull().default(300),
   accountDelayMinSeconds: integer('account_delay_min_seconds').notNull().default(600),
   accountDelayMaxSeconds: integer('account_delay_max_seconds').notNull().default(900),
+  postSelectionMode: text('post_selection_mode').notNull().default('sequential'),
   createdAt: integer('created_at').notNull(),
   updatedAt: integer('updated_at').notNull()
 })
@@ -123,6 +124,21 @@ export const imageSources = sqliteTable('image_sources', {
   mode: text('mode').notNull().default('sequential'),
   imagesPerPost: integer('images_per_post').notNull().default(1),
   missingPolicy: text('missing_policy').notNull().default('text_only'),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull()
+})
+
+export const pageTabPosts = sqliteTable('page_tab_posts', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  pageTabId: integer('page_tab_id').notNull(),
+  name: text('name').notNull(),
+  enabled: integer('enabled').notNull().default(1),
+  variantsJson: text('variants_json').notNull(),
+  imageFolderPath: text('image_folder_path').notNull().default(''),
+  imageMode: text('image_mode').notNull().default('random'),
+  imagesPerPost: integer('images_per_post').notNull().default(1),
+  missingPolicy: text('missing_policy').notNull().default('text_only'),
+  sortOrder: integer('sort_order').notNull(),
   createdAt: integer('created_at').notNull(),
   updatedAt: integer('updated_at').notNull()
 })

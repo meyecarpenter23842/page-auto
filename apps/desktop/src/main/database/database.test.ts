@@ -33,6 +33,9 @@ describe('initializeDatabase', () => {
     const executionLogsTable = runtime.client
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'execution_logs'")
       .get() as { name: string } | undefined
+    const postLibraryTable = runtime.client
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'page_tab_posts'")
+      .get() as { name: string } | undefined
 
     expect(existsSync(databaseFile)).toBe(true)
     expect(migrations).toEqual([
@@ -40,10 +43,12 @@ describe('initializeDatabase', () => {
       { version: 2, name: 'account_manager' },
       { version: 3, name: 'page_tab_config' },
       { version: 4, name: 'run_queue' },
-      { version: 5, name: 'recovery_execution_logs' }
+      { version: 5, name: 'recovery_execution_logs' },
+      { version: 6, name: 'page_tab_post_library' }
     ])
-    expect(schemaVersion?.value).toBe('5')
+    expect(schemaVersion?.value).toBe('6')
     expect(executionLogsTable?.name).toBe('execution_logs')
+    expect(postLibraryTable?.name).toBe('page_tab_posts')
 
     runtime.close()
   })
@@ -57,7 +62,7 @@ describe('initializeDatabase', () => {
       .prepare('SELECT COUNT(*) AS count FROM __page_auto_migrations')
       .get() as { count: number }
 
-    expect(count.count).toBe(5)
+    expect(count.count).toBe(6)
     reopened.close()
   })
 })

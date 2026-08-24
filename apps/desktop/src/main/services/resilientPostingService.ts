@@ -3,7 +3,7 @@ import { DEFAULT_APP_SETTINGS, type LoggingSettings, type RuntimeSettings } from
 import type { ExecuteSinglePostingJobPayload, ExecuteSinglePostingJobResult } from '../../shared/posting'
 import { AccountRepository } from '../database/accountRepository'
 import { ExecutionLogRepository } from '../database/executionLogRepository'
-import { selectRunContent, selectRunImages } from './postingSelection'
+import { selectRunImages, selectRunPost } from './postingSelection'
 import { redactExecutionText } from './executionLogSanitizer'
 import { shouldPersistPostingAttempt } from './loggingPolicy'
 import { canQueueRetryWithRuntime, retryDispositionFor } from './retryPolicy'
@@ -18,11 +18,8 @@ export interface PostingExecutor {
 
 function contentIndex(result: ExecuteSinglePostingJobResult): number | null {
   if (!result.item) return null
-  const selected = selectRunContent(result.run.run.snapshot, result.item)
-  if (!selected) return null
-  const normalized = result.run.run.snapshot.contents.map((value) => value.trim())
-  const index = normalized.findIndex((value) => value === selected.trim())
-  return index < 0 ? null : index + 1
+  const material = selectRunPost(result.run.run.snapshot, result.item)
+  return material ? material.postIndex + 1 : null
 }
 
 function retryDelay(milliseconds: number): Promise<void> {
@@ -160,8 +157,9 @@ export class ResilientPostingService implements PostingExecutor {
       account.proxy,
       account.proxyPassword
     ] : []
-    const images = item
-      ? await selectRunImages(outcome.run.run.snapshot.image, item)
+    const material = item ? selectRunPost(outcome.run.run.snapshot, item) : null
+    const images = item && material
+      ? await selectRunImages(material.image, item)
       : { paths: [], missing: false }
 
     this.logs.insert({

@@ -3,11 +3,13 @@ import { join } from 'node:path'
 import { initializeDatabase, type DatabaseRuntime } from './database'
 import { registerIpcHandlers, type IpcRuntime } from './ipc'
 import { createLogger } from './logger'
+import { registerPostLibraryIpcHandlers, type PostLibraryIpcRuntime } from './postLibraryIpc'
 import { ensureDataDirectoryLayout, resolveDataDirectory } from './services/portablePaths'
 
 let mainWindow: BrowserWindow | null = null
 let databaseRuntime: DatabaseRuntime | null = null
 let ipcRuntime: IpcRuntime | null = null
+let postLibraryIpcRuntime: PostLibraryIpcRuntime | null = null
 
 function resolveWindowIcon(): string {
   return app.isPackaged
@@ -35,16 +37,10 @@ function createMainWindow(): BrowserWindow {
   window.once('ready-to-show', () => window.show())
 
   const rendererUrl = process.env.ELECTRON_RENDERER_URL
-  if (rendererUrl) {
-    void window.loadURL(rendererUrl)
-  } else {
-    void window.loadFile(join(__dirname, '../renderer/index.html'))
-  }
+  if (rendererUrl) void window.loadURL(rendererUrl)
+  else void window.loadFile(join(__dirname, '../renderer/index.html'))
 
-  window.on('closed', () => {
-    mainWindow = null
-  })
-
+  window.on('closed', () => { mainWindow = null })
   return window
 }
 
@@ -63,28 +59,20 @@ app.whenReady().then(() => {
 
   try {
     databaseRuntime = initializeDatabase(databaseFile)
-    ipcRuntime = registerIpcHandlers({
-      database: databaseRuntime.client,
-      dataDirectory
-    })
-    logger.info('Application initialized', {
-      databaseFile,
-      dataDirectory,
-      packaged: app.isPackaged,
-      version: app.getVersion()
-    })
+    ipcRuntime = registerIpcHandlers({ database: databaseRuntime.client, dataDirectory })
+    postLibraryIpcRuntime = registerPostLibraryIpcHandlers(databaseRuntime.client)
+    logger.info('Application initialized', { databaseFile, dataDirectory, packaged: app.isPackaged, version: app.getVersion() })
 
     if (process.env.PAGE_AUTO_SMOKE_TEST === '1') {
       logger.info('Electron smoke test completed')
       app.quit()
       return
     }
-
     mainWindow = createMainWindow()
   } catch (error) {
-    logger.error('Application initialization failed', {
-      error: error instanceof Error ? error.message : String(error)
-    })
+    logger.error('Application initialization failed', { error: error instanceof Error ? error.message : String(error) })
+    postLibraryIpcRuntime?.dispose()
+    postLibraryIpcRuntime = null
     ipcRuntime?.dispose()
     ipcRuntime = null
     databaseRuntime?.close()
@@ -93,13 +81,13 @@ app.whenReady().then(() => {
   }
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0 && process.env.PAGE_AUTO_SMOKE_TEST !== '1') {
-      mainWindow = createMainWindow()
-    }
+    if (BrowserWindow.getAllWindows().length === 0 && process.env.PAGE_AUTO_SMOKE_TEST !== '1') mainWindow = createMainWindow()
   })
 })
 
 app.on('before-quit', () => {
+  postLibraryIpcRuntime?.dispose()
+  postLibraryIpcRuntime = null
   ipcRuntime?.dispose()
   ipcRuntime = null
   databaseRuntime?.close()
@@ -107,7 +95,5 @@ app.on('before-quit', () => {
 })
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit()
-  }
+  if (process.platform !== 'darwin') app.quit()
 })
