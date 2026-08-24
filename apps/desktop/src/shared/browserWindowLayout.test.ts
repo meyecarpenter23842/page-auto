@@ -2,12 +2,13 @@ import { describe, expect, it } from 'vitest'
 import { DEFAULT_APP_SETTINGS } from './appSettings'
 import {
   DEFAULT_BROWSER_WINDOW_LAYOUT,
+  autoBalancedBrowserTileGrid,
   browserTileGrid,
   compactBrowserSlotAssignments,
   compactContentScale,
   computeBrowserWindowPlacement,
   parseStoredBrowserWindowLayout,
-  withBrowserGridDimensions,
+  withAutoBalancedBrowserRows,
   type BrowserDisplayInfo
 } from './browserWindowLayout'
 
@@ -22,39 +23,55 @@ const display: BrowserDisplayInfo = {
 const browser = { ...DEFAULT_APP_SETTINGS.browser, windowWidth: 1280, windowHeight: 800 }
 
 describe('browser window layout', () => {
-  it('splits the real monitor working area horizontally and excludes the taskbar through workArea', () => {
-    const layout = { ...DEFAULT_BROWSER_WINDOW_LAYOUT, enabled: true, tileLayout: 'horizontal' as const, tileCount: 4 }
-    expect(browserTileGrid(layout)).toEqual({ columns: 4, rows: 1, capacity: 4 })
-
-    const first = computeBrowserWindowPlacement(layout, browser, display, 0)
-    const fourth = computeBrowserWindowPlacement(layout, browser, display, 3)
-    expect(first).toMatchObject({ displayId: 7, slotIndex: 0, x: 100, y: 40, height: 1040 })
-    expect(fourth?.x).toBeGreaterThan(first?.x ?? 0)
-    expect((fourth?.x ?? 0) + (fourth?.width ?? 0)).toBeLessThanOrEqual(2020)
-  })
-
-  it('supports legacy vertical layouts and real two-dimensional grids', () => {
-    expect(browserTileGrid({ ...DEFAULT_BROWSER_WINDOW_LAYOUT, enabled: true, tileLayout: 'vertical', tileCount: 5 }))
+  it('keeps legacy manual layouts readable for stored-config migration', () => {
+    expect(browserTileGrid({ ...DEFAULT_BROWSER_WINDOW_LAYOUT, tileLayout: 'horizontal', tileCount: 4 }))
+      .toEqual({ columns: 4, rows: 1, capacity: 4 })
+    expect(browserTileGrid({ ...DEFAULT_BROWSER_WINDOW_LAYOUT, tileLayout: 'vertical', tileCount: 5 }))
       .toEqual({ columns: 1, rows: 5, capacity: 5 })
-    expect(browserTileGrid({ ...DEFAULT_BROWSER_WINDOW_LAYOUT, enabled: true, tileLayout: 'grid', tileCount: 6, gridColumns: 3 }))
-      .toEqual({ columns: 3, rows: 2, capacity: 6 })
+    expect(browserTileGrid({ ...DEFAULT_BROWSER_WINDOW_LAYOUT, tileLayout: 'grid', tileCount: 12, gridColumns: 4 }))
+      .toEqual({ columns: 4, rows: 3, capacity: 12 })
   })
 
-  it('upgrades dimension edits to a 4 x 3 or 2 x 6 grid instead of forcing one full-screen axis', () => {
-    const fourByThree = withBrowserGridDimensions(
-      { ...DEFAULT_BROWSER_WINDOW_LAYOUT, enabled: true, tileLayout: 'horizontal', tileCount: 4 },
-      4,
-      3
-    )
-    const twoBySix = withBrowserGridDimensions(fourByThree, 2, 6)
+  it('derives horizontal columns automatically from only the selected vertical rows', () => {
+    const twoRows = withAutoBalancedBrowserRows({ ...DEFAULT_BROWSER_WINDOW_LAYOUT, enabled: true }, 2)
+    const threeRows = withAutoBalancedBrowserRows(twoRows, 3)
+    const fourRows = withAutoBalancedBrowserRows(threeRows, 4)
 
-    expect(fourByThree).toMatchObject({ tileLayout: 'grid', gridColumns: 4, tileCount: 12 })
-    expect(browserTileGrid(fourByThree)).toEqual({ columns: 4, rows: 3, capacity: 12 })
-    expect(twoBySix).toMatchObject({ tileLayout: 'grid', gridColumns: 2, tileCount: 12 })
-    expect(browserTileGrid(twoBySix)).toEqual({ columns: 2, rows: 6, capacity: 12 })
+    expect(autoBalancedBrowserTileGrid(twoRows, browser, display)).toEqual({ columns: 3, rows: 2, capacity: 6 })
+    expect(autoBalancedBrowserTileGrid(threeRows, browser, display)).toEqual({ columns: 4, rows: 3, capacity: 12 })
+    expect(autoBalancedBrowserTileGrid(fourRows, browser, display)).toEqual({ columns: 5, rows: 4, capacity: 20 })
+  })
 
-    const topLeft = computeBrowserWindowPlacement(fourByThree, browser, display, 0)
-    const secondRow = computeBrowserWindowPlacement(fourByThree, browser, display, 4)
+  it('recomputes balance from the target monitor aspect ratio instead of saving user-calculated columns', () => {
+    const layout = withAutoBalancedBrowserRows({ ...DEFAULT_BROWSER_WINDOW_LAYOUT, enabled: true }, 3)
+    const wide = autoBalancedBrowserTileGrid(layout, browser, display)
+    const portrait = autoBalancedBrowserTileGrid(layout, browser, {
+      ...display,
+      workArea: { x: 0, y: 0, width: 1080, height: 1920 }
+    })
+
+    expect(wide).toEqual({ columns: 4, rows: 3, capacity: 12 })
+    expect(portrait.columns).toBeLessThan(wide.columns)
+    expect(portrait.rows).toBe(3)
+  })
+
+  it('preserves the old horizontal capacity until the user explicitly chooses a new row count', () => {
+    const migrated = parseStoredBrowserWindowLayout('{"enabled":true,"tileLayout":"horizontal","tileCount":4,"gridColumns":2}')
+    expect(migrated).toMatchObject({ rowCount: 1, minimumCapacity: 4 })
+    expect(autoBalancedBrowserTileGrid(migrated, browser, display)).toEqual({ columns: 4, rows: 1, capacity: 4 })
+
+    const userChanged = withAutoBalancedBrowserRows(migrated, 1)
+    expect(userChanged.minimumCapacity).toBe(1)
+    expect(autoBalancedBrowserTileGrid(userChanged, browser, display)).toEqual({ columns: 1, rows: 1, capacity: 1 })
+  })
+
+  it('places Chrome in a real two-dimensional grid and scales content in both axes', () => {
+    const layout = withAutoBalancedBrowserRows({ ...DEFAULT_BROWSER_WINDOW_LAYOUT, enabled: true }, 3)
+    const grid = autoBalancedBrowserTileGrid(layout, browser, display)
+    const topLeft = computeBrowserWindowPlacement(layout, browser, display, 0)
+    const secondRow = computeBrowserWindowPlacement(layout, browser, display, grid.columns)
+
+    expect(grid).toEqual({ columns: 4, rows: 3, capacity: 12 })
     expect(topLeft?.width).toBeLessThan(display.workArea.width)
     expect(topLeft?.height).toBeLessThan(display.workArea.height)
     expect(secondRow?.y).toBeGreaterThan(topLeft?.y ?? 0)
@@ -65,28 +82,12 @@ describe('browser window layout', () => {
     expect(compactContentScale(browser, 1280, 800)).toBe(1)
     expect(compactContentScale(browser, 640, 400)).toBe(0.5)
     expect(compactContentScale(browser, 320, 200)).toBe(0.25)
-
-    const placement = computeBrowserWindowPlacement(
-      withBrowserGridDimensions({ ...DEFAULT_BROWSER_WINDOW_LAYOUT, enabled: true }, 4, 3),
-      browser,
-      { ...display, workArea: { x: 0, y: 0, width: 1920, height: 800 } },
-      0
-    )
-    expect(placement?.viewportWidth).toBe(1280)
-    expect(placement?.viewportHeight).toBe(800)
-    expect(placement?.width).toBeLessThan(1920)
-    expect(placement?.height).toBeLessThan(800)
-    expect(placement?.contentScale).toBeLessThan(1)
   })
 
-  it('allows every supported tile count to compute the scale it actually needs', () => {
-    const placement = computeBrowserWindowPlacement(
-      { ...DEFAULT_BROWSER_WINDOW_LAYOUT, enabled: true, tileLayout: 'horizontal', tileCount: 32 },
-      browser,
-      { ...display, workArea: { x: 0, y: 0, width: 1920, height: 800 } },
-      0
-    )
-    expect(placement?.contentScale).toBeLessThan(0.08)
+  it('limits automatic capacity to the existing 32 Chrome safety ceiling', () => {
+    const layout = withAutoBalancedBrowserRows({ ...DEFAULT_BROWSER_WINDOW_LAYOUT, enabled: true }, 32)
+    expect(autoBalancedBrowserTileGrid(layout, browser, display)).toEqual({ columns: 1, rows: 32, capacity: 32 })
+    expect(computeBrowserWindowPlacement(layout, browser, display, 32)).toBeNull()
   })
 
   it('compacts sparse active slots before retiling so overflow browsers fill holes', () => {
@@ -101,9 +102,9 @@ describe('browser window layout', () => {
     ])
   })
 
-  it('returns no placement outside capacity and safely falls back on invalid stored config', () => {
-    const layout = { ...DEFAULT_BROWSER_WINDOW_LAYOUT, enabled: true, tileCount: 2 }
-    expect(computeBrowserWindowPlacement(layout, browser, display, 2)).toBeNull()
+  it('migrates old stored grid rows/capacity and safely falls back on invalid config', () => {
+    const migrated = parseStoredBrowserWindowLayout('{"enabled":true,"tileLayout":"grid","tileCount":12,"gridColumns":4}')
+    expect(migrated).toMatchObject({ rowCount: 3, minimumCapacity: 12 })
     expect(parseStoredBrowserWindowLayout('{"tileCount":999}')).toEqual(DEFAULT_BROWSER_WINDOW_LAYOUT)
   })
 })

@@ -4,8 +4,8 @@ import { DEFAULT_APP_SETTINGS, type BrowserSettings } from '../../../shared/appS
 import type { BrowserExecutableResult, BrowserTestResult } from '../../../shared/browserSettings'
 import {
   DEFAULT_BROWSER_WINDOW_LAYOUT,
-  browserTileGrid,
-  withBrowserGridDimensions,
+  autoBalancedBrowserTileGrid,
+  withAutoBalancedBrowserRows,
   type BrowserDisplayInfo,
   type BrowserWindowLayoutSettings
 } from '../../../shared/browserWindowLayout'
@@ -33,7 +33,16 @@ export function BrowserSettingsSection({ appInfo }: BrowserSettingsSectionProps)
     saved && draft && savedLayout && layout
     && (JSON.stringify(saved) !== JSON.stringify(draft) || JSON.stringify(savedLayout) !== JSON.stringify(layout))
   ), [draft, layout, saved, savedLayout])
-  const grid = useMemo(() => layout ? browserTileGrid(layout) : { columns: 1, rows: 1, capacity: 1 }, [layout])
+
+  const previewDisplay = useMemo(() => {
+    if (!layout || layout.targetDisplayId === null) return null
+    return displays.find((display) => display.id === layout.targetDisplayId) ?? null
+  }, [displays, layout])
+
+  const grid = useMemo(() => {
+    if (!layout || !draft || !previewDisplay) return null
+    return autoBalancedBrowserTileGrid(layout, draft, previewDisplay)
+  }, [draft, layout, previewDisplay])
 
   useEffect(() => {
     void Promise.all([
@@ -61,8 +70,8 @@ export function BrowserSettingsSection({ appInfo }: BrowserSettingsSectionProps)
     setFeedback(null)
   }
 
-  const updateGrid = (columns: number, rows: number) => {
-    setLayout((current) => current ? withBrowserGridDimensions(current, columns, rows) : current)
+  const updateRows = (rows: number) => {
+    setLayout((current) => current ? withAutoBalancedBrowserRows(current, rows) : current)
     setFeedback(null)
   }
 
@@ -127,11 +136,11 @@ export function BrowserSettingsSection({ appInfo }: BrowserSettingsSectionProps)
         <div className="field"><span>Khung automation</span><div className="test-result ok">Desktop ổn định · tự scale</div></div>
         <div className="field"><span>Kết quả kiểm tra</span><div className={`test-result ${test?.status === 'success' ? 'ok' : test ? 'bad' : ''}`}>{test ? (test.status === 'success' ? `Hoạt động · ${test.launchDurationMs ?? 0} ms` : 'Không mở được') : 'Chưa kiểm tra'}</div></div>
 
-        <label className="toggle-card span-3"><div><strong>Compact / xếp nhiều Chrome</strong><small>Chia theo lưới 2 chiều. Cửa sổ và toàn bộ Facebook bên trong cùng co theo cả chiều ngang lẫn chiều dọc.</small></div><input type="checkbox" checked={layout.enabled} onChange={(event) => { updateLayout('enabled', event.target.checked); if (event.target.checked) update('mode', 'visible') }} /></label>
+        <label className="toggle-card span-3"><div><strong>Compact / xếp nhiều Chrome</strong><small>Chỉ chọn số hàng dọc. App tự tính số cột ngang cân đối theo màn hình và co Facebook phủ kín ô.</small></div><input type="checkbox" checked={layout.enabled} onChange={(event) => { updateLayout('enabled', event.target.checked); if (event.target.checked) update('mode', 'visible') }} /></label>
         {layout.enabled && <>
-          <label className="number-field"><span>Cột ngang</span><div><input type="number" min="1" max="16" value={grid.columns} onChange={(event) => updateGrid(Math.max(1, Math.min(16, Number(event.target.value) || 1)), grid.rows)} /><em>cột</em></div></label>
-          <label className="number-field"><span>Hàng dọc</span><div><input type="number" min="1" max="32" value={grid.rows} onChange={(event) => updateGrid(grid.columns, Math.max(1, Math.min(32, Number(event.target.value) || 1)))} /><em>hàng</em></div></label>
-          <div className="field"><span>Tổng sức chứa</span><div className="test-result ok">{grid.capacity} Chrome · scale 2 chiều</div></div>
+          <label className="number-field"><span>Số hàng dọc</span><div><input type="number" min="1" max="32" value={layout.rowCount} onChange={(event) => updateRows(Math.max(1, Math.min(32, Number(event.target.value) || 1)))} /><em>hàng</em></div></label>
+          <div className="field"><span>Tự cân đối</span><div className="test-result ok">{grid ? `${grid.columns} cột × ${grid.rows} hàng` : 'Theo màn hình tại vị trí chuột'}</div></div>
+          <div className="field"><span>Sức chứa dự kiến</span><div className="test-result ok">{grid ? `${grid.capacity} Chrome` : 'Tự tính khi mở / sắp xếp'}</div></div>
           <label className="field span-2"><span>Màn hình đích</span><select value={layout.targetDisplayId ?? ''} onChange={(event) => updateLayout('targetDisplayId', event.target.value ? Number(event.target.value) : null)}><option value="">Màn hình tại vị trí chuột</option>{displays.map((display) => <option key={display.id} value={display.id}>{display.label}{display.isPrimary ? ' · Chính' : ''}</option>)}</select></label>
           <div className="field"><span>Chrome đang mở</span><button type="button" className="settings-button" disabled={busy !== null || dirty} onClick={() => void retile()}>{busy === 'retile' ? 'Đang xếp...' : 'Sắp xếp lại Chrome'}</button></div>
         </>}
@@ -146,6 +155,6 @@ export function BrowserSettingsSection({ appInfo }: BrowserSettingsSectionProps)
         <label className="number-field"><span>Tự đóng Chrome sau</span><div><input type="number" min="1" value={draft.maxLifetimeMinutes} onChange={(event) => update('maxLifetimeMinutes', Number(event.target.value))} /><em>phút</em></div></label>
       </div>
     </div></div>
-    <div className="inline-settings-actions"><span className={`inline-settings-feedback ${feedback?.kind ?? ''}`}>{feedback?.text ?? (dirty ? 'Có thay đổi chưa lưu.' : 'Ví dụ 4 cột × 3 hàng = 12 Chrome; Chrome mới tự vào ô trống.')}</span><div><button type="button" className="settings-button" disabled={busy !== null} onClick={() => { setDraft(copyBrowser(DEFAULT_APP_SETTINGS.browser)); setLayout(copyLayout(DEFAULT_BROWSER_WINDOW_LAYOUT)) }}>Mặc định</button><button type="button" className="settings-button" disabled={!dirty || busy !== null} onClick={() => { if (saved) setDraft(copyBrowser(saved)); if (savedLayout) setLayout(copyLayout(savedLayout)) }}>Hủy</button><button type="button" className="settings-button primary" disabled={!dirty || busy !== null} onClick={() => void save()}>{busy === 'save' ? 'Đang lưu...' : 'Lưu cài đặt'}</button></div></div>
+    <div className="inline-settings-actions"><span className={`inline-settings-feedback ${feedback?.kind ?? ''}`}>{feedback?.text ?? (dirty ? 'Có thay đổi chưa lưu.' : (grid ? `Chọn ${layout.rowCount} hàng dọc; app tự cân đối ${grid.columns} cột ngang theo màn hình.` : `Chọn ${layout.rowCount} hàng dọc; số cột sẽ tự tính theo đúng màn hình tại vị trí chuột.`))}</span><div><button type="button" className="settings-button" disabled={busy !== null} onClick={() => { setDraft(copyBrowser(DEFAULT_APP_SETTINGS.browser)); setLayout(copyLayout(DEFAULT_BROWSER_WINDOW_LAYOUT)) }}>Mặc định</button><button type="button" className="settings-button" disabled={!dirty || busy !== null} onClick={() => { if (saved) setDraft(copyBrowser(saved)); if (savedLayout) setLayout(copyLayout(savedLayout)) }}>Hủy</button><button type="button" className="settings-button primary" disabled={!dirty || busy !== null} onClick={() => void save()}>{busy === 'save' ? 'Đang lưu...' : 'Lưu cài đặt'}</button></div></div>
   </div>
 }

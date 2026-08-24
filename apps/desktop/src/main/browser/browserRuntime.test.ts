@@ -5,7 +5,8 @@ import {
   applyBrowserWindowPlacement,
   buildBrowserLaunchOptions,
   compactDeviceMetrics,
-  effectiveCompactContentScale
+  effectiveCompactContentScale,
+  fitCompactViewportToInnerArea
 } from './browserRuntime'
 
 const placement: BrowserWindowPlacement = {
@@ -53,17 +54,29 @@ describe('buildBrowserLaunchOptions', () => {
     expect(options.args.some((arg) => arg.startsWith('--force-device-scale-factor='))).toBe(false)
   })
 
-  it('uses the real inner content area so Chrome toolbar height cannot crop the scaled page', () => {
+  it('fits the logical desktop viewport to the real inner area instead of letterboxing', () => {
     expect(effectiveCompactContentScale(placement, 320, 120)).toBe(0.15)
-    expect(compactDeviceMetrics(placement, 0.15)).toEqual({
-      width: 1280,
+    const fit = fitCompactViewportToInnerArea(placement, 320, 120)
+    expect(fit).toEqual({ width: 2133, height: 800, scale: 0.15 })
+    expect(fit.width * fit.scale).toBeCloseTo(320, 0)
+    expect(fit.height * fit.scale).toBeCloseTo(120, 5)
+    expect(compactDeviceMetrics(placement, fit.scale, fit.width, fit.height)).toEqual({
+      width: 2133,
       height: 800,
       deviceScaleFactor: 1,
       mobile: false,
-      screenWidth: 1280,
+      screenWidth: 2133,
       screenHeight: 800,
       scale: 0.15
     })
+  })
+
+  it('expands height instead when the compact content area is relatively narrow', () => {
+    const fit = fitCompactViewportToInnerArea(placement, 200, 200)
+    expect(fit.scale).toBe(0.156)
+    expect(fit.width).toBe(1282)
+    expect(fit.height).toBeGreaterThan(800)
+    expect(fit.height * fit.scale).toBeCloseTo(200, 0)
   })
 
   it('allows very small supported slots to scale below the old 0.08 crop floor', () => {
@@ -85,7 +98,11 @@ describe('buildBrowserLaunchOptions', () => {
 
     await applyBrowserWindowPlacement(context, page, placement)
     expect(detach).not.toHaveBeenCalled()
-    expect(send).toHaveBeenCalledWith('Emulation.setDeviceMetricsOverride', compactDeviceMetrics(placement, 0.15))
+    const fit = fitCompactViewportToInnerArea(placement, 320, 120)
+    expect(send).toHaveBeenCalledWith(
+      'Emulation.setDeviceMetricsOverride',
+      compactDeviceMetrics(placement, fit.scale, fit.width, fit.height)
+    )
 
     await applyBrowserWindowPlacement(context, page, null)
     expect(context.newCDPSession).toHaveBeenCalledTimes(1)
