@@ -20,6 +20,7 @@ export interface RotationRunStore {
 
 export interface RotationPostingExecutor {
   executeSingle(payload: ExecuteSinglePostingJobPayload): Promise<ExecuteSinglePostingJobResult>
+  releaseAccount?: (accountId: number) => Promise<void>
 }
 
 interface RotationClock {
@@ -369,6 +370,16 @@ export class RotationService {
     return this.getLiveSchedules(session.pageTabId) ?? session.run.run.snapshot.schedules
   }
 
+  private async releaseAccountTurn(accountId: number): Promise<void> {
+    if (!this.posting.releaseAccount) return
+    await this.posting.releaseAccount(accountId)
+  }
+
+  private async releaseIdleCurrentAccount(session: RotationSession): Promise<void> {
+    if (session.inFlight || session.currentAccountId === null) return
+    await this.releaseAccountTurn(session.currentAccountId)
+  }
+
   private finalizeStop(session: RotationSession): void {
     if (session.run.run.status !== 'stopped') {
       session.run = this.runs.stop(session.runId, 'manual')
@@ -465,93 +476,95 @@ export class RotationService {
 
       let usedSlot = false
       let leaveAccountEarly = false
-      while (session.slotsCompletedThisTurn < targetSlots && !session.disposed) {
-        const activeRunId = session.runId
-        const canPost = await this.waitUntilRunnable(session)
-        if (!canPost) return
-        if (session.runId !== activeRunId) {
-          accountIndex = 0
-          unavailableStreak = 0
-          continue runLoop
-        }
-
-        session.inFlight = true
-        let result: ExecuteSinglePostingJobResult
-        try {
-          result = await this.posting.executeSingle({ runId: session.runId, accountId: account.accountId })
-        } finally {
-          session.inFlight = false
-        }
-        session.run = result.run
-        session.lastResult = result.result
-
-        if (session.stopRequested) {
-          this.finalizeStop(session)
-          return
-        }
-
-        const sessionDecision = resolveSessionFailureDecision(result.result, this.getSessionSettings())
-        const networkDecision = resolveNetworkFailureDecision(result.result, this.getNetworkSettings())
-
-        if (result.item === null) {
-          if (networkDecision?.action === 'pause_tab') {
-            this.pauseForNetworkFailure(session, account.accountId)
-            leaveAccountEarly = true
-            break
-          }
-          if (networkDecision?.action === 'switch_account') {
-            session.message = `Proxy của tài khoản #${account.accountId} lỗi; chuyển sang tài khoản kế tiếp theo chính sách mạng.`
-            leaveAccountEarly = true
-            break
-          }
-          if (sessionDecision?.action === 'stop') {
-            this.pauseForSessionFailure(session, account.accountId, sessionDecision.kind)
-            leaveAccountEarly = true
-            break
-          }
-          if (result.result.code === 'no_pending_item' || isRunExhausted(result.run)) {
-            this.settleCycle()
+      try {
+        while (session.slotsCompletedThisTurn < targetSlots && !session.disposed) {
+          const activeRunId = session.runId
+          const canPost = await this.waitUntilRunnable(session)
+          if (!canPost) return
+          if (session.runId !== activeRunId) {
+            accountIndex = 0
+            unavailableStreak = 0
             continue runLoop
           }
-          if (isAccountUnavailable(result)) {
+
+          session.inFlight = true
+          let result: ExecuteSinglePostingJobResult
+          try {
+            result = await this.posting.executeSingle({ runId: session.runId, accountId: account.accountId })
+          } finally {
+            session.inFlight = false
+          }
+          session.run = result.run
+          session.lastResult = result.result
+
+          if (session.stopRequested) {
+            this.finalizeStop(session)
+            return
+          }
+
+          const sessionDecision = resolveSessionFailureDecision(result.result, this.getSessionSettings())
+          const networkDecision = resolveNetworkFailureDecision(result.result, this.getNetworkSettings())
+
+          if (result.item === null) {
+            if (networkDecision?.action === 'pause_tab') {
+              this.pauseForNetworkFailure(session, account.accountId)
+              leaveAccountEarly = true
+              break
+            }
+            if (networkDecision?.action === 'switch_account') {
+              session.message = `Proxy của tài khoản #${account.accountId} lỗi; chuyển sang tài khoản kế tiếp theo chính sách mạng.`
+              leaveAccountEarly = true
+              break
+            }
+            if (sessionDecision?.action === 'stop') {
+              this.pauseForSessionFailure(session, account.accountId, sessionDecision.kind)
+              leaveAccountEarly = true
+              break
+            }
+            if (result.result.code === 'no_pending_item' || isRunExhausted(result.run)) {
+              continue runLoop
+            }
+            if (isAccountUnavailable(result)) {
+              leaveAccountEarly = true
+              if (sessionDecision) {
+                session.message = `Tài khoản #${account.accountId} chưa thể đăng nhập/xác minh; chuyển sang tài khoản kế tiếp theo chính sách.`
+              }
+              break
+            }
             leaveAccountEarly = true
-            if (sessionDecision) {
+            break
+          }
+
+          usedSlot = true
+          unavailableStreak = 0
+          session.slotsCompletedThisTurn += 1
+
+          if (isRunExhausted(result.run)) {
+            continue runLoop
+          }
+
+          if (sessionDecision) {
+            leaveAccountEarly = true
+            if (sessionDecision.action === 'stop') {
+              this.pauseForSessionFailure(session, account.accountId, sessionDecision.kind)
+            } else {
               session.message = `Tài khoản #${account.accountId} chưa thể đăng nhập/xác minh; chuyển sang tài khoản kế tiếp theo chính sách.`
             }
             break
           }
-          leaveAccountEarly = true
-          break
-        }
 
-        usedSlot = true
-        unavailableStreak = 0
-        session.slotsCompletedThisTurn += 1
-
-        if (isRunExhausted(result.run)) {
-          this.settleCycle()
-          continue runLoop
-        }
-
-        if (sessionDecision) {
-          leaveAccountEarly = true
-          if (sessionDecision.action === 'stop') {
-            this.pauseForSessionFailure(session, account.accountId, sessionDecision.kind)
-          } else {
-            session.message = `Tài khoản #${account.accountId} chưa thể đăng nhập/xác minh; chuyển sang tài khoản kế tiếp theo chính sách.`
+          if (session.slotsCompletedThisTurn < targetSlots) {
+            const sameRun = await this.waitConfiguredDelay(
+              session,
+              current.run.snapshot.rotation.postDelayMinSeconds,
+              current.run.snapshot.rotation.postDelayMaxSeconds,
+              'Chờ giữa các bài'
+            )
+            if (!sameRun) continue runLoop
           }
-          break
         }
-
-        if (session.slotsCompletedThisTurn < targetSlots) {
-          const sameRun = await this.waitConfiguredDelay(
-            session,
-            current.run.snapshot.rotation.postDelayMinSeconds,
-            current.run.snapshot.rotation.postDelayMaxSeconds,
-            'Chờ giữa các bài'
-          )
-          if (!sameRun) continue runLoop
-        }
+      } finally {
+        await this.releaseAccountTurn(account.accountId)
       }
 
       if (session.stopRequested) {
@@ -604,11 +617,13 @@ export class RotationService {
   private async waitUntilRunnable(session: RotationSession): Promise<boolean> {
     while (!session.disposed) {
       if (session.stopRequested && !session.inFlight) {
+        await this.releaseIdleCurrentAccount(session)
         this.finalizeStop(session)
         return false
       }
 
       if (session.manualPaused) {
+        await this.releaseIdleCurrentAccount(session)
         session.status = 'paused'
         session.nextActionAt = null
         if (!session.inFlight && (session.run.run.status === 'running' || session.run.run.status === 'created')) {
@@ -623,6 +638,7 @@ export class RotationService {
       const todayKey = localDateKey(now)
 
       if (isRunExhausted(session.run) && session.activeDateKey === todayKey) {
+        await this.releaseIdleCurrentAccount(session)
         this.settleCycle()
         const next = nextScheduleStartAfterDay(schedules, now)
         session.status = 'waiting_window'
@@ -634,6 +650,7 @@ export class RotationService {
       }
 
       if (!isWithinSchedule(schedules, now)) {
+        await this.releaseIdleCurrentAccount(session)
         if (!session.inFlight && (session.run.run.status === 'running' || session.run.run.status === 'created')) {
           session.run = this.runs.pause(session.runId)
         }

@@ -11,6 +11,8 @@ import {
 } from './managedBrowserRegistry'
 import { resolveAccountProxyState } from './proxyConfig'
 
+const PROFILE_SHUTDOWN_TIMEOUT_MS = 5_000
+
 interface BrowserReadyMessage {
   type: 'browser-ready'
   accountId: number
@@ -36,6 +38,7 @@ interface BrowserWorkerEntry {
   process: UtilityProcess
   pending: PendingBootstrap | null
   closing: boolean
+  closePromise: Promise<void> | null
 }
 
 type SessionResultHandler = (result: FacebookSessionResult) => void
@@ -118,7 +121,7 @@ export class BrowserProfileManager {
       const worker = utilityProcess.fork(workerPath, [profileDirectory], {
         serviceName: `PAGE-AUTO account ${account.id}`
       })
-      const entry: BrowserWorkerEntry = { process: worker, pending: null, closing: false }
+      const entry: BrowserWorkerEntry = { process: worker, pending: null, closing: false, closePromise: null }
       this.workers.set(account.id, entry)
 
       worker.on('message', (message) => this.handleMessage(account.id, entry, message))
@@ -151,6 +154,61 @@ export class BrowserProfileManager {
         message: error instanceof Error ? error.message : String(error)
       }
     }
+  }
+
+  async closeAccount(accountId: number): Promise<void> {
+    const entry = this.workers.get(accountId)
+    clearManagedBrowserEndpoint(accountId)
+    if (!entry) return
+    if (entry.closePromise) return entry.closePromise
+
+    entry.closing = true
+    if (entry.pending) {
+      clearTimeout(entry.pending.timer)
+      entry.pending.resolve({
+        status: 'error',
+        profileDirectory: accountProfileDirectory(this.dataDirectory, accountId),
+        message: 'Browser đang được đóng vì lượt automation của account đã kết thúc.'
+      })
+      entry.pending = null
+    }
+
+    entry.closePromise = new Promise<void>((resolve) => {
+      let settled = false
+      let forceTimer: NodeJS.Timeout | null = null
+      let killSettleTimer: NodeJS.Timeout | null = null
+
+      const finish = (): void => {
+        if (settled) return
+        settled = true
+        if (forceTimer) clearTimeout(forceTimer)
+        if (killSettleTimer) clearTimeout(killSettleTimer)
+        if (this.workers.get(accountId) === entry) this.workers.delete(accountId)
+        clearManagedBrowserEndpoint(accountId)
+        resolve()
+      }
+
+      entry.process.once('exit', finish)
+      forceTimer = setTimeout(() => {
+        try {
+          entry.process.kill()
+        } finally {
+          killSettleTimer = setTimeout(finish, 250)
+        }
+      }, PROFILE_SHUTDOWN_TIMEOUT_MS)
+
+      try {
+        entry.process.postMessage({ type: 'shutdown' })
+      } catch {
+        try {
+          entry.process.kill()
+        } finally {
+          killSettleTimer = setTimeout(finish, 250)
+        }
+      }
+    })
+
+    await entry.closePromise
   }
 
   closeAll(): void {

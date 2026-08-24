@@ -87,7 +87,8 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
     () => appSettings.get().session,
     () => appSettings.get().network,
     () => appSettings.get().runtime,
-    () => appSettings.get().logging
+    () => appSettings.get().logging,
+    (accountId) => browserProfiles.closeAccount(accountId)
   )
   const posting = new ResilientPostingService(
     corePosting,
@@ -102,7 +103,8 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
       const accountId = payload.accountId
       if (accountId === undefined) return posting.executeSingle(payload)
       return accountExecution.run(accountId, () => posting.executeSingle(payload))
-    }
+    },
+    releaseAccount: (accountId) => accountExecution.run(accountId, () => corePosting.releaseAccount(accountId))
   }
   const rotation = new PageTabWorkerManager(
     () => new RotationService(

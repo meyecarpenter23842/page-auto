@@ -11,6 +11,7 @@ import { getManagedBrowserEndpoint } from './managedBrowserRegistry'
 import { BrowserLaunchGate } from './runtimeLaunchGate'
 
 const MANAGED_CDP_ARG_PREFIX = '--page-auto-managed-cdp='
+const ACCOUNT_SHUTDOWN_TIMEOUT_MS = 5_000
 
 interface PendingJob {
   job: PostingJobRequest
@@ -29,6 +30,10 @@ interface AccountWorkerEntry {
 
 function diagnostic(job: PostingJobRequest, message: string): void {
   console.info(`[PAGE-AUTO posting] run=${job.runId} item=${job.itemId} account=${job.accountId} ${message}`)
+}
+
+function accountDiagnostic(accountId: number, message: string): void {
+  console.info(`[PAGE-AUTO posting] account=${accountId} ${message}`)
 }
 
 export class PostingWorkerManager {
@@ -77,6 +82,54 @@ export class PostingWorkerManager {
       entry.pending = { job, resolve, timer, sent: false }
       this.dispatch(entry)
     })
+  }
+
+  async closeAccount(accountId: number): Promise<void> {
+    const entry = this.workers.get(accountId)
+    if (!entry) return
+    if (entry.pending) {
+      throw new Error(`Không thể đóng Chrome account #${accountId} khi posting job vẫn đang chạy.`)
+    }
+
+    accountDiagnostic(accountId, 'RELEASE account turn → shutdown worker/browser')
+    entry.shuttingDown = true
+
+    await new Promise<void>((resolve) => {
+      let settled = false
+      let forceTimer: NodeJS.Timeout | null = null
+      let killSettleTimer: NodeJS.Timeout | null = null
+
+      const finish = (): void => {
+        if (settled) return
+        settled = true
+        if (forceTimer) clearTimeout(forceTimer)
+        if (killSettleTimer) clearTimeout(killSettleTimer)
+        if (this.workers.get(accountId) === entry) this.workers.delete(accountId)
+        resolve()
+      }
+
+      entry.process.once('exit', finish)
+      forceTimer = setTimeout(() => {
+        accountDiagnostic(accountId, 'shutdown grace timeout → force kill worker')
+        try {
+          entry.process.kill()
+        } finally {
+          killSettleTimer = setTimeout(finish, 250)
+        }
+      }, ACCOUNT_SHUTDOWN_TIMEOUT_MS)
+
+      try {
+        entry.process.postMessage({ type: 'shutdown' })
+      } catch {
+        try {
+          entry.process.kill()
+        } finally {
+          killSettleTimer = setTimeout(finish, 250)
+        }
+      }
+    })
+
+    accountDiagnostic(accountId, 'RELEASE complete → Chrome/worker closed')
   }
 
   closeAll(): void {
