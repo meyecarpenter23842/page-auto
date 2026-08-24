@@ -20,6 +20,7 @@ import {
   type AccountRecord,
   type ImportPreset
 } from '../../../shared/accounts'
+import { openAccountProfilesBatch } from './accountProfileBatch'
 import './accounts.css'
 import './accountEnhancements.css'
 
@@ -524,6 +525,7 @@ export function AccountManager() {
   const [sort, setSort] = useState<{ id: ColumnId; direction: 'asc' | 'desc' }>({ id: 'id', direction: 'desc' })
   const [revealedSecrets, setRevealedSecrets] = useState<Set<string>>(new Set())
   const [notice, setNotice] = useState<string | null>(null)
+  const [openingProfiles, setOpeningProfiles] = useState(false)
   const [contextMenu, setContextMenu] = useState<ContextMenuState>(null)
 
   const loadAccounts = useCallback(async () => {
@@ -676,18 +678,27 @@ export function AccountManager() {
   }
 
   const openProfile = async () => {
-    const account = selected[0]
-    if (selected.length !== 1 || !account) return
-    const result = await window.pageAuto.openAccountProfile({ accountId: account.id })
-    if (result.status === 'error') {
-      setNotice(`Không mở được Chrome: ${result.message ?? 'lỗi không xác định'}`)
-    } else if (result.status === 'already_open') {
-      setNotice(`Chrome của ${account.uid} đang mở; đã yêu cầu kiểm tra lại phiên đăng nhập.`)
-    } else {
-      setNotice(`Đã mở Chrome cho ${account.uid} và bắt đầu kiểm tra phiên đăng nhập.`)
-    }
+    if (selected.length === 0 || openingProfiles) return
+    const targets = selected.map((account) => ({ id: account.id, uid: account.uid }))
+    setOpeningProfiles(true)
     setContextMenu(null)
-    await loadAccounts()
+    try {
+      const outcomes = await openAccountProfilesBatch(
+        targets,
+        (accountId) => window.pageAuto.openAccountProfile({ accountId })
+      )
+      const started = outcomes.filter((item) => item.status === 'started').length
+      const alreadyOpen = outcomes.filter((item) => item.status === 'already_open').length
+      const failed = outcomes.filter((item) => item.status === 'error')
+      const firstFailure = failed[0]
+      setNotice(
+        `Đã xử lý ${outcomes.length} Chrome: mở mới ${started}, đang mở ${alreadyOpen}, lỗi ${failed.length}`
+        + (firstFailure ? ` · ${firstFailure.uid}: ${firstFailure.message ?? 'lỗi không xác định'}` : '.')
+      )
+      await loadAccounts()
+    } finally {
+      setOpeningProfiles(false)
+    }
   }
 
   const onImportComplete = async (result: AccountImportResult, operation: AccountImportOperation) => {
@@ -743,7 +754,7 @@ export function AccountManager() {
             <button className="button danger" type="button" disabled={selectedIds.size === 0} onClick={() => void deleteSelected()}>Xóa</button>
           </div>
           <div className="toolbar-group">
-            <button className="button secondary" type="button" disabled={selected.length !== 1} onClick={() => void openProfile()}>Mở Chrome</button>
+            <button className="button secondary" type="button" disabled={selectedIds.size === 0 || openingProfiles} onClick={() => void openProfile()}>{openingProfiles ? 'Đang mở…' : selected.length > 1 ? `Mở ${selected.length} Chrome` : 'Mở Chrome'}</button>
             <button className="button secondary" type="button" disabled title="Kiểm tra phiên được thực hiện khi mở Chrome hoặc trước mỗi lượt đăng">Kiểm tra phiên</button>
             <button className="button secondary" type="button" disabled={selectedIds.size === 0} onClick={() => void assignCategory()}>Gán nhóm</button>
             <div className="column-settings-anchor">
@@ -806,7 +817,7 @@ export function AccountManager() {
         <div className="account-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onPointerDown={(event) => event.stopPropagation()}>
           <div className="context-menu-meta">Đã chọn {selected.length} tài khoản</div>
           <button type="button" disabled={selected.length !== 1} onClick={() => { setEditorAccount(selected[0] ?? null); setContextMenu(null) }}>Sửa tài khoản</button>
-          <button type="button" disabled={selected.length !== 1} onClick={() => void openProfile()}>Mở Chrome</button>
+          <button type="button" disabled={selectedIds.size === 0 || openingProfiles} onClick={() => void openProfile()}>{openingProfiles ? 'Đang mở…' : selected.length > 1 ? `Mở ${selected.length} Chrome` : 'Mở Chrome'}</button>
           <button type="button" disabled title="Kiểm tra phiên được thực hiện khi mở Chrome hoặc trước mỗi lượt đăng">Kiểm tra phiên</button>
           <button type="button" disabled={selectedIds.size === 0} onClick={() => void assignCategory()}>Gán nhóm</button>
           <button type="button" disabled={selectedIds.size === 0} onClick={() => void copySelectedUids()}>Sao chép UID</button>
