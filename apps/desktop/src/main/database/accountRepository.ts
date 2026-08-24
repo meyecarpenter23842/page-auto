@@ -10,7 +10,7 @@ import type {
   ImportPreset,
   SaveImportPresetInput
 } from '../../shared/accounts'
-import { parseAccountImport } from './accountImport'
+import { parseAccountImport, resolveImportOperation } from './accountImport'
 
 const ACCOUNT_SELECT = `
   SELECT
@@ -153,9 +153,7 @@ export class AccountRepository {
 
   create(input: AccountDraft): AccountRecord {
     const account = normalizeDraft(input)
-    if (!account.uid) {
-      throw new Error('UID/UserName là bắt buộc.')
-    }
+    if (!account.uid) throw new Error('UID/UserName là bắt buộc.')
 
     const now = Date.now()
     const result = this.client
@@ -177,18 +175,13 @@ export class AccountRepository {
       .run({ ...account, createdAt: now, updatedAt: now })
 
     const created = this.getById(Number(result.lastInsertRowid))
-    if (!created) {
-      throw new Error('Không thể đọc lại account vừa tạo.')
-    }
-
+    if (!created) throw new Error('Không thể đọc lại account vừa tạo.')
     return created
   }
 
   update(id: number, patch: Partial<AccountDraft>): AccountRecord {
     const current = this.getById(id)
-    if (!current) {
-      throw new Error(`Không tìm thấy account #${id}.`)
-    }
+    if (!current) throw new Error(`Không tìm thấy account #${id}.`)
 
     const merged: AccountDraft = {
       uid: patch.uid !== undefined ? patch.uid : current.uid,
@@ -253,17 +246,13 @@ export class AccountRepository {
       .run({ ...account, id, updatedAt: Date.now() })
 
     const updated = this.getById(id)
-    if (!updated) {
-      throw new Error('Không thể đọc lại account vừa cập nhật.')
-    }
+    if (!updated) throw new Error('Không thể đọc lại account vừa cập nhật.')
     return updated
   }
 
   delete(ids: number[]): number {
     const uniqueIds = [...new Set(ids.filter((id) => Number.isInteger(id) && id > 0))]
-    if (uniqueIds.length === 0) {
-      return 0
-    }
+    if (uniqueIds.length === 0) return 0
 
     const placeholders = uniqueIds.map(() => '?').join(', ')
     return this.client.prepare(`DELETE FROM accounts WHERE id IN (${placeholders})`).run(...uniqueIds).changes
@@ -271,6 +260,7 @@ export class AccountRepository {
 
   import(request: AccountImportRequest): AccountImportResult {
     const parsed = parseAccountImport(request)
+    const operation = resolveImportOperation(request)
     const result: AccountImportResult = {
       imported: 0,
       updated: 0,
@@ -281,26 +271,44 @@ export class AccountRepository {
     const run = this.client.transaction(() => {
       for (const draft of parsed.accounts) {
         const existing = this.getByUid(draft.uid)
-        if (!existing) {
+
+        if (operation === 'insert') {
+          if (existing) {
+            result.skipped += 1
+            continue
+          }
+
           try {
             this.create(draft)
             result.imported += 1
           } catch (error) {
-            result.errors.push({
-              line: 0,
-              message: error instanceof Error ? error.message : String(error)
-            })
+            result.errors.push({ line: 0, message: error instanceof Error ? error.message : String(error) })
           }
           continue
         }
 
-        if (request.duplicatePolicy === 'skip') {
+        if (!existing) {
           result.skipped += 1
+          result.errors.push({ line: 0, message: `Không tìm thấy UID/UserName để cập nhật: ${draft.uid}` })
           continue
         }
 
-        this.update(existing.id, draft)
-        result.updated += 1
+        // UID is the lookup key for batch update; never rewrite it from the
+        // import payload. Missing properties stay unchanged, explicit nulls
+        // clear existing values.
+        const { uid: _uid, ...patch } = draft
+        if (Object.keys(patch).length === 0) {
+          result.skipped += 1
+          result.errors.push({ line: 0, message: `Không có trường nào để cập nhật cho UID/UserName: ${draft.uid}` })
+          continue
+        }
+
+        try {
+          this.update(existing.id, patch)
+          result.updated += 1
+        } catch (error) {
+          result.errors.push({ line: 0, message: error instanceof Error ? error.message : String(error) })
+        }
       }
     })
 
@@ -329,9 +337,7 @@ export class AccountRepository {
 
   saveImportPreset(input: SaveImportPresetInput): ImportPreset {
     const name = input.name.trim()
-    if (!name) {
-      throw new Error('Tên preset là bắt buộc.')
-    }
+    if (!name) throw new Error('Tên preset là bắt buộc.')
 
     const now = Date.now()
     this.client
@@ -358,9 +364,7 @@ export class AccountRepository {
       `)
       .get(name) as Record<string, unknown> | undefined
 
-    if (!preset) {
-      throw new Error('Không thể đọc lại preset vừa lưu.')
-    }
+    if (!preset) throw new Error('Không thể đọc lại preset vừa lưu.')
 
     return {
       id: Number(preset.id),
@@ -381,9 +385,7 @@ export class AccountRepository {
       .prepare('SELECT layout_json AS layoutJson FROM column_layouts WHERE view_key = ?')
       .get(viewKey) as { layoutJson: string } | undefined
 
-    if (!row) {
-      return null
-    }
+    if (!row) return null
 
     try {
       return JSON.parse(row.layoutJson) as AccountColumnLayout

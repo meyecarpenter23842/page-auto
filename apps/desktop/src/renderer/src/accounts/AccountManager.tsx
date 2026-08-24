@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type FormEvent,
+  type MouseEvent as ReactMouseEvent
+} from 'react'
 import {
   ACCOUNT_IMPORT_FIELDS,
   ACCOUNT_STATUSES,
@@ -7,11 +14,13 @@ import {
   type AccountDraft,
   type AccountImportField,
   type AccountImportMapping,
+  type AccountImportOperation,
   type AccountImportResult,
   type AccountRecord,
   type ImportPreset
 } from '../../../shared/accounts'
 import './accounts.css'
+import './accountEnhancements.css'
 
 type ColumnId = keyof AccountRecord
 
@@ -21,6 +30,17 @@ type GridColumn = {
   defaultVisible: boolean
   sensitive?: boolean
   width: number
+}
+
+type ContextMenuState = {
+  x: number
+  y: number
+} | null
+
+type PreviewRow = {
+  line: number
+  raw: string
+  values: string[]
 }
 
 const accountStatusLabels: Record<AccountRecord['status'], string> = {
@@ -104,6 +124,7 @@ const DEFAULT_CUSTOM_MAPPING: AccountImportMapping = [
   'note'
 ]
 const MIN_CUSTOM_MAPPING_COLUMNS = DEFAULT_CUSTOM_MAPPING.length
+const PREVIEW_LIMIT = 12
 
 function formatDate(value: unknown): string {
   if (typeof value !== 'number' || !value) return '—'
@@ -115,11 +136,6 @@ function formatCellValue(account: AccountRecord, column: GridColumn): string {
   if (value === null || value === undefined || value === '') return '—'
   if (['lastUsedAt', 'lastCookieCheck', 'createdAt', 'updatedAt'].includes(column.id)) return formatDate(value)
   return String(value)
-}
-
-function samplePreview(values: string[], index: number): string {
-  const value = values[index] ?? ''
-  return value ? ` · ${value.slice(0, 24)}` : ''
 }
 
 function maskSecret(value: string): string {
@@ -265,49 +281,58 @@ function AccountEditor({ account, onClose, onSaved }: AccountEditorProps) {
 }
 
 interface ImportDialogProps {
-  mode: 'quick' | 'custom'
+  operation: AccountImportOperation
   presets: ImportPreset[]
   onClose: () => void
-  onImported: (result: AccountImportResult) => void
+  onImported: (result: AccountImportResult, operation: AccountImportOperation) => void
   onPresetSaved: (preset: ImportPreset) => void
 }
 
-function ImportDialog({ mode, presets, onClose, onImported, onPresetSaved }: ImportDialogProps) {
+function ImportDialog({ operation, presets, onClose, onImported, onPresetSaved }: ImportDialogProps) {
   const [rawText, setRawText] = useState('')
   const [delimiter, setDelimiter] = useState('|')
-  const [mapping, setMapping] = useState<AccountImportMapping>(() => mode === 'quick' ? ['uid', 'cookie'] : [...DEFAULT_CUSTOM_MAPPING])
-  const [duplicatePolicy, setDuplicatePolicy] = useState<'skip' | 'update'>('skip')
+  const [mapping, setMapping] = useState<AccountImportMapping>(() => [...DEFAULT_CUSTOM_MAPPING])
   const [presetName, setPresetName] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const sampleValues = useMemo(() => {
-    const line = rawText.split(/\r?\n/).find((item) => item.trim()) ?? ''
-    return line ? line.split(delimiter || '|').map((value) => value.trim()) : []
-  }, [rawText, delimiter])
+  const previewRows = useMemo<PreviewRow[]>(() => rawText
+    .split(/\r?\n/)
+    .map((raw, index) => ({ line: index + 1, raw, values: raw.split(delimiter || '|') }))
+    .filter((row) => row.raw.trim()), [rawText, delimiter])
+
+  const maxDataColumns = useMemo(() => previewRows.reduce((max, row) => Math.max(max, row.values.length), 0), [previewRows])
+  const distinctColumnCounts = useMemo(() => new Set(previewRows.map((row) => row.values.length)), [previewRows])
 
   useEffect(() => {
-    if (mode !== 'custom') return
-    setMapping((current) => {
-      const targetLength = Math.max(sampleValues.length, MIN_CUSTOM_MAPPING_COLUMNS)
-      return current.length >= targetLength ? current : normalizeCustomMapping(current, targetLength)
-    })
-  }, [mode, sampleValues.length])
+    setMapping((current) => normalizeCustomMapping(current, Math.max(maxDataColumns, MIN_CUSTOM_MAPPING_COLUMNS)))
+  }, [maxDataColumns])
 
   const applyPreset = (nextDelimiter: string, nextMapping: AccountImportMapping) => {
     setDelimiter(nextDelimiter)
-    setMapping(mode === 'custom' ? normalizeCustomMapping([...nextMapping]) : [...nextMapping])
+    setMapping(normalizeCustomMapping([...nextMapping], Math.max(maxDataColumns, nextMapping.length)))
   }
 
   const addMappingColumn = () => setMapping((current) => [...current, 'ignore'])
   const removeMappingColumn = () => setMapping((current) => current.length > MIN_CUSTOM_MAPPING_COLUMNS ? current.slice(0, -1) : current)
 
   const importNow = async () => {
+    const uidMappings = mapping.filter((field) => field === 'uid').length
+    if (uidMappings !== 1) {
+      setError('Cần ánh xạ đúng 1 cột UID/Tên đăng nhập.')
+      return
+    }
+
+    if (operation === 'update' && !mapping.some((field) => field !== 'uid' && field !== 'ignore')) {
+      setError('Cần chọn ít nhất 1 trường để cập nhật ngoài UID.')
+      return
+    }
+
     setError(null)
     setSaving(true)
     try {
-      const result = await window.pageAuto.importAccounts({ rawText, delimiter, mapping, duplicatePolicy })
-      onImported(result)
+      const result = await window.pageAuto.importAccounts({ rawText, delimiter, mapping, operation })
+      onImported(result, operation)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -331,19 +356,30 @@ function ImportDialog({ mode, presets, onClose, onImported, onPresetSaved }: Imp
 
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
-      <div className="modal import-modal" onMouseDown={(event) => event.stopPropagation()}>
+      <div className="modal import-modal account-import-v2" onMouseDown={(event) => event.stopPropagation()}>
         <div className="modal-header">
-          <div><p className="eyebrow">Nhập tài khoản</p><h2>{mode === 'quick' ? 'Nhập nhanh' : 'Nhập tùy chỉnh'}</h2></div>
+          <div>
+            <p className="eyebrow">Quản lý tài khoản</p>
+            <h2>{operation === 'insert' ? 'Nhập tài khoản' : 'Cập nhật tài khoản theo UID'}</h2>
+          </div>
           <button className="icon-button" type="button" onClick={onClose}>×</button>
+        </div>
+
+        <div className="import-operation-note">
+          {operation === 'insert'
+            ? 'UID đã tồn tại sẽ được bỏ qua. Dấu phân cách giữ nguyên vị trí cột trống.'
+            : 'UID là khóa tìm tài khoản. Bỏ qua = giữ dữ liệu cũ; ô có cột nhưng để trống = xóa dữ liệu cũ; cột không tồn tại trong dòng = giữ nguyên.'}
         </div>
 
         <div className="import-toolbar-row">
           <label><span>Dấu phân cách</span><input className="delimiter-input" value={delimiter} maxLength={8} onChange={(e) => setDelimiter(e.target.value)} /></label>
-          <label><span>Khi UID trùng</span><select value={duplicatePolicy} onChange={(e) => setDuplicatePolicy(e.target.value as 'skip' | 'update')}><option value="skip">Bỏ qua</option><option value="update">Cập nhật dữ liệu cũ</option></select></label>
-          {mode === 'custom' ? <span className="mapping-format-hint">Mặc định: UID | Mật khẩu | 2FA | Cookie | Email | Mật khẩu email | Proxy | User-Agent | Ghi chú</span> : null}
+          <span className="mapping-format-hint">Mặc định: UID | Mật khẩu | 2FA | Cookie | Email | Mật khẩu email | Proxy | User-Agent | Ghi chú</span>
         </div>
 
-        <label className="paste-area"><span>Dán dữ liệu — mỗi tài khoản một dòng</span><textarea rows={8} value={rawText} onChange={(e) => setRawText(e.target.value)} placeholder="100001|password|2fa|cookie|email|passmail|proxy|useragent|note" /></label>
+        <label className="paste-area">
+          <span>Dán dữ liệu — mỗi tài khoản một dòng</span>
+          <textarea rows={7} value={rawText} onChange={(e) => setRawText(e.target.value)} placeholder="100001|password|2fa|cookie|email|passmail|proxy|useragent|note" />
+        </label>
 
         <div className="preset-strip">
           {[...BUILTIN_IMPORT_PRESETS.map((preset) => ({ ...preset, id: preset.key })), ...presets].map((preset) => (
@@ -351,39 +387,79 @@ function ImportDialog({ mode, presets, onClose, onImported, onPresetSaved }: Imp
           ))}
         </div>
 
-        {mode === 'custom' ? (
-          <div className="mapping-panel">
-            <div className="mapping-header">
-              <div><strong>Ánh xạ thứ tự cột</strong><span>{sampleValues.length ? `${sampleValues.length} cột dữ liệu · ` : ''}{mapping.length} ô ánh xạ</span></div>
-              <div className="mapping-actions">
-                <button className="button secondary compact" type="button" onClick={removeMappingColumn} disabled={mapping.length <= MIN_CUSTOM_MAPPING_COLUMNS}>− Cột</button>
-                <button className="button secondary compact" type="button" onClick={addMappingColumn}>+ Cột</button>
-              </div>
+        <div className="mapping-panel">
+          <div className="mapping-header">
+            <div>
+              <strong>Ánh xạ thứ tự cột</strong>
+              <span>{maxDataColumns ? `${maxDataColumns} cột dữ liệu · ` : ''}{mapping.length} ô ánh xạ</span>
             </div>
-            <div className="mapping-grid">
-              {mapping.map((field, index) => (
-                <label key={index}>
-                  <span>Cột {index + 1}{samplePreview(sampleValues, index)}</span>
-                  <select value={field} onChange={(e) => setMapping((current) => current.map((item, itemIndex) => itemIndex === index ? e.target.value as AccountImportField | 'ignore' : item))}>
-                    <option value="ignore">Bỏ qua</option>
-                    {ACCOUNT_IMPORT_FIELDS.map((item) => <option key={item} value={item}>{importFieldLabels[item]}</option>)}
-                  </select>
-                </label>
-              ))}
-            </div>
-            <div className="save-preset-row">
-              <input value={presetName} onChange={(e) => setPresetName(e.target.value)} placeholder="Tên mẫu tùy chỉnh" />
-              <button className="button secondary" type="button" onClick={() => void savePreset()}>Lưu mẫu</button>
+            <div className="mapping-actions">
+              <button className="button secondary compact" type="button" onClick={removeMappingColumn} disabled={mapping.length <= MIN_CUSTOM_MAPPING_COLUMNS}>− Cột</button>
+              <button className="button secondary compact" type="button" onClick={addMappingColumn}>+ Cột</button>
             </div>
           </div>
-        ) : (
-          <div className="mapping-summary">Định dạng hiện tại: {mapping.map((field) => importFieldLabels[field]).join(` ${delimiter} `)}</div>
-        )}
+
+          <div className="mapping-grid">
+            {mapping.map((field, index) => (
+              <label key={index}>
+                <span>Cột {index + 1}</span>
+                <select value={field} onChange={(e) => setMapping((current) => current.map((item, itemIndex) => itemIndex === index ? e.target.value as AccountImportField | 'ignore' : item))}>
+                  <option value="ignore">Bỏ qua</option>
+                  {ACCOUNT_IMPORT_FIELDS.map((item) => <option key={item} value={item}>{importFieldLabels[item]}</option>)}
+                </select>
+              </label>
+            ))}
+          </div>
+
+          <div className="import-preview-heading">
+            <strong>Xem trước dữ liệu</strong>
+            <span>{previewRows.length} dòng{distinctColumnCounts.size > 1 ? ' · có dòng lệch số cột' : ''}</span>
+          </div>
+
+          <div className="import-preview-wrap">
+            <table className="import-preview-table">
+              <thead>
+                <tr>
+                  <th>Dòng</th>
+                  {mapping.map((field, index) => <th key={index}>Cột {index + 1}<small>{importFieldLabels[field]}</small></th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {previewRows.slice(0, PREVIEW_LIMIT).map((row) => {
+                  const mismatched = distinctColumnCounts.size > 1 && row.values.length !== maxDataColumns
+                  return (
+                    <tr key={row.line} className={mismatched ? 'preview-row-warning' : ''}>
+                      <td className="preview-line-number">{row.line}{mismatched ? ' ⚠' : ''}</td>
+                      {mapping.map((_field, index) => {
+                        const exists = index < row.values.length
+                        const value = exists ? (row.values[index] ?? '').trim() : ''
+                        return (
+                          <td key={index} className={!exists ? 'preview-cell-missing' : value === '' ? 'preview-cell-empty' : ''} title={value || undefined}>
+                            {!exists ? '[Không có cột]' : value === '' ? '[Trống]' : value}
+                          </td>
+                        )
+                      })}
+                    </tr>
+                  )
+                })}
+                {previewRows.length === 0 ? <tr><td colSpan={mapping.length + 1} className="preview-empty-state">Dán dữ liệu để xem từng cột trước khi thực hiện.</td></tr> : null}
+              </tbody>
+            </table>
+          </div>
+          {previewRows.length > PREVIEW_LIMIT ? <div className="preview-more">Đang xem {PREVIEW_LIMIT}/{previewRows.length} dòng đầu.</div> : null}
+
+          <div className="save-preset-row">
+            <input value={presetName} onChange={(e) => setPresetName(e.target.value)} placeholder="Tên mẫu tùy chỉnh" />
+            <button className="button secondary" type="button" onClick={() => void savePreset()}>Lưu mẫu</button>
+          </div>
+        </div>
 
         {error ? <div className="inline-error">{error}</div> : null}
         <div className="modal-actions">
           <button className="button secondary" type="button" onClick={onClose}>Hủy</button>
-          <button className="button primary" type="button" disabled={saving || !rawText.trim()} onClick={() => void importNow()}>{saving ? 'Đang nhập…' : 'Nhập tài khoản'}</button>
+          <button className="button primary" type="button" disabled={saving || !rawText.trim()} onClick={() => void importNow()}>
+            {saving ? 'Đang xử lý…' : operation === 'insert' ? 'Nhập tài khoản' : 'Cập nhật tài khoản'}
+          </button>
         </div>
       </div>
     </div>
@@ -441,11 +517,12 @@ export function AccountManager() {
   const [layout, setLayout] = useState<AccountColumnLayout>(defaultLayout)
   const [columnManagerOpen, setColumnManagerOpen] = useState(false)
   const [editorAccount, setEditorAccount] = useState<AccountRecord | null | undefined>(undefined)
-  const [importMode, setImportMode] = useState<'quick' | 'custom' | null>(null)
+  const [importOperation, setImportOperation] = useState<AccountImportOperation | null>(null)
   const [presets, setPresets] = useState<ImportPreset[]>([])
   const [sort, setSort] = useState<{ id: ColumnId; direction: 'asc' | 'desc' }>({ id: 'id', direction: 'desc' })
   const [revealedSecrets, setRevealedSecrets] = useState<Set<string>>(new Set())
   const [notice, setNotice] = useState<string | null>(null)
+  const [contextMenu, setContextMenu] = useState<ContextMenuState>(null)
 
   const loadAccounts = useCallback(async () => {
     setLoading(true)
@@ -469,6 +546,21 @@ export function AccountManager() {
       setPresets(savedPresets)
     })
   }, [])
+
+  useEffect(() => {
+    if (!contextMenu) return
+    const close = () => setContextMenu(null)
+    window.addEventListener('pointerdown', close)
+    window.addEventListener('blur', close)
+    window.addEventListener('resize', close)
+    window.addEventListener('scroll', close, true)
+    return () => {
+      window.removeEventListener('pointerdown', close)
+      window.removeEventListener('blur', close)
+      window.removeEventListener('resize', close)
+      window.removeEventListener('scroll', close, true)
+    }
+  }, [contextMenu])
 
   const persistLayout = (next: AccountColumnLayout) => {
     setLayout(next)
@@ -504,6 +596,7 @@ export function AccountManager() {
     const count = await window.pageAuto.deleteAccounts({ ids: [...selectedIds] })
     setNotice(`Đã xóa ${count} tài khoản.`)
     setSelectedIds(new Set())
+    setContextMenu(null)
     await loadAccounts()
   }
 
@@ -514,6 +607,7 @@ export function AccountManager() {
     if (category === null) return
     for (const account of selected) await window.pageAuto.updateAccount({ id: account.id, patch: { category } })
     setNotice(`Đã gán nhóm cho ${selected.length} tài khoản.`)
+    setContextMenu(null)
     await loadAccounts()
   }
 
@@ -528,12 +622,14 @@ export function AccountManager() {
     } else {
       setNotice(`Đã mở Chrome cho ${account.uid} và bắt đầu kiểm tra phiên đăng nhập.`)
     }
+    setContextMenu(null)
     await loadAccounts()
   }
 
-  const onImportComplete = async (result: AccountImportResult) => {
-    setImportMode(null)
-    setNotice(`Nhập dữ liệu: thêm ${result.imported}, cập nhật ${result.updated}, bỏ qua ${result.skipped}${result.errors.length ? `, lỗi ${result.errors.length}` : ''}.`)
+  const onImportComplete = async (result: AccountImportResult, operation: AccountImportOperation) => {
+    setImportOperation(null)
+    const action = operation === 'insert' ? 'Nhập' : 'Cập nhật'
+    setNotice(`${action} dữ liệu: thêm ${result.imported}, cập nhật ${result.updated}, bỏ qua ${result.skipped}${result.errors.length ? `, lỗi ${result.errors.length}` : ''}.`)
     await loadAccounts()
   }
 
@@ -546,13 +642,40 @@ export function AccountManager() {
     return (
       <span className="secret-cell">
         <span title={revealed ? value : undefined}>{revealed ? value : maskSecret(value)}</span>
-        <button type="button" onClick={() => setRevealedSecrets((current) => {
-          const next = new Set(current)
-          if (next.has(key)) next.delete(key); else next.add(key)
-          return next
-        })}>{revealed ? 'Ẩn' : 'Hiện'}</button>
+        <button type="button" onClick={(event) => {
+          event.stopPropagation()
+          setRevealedSecrets((current) => {
+            const next = new Set(current)
+            if (next.has(key)) next.delete(key); else next.add(key)
+            return next
+          })
+        }}>{revealed ? 'Ẩn' : 'Hiện'}</button>
       </span>
     )
+  }
+
+  const selectRow = (account: AccountRecord, event: ReactMouseEvent<HTMLTableRowElement>) => {
+    if (event.target instanceof Element && event.target.closest('button,input,select,a')) return
+    setSelectedIds((current) => {
+      if (event.ctrlKey || event.metaKey) {
+        const next = new Set(current)
+        if (next.has(account.id)) next.delete(account.id); else next.add(account.id)
+        return next
+      }
+      return new Set([account.id])
+    })
+  }
+
+  const openContextMenu = (account: AccountRecord, event: ReactMouseEvent<HTMLTableRowElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+    setSelectedIds((current) => current.has(account.id) ? current : new Set([account.id]))
+    const menuWidth = 190
+    const menuHeight = 176
+    setContextMenu({
+      x: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
+      y: Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8))
+    })
   }
 
   return (
@@ -561,8 +684,8 @@ export function AccountManager() {
         <div className="account-toolbar">
           <div className="toolbar-group">
             <button className="button primary" type="button" onClick={() => setEditorAccount(null)}>+ Thêm tài khoản</button>
-            <button className="button secondary" type="button" onClick={() => setImportMode('quick')}>Nhập nhanh</button>
-            <button className="button secondary" type="button" onClick={() => setImportMode('custom')}>Nhập tùy chỉnh</button>
+            <button className="button secondary" type="button" onClick={() => setImportOperation('insert')}>Nhập tài khoản</button>
+            <button className="button secondary" type="button" onClick={() => setImportOperation('update')}>Cập nhật tài khoản</button>
             <button className="button secondary" type="button" disabled={selected.length !== 1} onClick={() => setEditorAccount(selected[0] ?? null)}>Sửa</button>
             <button className="button danger" type="button" disabled={selectedIds.size === 0} onClick={() => void deleteSelected()}>Xóa</button>
           </div>
@@ -594,8 +717,14 @@ export function AccountManager() {
             </tr></thead>
             <tbody>
               {sortedAccounts.map((account) => (
-                <tr key={account.id} className={selectedIds.has(account.id) ? 'selected-row' : ''} onDoubleClick={() => setEditorAccount(account)}>
-                  <td className="select-column"><input type="checkbox" checked={selectedIds.has(account.id)} onChange={() => setSelectedIds((current) => { const next = new Set(current); if (next.has(account.id)) next.delete(account.id); else next.add(account.id); return next })} /></td>
+                <tr
+                  key={account.id}
+                  className={selectedIds.has(account.id) ? 'selected-row' : ''}
+                  onClick={(event) => selectRow(account, event)}
+                  onContextMenu={(event) => openContextMenu(account, event)}
+                  onDoubleClick={() => setEditorAccount(account)}
+                >
+                  <td className="select-column"><input type="checkbox" checked={selectedIds.has(account.id)} onClick={(event) => event.stopPropagation()} onChange={() => setSelectedIds((current) => { const next = new Set(current); if (next.has(account.id)) next.delete(account.id); else next.add(account.id); return next })} /></td>
                   {visibleColumns.map((column) => <td key={column.id} style={{ width: layout.widths[column.id], maxWidth: layout.widths[column.id] }}>{renderCell(account, column)}</td>)}
                 </tr>
               ))}
@@ -605,8 +734,18 @@ export function AccountManager() {
         </div>
       </div>
 
+      {contextMenu ? (
+        <div className="account-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onPointerDown={(event) => event.stopPropagation()}>
+          <button type="button" disabled={selected.length !== 1} onClick={() => { setEditorAccount(selected[0] ?? null); setContextMenu(null) }}>Sửa tài khoản</button>
+          <button type="button" disabled={selected.length !== 1} onClick={() => void openProfile()}>Mở Chrome</button>
+          <button type="button" disabled={selectedIds.size === 0} onClick={() => void assignCategory()}>Gán nhóm</button>
+          <div className="context-menu-separator" />
+          <button className="context-danger" type="button" disabled={selectedIds.size === 0} onClick={() => void deleteSelected()}>Xóa tài khoản</button>
+        </div>
+      ) : null}
+
       {editorAccount !== undefined ? <AccountEditor account={editorAccount} onClose={() => setEditorAccount(undefined)} onSaved={async () => { setEditorAccount(undefined); setNotice('Đã lưu tài khoản.'); await loadAccounts() }} /> : null}
-      {importMode ? <ImportDialog mode={importMode} presets={presets} onClose={() => setImportMode(null)} onImported={(result) => void onImportComplete(result)} onPresetSaved={(preset) => setPresets((current) => [...current.filter((item) => item.id !== preset.id), preset].sort((a, b) => a.name.localeCompare(b.name)))} /> : null}
+      {importOperation ? <ImportDialog operation={importOperation} presets={presets} onClose={() => setImportOperation(null)} onImported={(result, operation) => void onImportComplete(result, operation)} onPresetSaved={(preset) => setPresets((current) => [...current.filter((item) => item.id !== preset.id), preset].sort((a, b) => a.name.localeCompare(b.name)))} /> : null}
     </section>
   )
 }

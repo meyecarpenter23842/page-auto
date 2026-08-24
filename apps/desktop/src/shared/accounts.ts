@@ -68,12 +68,15 @@ export const ACCOUNT_IMPORT_FIELDS = [
 export type AccountImportField = (typeof ACCOUNT_IMPORT_FIELDS)[number]
 export type AccountImportMapping = Array<AccountImportField | 'ignore'>
 export type DuplicatePolicy = 'skip' | 'update'
+export type AccountImportOperation = 'insert' | 'update'
 
 export interface AccountImportRequest {
   rawText: string
   delimiter: string
   mapping: AccountImportMapping
-  duplicatePolicy: DuplicatePolicy
+  /** @deprecated Kept for backward-compatible callers/tests. Prefer operation. */
+  duplicatePolicy?: DuplicatePolicy
+  operation?: AccountImportOperation
 }
 
 export interface AccountImportIssue {
