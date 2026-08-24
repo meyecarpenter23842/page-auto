@@ -213,4 +213,42 @@ describe('RotationService', () => {
     expect(resumed.nextActionAt).toBeNull()
     service.dispose()
   })
+
+  it('restores a paused run and restarts the scheduler when Resume is clicked after app restart', async () => {
+    const store = new FakeRunStore()
+    store.details = makeRun(1)
+    store.details.run.status = 'paused'
+    store.details.run.snapshot.accounts = [{ accountId: 101, enabled: true, sortOrder: 0, postsPerTurn: 1 }]
+    store.details.run.snapshot.schedules = [{ dayOfWeek: 1, startMinute: 460, endMinute: 600, enabled: true, sortOrder: 0 }]
+
+    const accountCalls: number[] = []
+    const posting = {
+      executeSingle: async (payload: { runId: number; accountId?: number }): Promise<ExecuteSinglePostingJobResult> => {
+        const accountId = payload.accountId ?? -1
+        accountCalls.push(accountId)
+        const run = store.finishOne()
+        return {
+          accountId,
+          item: item(1, payload.runId),
+          result: { status: 'success', message: 'ok' },
+          run
+        }
+      }
+    }
+    const service = new RotationService(store, posting, {
+      now: () => new Date(2026, 7, 24, 7, 50),
+      random: () => 0,
+      sleep: async () => undefined
+    })
+
+    const resumed = service.resume({ pageTabId: 10 })
+    expect(resumed.status).toBe('running')
+    expect(resumed.message).toContain('khôi phục')
+
+    await service.waitForSettled()
+
+    expect(accountCalls).toEqual([101])
+    expect(store.resumeCalls).toBe(1)
+    expect(service.status({ pageTabId: 10 }).status).toBe('completed')
+  })
 })

@@ -127,19 +127,7 @@ export class RotationService {
       disposed: false
     }
 
-    this.session = session
-    this.loopPromise = this.runLoop(session).catch((cause) => {
-      if (session.disposed) return
-      session.status = 'error'
-      session.message = cause instanceof Error ? cause.message : String(cause)
-      session.nextActionAt = null
-      try {
-        if (session.run.run.status === 'running') session.run = this.runs.pause(session.runId)
-      } catch {
-        // Keep the original runtime error visible.
-      }
-    })
-
+    this.attachSession(session)
     return snapshotSession(session)
   }
 
@@ -176,12 +164,20 @@ export class RotationService {
   }
 
   resume(payload: RotationPageTabPayload): RotationRuntimeSnapshot {
-    const session = this.requireSession(payload.pageTabId)
-    if (session.status === 'completed') return snapshotSession(session)
+    const existing = this.session?.pageTabId === payload.pageTabId ? this.session : null
+    const session = existing ?? this.restoreSession(payload.pageTabId)
+    const restoredAfterRestart = existing === null
+
+    if (session.status === 'completed') {
+      if (restoredAfterRestart) this.session = session
+      return snapshotSession(session)
+    }
     if (session.status === 'error') throw new Error('Vòng chạy đang lỗi; hãy bắt đầu lại sau khi xử lý nguyên nhân.')
 
     session.manualPaused = false
-    session.message = 'Đang tiếp tục vòng chạy tài khoản.'
+    session.message = restoredAfterRestart
+      ? 'Đã khôi phục phiên chạy sau khi khởi động lại ứng dụng.'
+      : 'Đang tiếp tục vòng chạy tài khoản.'
     const schedules = this.schedulesFor(session)
     if (isWithinSchedule(schedules, this.clock.now())) {
       if (session.run.run.status !== 'running') session.run = this.runs.resume(session.runId)
@@ -194,6 +190,8 @@ export class RotationService {
       session.status = 'waiting_window'
       session.nextActionAt = nextScheduleStart(schedules, this.clock.now())?.getTime() ?? null
     }
+
+    if (restoredAfterRestart) this.attachSession(session)
     return snapshotSession(session)
   }
 
@@ -210,6 +208,53 @@ export class RotationService {
       } catch {
         // Shutdown should continue even when DB state already changed.
       }
+    }
+  }
+
+  private attachSession(session: RotationSession): void {
+    this.session = session
+    this.loopPromise = this.runLoop(session).catch((cause) => {
+      if (session.disposed) return
+      session.status = 'error'
+      session.message = cause instanceof Error ? cause.message : String(cause)
+      session.nextActionAt = null
+      try {
+        if (session.run.run.status === 'running') session.run = this.runs.pause(session.runId)
+      } catch {
+        // Keep the original runtime error visible.
+      }
+    })
+  }
+
+  private restoreSession(pageTabId: number): RotationSession {
+    const run = this.runs.getLatestForPageTab(pageTabId)
+    if (!run) {
+      throw new Error(`Page Tab #${pageTabId} chưa có phiên chạy để tiếp tục. Hãy bấm Bắt đầu để tạo phiên mới.`)
+    }
+    if (run.run.status === 'stopped' || run.run.status === 'failed') {
+      throw new Error(`Phiên #${run.run.id} đã ${run.run.status === 'stopped' ? 'dừng' : 'thất bại'}; hãy bấm Bắt đầu để tạo phiên mới.`)
+    }
+
+    const accounts = sortedEnabledAccounts(run)
+    if (accounts.length === 0) throw new Error('Page Tab không có tài khoản được bật để tiếp tục.')
+
+    return {
+      pageTabId,
+      runId: run.run.id,
+      status: run.run.status === 'completed' ? 'completed' : 'paused',
+      currentAccountId: null,
+      currentAccountIndex: null,
+      slotsCompletedThisTurn: 0,
+      targetSlotsThisTurn: 0,
+      cycle: 0,
+      nextActionAt: null,
+      message: run.run.status === 'completed'
+        ? 'Phiên chạy đã hoàn tất.'
+        : 'Đã tìm thấy phiên chạy trước đó; sẵn sàng khôi phục.',
+      lastResult: null,
+      run,
+      manualPaused: true,
+      disposed: false
     }
   }
 
