@@ -12,7 +12,7 @@ export interface PageTabRotationController {
 export type PageTabRotationControllerFactory = (pageTabId: number) => PageTabRotationController
 
 function isMissingRotationSession(error: unknown): boolean {
-  return error instanceof Error && /chưa có Account Rotation đang hoạt động/i.test(error.message)
+  return error instanceof Error && /chưa có Account Rotation đang hoạt động|chưa có vòng chạy tài khoản đang hoạt động/i.test(error.message)
 }
 
 function isActiveStatus(status: RotationRuntimeStatus): boolean {
@@ -47,6 +47,13 @@ export class PageTabWorkerManager {
   resume(payload: RotationPageTabPayload): RotationRuntimeSnapshot {
     this.assertCapacity(payload.pageTabId)
     const controller = this.getOrCreate(payload.pageTabId)
+    const current = controller.status(payload)
+
+    // Resume is the operator's "run this tab again" action. A completed run has no
+    // pending items left, so create a fresh run from the current Page Tab config and
+    // original Group Set instead of silently returning `completed` forever.
+    if (current.status === 'completed') return controller.start(payload)
+
     try {
       return controller.resume(payload)
     } catch (error) {

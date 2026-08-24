@@ -12,8 +12,27 @@ import { BrowserLaunchGate } from './runtimeLaunchGate'
 
 const MANAGED_CDP_ARG_PREFIX = '--page-auto-managed-cdp='
 
+interface PendingJob {
+  job: PostingJobRequest
+  resolve: (result: PostingJobResult) => void
+  timer: NodeJS.Timeout
+  sent: boolean
+}
+
+interface AccountWorkerEntry {
+  accountId: number
+  process: UtilityProcess
+  ready: boolean
+  pending: PendingJob | null
+  shuttingDown: boolean
+}
+
+function diagnostic(job: PostingJobRequest, message: string): void {
+  console.info(`[PAGE-AUTO posting] run=${job.runId} item=${job.itemId} account=${job.accountId} ${message}`)
+}
+
 export class PostingWorkerManager {
-  private readonly workers = new Set<UtilityProcess>()
+  private readonly workers = new Map<number, AccountWorkerEntry>()
   private readonly launchGate = new BrowserLaunchGate()
 
   constructor(
@@ -22,62 +41,129 @@ export class PostingWorkerManager {
 
   async run(job: PostingJobRequest): Promise<PostingJobResult> {
     const runtime = { ...this.getRuntimeSettings() }
-    await this.launchGate.wait(runtime.browserLaunchSpacingMs)
+    let entry = this.workers.get(job.accountId)
+
+    if (!entry || entry.shuttingDown) {
+      await this.launchGate.wait(runtime.browserLaunchSpacingMs)
+      entry = this.spawnWorker(job)
+    } else {
+      diagnostic(job, 'reuse posting worker hiện có')
+    }
+
+    if (entry.pending) {
+      return {
+        status: 'failed',
+        code: 'unexpected_error',
+        message: `Posting worker của account #${job.accountId} đang bận với job khác.`
+      }
+    }
 
     return new Promise((resolve) => {
-      const managedEndpoint = getManagedBrowserEndpoint(job.accountId)
-      const workerArgs = managedEndpoint ? [`${MANAGED_CDP_ARG_PREFIX}${managedEndpoint}`] : []
-      const worker = utilityProcess.fork(join(__dirname, 'posting-worker.js'), workerArgs, {
-        serviceName: `PAGE-AUTO posting run ${job.runId} item ${job.itemId}`
-      })
-      this.workers.add(worker)
-
-      let settled = false
-      let started = false
-      const finish = (result: PostingJobResult) => {
-        if (settled) return
-        settled = true
-        clearTimeout(timeout)
-        this.workers.delete(worker)
-        worker.kill()
-        resolve(result)
-      }
-
-      const timeout = setTimeout(() => {
-        finish({
+      const timer = setTimeout(() => {
+        if (!entry?.pending || entry.pending.job.itemId !== job.itemId) return
+        diagnostic(job, `TIMEOUT sau ${runtime.maxAccountRuntimeSeconds}s`)
+        const pending = entry.pending
+        entry.pending = null
+        this.workers.delete(job.accountId)
+        entry.shuttingDown = true
+        entry.process.kill()
+        pending.resolve({
           status: 'failed',
           code: 'worker_timeout',
           message: `Posting worker vượt giới hạn runtime ${runtime.maxAccountRuntimeSeconds}s; cần review trước khi retry để tránh đăng trùng.`
         })
       }, runtime.maxAccountRuntimeSeconds * 1000)
 
-      worker.on('message', (raw: unknown) => {
-        const message = raw as PostingWorkerMessage
-        if (message.type === 'ready' && !started) {
-          started = true
-          const request: PostingWorkerRequestMessage = { type: 'execute', job }
-          worker.postMessage(request)
-          return
-        }
-        if (message.type === 'result') {
-          finish(message.result)
-        }
-      })
-
-      worker.once('exit', (code) => {
-        if (!settled) {
-          finish({
-            status: 'failed',
-            code: 'worker_crashed',
-            message: `Posting worker thoát với code ${code}; trạng thái publish có thể chưa xác định, cần review trước khi retry.`
-          })
-        }
-      })
+      entry.pending = { job, resolve, timer, sent: false }
+      this.dispatch(entry)
     })
   }
 
   closeAll(): void {
-    for (const worker of this.workers) worker.kill()
+    for (const entry of this.workers.values()) {
+      entry.shuttingDown = true
+      try {
+        entry.process.postMessage({ type: 'shutdown' })
+      } catch {
+        entry.process.kill()
+        continue
+      }
+      setTimeout(() => entry.process.kill(), 500)
+    }
     this.workers.clear()
+  }
+
+  private spawnWorker(job: PostingJobRequest): AccountWorkerEntry {
+    const managedEndpoint = getManagedBrowserEndpoint(job.accountId)
+    const workerArgs = managedEndpoint ? [`${MANAGED_CDP_ARG_PREFIX}${managedEndpoint}`] : []
+    const worker = utilityProcess.fork(join(__dirname, 'posting-worker.js'), workerArgs, {
+      serviceName: `PAGE-AUTO posting account ${job.accountId}`
+    })
+    const entry: AccountWorkerEntry = {
+      accountId: job.accountId,
+      process: worker,
+      ready: false,
+      pending: null,
+      shuttingDown: false
+    }
+    this.workers.set(job.accountId, entry)
+    diagnostic(job, managedEndpoint ? 'spawn worker + attach Chrome managed' : 'spawn worker + sẽ mở persistent Chrome')
+
+    worker.on('message', (raw: unknown) => {
+      const message = raw as PostingWorkerMessage
+      if (message.type === 'ready') {
+        entry.ready = true
+        const pending = entry.pending
+        if (pending) diagnostic(pending.job, 'worker READY')
+        this.dispatch(entry)
+        return
+      }
+      if (message.type === 'result') {
+        const pending = entry.pending
+        if (!pending) return
+        clearTimeout(pending.timer)
+        entry.pending = null
+        diagnostic(pending.job, `RESULT status=${message.result.status} code=${message.result.code ?? 'none'} — ${message.result.message}`)
+        pending.resolve(message.result)
+      }
+    })
+
+    worker.once('exit', (code) => {
+      if (this.workers.get(job.accountId) === entry) this.workers.delete(job.accountId)
+      const pending = entry.pending
+      entry.pending = null
+      if (!pending) return
+      clearTimeout(pending.timer)
+      diagnostic(pending.job, `WORKER EXIT code=${code}`)
+      pending.resolve({
+        status: 'failed',
+        code: 'worker_crashed',
+        message: `Posting worker thoát với code ${code}; trạng thái publish có thể chưa xác định, cần review trước khi retry.`
+      })
+    })
+
+    return entry
+  }
+
+  private dispatch(entry: AccountWorkerEntry): void {
+    const pending = entry.pending
+    if (!entry.ready || !pending || pending.sent || entry.shuttingDown) return
+    pending.sent = true
+    const request: PostingWorkerRequestMessage = { type: 'execute', job: pending.job }
+    diagnostic(pending.job, 'SEND execute → posting engine')
+    try {
+      entry.process.postMessage(request)
+    } catch (error) {
+      clearTimeout(pending.timer)
+      entry.pending = null
+      this.workers.delete(entry.accountId)
+      entry.shuttingDown = true
+      entry.process.kill()
+      pending.resolve({
+        status: 'failed',
+        code: 'worker_crashed',
+        message: error instanceof Error ? error.message : String(error)
+      })
+    }
   }
 }

@@ -7,11 +7,13 @@ function snapshot(pageTabId: number, status: RotationRuntimeSnapshot['status'] =
 }
 class FakeController implements PageTabRotationController {
   state: RotationRuntimeSnapshot
+  startCalls = 0
+  resumeCalls = 0
   constructor(readonly pageTabId: number) { this.state = snapshot(pageTabId) }
-  start() { this.state = snapshot(this.pageTabId, 'running'); return this.state }
+  start() { this.startCalls += 1; this.state = snapshot(this.pageTabId, 'running'); return this.state }
   status() { return this.state }
   pause() { this.state = { ...this.state, status: 'paused' }; return this.state }
-  resume() { this.state = { ...this.state, status: 'running' }; return this.state }
+  resume() { this.resumeCalls += 1; this.state = { ...this.state, status: 'running' }; return this.state }
   dispose() {}
 }
 
@@ -59,5 +61,15 @@ describe('PageTabWorkerManager', () => {
     const manager = new PageTabWorkerManager((pageTabId) => new RestartedController(pageTabId))
     expect(manager.resume({ pageTabId: 10 }).status).toBe('running')
     expect(manager.status({ pageTabId: 10 }).status).toBe('running')
+  })
+
+  it('starts a fresh run when Resume is clicked after the previous run completed', () => {
+    const controller = new FakeController(10)
+    controller.state = snapshot(10, 'completed')
+    const manager = new PageTabWorkerManager(() => controller)
+
+    expect(manager.resume({ pageTabId: 10 }).status).toBe('running')
+    expect(controller.startCalls).toBe(1)
+    expect(controller.resumeCalls).toBe(0)
   })
 })
