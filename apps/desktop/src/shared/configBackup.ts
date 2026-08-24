@@ -2,8 +2,10 @@ import type { AccountColumnLayout, AccountImportMapping } from './accounts'
 import type {
   ContentMode,
   PageTabImageConfig,
+  PageTabPostInput,
   PageTabRotationConfig,
-  PageTabScheduleInput
+  PageTabScheduleInput,
+  PostSelectionMode
 } from './pageTabs'
 
 export const CONFIG_BACKUP_FORMAT = 'page-auto-config'
@@ -22,6 +24,11 @@ export interface ConfigBackupPageTabAccount {
   postsPerTurn: number | null
 }
 
+export interface ConfigBackupPostLibrary {
+  mode: PostSelectionMode
+  posts: PageTabPostInput[]
+}
+
 export interface ConfigBackupPageTab {
   name: string
   pageUid: string
@@ -32,6 +39,7 @@ export interface ConfigBackupPageTab {
   contentMode: ContentMode
   contents: string[]
   image: PageTabImageConfig
+  postLibrary?: ConfigBackupPostLibrary
 }
 
 export interface ConfigBackupImportPreset {

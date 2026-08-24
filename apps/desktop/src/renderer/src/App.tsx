@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { AppInfo } from '../../ipc/channels'
 import { AccountManager } from './accounts/AccountManager'
 import { ExecutionLogs } from './logs/ExecutionLogs'
-import { PageTabsManager } from './page-tabs/PageTabsManager'
+import { PageTabsManager } from './page-tabs/PageTabsManagerV2'
 import { SettingsPanel } from './settings/SettingsPanel'
 
 type RouteId = 'overview' | 'accounts' | 'page-tabs' | 'logs' | 'settings'

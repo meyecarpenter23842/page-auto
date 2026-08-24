@@ -24,7 +24,7 @@ import type { CaptchaSettingsView, SaveCaptchaSettingsInput } from '../shared/ca
 import type { ConfigBackupExportResult, ConfigBackupRestoreResult } from '../shared/configBackup'
 import type { ExecutionLogFilters, ExecutionLogRecord, RetryRunItemPayload, RetryRunItemResult } from '../shared/executionLogs'
 import type { LogCleanupResult } from '../shared/loggingMaintenance'
-import type { CreatePageTabInput, ImageFolderInspection, PageTabConfig, PageTabIdPayload, PageTabSummary, PickTextFileResult, UpdatePageTabPayload } from '../shared/pageTabs'
+import type { CreatePageTabInput, ImageFolderInspection, PageTabConfig, PageTabIdPayload, PageTabPostLibrary, PageTabSummary, PickTextFileResult, SavePageTabPostLibraryInput, UpdatePageTabPayload } from '../shared/pageTabs'
 import type { ExecuteSinglePostingJobPayload, ExecuteSinglePostingJobResult } from '../shared/posting'
 import type { RotationPageTabPayload, RotationRuntimeSnapshot } from '../shared/rotation'
 import type { CreateRunPayload, RunDetails, RunIdPayload } from '../shared/runs'
@@ -48,6 +48,8 @@ const api = {
   updatePageTab: (payload: UpdatePageTabPayload): Promise<PageTabConfig> => ipcRenderer.invoke(IPC_CHANNELS.pageTabsUpdate, payload) as Promise<PageTabConfig>,
   deletePageTab: (payload: PageTabIdPayload): Promise<boolean> => ipcRenderer.invoke(IPC_CHANNELS.pageTabsDelete, payload) as Promise<boolean>,
   duplicatePageTab: (payload: PageTabIdPayload): Promise<PageTabConfig> => ipcRenderer.invoke(IPC_CHANNELS.pageTabsDuplicate, payload) as Promise<PageTabConfig>,
+  getPageTabPostLibrary: (payload: PageTabIdPayload): Promise<PageTabPostLibrary> => ipcRenderer.invoke(IPC_CHANNELS.pageTabsPostLibraryGet, payload) as Promise<PageTabPostLibrary>,
+  savePageTabPostLibrary: (payload: SavePageTabPostLibraryInput): Promise<PageTabPostLibrary> => ipcRenderer.invoke(IPC_CHANNELS.pageTabsPostLibrarySave, payload) as Promise<PageTabPostLibrary>,
   pickPageTabImageFolder: (): Promise<string | null> => ipcRenderer.invoke(IPC_CHANNELS.pageTabsPickImageFolder) as Promise<string | null>,
   inspectPageTabImageFolder: (folderPath: string): Promise<ImageFolderInspection> => ipcRenderer.invoke(IPC_CHANNELS.pageTabsInspectImageFolder, folderPath) as Promise<ImageFolderInspection>,
   pickPageTabTextFile: (): Promise<PickTextFileResult | null> => ipcRenderer.invoke(IPC_CHANNELS.pageTabsPickTextFile) as Promise<PickTextFileResult | null>,

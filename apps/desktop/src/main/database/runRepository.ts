@@ -9,6 +9,7 @@ import type {
   RunSnapshot,
   RunStatus
 } from '../../shared/runs'
+import { PageTabPostRepository } from './pageTabPostRepository'
 import { PageTabRepository } from './pageTabRepository'
 
 interface RunRow {
@@ -73,15 +74,18 @@ function rowToItem(row: Record<string, unknown>): RunItem {
 
 export class RunRepository {
   private readonly pageTabs: PageTabRepository
+  private readonly posts: PageTabPostRepository
 
   constructor(private readonly client: Database.Database) {
     this.pageTabs = new PageTabRepository(client)
+    this.posts = new PageTabPostRepository(client)
   }
 
   createForPageTab(pageTabId: number): RunDetails {
     const create = this.client.transaction(() => {
       const config = this.pageTabs.get(pageTabId)
       if (!config) throw new Error(`Không tìm thấy Page Tab #${pageTabId}.`)
+      const postLibrary = this.posts.get(pageTabId)
 
       const active = this.client.prepare(`
         SELECT id FROM runs
@@ -129,6 +133,14 @@ export class RunRepository {
         contentMode: config.contentMode,
         contents: [...config.contents],
         image: { ...config.image },
+        postMode: postLibrary.mode,
+        posts: postLibrary.posts.map((post, index) => ({
+          name: post.name,
+          enabled: post.enabled,
+          sortOrder: index,
+          variants: [...post.variants],
+          image: { ...post.image }
+        })),
         groupSourceCount: groupRows.length
       }
 
@@ -154,7 +166,8 @@ export class RunRepository {
       this.addEvent(runId, 'run_created', {
         pageTabId,
         groupCount: groupRows.length,
-        accountCount: snapshot.accounts.filter((account) => account.enabled).length
+        accountCount: snapshot.accounts.filter((account) => account.enabled).length,
+        postCount: snapshot.posts?.filter((post) => post.enabled).length ?? 0
       }, now)
 
       return runId

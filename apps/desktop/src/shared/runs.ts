@@ -2,7 +2,8 @@ import type {
   ContentMode,
   PageTabImageConfig,
   PageTabRotationConfig,
-  PageTabScheduleInput
+  PageTabScheduleInput,
+  PostSelectionMode
 } from './pageTabs'
 
 export const RUN_STATUSES = ['created', 'running', 'paused', 'completed', 'stopped', 'failed'] as const
@@ -19,6 +20,14 @@ export interface RunSnapshotAccount {
   postsPerTurn: number | null
 }
 
+export interface RunSnapshotPost {
+  name: string
+  enabled: boolean
+  sortOrder: number
+  variants: string[]
+  image: PageTabImageConfig
+}
+
 export interface RunSnapshot {
   version: 1
   pageTabId: number
@@ -27,9 +36,14 @@ export interface RunSnapshot {
   rotation: PageTabRotationConfig
   accounts: RunSnapshotAccount[]
   schedules: PageTabScheduleInput[]
+  /** Legacy compatibility for runs created before Post Library. */
   contentMode: ContentMode
+  /** Legacy compatibility for runs created before Post Library. */
   contents: string[]
+  /** Legacy compatibility for runs created before Post Library. */
   image: PageTabImageConfig
+  postMode?: PostSelectionMode
+  posts?: RunSnapshotPost[]
   groupSourceCount: number
 }
 

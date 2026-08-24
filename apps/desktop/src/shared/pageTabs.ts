@@ -10,6 +10,46 @@ export type ImageMode = (typeof IMAGE_MODES)[number]
 export const MISSING_IMAGE_POLICIES = ['text_only', 'skip'] as const
 export type MissingImagePolicy = (typeof MISSING_IMAGE_POLICIES)[number]
 
+export const POST_SELECTION_MODES = ['sequential', 'random'] as const
+export type PostSelectionMode = (typeof POST_SELECTION_MODES)[number]
+
+export function parsePostVariantText(value: string): string[] {
+  const variants: string[] = []
+  let buffer = ''
+  let escaped = false
+
+  for (const char of value.replace(/\r\n/g, '\n')) {
+    if (escaped) {
+      if (char === '|' || char === '\\') buffer += char
+      else buffer += `\\${char}`
+      escaped = false
+      continue
+    }
+    if (char === '\\') {
+      escaped = true
+      continue
+    }
+    if (char === '|') {
+      const normalized = buffer.trim()
+      if (normalized) variants.push(normalized)
+      buffer = ''
+      continue
+    }
+    buffer += char
+  }
+
+  if (escaped) buffer += '\\'
+  const tail = buffer.trim()
+  if (tail) variants.push(tail)
+  return variants
+}
+
+export function formatPostVariantText(variants: string[]): string {
+  return variants
+    .map((variant) => variant.replace(/\\/g, '\\\\').replace(/\|/g, '\\|'))
+    .join('\n|\n')
+}
+
 export interface PageTabRotationConfig {
   postsPerAccount: number
   postDelayMinSeconds: number
@@ -51,6 +91,31 @@ export interface PageTabImageConfig {
   missingPolicy: MissingImagePolicy
 }
 
+export interface PageTabPostInput {
+  name: string
+  enabled: boolean
+  sortOrder: number
+  variants: string[]
+  image: PageTabImageConfig
+}
+
+export interface PageTabPostItem extends PageTabPostInput {
+  id: number
+}
+
+export interface PageTabPostLibrary {
+  pageTabId: number
+  mode: PostSelectionMode
+  posts: PageTabPostItem[]
+  legacyFallback: boolean
+}
+
+export interface SavePageTabPostLibraryInput {
+  pageTabId: number
+  mode: PostSelectionMode
+  posts: PageTabPostInput[]
+}
+
 export interface PageTabSaveInput {
   name: string
   pageUid: string
@@ -58,8 +123,11 @@ export interface PageTabSaveInput {
   accounts: PageTabAccountInput[]
   schedules: PageTabScheduleInput[]
   groupUids: string[]
+  /** Legacy compatibility. New UI/runtime uses PageTabPostLibrary. */
   contentMode: ContentMode
+  /** Legacy compatibility. New UI/runtime uses PageTabPostLibrary. */
   contents: string[]
+  /** Legacy compatibility. New UI/runtime uses PageTabPostLibrary. */
   image: PageTabImageConfig
 }
 

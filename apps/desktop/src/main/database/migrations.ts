@@ -247,6 +247,30 @@ export const migrations: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_execution_logs_result ON execution_logs(result, timestamp DESC);
       CREATE INDEX IF NOT EXISTS idx_execution_logs_run_item ON execution_logs(run_item_id, id DESC);
     `
+  },
+  {
+    version: 6,
+    name: 'page_tab_post_library',
+    sql: `
+      ALTER TABLE page_tabs ADD COLUMN post_selection_mode TEXT NOT NULL DEFAULT 'sequential';
+
+      CREATE TABLE IF NOT EXISTS page_tab_posts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+        page_tab_id INTEGER NOT NULL REFERENCES page_tabs(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        variants_json TEXT NOT NULL,
+        image_folder_path TEXT NOT NULL DEFAULT '',
+        image_mode TEXT NOT NULL DEFAULT 'random',
+        images_per_post INTEGER NOT NULL DEFAULT 1,
+        missing_policy TEXT NOT NULL DEFAULT 'text_only',
+        sort_order INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_page_tab_posts_order ON page_tab_posts(page_tab_id, sort_order, id);
+    `
   }
 ]
 

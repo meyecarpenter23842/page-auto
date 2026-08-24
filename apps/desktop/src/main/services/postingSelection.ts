@@ -18,13 +18,48 @@ function deterministicIndex(seed: string, length: number): number {
   return length === 0 ? 0 : hashSeed(seed) % length
 }
 
-export function selectRunContent(snapshot: RunSnapshot, item: RunItem): string | null {
+export interface RunPostMaterial {
+  content: string
+  image: PageTabImageConfig
+  postIndex: number
+  variantIndex: number
+}
+
+export function selectRunPost(snapshot: RunSnapshot, item: RunItem): RunPostMaterial | null {
+  const posts = (snapshot.posts ?? [])
+    .filter((post) => post.enabled)
+    .map((post) => ({ ...post, variants: post.variants.map((variant) => variant.trim()).filter(Boolean) }))
+    .filter((post) => post.variants.length > 0)
+
+  if (posts.length > 0) {
+    const postIndex = snapshot.postMode === 'random'
+      ? deterministicIndex(`${item.runId}:${item.id}:${item.groupUid}:post`, posts.length)
+      : item.sortOrder % posts.length
+    const post = posts[postIndex]
+    if (!post) return null
+    const variantIndex = deterministicIndex(`${item.runId}:${item.id}:${item.groupUid}:variant:${postIndex}`, post.variants.length)
+    const content = post.variants[variantIndex]
+    if (!content) return null
+    return {
+      content,
+      image: { ...post.image },
+      postIndex,
+      variantIndex
+    }
+  }
+
   const contents = snapshot.contents.map((content) => content.trim()).filter(Boolean)
   if (contents.length === 0) return null
-  if (snapshot.contentMode === 'random') {
-    return contents[deterministicIndex(`${item.runId}:${item.id}:${item.groupUid}`, contents.length)] ?? null
-  }
-  return contents[item.sortOrder % contents.length] ?? null
+  const postIndex = snapshot.contentMode === 'random'
+    ? deterministicIndex(`${item.runId}:${item.id}:${item.groupUid}`, contents.length)
+    : item.sortOrder % contents.length
+  const content = contents[postIndex]
+  if (!content) return null
+  return { content, image: { ...snapshot.image }, postIndex, variantIndex: 0 }
+}
+
+export function selectRunContent(snapshot: RunSnapshot, item: RunItem): string | null {
+  return selectRunPost(snapshot, item)?.content ?? null
 }
 
 export interface ImageSelection {

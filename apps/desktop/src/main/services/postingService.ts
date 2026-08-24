@@ -19,7 +19,7 @@ import { PostingWorkerManager } from '../browser/postingWorkerManager'
 import { AccountRepository } from '../database/accountRepository'
 import { RunRepository } from '../database/runRepository'
 import { redactExecutionText } from './executionLogSanitizer'
-import { selectRunContent, selectRunImages } from './postingSelection'
+import { selectRunImages, selectRunPost } from './postingSelection'
 
 function accountSecrets(account: AccountRecord): Array<string | null | undefined> {
   return [account.password, account.cookie, account.twoFactorSecret, account.emailPassword, account.proxy, account.proxyPassword]
@@ -94,16 +94,16 @@ export class PostingService {
       return { accountId: account.id, item: null, result: terminalFailure('Phiên chạy không còn Group chờ xử lý.', 'no_pending_item'), run: current }
     }
 
-    const content = selectRunContent(details.run.snapshot, item)
-    if (!content) {
-      const run = this.runs.completeItem({ runId: payload.runId, itemId: item.id, status: 'failed', errorMessage: 'Bộ nội dung không có bài hợp lệ.' })
-      return { accountId: account.id, item, result: terminalFailure('Bộ nội dung không có bài hợp lệ.', 'no_content'), run }
+    const material = selectRunPost(details.run.snapshot, item)
+    if (!material) {
+      const run = this.runs.completeItem({ runId: payload.runId, itemId: item.id, status: 'failed', errorMessage: 'Thư viện bài viết không có bài hợp lệ.' })
+      return { accountId: account.id, item, result: terminalFailure('Thư viện bài viết không có bài hợp lệ.', 'no_content'), run }
     }
 
-    const images = await selectRunImages(details.run.snapshot.image, item)
-    if (images.missing && details.run.snapshot.image.missingPolicy === 'skip') {
+    const images = await selectRunImages(material.image, item)
+    if (images.missing && material.image.missingPolicy === 'skip') {
       const run = this.runs.completeItem({ runId: payload.runId, itemId: item.id, status: 'skipped' })
-      return { accountId: account.id, item, result: { status: 'skipped', code: 'missing_media', message: 'Thiếu ảnh theo cấu hình; Group được bỏ qua trong phiên hiện tại.' }, run }
+      return { accountId: account.id, item, result: { status: 'skipped', code: 'missing_media', message: 'Thiếu ảnh theo cấu hình của bài; Group được bỏ qua trong phiên hiện tại.' }, run }
     }
 
     const sessionSettings = { ...this.getSessionSettings() }
@@ -116,7 +116,7 @@ export class PostingService {
       profileDirectory: accountProfileDirectory(this.dataDirectory, account.id),
       pageUid: details.run.pageUid,
       groupUid: item.groupUid,
-      content,
+      content: material.content,
       imagePaths: images.paths,
       browser: { ...this.getBrowserSettings() },
       session: sessionSettings,
