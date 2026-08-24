@@ -24,6 +24,18 @@ import type { BrowserDisplayInfo, BrowserRetileResult, BrowserWindowLayoutSettin
 import type { CaptchaSettingsView, SaveCaptchaSettingsInput } from '../shared/captchaSettings'
 import type { ConfigBackupExportResult, ConfigBackupRestoreResult } from '../shared/configBackup'
 import type { ExecutionLogFilters, ExecutionLogRecord, RetryRunItemPayload, RetryRunItemResult } from '../shared/executionLogs'
+import type {
+  HotmailAccountPayload,
+  HotmailBatchPayload,
+  HotmailBatchResult,
+  HotmailBrowserOpenResult,
+  HotmailDashboardRow,
+  HotmailOAuthStartResult,
+  HotmailProxyStatus,
+  HotmailProxyTestResult,
+  HotmailSettingsView,
+  SaveHotmailSettingsInput
+} from '../shared/hotmail'
 import type { LogCleanupResult } from '../shared/loggingMaintenance'
 import type { CreatePageTabInput, ImageFolderInspection, PageTabConfig, PageTabIdPayload, PageTabPostLibrary, PageTabSummary, PickTextFileResult, SavePageTabPostLibraryInput, UpdatePageTabPayload } from '../shared/pageTabs'
 import type { ExecuteSinglePostingJobPayload, ExecuteSinglePostingJobResult } from '../shared/posting'
@@ -43,6 +55,18 @@ const api = {
   getAccountColumnLayout: (): Promise<AccountColumnLayout | null> => ipcRenderer.invoke(IPC_CHANNELS.accountColumnLayoutGet) as Promise<AccountColumnLayout | null>,
   saveAccountColumnLayout: (payload: AccountColumnLayoutPayload): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.accountColumnLayoutSave, payload) as Promise<void>,
   openAccountProfile: (payload: AccountOpenProfilePayload): Promise<BrowserProfileResult> => ipcRenderer.invoke(IPC_CHANNELS.accountOpenProfile, payload) as Promise<BrowserProfileResult>,
+  listHotmailDashboard: (): Promise<HotmailDashboardRow[]> => ipcRenderer.invoke(IPC_CHANNELS.hotmailDashboardList) as Promise<HotmailDashboardRow[]>,
+  getHotmailSettings: (): Promise<HotmailSettingsView> => ipcRenderer.invoke(IPC_CHANNELS.hotmailSettingsGet) as Promise<HotmailSettingsView>,
+  saveHotmailSettings: (input: SaveHotmailSettingsInput): Promise<HotmailSettingsView> => ipcRenderer.invoke(IPC_CHANNELS.hotmailSettingsSave, input) as Promise<HotmailSettingsView>,
+  pickHotmailProfileRoot: (): Promise<string | null> => ipcRenderer.invoke(IPC_CHANNELS.hotmailPickProfileRoot) as Promise<string | null>,
+  pickHotmailBrowserExecutable: (): Promise<string | null> => ipcRenderer.invoke(IPC_CHANNELS.hotmailPickBrowserExecutable) as Promise<string | null>,
+  startHotmailOAuth: (payload: HotmailAccountPayload): Promise<HotmailOAuthStartResult> => ipcRenderer.invoke(IPC_CHANNELS.hotmailOAuthStart, payload) as Promise<HotmailOAuthStartResult>,
+  getHotmailCodes: (payload: HotmailBatchPayload): Promise<HotmailBatchResult> => ipcRenderer.invoke(IPC_CHANNELS.hotmailCodesGet, payload) as Promise<HotmailBatchResult>,
+  checkHotmail: (payload: HotmailBatchPayload): Promise<HotmailBatchResult> => ipcRenderer.invoke(IPC_CHANNELS.hotmailCheck, payload) as Promise<HotmailBatchResult>,
+  openHotmail: (payload: HotmailAccountPayload): Promise<HotmailBrowserOpenResult> => ipcRenderer.invoke(IPC_CHANNELS.hotmailOpen, payload) as Promise<HotmailBrowserOpenResult>,
+  getHotmailProxyStatus: (): Promise<HotmailProxyStatus> => ipcRenderer.invoke(IPC_CHANNELS.hotmailProxyStatus) as Promise<HotmailProxyStatus>,
+  rotateHotmailProxy: (): Promise<HotmailProxyStatus> => ipcRenderer.invoke(IPC_CHANNELS.hotmailProxyRotate) as Promise<HotmailProxyStatus>,
+  testHotmailProxy: (): Promise<HotmailProxyTestResult> => ipcRenderer.invoke(IPC_CHANNELS.hotmailProxyTest) as Promise<HotmailProxyTestResult>,
   listPageTabs: (): Promise<PageTabSummary[]> => ipcRenderer.invoke(IPC_CHANNELS.pageTabsList) as Promise<PageTabSummary[]>,
   getPageTab: (payload: PageTabIdPayload): Promise<PageTabConfig | null> => ipcRenderer.invoke(IPC_CHANNELS.pageTabsGet, payload) as Promise<PageTabConfig | null>,
   createPageTab: (input: CreatePageTabInput): Promise<PageTabConfig> => ipcRenderer.invoke(IPC_CHANNELS.pageTabsCreate, input) as Promise<PageTabConfig>,
