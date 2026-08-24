@@ -11,6 +11,12 @@ import {
 } from './managedBrowserRegistry'
 import { resolveAccountProxyState } from './proxyConfig'
 
+interface BrowserReadyMessage {
+  type: 'browser-ready'
+  accountId: number
+  cdpEndpoint: string
+}
+
 interface SessionResultMessage extends FacebookSessionResult {
   type: 'session-result'
   cdpEndpoint?: string
@@ -47,6 +53,15 @@ function sessionAccount(account: AccountRecord): FacebookSessionAccount {
     cookie: account.cookie,
     twoFactorSecret: account.twoFactorSecret
   }
+}
+
+function isBrowserReadyMessage(message: unknown): message is BrowserReadyMessage {
+  if (!message || typeof message !== 'object') return false
+  const candidate = message as Partial<BrowserReadyMessage>
+  return candidate.type === 'browser-ready'
+    && typeof candidate.accountId === 'number'
+    && typeof candidate.cdpEndpoint === 'string'
+    && candidate.cdpEndpoint.length > 0
 }
 
 function isSessionResultMessage(message: unknown): message is SessionResultMessage {
@@ -219,6 +234,11 @@ export class BrowserProfileManager {
         })
       }
       if (this.workers.get(accountId) === entry) this.workers.delete(accountId)
+      return
+    }
+
+    if (isBrowserReadyMessage(message)) {
+      if (message.accountId === accountId) setManagedBrowserEndpoint(accountId, message.cdpEndpoint)
       return
     }
 

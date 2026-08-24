@@ -6,6 +6,7 @@ import { canQueueRetry, MAX_RETRY_ATTEMPTS } from './retryPolicy'
 
 const RECOVERY_ERROR_CODE = 'recovery_unconfirmed'
 const RECOVERY_MESSAGE = 'App/worker dừng khi item đang processing; chưa có bằng chứng publish success nên item cần review và không tự retry.'
+const SAFE_PREPUBLISH_ERROR_CODES = new Set(['profile_in_use', 'browser_launch_failed'])
 
 interface InterruptedItemRow {
   itemId: number
@@ -19,6 +20,19 @@ interface InterruptedItemRow {
 interface RunningRunRow {
   runId: number
   pageTabId: number | null
+}
+
+interface RetryItemRow {
+  itemId: number
+  runId: number
+  status: string
+  attemptCount: number
+  runStatus: string
+  pageTabId: number | null
+}
+
+interface SafePrepublishRepairRow extends RetryItemRow {
+  errorCode: string | null
 }
 
 export interface RuntimeRecoverySummary {
@@ -138,6 +152,7 @@ export class RuntimeRecoveryService {
         pausedRuns += 1
       }
 
+      this.requeueLatestSafePrepublishFailures(now)
       return { pausedRuns, reviewItems: interruptedItems.length }
     })
 
@@ -146,26 +161,7 @@ export class RuntimeRecoveryService {
 
   retryFailedItem(runItemId: number): RetryRunItemResult {
     const retry = this.client.transaction(() => {
-      const row = this.client.prepare(`
-        SELECT
-          ri.id AS itemId,
-          ri.run_id AS runId,
-          ri.status,
-          ri.attempt_count AS attemptCount,
-          r.status AS runStatus,
-          r.page_tab_id AS pageTabId
-        FROM run_items ri
-        JOIN runs r ON r.id = ri.run_id
-        WHERE ri.id = ?
-      `).get(runItemId) as {
-        itemId: number
-        runId: number
-        status: string
-        attemptCount: number
-        runStatus: string
-        pageTabId: number | null
-      } | undefined
-
+      const row = this.getRetryItem(runItemId)
       if (!row) throw new Error(`Không tìm thấy run item #${runItemId}.`)
       if (row.status !== 'failed') throw new Error('Chỉ có thể queue retry cho item đang failed.')
       if (row.runStatus === 'stopped' || row.runStatus === 'failed') {
@@ -184,29 +180,7 @@ export class RuntimeRecoveryService {
       }
 
       const now = Date.now()
-      this.client.prepare(`
-        UPDATE run_items
-        SET status = 'pending', last_error = NULL, started_at = NULL, finished_at = NULL, updated_at = ?
-        WHERE id = ? AND status = 'failed'
-      `).run(now, runItemId)
-
-      if (row.runStatus === 'completed') {
-        this.client.prepare(`
-          UPDATE runs
-          SET status = 'paused', paused_at = ?, completed_at = NULL, updated_at = ?
-          WHERE id = ?
-        `).run(now, now, row.runId)
-        if (row.pageTabId !== null) {
-          this.client.prepare(`UPDATE page_tabs SET status = 'paused', updated_at = ? WHERE id = ?`)
-            .run(now, row.pageTabId)
-        }
-      }
-
-      this.addRunEvent(row.runId, 'item_retry_queued', {
-        itemId: row.itemId,
-        previousErrorCode: errorCode,
-        attemptCount: row.attemptCount
-      }, now)
+      this.requeueFailedItem(row, now, errorCode, 'item_retry_queued')
 
       const previous = latestLog
       this.logs.insert({
@@ -240,6 +214,122 @@ export class RuntimeRecoveryService {
       run,
       message: 'Đã đưa item về hàng pending an toàn. Resume Page Tab để chạy lại.'
     }
+  }
+
+  requeueSafePrepublishFailure(runItemId: number): RetryRunItemResult {
+    const retry = this.client.transaction(() => {
+      const row = this.getRetryItem(runItemId)
+      if (!row) throw new Error(`Không tìm thấy run item #${runItemId}.`)
+      if (row.status !== 'failed') throw new Error('Chỉ có thể khôi phục item đang failed.')
+      if (row.runStatus === 'stopped' || row.runStatus === 'failed') {
+        throw new Error('Run đã stopped/failed; không thể khôi phục item vào run này.')
+      }
+
+      const latestLog = this.logs.getLatestForRunItem(runItemId)
+      const errorCode = latestLog?.errorCode ?? null
+      if (!errorCode || !SAFE_PREPUBLISH_ERROR_CODES.has(errorCode)) {
+        throw new Error('Lỗi hiện tại không phải lỗi browser an toàn trước publish.')
+      }
+
+      const now = Date.now()
+      this.requeueFailedItem(row, now, errorCode, 'item_safe_prepublish_requeued')
+      return row.runId
+    })
+
+    const runId = retry()
+    const run = this.runs.get(runId)
+    if (!run) throw new Error(`Không tìm thấy run #${runId} sau khi khôi phục item.`)
+    return {
+      itemId: runItemId,
+      run,
+      message: 'Lỗi browser xảy ra trước publish; Group vẫn được giữ ở hàng pending.'
+    }
+  }
+
+  private getRetryItem(runItemId: number): RetryItemRow | null {
+    const row = this.client.prepare(`
+      SELECT
+        ri.id AS itemId,
+        ri.run_id AS runId,
+        ri.status,
+        ri.attempt_count AS attemptCount,
+        r.status AS runStatus,
+        r.page_tab_id AS pageTabId
+      FROM run_items ri
+      JOIN runs r ON r.id = ri.run_id
+      WHERE ri.id = ?
+    `).get(runItemId) as RetryItemRow | undefined
+    return row ?? null
+  }
+
+  private requeueFailedItem(
+    row: RetryItemRow,
+    now: number,
+    previousErrorCode: string | null,
+    eventType: string
+  ): void {
+    this.client.prepare(`
+      UPDATE run_items
+      SET status = 'pending', last_error = NULL, started_at = NULL, finished_at = NULL, updated_at = ?
+      WHERE id = ? AND status = 'failed'
+    `).run(now, row.itemId)
+
+    if (row.runStatus === 'completed') {
+      this.client.prepare(`
+        UPDATE runs
+        SET status = 'paused', paused_at = ?, completed_at = NULL, updated_at = ?
+        WHERE id = ?
+      `).run(now, now, row.runId)
+      if (row.pageTabId !== null) {
+        this.client.prepare(`UPDATE page_tabs SET status = 'paused', updated_at = ? WHERE id = ?`)
+          .run(now, row.pageTabId)
+      }
+    }
+
+    this.addRunEvent(row.runId, eventType, {
+      itemId: row.itemId,
+      previousErrorCode,
+      attemptCount: row.attemptCount
+    }, now)
+  }
+
+  private requeueLatestSafePrepublishFailures(now: number): number {
+    const rows = this.client.prepare(`
+      SELECT
+        ri.id AS itemId,
+        ri.run_id AS runId,
+        ri.status,
+        ri.attempt_count AS attemptCount,
+        r.status AS runStatus,
+        r.page_tab_id AS pageTabId,
+        (
+          SELECT el.error_code
+          FROM execution_logs el
+          WHERE el.run_item_id = ri.id
+            AND el.error_code IS NOT NULL
+          ORDER BY el.id DESC
+          LIMIT 1
+        ) AS errorCode
+      FROM run_items ri
+      JOIN runs r ON r.id = ri.run_id
+      WHERE ri.status = 'failed'
+        AND r.page_tab_id IS NOT NULL
+        AND r.status IN ('created', 'running', 'paused', 'completed')
+        AND r.id = (
+          SELECT MAX(r2.id)
+          FROM runs r2
+          WHERE r2.page_tab_id = r.page_tab_id
+        )
+      ORDER BY ri.id
+    `).all() as SafePrepublishRepairRow[]
+
+    let repaired = 0
+    for (const row of rows) {
+      if (!row.errorCode || !SAFE_PREPUBLISH_ERROR_CODES.has(row.errorCode)) continue
+      this.requeueFailedItem(row, now, row.errorCode, 'item_legacy_safe_prepublish_requeued')
+      repaired += 1
+    }
+    return repaired
   }
 
   private addRunEvent(runId: number, eventType: string, payload: unknown, createdAt: number): void {

@@ -10,6 +10,8 @@ import { canQueueRetryWithRuntime, retryDispositionFor } from './retryPolicy'
 import { RuntimeRecoveryService } from './runtimeRecovery'
 import { ConsecutiveFailureTracker } from './runtimeFailureTracker'
 
+const SAFE_PREPUBLISH_BROWSER_CODES = new Set(['profile_in_use', 'browser_launch_failed'])
+
 export interface PostingExecutor {
   executeSingle(payload: ExecuteSinglePostingJobPayload): Promise<ExecuteSinglePostingJobResult>
 }
@@ -26,6 +28,15 @@ function contentIndex(result: ExecuteSinglePostingJobResult): number | null {
 function retryDelay(milliseconds: number): Promise<void> {
   if (milliseconds <= 0) return Promise.resolve()
   return new Promise((resolve) => setTimeout(resolve, milliseconds))
+}
+
+function isSafePrepublishBrowserFailure(outcome: ExecuteSinglePostingJobResult): boolean {
+  return Boolean(
+    outcome.item
+    && outcome.result.status === 'failed'
+    && outcome.result.code
+    && SAFE_PREPUBLISH_BROWSER_CODES.has(outcome.result.code)
+  )
 }
 
 export class ResilientPostingService implements PostingExecutor {
@@ -67,6 +78,9 @@ export class ResilientPostingService implements PostingExecutor {
           this.recovery.retryFailedItem(item.id)
         } catch {
           if (logging.level === 'normal') await this.writeAttemptLog(outcome)
+          if (isSafePrepublishBrowserFailure(outcome)) {
+            return this.preserveSafePrepublishFailure(payload, outcome, runtime)
+          }
           return this.applyConsecutiveFailureLimit(payload, outcome, runtime)
         }
 
@@ -77,6 +91,34 @@ export class ResilientPostingService implements PostingExecutor {
         continue
       }
 
+      if (isSafePrepublishBrowserFailure(outcome)) {
+        return this.preserveSafePrepublishFailure(payload, outcome, runtime)
+      }
+
+      return this.applyConsecutiveFailureLimit(payload, outcome, runtime)
+    }
+  }
+
+  private preserveSafePrepublishFailure(
+    payload: ExecuteSinglePostingJobPayload,
+    outcome: ExecuteSinglePostingJobResult,
+    runtime: RuntimeSettings
+  ): ExecuteSinglePostingJobResult {
+    const item = outcome.item
+    if (!item) return this.applyConsecutiveFailureLimit(payload, outcome, runtime)
+
+    try {
+      const restored = this.recovery.requeueSafePrepublishFailure(item.id)
+      return this.applyConsecutiveFailureLimit(payload, {
+        ...outcome,
+        item: null,
+        run: restored.run,
+        result: {
+          ...outcome.result,
+          message: `${outcome.result.message} Lỗi xảy ra trước publish nên Group vẫn được giữ để chạy lại.`
+        }
+      }, runtime)
+    } catch {
       return this.applyConsecutiveFailureLimit(payload, outcome, runtime)
     }
   }

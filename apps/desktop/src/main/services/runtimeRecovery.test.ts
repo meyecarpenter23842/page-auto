@@ -111,4 +111,81 @@ describe('RuntimeRecoveryService', () => {
     expect(runs.listItems(created.run.id)[0]).toMatchObject({ status: 'pending', attemptCount: 1 })
     runtime.close()
   })
+
+  it('repairs latest run items previously burned by profile_in_use because publish never started', () => {
+    const { runtime, account, tab, runs, logs, recovery } = createFixture(['g1'])
+    const created = runs.createForPageTab(tab.id)
+    runs.resume(created.run.id)
+    const claimed = runs.claimNext(created.run.id)
+    if (!claimed) throw new Error('Expected claimed item')
+
+    runs.completeItem({
+      runId: created.run.id,
+      itemId: claimed.id,
+      status: 'failed',
+      errorMessage: 'Browser profile đang được mở ở process khác.'
+    })
+    logs.insert({
+      runId: created.run.id,
+      runItemId: claimed.id,
+      pageTabId: tab.id,
+      accountId: account.id,
+      pageUid: tab.pageUid,
+      groupUid: claimed.groupUid,
+      contentIndex: 1,
+      imagePaths: [],
+      action: 'posting_attempt',
+      result: 'failed',
+      errorCode: 'profile_in_use',
+      errorMessage: 'Browser profile đang được mở ở process khác.',
+      screenshotPath: null,
+      publishedUrl: null,
+      attemptCount: claimed.attemptCount,
+      retryDisposition: 'retryable'
+    })
+
+    expect(runs.get(created.run.id)?.run.status).toBe('completed')
+    expect(recovery.recoverInterruptedRuns()).toEqual({ pausedRuns: 0, reviewItems: 0 })
+    expect(runs.get(created.run.id)?.run.status).toBe('paused')
+    expect(runs.listItems(created.run.id)[0]).toMatchObject({ status: 'pending', attemptCount: 1 })
+    runtime.close()
+  })
+
+  it('preserves a browser launch failure as pending even after normal retry limits are exhausted', () => {
+    const { runtime, account, tab, runs, logs, recovery } = createFixture(['g1'])
+    const created = runs.createForPageTab(tab.id)
+    runs.resume(created.run.id)
+    const claimed = runs.claimNext(created.run.id)
+    if (!claimed) throw new Error('Expected claimed item')
+
+    runs.completeItem({
+      runId: created.run.id,
+      itemId: claimed.id,
+      status: 'failed',
+      errorMessage: 'Chrome launch failed'
+    })
+    logs.insert({
+      runId: created.run.id,
+      runItemId: claimed.id,
+      pageTabId: tab.id,
+      accountId: account.id,
+      pageUid: tab.pageUid,
+      groupUid: claimed.groupUid,
+      contentIndex: 1,
+      imagePaths: [],
+      action: 'posting_attempt',
+      result: 'failed',
+      errorCode: 'browser_launch_failed',
+      errorMessage: 'Chrome launch failed',
+      screenshotPath: null,
+      publishedUrl: null,
+      attemptCount: 99,
+      retryDisposition: 'retryable'
+    })
+
+    const restored = recovery.requeueSafePrepublishFailure(claimed.id)
+    expect(restored.run.run.status).toBe('paused')
+    expect(runs.listItems(created.run.id)[0]).toMatchObject({ status: 'pending' })
+    runtime.close()
+  })
 })
