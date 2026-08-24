@@ -20,17 +20,12 @@ function managedCdpEndpointFromArgs(argv: string[] = process.argv): string | nul
 function compactLaunchArgs(args: string[] | undefined, placement: BrowserWindowPlacement | null): string[] | undefined {
   if (!placement) return args
   const retained = (args ?? []).filter((arg) =>
-    !arg.startsWith('--window-size=')
-    && !arg.startsWith('--window-position=')
-    && !arg.startsWith('--force-device-scale-factor=')
-    && arg !== '--high-dpi-support=1'
+    !arg.startsWith('--window-size=') && !arg.startsWith('--window-position=')
   )
   return [
     ...retained,
     `--window-size=${placement.width},${placement.height}`,
-    `--window-position=${placement.x},${placement.y}`,
-    `--force-device-scale-factor=${placement.contentScale}`,
-    '--high-dpi-support=1'
+    `--window-position=${placement.x},${placement.y}`
   ]
 }
 
@@ -60,14 +55,18 @@ function rememberContext(context: BrowserContext, browser: Browser | null): Brow
     persistentContext = null
     persistentProxy = null
     attachedBrowser = null
+    activePlacement = null
   })
   return persistentProxy
 }
 
+/** Set the launch placement only while the account browser has not been opened yet. */
 export function setManagedBrowserPlacement(placement: BrowserWindowPlacement | null): void {
+  if (persistentContext) return
   activePlacement = placement
 }
 
+/** Explicit user re-tile action. This is the only operation that repositions an existing posting browser. */
 export async function retileManagedPostingBrowser(placement: BrowserWindowPlacement | null): Promise<void> {
   activePlacement = placement
   if (persistentContext) await applyCurrentPlacement(persistentContext)
@@ -75,9 +74,8 @@ export async function retileManagedPostingBrowser(placement: BrowserWindowPlacem
 
 /**
  * Reuse one persistent account browser for every Group/post inside the current
- * account turn. When the scheduler ends that turn it shuts the posting worker down,
- * and closeManagedPostingBrowser closes the actual Chrome regardless of whether the
- * worker launched it or attached to an Account Manager Chrome through loopback CDP.
+ * account turn. Placement is applied once when the browser is opened/attached and
+ * later only when the operator explicitly requests re-tile.
  */
 export function installManagedBrowserReuse(): void {
   if (installed) return
@@ -86,10 +84,7 @@ export function installManagedBrowserReuse(): void {
   const endpoint = managedCdpEndpointFromArgs()
   const originalLaunchPersistentContext = chromium.launchPersistentContext.bind(chromium)
   const managedLaunch: typeof chromium.launchPersistentContext = async (userDataDir, options) => {
-    if (persistentProxy && persistentContext) {
-      await applyCurrentPlacement(persistentContext)
-      return persistentProxy
-    }
+    if (persistentProxy && persistentContext) return persistentProxy
 
     if (endpoint) {
       try {
