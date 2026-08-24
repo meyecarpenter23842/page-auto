@@ -18,6 +18,7 @@ import type {
 } from '../shared/accounts'
 import { assertValidAppSettings, type AppSettingsPatch } from '../shared/appSettings'
 import type { BrowserTestRequest } from '../shared/browserSettings'
+import type { BrowserRetileResult, BrowserWindowLayoutSettings } from '../shared/browserWindowLayout'
 import type { SaveCaptchaSettingsInput } from '../shared/captchaSettings'
 import type { ConfigBackupRestoreResult } from '../shared/configBackup'
 import type { ExecutionLogFilters, RetryRunItemPayload } from '../shared/executionLogs'
@@ -27,8 +28,10 @@ import type { RotationPageTabPayload } from '../shared/rotation'
 import type { CreateRunPayload, RunIdPayload } from '../shared/runs'
 import { BrowserEngineService } from './browser/browserEngineService'
 import { BrowserProfileManager } from './browser/browserProfileManager'
+import { BrowserWindowLayoutManager } from './browser/browserWindowLayoutManager'
 import { AccountRepository } from './database/accountRepository'
 import { AppSettingsRepository } from './database/appSettingsRepository'
+import { BrowserWindowLayoutRepository } from './database/browserWindowLayoutRepository'
 import { CaptchaSettingsRepository } from './database/captchaSettingsRepository'
 import { ExecutionLogRepository } from './database/executionLogRepository'
 import { PageTabRepository } from './database/pageTabRepository'
@@ -55,6 +58,7 @@ const MAX_BACKUP_FILE_BYTES = 20 * 1024 * 1024
 export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
   const accounts = new AccountRepository(options.database)
   const appSettings = new AppSettingsRepository(options.database)
+  const browserWindowLayoutSettings = new BrowserWindowLayoutRepository(options.database)
   const captchaSettings = new CaptchaSettingsRepository(options.database)
   const pageTabs = new PageTabRepository(options.database)
   const runs = new RunRepository(options.database)
@@ -63,6 +67,7 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
   const configBackup = new ConfigBackupService(options.database)
   const logMaintenance = new LogMaintenanceService(options.database, options.dataDirectory)
   const browserEngine = new BrowserEngineService()
+  const browserWindowLayout = new BrowserWindowLayoutManager()
   recovery.recoverInterruptedRuns()
   void logMaintenance.cleanup(appSettings.get().logging).catch(() => undefined)
 
@@ -78,7 +83,7 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
       lastCookieCheck: session.lastCookieCheck,
       lastUsedAt: session.status === 'valid' ? Date.now() : current.lastUsedAt
     })
-  }, () => appSettings.get().browser, () => appSettings.get().session)
+  }, () => appSettings.get().browser, () => appSettings.get().session, browserWindowLayout, () => browserWindowLayoutSettings.get())
 
   const corePosting = new PostingService(
     options.database,
@@ -88,7 +93,9 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
     () => appSettings.get().network,
     () => appSettings.get().runtime,
     () => appSettings.get().logging,
-    (accountId) => browserProfiles.closeAccount(accountId)
+    (accountId) => browserProfiles.closeAccount(accountId),
+    browserWindowLayout,
+    () => browserWindowLayoutSettings.get()
   )
   const posting = new ResilientPostingService(
     corePosting,
@@ -220,6 +227,30 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
     assertValidAppSettings(candidate)
     return browserEngine.testBrowser(candidate.browser)
   })
+  ipcMain.handle(IPC_CHANNELS.browserWindowLayoutGet, () => browserWindowLayoutSettings.get())
+  ipcMain.handle(IPC_CHANNELS.browserWindowLayoutSave, (_event, input: BrowserWindowLayoutSettings) => browserWindowLayoutSettings.save(input))
+  ipcMain.handle(IPC_CHANNELS.browserDisplaysList, () => browserWindowLayout.listDisplays())
+  ipcMain.handle(IPC_CHANNELS.browserRetile, (): BrowserRetileResult => {
+    const layout = browserWindowLayoutSettings.get()
+    if (!layout.enabled) {
+      return { status: 'not_compact', appliedCount: 0, overflowCount: 0, message: 'Compact/Tiled đang tắt.' }
+    }
+    if (browserWindowLayout.activeCount() === 0) {
+      return { status: 'no_browsers', appliedCount: 0, overflowCount: 0, message: 'Không có Chrome PAGE-AUTO nào đang mở để sắp xếp.' }
+    }
+
+    const snapshot = browserWindowLayout.snapshot(layout, appSettings.get().browser)
+    browserProfiles.retile(snapshot.placements)
+    corePosting.retileBrowsers(snapshot.placements)
+    return {
+      status: 'success',
+      appliedCount: snapshot.placements.size,
+      overflowCount: snapshot.overflowCount,
+      message: snapshot.overflowCount > 0
+        ? `Đã sắp xếp ${snapshot.placements.size} Chrome; ${snapshot.overflowCount} Chrome vượt số ô cấu hình nên giữ nguyên.`
+        : `Đã sắp xếp ${snapshot.placements.size} Chrome theo layout đã lưu.`
+    }
+  })
 
   ipcMain.handle(IPC_CHANNELS.captchaSettingsGet, () => captchaSettings.get())
   ipcMain.handle(IPC_CHANNELS.captchaSettingsSave, (_event, input: SaveCaptchaSettingsInput) => captchaSettings.save(input))
@@ -242,7 +273,7 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
     if (!filePath) return { canceled: true, filePath: null, accountsCreated: 0, pageTabsCreated: 0, pageTabsUpdated: 0, importPresetsRestored: 0, columnLayoutRestored: false, message: 'Đã hủy restore backup.' }
     const fileStat = await stat(filePath)
     if (fileStat.size > MAX_BACKUP_FILE_BYTES) throw new Error('File backup lớn hơn giới hạn 20 MB.')
-    return configBackup.restoreFromJson(await readFile(filePath, 'utf8'), filePath)
+    return configBackup.restoreFromJson(await readFile(result.filePath, 'utf8'), result.filePath)
   })
 
   return {
