@@ -1,4 +1,5 @@
 import { access, readFile } from 'node:fs/promises'
+import { request } from 'node:http'
 import { join } from 'node:path'
 import { chromium, type Browser, type BrowserContext } from 'playwright-core'
 
@@ -49,6 +50,36 @@ async function readCdpEndpoint(profileDirectory: string): Promise<string | null>
   return null
 }
 
+async function probeCdpEndpoint(endpoint: string, timeoutMs = 650): Promise<boolean> {
+  return await new Promise<boolean>((resolveProbe) => {
+    let settled = false
+    const finish = (value: boolean) => {
+      if (settled) return
+      settled = true
+      resolveProbe(value)
+    }
+    try {
+      const req = request(new URL('/json/version', endpoint), { method: 'GET', timeout: timeoutMs }, (response) => {
+        response.resume()
+        finish((response.statusCode ?? 500) >= 200 && (response.statusCode ?? 500) < 500)
+      })
+      req.once('timeout', () => {
+        req.destroy()
+        finish(false)
+      })
+      req.once('error', () => finish(false))
+      req.end()
+    } catch {
+      finish(false)
+    }
+  })
+}
+
+async function readLiveCdpEndpoint(profileDirectory: string): Promise<string | null> {
+  const endpoint = await readCdpEndpoint(profileDirectory)
+  return endpoint && await probeCdpEndpoint(endpoint) ? endpoint : null
+}
+
 async function hasProfileLock(profileDirectory: string): Promise<boolean> {
   for (const name of ['SingletonLock', 'SingletonCookie', 'SingletonSocket']) {
     try {
@@ -67,6 +98,15 @@ async function openOutlook(context: BrowserContext): Promise<void> {
   await page.bringToFront().catch(() => undefined)
 }
 
+async function launchProfile(command: OpenCommand): Promise<BrowserContext> {
+  return await chromium.launchPersistentContext(command.profileDirectory, {
+    headless: false,
+    viewport: null,
+    ...(command.executablePath ? { executablePath: command.executablePath } : {}),
+    ...(command.proxy ? { proxy: command.proxy } : {})
+  })
+}
+
 async function run(): Promise<void> {
   let launchedContext: BrowserContext | null = null
   let attachedBrowser: Browser | null = null
@@ -83,7 +123,7 @@ async function run(): Promise<void> {
           await openOutlook(launchedContext)
           result = {
             type: 'open-result', accountId: command.accountId, status: 'already_open', attached: false,
-            proxyManagedExternally: false, message: 'Mail browser đang mở bằng profile MaxHotmail này.'
+            proxyManagedExternally: false, message: 'Email browser đang mở bằng profile này.'
           }
         } else if (attachedBrowser) {
           const context = attachedBrowser.contexts()[0]
@@ -91,10 +131,10 @@ async function run(): Promise<void> {
           await openOutlook(context)
           result = {
             type: 'open-result', accountId: command.accountId, status: 'already_open', attached: true,
-            proxyManagedExternally: true, message: 'Đã attach browser MaxHotmail đang chạy; proxy do process sở hữu browser quản lý.'
+            proxyManagedExternally: true, message: 'Đã attach browser Email đang chạy; proxy do process sở hữu browser quản lý.'
           }
         } else {
-          const endpoint = await readCdpEndpoint(command.profileDirectory)
+          const endpoint = await readLiveCdpEndpoint(command.profileDirectory)
           if (endpoint) {
             try {
               attachedBrowser = await chromium.connectOverCDP(endpoint)
@@ -103,31 +143,39 @@ async function run(): Promise<void> {
               await openOutlook(context)
               result = {
                 type: 'open-result', accountId: command.accountId, status: 'already_open', attached: true,
-                proxyManagedExternally: true, message: 'Đã attach browser MaxHotmail đang chạy; không thay proxy giữa phiên.'
+                proxyManagedExternally: true, message: 'Đã attach browser Email đang chạy; không thay proxy giữa phiên.'
               }
             } catch {
               attachedBrowser = null
               if (await hasProfileLock(command.profileDirectory)) {
                 result = {
                   type: 'open-result', accountId: command.accountId, status: 'profile_in_use', attached: false,
-                  proxyManagedExternally: true, message: 'Profile MaxHotmail đang được process khác sử dụng nhưng không attach CDP được.'
+                  proxyManagedExternally: true, message: 'Profile đang được process khác sử dụng nhưng không attach CDP được.'
                 }
               } else {
-                throw new Error('CDP endpoint của profile không còn hoạt động.')
+                launchedContext = await launchProfile(command)
+                await openOutlook(launchedContext)
+                result = {
+                  type: 'open-result', accountId: command.accountId, status: 'started', attached: false,
+                  proxyManagedExternally: false, message: 'CDP cũ không còn dùng được; đã mở profile trực tiếp theo UID.'
+                }
               }
             }
           } else if (await hasProfileLock(command.profileDirectory)) {
             result = {
               type: 'open-result', accountId: command.accountId, status: 'profile_in_use', attached: false,
-              proxyManagedExternally: true, message: 'Profile MaxHotmail đang được process khác sử dụng; PAGE-AUTO không mở process thứ hai.'
+              proxyManagedExternally: true, message: 'Profile đang được process khác sử dụng; PAGE-AUTO không mở process thứ hai.'
             }
           } else {
-            launchedContext = await chromium.launchPersistentContext(command.profileDirectory, {
-              headless: false,
-              viewport: null,
-              ...(command.executablePath ? { executablePath: command.executablePath } : {}),
-              ...(command.proxy ? { proxy: command.proxy } : {})
-            })
+            launchedContext = await launchProfile(command)
+            await openOutlook(launchedContext)
+            result = {
+              type: 'open-result', accountId: command.accountId, status: 'started', attached: false,
+              proxyManagedExternally: false, message: 'Đã mở trực tiếp profile Email theo UID.'
+            }
+          }
+
+          if (launchedContext) {
             launchedContext.once('close', () => {
               launchedContext = null
               if (!closing) {
@@ -135,11 +183,6 @@ async function run(): Promise<void> {
                 setTimeout(() => process.exit(0), 25)
               }
             })
-            await openOutlook(launchedContext)
-            result = {
-              type: 'open-result', accountId: command.accountId, status: 'started', attached: false,
-              proxyManagedExternally: false, message: 'Đã mở trực tiếp profile MaxHotmail theo UID.'
-            }
           }
         }
       } catch (error) {

@@ -8,24 +8,34 @@ import { SettingsPanel } from './settings/SettingsPanel'
 
 type RouteId = 'overview' | 'accounts' | 'hotmail' | 'page-tabs' | 'logs' | 'settings'
 
-interface Route { id: RouteId; label: string; shortLabel: string }
+interface Route { id: RouteId; label: string }
 
 const routes: Route[] = [
-  { id: 'overview', label: 'Tổng quan', shortLabel: 'OV' },
-  { id: 'accounts', label: 'Tài khoản', shortLabel: 'AC' },
-  { id: 'hotmail', label: 'Hotmail Auto', shortLabel: 'HM' },
-  { id: 'page-tabs', label: 'Page Tabs', shortLabel: 'PT' },
-  { id: 'logs', label: 'Nhật ký', shortLabel: 'LG' },
-  { id: 'settings', label: 'Cài đặt', shortLabel: 'ST' }
+  { id: 'overview', label: 'Tổng quan' },
+  { id: 'accounts', label: 'Tài khoản' },
+  { id: 'hotmail', label: 'Email' },
+  { id: 'page-tabs', label: 'Page Tabs' },
+  { id: 'logs', label: 'Nhật ký' },
+  { id: 'settings', label: 'Cài đặt' }
 ]
 
 const routeDescriptions: Record<RouteId, { title: string; description: string }> = {
   overview: { title: 'Tổng quan', description: 'Phase 9 đóng gói PAGE-AUTO thành Windows portable folder/ZIP, giữ data cạnh executable và bổ sung backup/restore config không chứa plaintext secret.' },
   accounts: { title: 'Account Manager', description: 'Quản lý account theo data-grid nhiều cột, import linh hoạt và persistent browser profile riêng.' },
-  hotmail: { title: 'Hotmail Auto', description: 'Dashboard Email theo UID từ Account Manager, Microsoft Mail.Read, MaxHotmail profile root trực tiếp và Proxy Email pool độc lập.' },
+  hotmail: { title: 'Email', description: 'Dashboard Email theo UID từ Account Manager, Microsoft Mail.Read, external profile root trực tiếp, mail khôi phục và Proxy Email pool độc lập.' },
   'page-tabs': { title: 'Page Tabs', description: 'Mỗi Page UID có config, queue và runtime độc lập; restart giữ run history và có thể resume phiên đang pause.' },
   logs: { title: 'Runtime Logs', description: 'Execution log chi tiết, screenshot evidence, retry disposition và manual-review cho kết quả publish chưa chắc chắn.' },
   settings: { title: 'Cài đặt', description: 'Cấu hình trình duyệt, session, mạng, vận hành và chẩn đoán dùng chung cho PAGE-AUTO.' }
+}
+
+function RouteIcon({ id }: { id: RouteId }) {
+  const common = { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const }
+  if (id === 'hotmail') return <svg {...common}><path d="M3.5 6.5h17v11h-17z" /><path d="m4 7 8 6 8-6" /></svg>
+  if (id === 'page-tabs') return <svg {...common}><path d="M5 4.5h12.5v14H5z" /><path d="M8.5 7.5h12v12h-12" /><path d="M8 9h6" /></svg>
+  if (id === 'accounts') return <svg {...common}><circle cx="9" cy="8" r="3" /><path d="M3.5 18c.5-3 2.4-4.5 5.5-4.5s5 1.5 5.5 4.5" /><path d="M16 7.5a2.5 2.5 0 0 1 0 5" /><path d="M16.5 14c2.1.4 3.4 1.7 4 4" /></svg>
+  if (id === 'overview') return <svg {...common}><rect x="4" y="4" width="6" height="6" rx="1" /><rect x="14" y="4" width="6" height="6" rx="1" /><rect x="4" y="14" width="6" height="6" rx="1" /><rect x="14" y="14" width="6" height="6" rx="1" /></svg>
+  if (id === 'logs') return <svg {...common}><path d="M6 5h12" /><path d="M6 10h12" /><path d="M6 15h8" /><path d="M6 20h10" /></svg>
+  return <svg {...common}><circle cx="12" cy="12" r="3" /><path d="M12 3.5v2" /><path d="M12 18.5v2" /><path d="m5.9 5.9 1.4 1.4" /><path d="m16.7 16.7 1.4 1.4" /><path d="M3.5 12h2" /><path d="M18.5 12h2" /><path d="m5.9 18.1 1.4-1.4" /><path d="m16.7 7.3 1.4-1.4" /></svg>
 }
 
 export function App() {
@@ -63,7 +73,7 @@ export function App() {
                 type="button"
                 onClick={() => setActiveRoute(route.id)}
               >
-                <span className="nav-icon">{route.shortLabel}</span>
+                <span className="nav-icon"><RouteIcon id={route.id} /></span>
                 <span className="nav-label">{route.label}</span>
               </button>
             ))}
@@ -77,7 +87,7 @@ export function App() {
       </aside>
 
       <main key={activeRoute} className={`${workspaceClass} workspace-transition`}>
-        <header className="topbar"><div><p className="eyebrow">PAGE-AUTO / {activeRoute.toUpperCase()}</p><h1>{active.title}</h1></div><div className="version-badge">{appInfo ? `v${appInfo.version}` : 'Loading...'}</div></header>
+        <header className="topbar"><div><p className="eyebrow">PAGE-AUTO / {activeRoute === 'hotmail' ? 'EMAIL' : activeRoute.toUpperCase()}</p><h1>{active.title}</h1></div><div className="version-badge">{appInfo ? `v${appInfo.version}` : 'Loading...'}</div></header>
 
         {activeRoute === 'accounts' ? <AccountManager /> : activeRoute === 'hotmail' ? <HotmailAuto /> : activeRoute === 'page-tabs' ? <div className="page-tabs-route"><PageTabsManager /></div> : activeRoute === 'logs' ? <ExecutionLogs /> : activeRoute === 'settings' ? <SettingsPanel appInfo={appInfo} /> : (
           <>

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ChangeEvent, type MouseEvent } from 'react'
+import { EMAIL_RECOVERY_PROVIDERS, detectRecoveryMailProvider } from '../../../shared/emailRecoveryProviders'
 import type {
   EmailProxyMode,
   HotmailBatchResult,
@@ -18,6 +19,15 @@ interface SettingsDraft {
   proxyMode: EmailProxyMode
   proxyListText: string
 }
+
+type SettingsTab = 'profile' | 'microsoft' | 'recovery' | 'proxy'
+type ActionKey = 'oauth' | 'codes' | 'open' | 'check' | 'rotate' | 'test' | 'save' | 'pick-root' | 'pick-browser' | 'copy'
+
+type ContextMenuState = {
+  x: number
+  y: number
+  accountId: number
+} | null
 
 function settingsDraft(settings: HotmailSettingsView): SettingsDraft {
   return {
@@ -41,7 +51,12 @@ function statusLabel(value: string): string {
 function resultSummary(result: HotmailBatchResult): string {
   const success = result.results.filter((item) => item.status === 'success').length
   const failed = result.results.length - success
-  return `Hoàn tất ${result.results.length} account · ${success} thành công · ${failed} lỗi.`
+  const detail = result.results.find((item) => item.status !== 'success')?.message
+  return `Hoàn tất ${result.results.length} account · ${success} thành công · ${failed} lỗi${detail ? ` · ${detail}` : ''}.`
+}
+
+function Spinner() {
+  return <span className="email-spinner" aria-hidden="true" />
 }
 
 export function HotmailAuto() {
@@ -50,38 +65,58 @@ export function HotmailAuto() {
   const [draft, setDraft] = useState<SettingsDraft | null>(null)
   const [selection, setSelection] = useState<Set<number>>(new Set())
   const [proxyDirty, setProxyDirty] = useState(false)
-  const [showConfig, setShowConfig] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const [message, setMessage] = useState('Hotmail Auto lấy account trực tiếp từ Account Manager theo UID.')
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>('profile')
+  const [busyActions, setBusyActions] = useState<Set<ActionKey>>(new Set())
+  const [message, setMessage] = useState('Email lấy account trực tiếp từ Account Manager theo UID.')
   const [oauthPrompt, setOauthPrompt] = useState<HotmailOAuthStartResult | null>(null)
   const [proxyStatus, setProxyStatus] = useState<HotmailProxyStatus | null>(null)
+  const [contextMenu, setContextMenu] = useState<ContextMenuState>(null)
 
   const selectedIds = useMemo(() => [...selection], [selection])
   const selectedRows = useMemo(() => rows.filter((row) => selection.has(row.accountId)), [rows, selection])
 
-  const refresh = async () => {
-    const [nextRows, nextSettings, nextProxy] = await Promise.all([
-      window.pageAuto.listHotmailDashboard(),
+  const refreshRows = async () => setRows(await window.pageAuto.listHotmailDashboard())
+  const refreshSettings = async () => {
+    const [nextSettings, nextProxy] = await Promise.all([
       window.pageAuto.getHotmailSettings(),
       window.pageAuto.getHotmailProxyStatus()
     ])
-    setRows(nextRows)
     setSettings(nextSettings)
     setProxyStatus(nextProxy)
     setDraft((current) => current ?? settingsDraft(nextSettings))
   }
+  const refreshAll = async () => await Promise.all([refreshRows(), refreshSettings()])
 
-  useEffect(() => { void refresh().catch((error) => setMessage(error instanceof Error ? error.message : String(error))) }, [])
+  useEffect(() => { void refreshAll().catch((error) => setMessage(error instanceof Error ? error.message : String(error))) }, [])
+  useEffect(() => {
+    if (!contextMenu) return
+    const close = () => setContextMenu(null)
+    window.addEventListener('mousedown', close)
+    window.addEventListener('blur', close)
+    window.addEventListener('scroll', close, true)
+    return () => {
+      window.removeEventListener('mousedown', close)
+      window.removeEventListener('blur', close)
+      window.removeEventListener('scroll', close, true)
+    }
+  }, [contextMenu])
 
-  const run = async (task: () => Promise<string>) => {
-    setBusy(true)
+  const isBusy = (key: ActionKey) => busyActions.has(key)
+  const runAction = async (key: ActionKey, task: () => Promise<string>, refresh: 'none' | 'rows' | 'settings' = 'rows') => {
+    setBusyActions((current) => new Set(current).add(key))
     try {
       setMessage(await task())
-      await refresh()
+      if (refresh === 'rows') await refreshRows()
+      if (refresh === 'settings') await refreshSettings()
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error))
     } finally {
-      setBusy(false)
+      setBusyActions((current) => {
+        const next = new Set(current)
+        next.delete(key)
+        return next
+      })
     }
   }
 
@@ -103,19 +138,19 @@ export function HotmailAuto() {
     return selectedIds
   }
 
-  const connectOAuth = () => run(async () => {
-    const accountId = requireSelection()[0]
-    if (!accountId) throw new Error('Chưa chọn account.')
-    const result = await window.pageAuto.startHotmailOAuth({ accountId })
+  const connectOAuth = (accountId?: number) => runAction('oauth', async () => {
+    const id = accountId ?? requireSelection()[0]
+    if (!id) throw new Error('Chưa chọn account.')
+    const result = await window.pageAuto.startHotmailOAuth({ accountId: id })
     setOauthPrompt(result)
     return result.message
   })
 
-  const getCodes = () => run(async () => resultSummary(await window.pageAuto.getHotmailCodes({ accountIds: requireSelection() })))
-  const checkMail = () => run(async () => resultSummary(await window.pageAuto.checkHotmail({ accountIds: requireSelection() })))
+  const getCodes = (accountIds?: number[]) => runAction('codes', async () => resultSummary(await window.pageAuto.getHotmailCodes({ accountIds: accountIds ?? requireSelection() })))
+  const checkMail = (accountIds?: number[]) => runAction('check', async () => resultSummary(await window.pageAuto.checkHotmail({ accountIds: accountIds ?? requireSelection() })))
 
-  const openMail = () => run(async () => {
-    const ids = requireSelection()
+  const openMail = (accountIds?: number[]) => runAction('open', async () => {
+    const ids = accountIds ?? requireSelection()
     const messages: string[] = []
     for (const accountId of ids) {
       const result = await window.pageAuto.openHotmail({ accountId })
@@ -124,8 +159,30 @@ export function HotmailAuto() {
     return messages.join(' · ')
   })
 
-  const saveSettings = () => run(async () => {
-    if (!draft) throw new Error('Cấu hình Hotmail chưa tải xong.')
+  const rotateProxy = () => runAction('rotate', async () => {
+    const status = await window.pageAuto.rotateHotmailProxy()
+    setProxyStatus(status)
+    return status.message
+  }, 'none')
+
+  const testProxy = () => runAction('test', async () => (await window.pageAuto.testHotmailProxy()).message, 'none')
+
+  const pickProfileRoot = () => runAction('pick-root', async () => {
+    const path = await window.pageAuto.pickHotmailProfileRoot()
+    if (!path) return 'Đã hủy chọn Email Profile Root.'
+    setDraft((current) => current ? { ...current, profileRoot: path } : current)
+    return `Đã chọn Email Profile Root: ${path}.`
+  }, 'none')
+
+  const pickBrowser = () => runAction('pick-browser', async () => {
+    const path = await window.pageAuto.pickHotmailBrowserExecutable()
+    if (!path) return 'Đã hủy chọn browser executable.'
+    setDraft((current) => current ? { ...current, browserExecutable: path } : current)
+    return `Đã chọn browser: ${path}.`
+  }, 'none')
+
+  const saveSettings = () => runAction('save', async () => {
+    if (!draft) throw new Error('Cấu hình Email chưa tải xong.')
     const input: SaveHotmailSettingsInput = {
       profileRoot: draft.profileRoot,
       browserExecutable: draft.browserExecutable,
@@ -138,45 +195,34 @@ export function HotmailAuto() {
     setSettings(saved)
     setDraft(settingsDraft(saved))
     setProxyDirty(false)
-    return 'Đã lưu cấu hình Hotmail Auto. Proxy Email vẫn độc lập với proxy Facebook.'
-  })
+    setSettingsOpen(false)
+    return 'Đã lưu Thiết lập Email.'
+  }, 'settings')
 
-  const pickProfileRoot = () => run(async () => {
-    const path = await window.pageAuto.pickHotmailProfileRoot()
-    if (!path) return 'Đã hủy chọn Email Profile Root.'
-    setDraft((current) => current ? { ...current, profileRoot: path } : current)
-    return `Đã chọn Email Profile Root: ${path}. Bấm Lưu cấu hình để áp dụng.`
-  })
+  const copyEmail = (accountId: number) => runAction('copy', async () => {
+    const email = rows.find((row) => row.accountId === accountId)?.email
+    if (!email) throw new Error('Account chưa có Email.')
+    await navigator.clipboard.writeText(email)
+    return `Đã copy ${email}.`
+  }, 'none')
 
-  const pickBrowser = () => run(async () => {
-    const path = await window.pageAuto.pickHotmailBrowserExecutable()
-    if (!path) return 'Đã hủy chọn browser executable.'
-    setDraft((current) => current ? { ...current, browserExecutable: path } : current)
-    return `Đã chọn browser: ${path}. Bấm Lưu cấu hình để áp dụng.`
-  })
-
-  const rotateProxy = () => run(async () => {
-    const status = await window.pageAuto.rotateHotmailProxy()
-    setProxyStatus(status)
-    return status.message
-  })
-
-  const testProxy = () => run(async () => {
-    const result = await window.pageAuto.testHotmailProxy()
-    return result.message
-  })
+  const openContextMenu = (event: MouseEvent<HTMLTableRowElement>, accountId: number) => {
+    event.preventDefault()
+    if (!selection.has(accountId)) setSelection(new Set([accountId]))
+    setContextMenu({ x: event.clientX, y: event.clientY, accountId })
+  }
 
   return (
-    <section className="hotmail-shell">
-      <div className="hotmail-toolbar">
+    <section className="hotmail-shell email-shell">
+      <div className="hotmail-toolbar email-toolbar">
         <div className="hotmail-toolbar-actions">
-          <button disabled={busy} onClick={() => void connectOAuth()}>Kết nối / Lấy OAuth</button>
-          <button disabled={busy} onClick={() => void getCodes()}>Lấy code</button>
-          <button disabled={busy} onClick={() => void openMail()}>Mở mail</button>
-          <button disabled={busy} onClick={() => void checkMail()}>Kiểm tra mail</button>
-          <button disabled={busy} onClick={() => setShowConfig((value) => !value)}>Config Proxy / Profile</button>
-          <button disabled={busy} onClick={() => void rotateProxy()}>Đổi IP</button>
-          <button disabled={busy} onClick={() => void testProxy()}>Test Proxy</button>
+          <button className="email-button primary" disabled={isBusy('oauth')} onClick={() => void connectOAuth()}>{isBusy('oauth') && <Spinner />}Kết nối Microsoft</button>
+          <button className="email-button success" disabled={isBusy('codes')} onClick={() => void getCodes()}>{isBusy('codes') && <Spinner />}Lấy code</button>
+          <button className="email-button primary" disabled={isBusy('open')} onClick={() => void openMail()}>{isBusy('open') && <Spinner />}Mở mail</button>
+          <button className="email-button secondary" disabled={isBusy('check')} onClick={() => void checkMail()}>{isBusy('check') && <Spinner />}Kiểm tra mail</button>
+          <button className="email-button settings" onClick={() => { setSettingsTab('profile'); setSettingsOpen(true) }}>Thiết lập Email</button>
+          <button className="email-button secondary" disabled={isBusy('rotate')} onClick={() => void rotateProxy()}>{isBusy('rotate') && <Spinner />}Đổi IP</button>
+          <button className="email-button secondary" disabled={isBusy('test')} onClick={() => void testProxy()}>{isBusy('test') && <Spinner />}Test Proxy</button>
         </div>
         <div className="hotmail-toolbar-meta">
           <strong>{selectedRows.length}/{rows.length}</strong> đã chọn
@@ -184,19 +230,6 @@ export function HotmailAuto() {
           <span>{proxyStatus?.currentProxy ?? 'Không có proxy hiện tại'}</span>
         </div>
       </div>
-
-      {showConfig && draft ? (
-        <div className="hotmail-config-panel">
-          <label className="wide"><span>Email Profile Root (MaxHotmail)</span><div className="input-action"><input value={draft.profileRoot} onChange={(event: ChangeEvent<HTMLInputElement>) => setDraft({ ...draft, profileRoot: event.target.value })} placeholder="D:\\...\\MaxHotmail\\profiles" /><button onClick={() => void pickProfileRoot()}>Chọn folder</button></div></label>
-          <label className="wide"><span>Browser executable</span><div className="input-action"><input value={draft.browserExecutable} onChange={(event: ChangeEvent<HTMLInputElement>) => setDraft({ ...draft, browserExecutable: event.target.value })} placeholder="Để trống = dùng browser PAGE-AUTO" /><button onClick={() => void pickBrowser()}>Chọn file</button></div></label>
-          <label><span>Microsoft OAuth Client ID</span><input value={draft.oauthClientId} onChange={(event: ChangeEvent<HTMLInputElement>) => setDraft({ ...draft, oauthClientId: event.target.value })} placeholder="Public client / desktop app ID" /></label>
-          <label><span>OAuth tenant</span><input value={draft.oauthTenant} onChange={(event: ChangeEvent<HTMLInputElement>) => setDraft({ ...draft, oauthTenant: event.target.value })} placeholder="consumers" /></label>
-          <label><span>Proxy mode</span><select value={draft.proxyMode} onChange={(event: ChangeEvent<HTMLSelectElement>) => setDraft({ ...draft, proxyMode: event.target.value as EmailProxyMode })}><option value="direct">Direct</option><option value="random_ipv4">Random IPv4</option></select></label>
-          <label className="proxy-list"><span>Proxy pool IPv4 {settings ? `(đang lưu ${settings.proxyCount})` : ''}</span><textarea value={draft.proxyListText} onChange={(event: ChangeEvent<HTMLTextAreaElement>) => { setDraft({ ...draft, proxyListText: event.target.value }); setProxyDirty(true) }} placeholder={'Mỗi dòng: 1.2.3.4:8080\nhoặc 1.2.3.4:8080:user:pass\nĐể nguyên không sửa = giữ pool hiện tại'} /></label>
-          <div className="hotmail-config-actions"><button className="primary" disabled={busy} onClick={() => void saveSettings()}>Lưu cấu hình</button><button disabled={busy} onClick={() => { setDraft((current) => current ? { ...current, proxyListText: '' } : current); setProxyDirty(true) }}>Xóa pool khi lưu</button></div>
-          <p className="hotmail-config-note">Profile chỉ resolve <code>root\UID</code>; PAGE-AUTO không scan account, không clone profile và không tạo fallback sang ổ C. Proxy Email là pool chung, không đọc/ghi proxy Facebook.</p>
-        </div>
-      ) : null}
 
       {oauthPrompt ? (
         <div className="hotmail-oauth-banner">
@@ -207,35 +240,113 @@ export function HotmailAuto() {
         </div>
       ) : null}
 
-      <div className="hotmail-status-line">{busy ? 'Đang xử lý… ' : ''}{message}</div>
+      <div className="hotmail-status-line"><span className="email-status-dot" />{message}</div>
 
       <div className="hotmail-grid-wrap">
         <table className="hotmail-grid">
           <thead><tr>
             <th className="check"><input type="checkbox" checked={rows.length > 0 && selection.size === rows.length} onChange={toggleAll} /></th>
-            <th>UID</th><th>Email</th><th>Pass Email</th><th>Mail khôi phục</th><th>OAuth</th><th>Mail</th><th>Profile</th><th>Code mới nhất</th><th>Lấy code gần nhất</th><th>Runtime</th><th>Lỗi gần nhất</th>
+            <th>UID</th><th>Email</th><th>Pass Email</th><th>Mail khôi phục</th><th>Loại khôi phục</th><th>OAuth</th><th>Mail</th><th>Profile</th><th>Code mới nhất</th><th>Lấy code gần nhất</th><th>Runtime</th><th>Lỗi gần nhất</th>
           </tr></thead>
           <tbody>
-            {rows.map((row) => (
-              <tr key={row.accountId} className={selection.has(row.accountId) ? 'selected' : ''} onClick={() => toggleOne(row.accountId)}>
-                <td className="check" onClick={(event: MouseEvent<HTMLTableCellElement>) => event.stopPropagation()}><input type="checkbox" checked={selection.has(row.accountId)} onChange={() => toggleOne(row.accountId)} /></td>
-                <td className="mono">{row.uid}</td>
-                <td>{row.email ?? '—'}</td>
-                <td className="secret">{row.emailPasswordMasked ?? '—'}</td>
-                <td>{row.backupEmail ?? '—'}</td>
-                <td><span className={`hotmail-chip ${row.oauthStatus}`}>{statusLabel(row.oauthStatus)}</span></td>
-                <td><span className={`hotmail-chip ${row.mailStatus}`}>{statusLabel(row.mailStatus)}</span></td>
-                <td title={row.profileDirectory ?? ''}><span className={`hotmail-chip ${row.profileStatus}`}>{statusLabel(row.profileStatus)}</span></td>
-                <td className="code-cell">{row.latestCode ?? '—'}</td>
-                <td>{formatTime(row.lastCodeAt)}</td>
-                <td><span className={`hotmail-chip ${row.runtimeStatus}`}>{statusLabel(row.runtimeStatus)}</span></td>
-                <td className="error-cell" title={row.lastError ?? ''}>{row.lastError ?? '—'}</td>
-              </tr>
-            ))}
-            {rows.length === 0 ? <tr><td className="empty" colSpan={12}>Account Manager chưa có account để hiển thị.</td></tr> : null}
+            {rows.map((row) => {
+              const recovery = detectRecoveryMailProvider(row.backupEmail)
+              return (
+                <tr key={row.accountId} className={selection.has(row.accountId) ? 'selected' : ''} onClick={() => toggleOne(row.accountId)} onContextMenu={(event) => openContextMenu(event, row.accountId)}>
+                  <td className="check" onClick={(event: MouseEvent<HTMLTableCellElement>) => event.stopPropagation()}><input type="checkbox" checked={selection.has(row.accountId)} onChange={() => toggleOne(row.accountId)} /></td>
+                  <td className="mono">{row.uid}</td>
+                  <td>{row.email ?? '—'}</td>
+                  <td className="secret">{row.emailPasswordMasked ?? '—'}</td>
+                  <td>{row.backupEmail ?? '—'}</td>
+                  <td title={recovery.domain ?? ''}><span className={`recovery-chip ${recovery.kind}`}>{recovery.label}</span></td>
+                  <td><span className={`hotmail-chip ${row.oauthStatus}`}>{statusLabel(row.oauthStatus)}</span></td>
+                  <td><span className={`hotmail-chip ${row.mailStatus}`}>{statusLabel(row.mailStatus)}</span></td>
+                  <td title={row.profileDirectory ?? ''}><span className={`hotmail-chip ${row.profileStatus}`}>{statusLabel(row.profileStatus)}</span></td>
+                  <td className="code-cell">{row.latestCode ?? '—'}</td>
+                  <td>{formatTime(row.lastCodeAt)}</td>
+                  <td><span className={`hotmail-chip ${row.runtimeStatus}`}>{statusLabel(row.runtimeStatus)}</span></td>
+                  <td className="error-cell" title={row.lastError ?? ''}>{row.lastError ?? '—'}</td>
+                </tr>
+              )
+            })}
+            {rows.length === 0 ? <tr><td className="empty" colSpan={13}>Account Manager chưa có account để hiển thị.</td></tr> : null}
           </tbody>
         </table>
       </div>
+
+      {contextMenu ? (
+        <div className="email-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onMouseDown={(event) => event.stopPropagation()}>
+          <button onClick={() => { setContextMenu(null); void openMail([contextMenu.accountId]) }}>Mở mail / profile</button>
+          <button onClick={() => { setContextMenu(null); void getCodes([contextMenu.accountId]) }}>Lấy code</button>
+          <button onClick={() => { setContextMenu(null); void checkMail([contextMenu.accountId]) }}>Kiểm tra mail</button>
+          <button onClick={() => { setContextMenu(null); void connectOAuth(contextMenu.accountId) }}>Kết nối lại Microsoft</button>
+          <div className="email-context-separator" />
+          <button onClick={() => { setContextMenu(null); void copyEmail(contextMenu.accountId) }}>Copy Email</button>
+        </div>
+      ) : null}
+
+      {settingsOpen && draft ? (
+        <div className="email-modal-backdrop" role="presentation" onMouseDown={() => setSettingsOpen(false)}>
+          <div className="email-settings-modal" role="dialog" aria-modal="true" aria-label="Thiết lập Email" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="email-modal-header">
+              <div><p className="eyebrow">EMAIL</p><h2>Thiết lập Email</h2></div>
+              <button className="email-icon-button" onClick={() => setSettingsOpen(false)}>×</button>
+            </div>
+            <div className="email-settings-tabs">
+              <button className={settingsTab === 'profile' ? 'active' : ''} onClick={() => setSettingsTab('profile')}>Profile</button>
+              <button className={settingsTab === 'microsoft' ? 'active' : ''} onClick={() => setSettingsTab('microsoft')}>Microsoft</button>
+              <button className={settingsTab === 'recovery' ? 'active' : ''} onClick={() => setSettingsTab('recovery')}>Mail khôi phục</button>
+              <button className={settingsTab === 'proxy' ? 'active' : ''} onClick={() => setSettingsTab('proxy')}>Proxy Email</button>
+            </div>
+
+            <div className="email-settings-body">
+              {settingsTab === 'profile' ? (
+                <div className="email-settings-grid">
+                  <label className="wide"><span>Email Profile Root (MaxHotmail)</span><div className="input-action"><input value={draft.profileRoot} onChange={(event: ChangeEvent<HTMLInputElement>) => setDraft({ ...draft, profileRoot: event.target.value })} placeholder="F:\\...\\MaxHotmail\\profiles" /><button className="email-button secondary" disabled={isBusy('pick-root')} onClick={() => void pickProfileRoot()}>{isBusy('pick-root') && <Spinner />}Chọn folder</button></div></label>
+                  <label className="wide"><span>Browser executable</span><div className="input-action"><input value={draft.browserExecutable} onChange={(event: ChangeEvent<HTMLInputElement>) => setDraft({ ...draft, browserExecutable: event.target.value })} placeholder="Để trống = dùng browser PAGE-AUTO" /><button className="email-button secondary" disabled={isBusy('pick-browser')} onClick={() => void pickBrowser()}>{isBusy('pick-browser') && <Spinner />}Chọn file</button></div></label>
+                  <p className="email-help wide">Profile luôn resolve đúng <code>root\UID</code>. File DevToolsActivePort chỉ được coi là Running khi endpoint CDP còn sống; file cũ không còn làm kẹt profile.</p>
+                </div>
+              ) : null}
+
+              {settingsTab === 'microsoft' ? (
+                <div className="email-settings-grid">
+                  <label><span>Microsoft OAuth Client ID</span><input value={draft.oauthClientId} onChange={(event: ChangeEvent<HTMLInputElement>) => setDraft({ ...draft, oauthClientId: event.target.value })} placeholder="Public client / desktop app ID" /></label>
+                  <label><span>OAuth tenant</span><input value={draft.oauthTenant} onChange={(event: ChangeEvent<HTMLInputElement>) => setDraft({ ...draft, oauthTenant: event.target.value })} placeholder="consumers" /></label>
+                  <p className="email-help wide">Microsoft/Hotmail là provider chính hiện tại. Quyền đọc mail vẫn dùng Mail.Read; token không đưa ra renderer.</p>
+                </div>
+              ) : null}
+
+              {settingsTab === 'recovery' ? (
+                <div className="recovery-provider-list">
+                  {EMAIL_RECOVERY_PROVIDERS.map((provider) => (
+                    <article key={provider.id} className="recovery-provider-card">
+                      <div className="recovery-provider-heading"><strong>{provider.label}</strong><span className={`recovery-chip ${provider.kind}`}>{provider.kind === 'temporary' ? 'Mail dùng nhanh' : 'Mail thường'}</span></div>
+                      <div className="recovery-domain-list">{provider.domains.map((domain) => <code key={domain}>{domain}</code>)}</div>
+                      <p>{provider.note}</p>
+                    </article>
+                  ))}
+                  <p className="email-help">Domain chưa biết vẫn hiển thị bình thường. Catalog được tách riêng để bổ sung thêm provider/domain về sau mà không đổi Account Manager.</p>
+                </div>
+              ) : null}
+
+              {settingsTab === 'proxy' ? (
+                <div className="email-settings-grid">
+                  <label><span>Proxy mode</span><select value={draft.proxyMode} onChange={(event: ChangeEvent<HTMLSelectElement>) => setDraft({ ...draft, proxyMode: event.target.value as EmailProxyMode })}><option value="direct">Direct</option><option value="random_ipv4">Random IPv4</option></select></label>
+                  <label><span>Pool hiện tại</span><input value={`${settings?.proxyCount ?? 0} proxy`} readOnly /></label>
+                  <label className="wide"><span>Proxy pool IPv4</span><textarea value={draft.proxyListText} onChange={(event: ChangeEvent<HTMLTextAreaElement>) => { setDraft({ ...draft, proxyListText: event.target.value }); setProxyDirty(true) }} placeholder={'Mỗi dòng: 1.2.3.4:8080\nhoặc 1.2.3.4:8080:user:pass\nĐể nguyên không sửa = giữ pool hiện tại'} /></label>
+                  <div className="proxy-preview wide">{settings?.proxyPreview.length ? settings.proxyPreview.map((proxy) => <code key={proxy}>{proxy}</code>) : <span>Chưa có proxy lưu.</span>}</div>
+                  <button className="email-button danger compact" onClick={() => { setDraft({ ...draft, proxyListText: '' }); setProxyDirty(true) }}>Xóa pool khi lưu</button>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="email-modal-footer">
+              <span>{message}</span>
+              <div><button className="email-button secondary" onClick={() => setSettingsOpen(false)}>Hủy</button><button className="email-button primary" disabled={isBusy('save')} onClick={() => void saveSettings()}>{isBusy('save') && <Spinner />}Lưu thiết lập</button></div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </section>
   )
 }
