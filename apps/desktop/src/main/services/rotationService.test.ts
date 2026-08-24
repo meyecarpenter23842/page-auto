@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { PageTabScheduleInput } from '../../shared/pageTabs'
 import type { ExecuteSinglePostingJobResult } from '../../shared/posting'
 import type { RunDetails, RunItem } from '../../shared/runs'
-import { RotationService, type RotationRunStore } from './rotationService'
+import { RotationService, type RotationRunStore, type RunStopReason } from './rotationService'
 
 function makeRun(total = 7): RunDetails {
   return {
@@ -57,14 +57,30 @@ class FakeRunStore implements RotationRunStore {
   details: RunDetails | null = null
   pauseCalls = 0
   resumeCalls = 0
+  stopCalls = 0
+  createCalls = 0
 
   getLatestForPageTab(): RunDetails | null {
     return this.details
   }
 
   createForPageTab(): RunDetails {
-    this.details = makeRun()
-    return this.details
+    const previous = this.details
+    const next = makeRun(previous?.metrics.total ?? 7)
+    next.run.id = (previous?.run.id ?? 0) + 1
+    if (previous) {
+      next.run.snapshot = {
+        ...previous.run.snapshot,
+        rotation: { ...previous.run.snapshot.rotation },
+        accounts: previous.run.snapshot.accounts.map((account) => ({ ...account })),
+        schedules: previous.run.snapshot.schedules.map((schedule) => ({ ...schedule })),
+        contents: [...previous.run.snapshot.contents],
+        image: { ...previous.run.snapshot.image }
+      }
+    }
+    this.details = next
+    this.createCalls += 1
+    return next
   }
 
   get(): RunDetails | null {
@@ -82,6 +98,13 @@ class FakeRunStore implements RotationRunStore {
     if (!this.details) throw new Error('missing run')
     this.resumeCalls += 1
     this.details.run.status = 'running'
+    return this.details
+  }
+
+  stop(_runId: number, _reason?: RunStopReason): RunDetails {
+    if (!this.details) throw new Error('missing run')
+    this.stopCalls += 1
+    this.details.run.status = 'stopped'
     return this.details
   }
 
@@ -113,6 +136,10 @@ function item(id: number, runId: number): RunItem {
   }
 }
 
+function never(): Promise<void> {
+  return new Promise(() => undefined)
+}
+
 describe('RotationService', () => {
   it('loops enabled accounts in order and honors per-account post quotas and delays', async () => {
     const store = new FakeRunStore()
@@ -135,7 +162,10 @@ describe('RotationService', () => {
     const service = new RotationService(store, posting, {
       now: () => new Date(2026, 7, 24, 10, 30),
       random: () => 0,
-      sleep: async (milliseconds) => { sleeps.push(milliseconds) }
+      sleep: async (milliseconds) => {
+        if (store.details?.run.status === 'completed' && milliseconds > 1000) return never()
+        sleeps.push(milliseconds)
+      }
     })
 
     service.start({ pageTabId: 10 })
@@ -143,8 +173,9 @@ describe('RotationService', () => {
 
     expect(accountCalls).toEqual([101, 101, 202, 101, 101, 202, 101])
     expect(sleeps).toEqual([1000, 1000, 1000, 1000, 1000, 1000])
-    expect(service.status({ pageTabId: 10 }).status).toBe('completed')
+    expect(service.status({ pageTabId: 10 }).status).toBe('waiting_window')
     expect(store.resumeCalls).toBe(1)
+    service.dispose()
   })
 
   it('pauses outside the configured window and resumes when the window opens', async () => {
@@ -168,7 +199,10 @@ describe('RotationService', () => {
     const service = new RotationService(store, posting, {
       now: () => now,
       random: () => 0,
-      sleep: async (milliseconds) => { now = new Date(now.getTime() + milliseconds) }
+      sleep: async (milliseconds) => {
+        if (store.details?.run.status === 'completed') return never()
+        now = new Date(now.getTime() + milliseconds)
+      }
     })
 
     service.start({ pageTabId: 10 })
@@ -176,7 +210,8 @@ describe('RotationService', () => {
 
     expect(store.pauseCalls).toBeGreaterThan(0)
     expect(store.resumeCalls).toBe(1)
-    expect(service.status({ pageTabId: 10 }).status).toBe('completed')
+    expect(service.status({ pageTabId: 10 }).status).toBe('waiting_window')
+    service.dispose()
   })
 
   it('uses the latest Page Tab schedule on Resume instead of a stale run snapshot', () => {
@@ -238,7 +273,7 @@ describe('RotationService', () => {
     const service = new RotationService(store, posting, {
       now: () => new Date(2026, 7, 24, 7, 50),
       random: () => 0,
-      sleep: async () => undefined
+      sleep: async () => never()
     })
 
     const resumed = service.resume({ pageTabId: 10 })
@@ -249,6 +284,94 @@ describe('RotationService', () => {
 
     expect(accountCalls).toEqual([101])
     expect(store.resumeCalls).toBe(1)
-    expect(service.status({ pageTabId: 10 }).status).toBe('completed')
+    expect(service.status({ pageTabId: 10 }).status).toBe('waiting_window')
+    service.dispose()
+  })
+
+  it('defers Stop until an in-flight posting job finishes, then marks the run stopped', async () => {
+    const store = new FakeRunStore()
+    store.details = makeRun(1)
+    store.details.run.snapshot.accounts = [{ accountId: 101, enabled: true, sortOrder: 0, postsPerTurn: 1 }]
+
+    let resolveJob!: () => void
+    let jobStarted!: () => void
+    const started = new Promise<void>((resolve) => { jobStarted = resolve })
+    const posting = {
+      executeSingle: (payload: { runId: number; accountId?: number }): Promise<ExecuteSinglePostingJobResult> => {
+        jobStarted()
+        return new Promise((resolve) => {
+          resolveJob = () => {
+            const run = store.finishOne()
+            resolve({
+              accountId: payload.accountId ?? null,
+              item: item(1, payload.runId),
+              result: { status: 'success', message: 'ok' },
+              run
+            })
+          }
+        })
+      }
+    }
+    const service = new RotationService(store, posting, {
+      now: () => new Date(2026, 7, 24, 10, 30),
+      random: () => 0,
+      sleep: async () => undefined
+    })
+
+    service.start({ pageTabId: 10 })
+    await started
+    const stopping = service.stop({ pageTabId: 10 })
+    expect(stopping.status).toBe('stopping')
+    expect(store.stopCalls).toBe(0)
+
+    resolveJob()
+    await service.waitForSettled()
+    expect(service.status({ pageTabId: 10 }).status).toBe('stopped')
+    expect(store.stopCalls).toBe(1)
+  })
+
+  it('creates a fresh run from the original daily snapshot on the next eligible local day', async () => {
+    const store = new FakeRunStore()
+    store.details = makeRun(1)
+    store.details.run.snapshot.accounts = [{ accountId: 101, enabled: true, sortOrder: 0, postsPerTurn: 1 }]
+    store.details.run.snapshot.schedules = [
+      { dayOfWeek: 1, startMinute: 1438, endMinute: 1439, enabled: true, sortOrder: 0 },
+      { dayOfWeek: 2, startMinute: 0, endMinute: 1, enabled: true, sortOrder: 1 }
+    ]
+
+    let now = new Date(2026, 7, 24, 23, 58, 30)
+    let calls = 0
+    let secondStarted!: () => void
+    const secondRunStarted = new Promise<void>((resolve) => { secondStarted = resolve })
+    const posting = {
+      executeSingle: (payload: { runId: number; accountId?: number }): Promise<ExecuteSinglePostingJobResult> => {
+        calls += 1
+        if (calls === 1) {
+          const run = store.finishOne()
+          return Promise.resolve({
+            accountId: payload.accountId ?? null,
+            item: item(1, payload.runId),
+            result: { status: 'success', message: 'ok' },
+            run
+          })
+        }
+        secondStarted()
+        return new Promise(() => undefined)
+      }
+    }
+    const service = new RotationService(store, posting, {
+      now: () => now,
+      random: () => 0,
+      sleep: async (milliseconds) => { now = new Date(now.getTime() + milliseconds) }
+    })
+
+    service.start({ pageTabId: 10 })
+    await service.waitForSettled()
+    await secondRunStarted
+
+    expect(store.createCalls).toBe(1)
+    expect(service.status({ pageTabId: 10 }).runId).toBe(2)
+    expect(service.status({ pageTabId: 10 }).status).toBe('running')
+    service.dispose()
   })
 })

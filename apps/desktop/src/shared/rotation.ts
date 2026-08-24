@@ -7,6 +7,8 @@ export const ROTATION_RUNTIME_STATUSES = [
   'running',
   'paused',
   'waiting_window',
+  'stopping',
+  'stopped',
   'completed',
   'error'
 ] as const

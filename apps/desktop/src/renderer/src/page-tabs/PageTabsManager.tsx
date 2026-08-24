@@ -35,12 +35,8 @@ function timeToMinutes(value: string): number {
   return Math.max(0, Math.min(1439, hours * 60 + minutes))
 }
 
-function scheduleValidationError(schedule: PageTabSchedule, index: number): string | null {
-  if (!schedule.enabled) return null
-  if (schedule.startMinute >= schedule.endMinute) {
-    return `Khung giờ #${index + 1}: giờ kết thúc phải sau giờ bắt đầu. Hãy sửa thời gian hoặc tắt khung giờ này.`
-  }
-  return null
+function scheduleIsInvalid(schedule: PageTabSchedule): boolean {
+  return schedule.enabled && schedule.startMinute >= schedule.endMinute
 }
 
 function parseGroupText(text: string): string[] {
@@ -79,7 +75,7 @@ function toSaveInput(config: PageTabConfig): PageTabSaveInput {
       dayOfWeek: item.dayOfWeek,
       startMinute: item.startMinute,
       endMinute: item.endMinute,
-      enabled: item.enabled,
+      enabled: item.enabled && item.startMinute < item.endMinute,
       sortOrder: index
     })),
     groupUids: [...config.groupUids],
@@ -438,15 +434,7 @@ export function PageTabsManager() {
 
   const save = async () => {
     if (!config) return
-    const scheduleError = config.schedules
-      .map((schedule, index) => scheduleValidationError(schedule, index))
-      .find((message): message is string => message !== null)
-    if (scheduleError) {
-      setNotice(null)
-      setError(scheduleError)
-      setEditorModal('schedule')
-      return
-    }
+    const invalidScheduleCount = config.schedules.filter(scheduleIsInvalid).length
 
     setSaving(true)
     setError(null)
@@ -454,7 +442,9 @@ export function PageTabsManager() {
       const saved = await window.pageAuto.updatePageTab({ id: config.id, config: toSaveInput(config) })
       setConfig(saved)
       setDirty(false)
-      setNotice('Đã lưu toàn bộ cấu hình Page Tab.')
+      setNotice(invalidScheduleCount > 0
+        ? `Đã lưu cấu hình. ${invalidScheduleCount} khung giờ sai được tự tắt để không chặn lưu.`
+        : 'Đã lưu toàn bộ cấu hình Page Tab.')
       await refreshTabs(saved.id)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
@@ -559,7 +549,7 @@ export function PageTabsManager() {
   const groupCount = config ? parseGroupText(config.groupUids.join('\n')).length : 0
   const contentCount = config?.contents.filter((item) => item.trim()).length ?? 0
   const enabledAccountCount = config?.accounts.filter((item) => item.enabled).length ?? 0
-  const enabledScheduleCount = config?.schedules.filter((item) => item.enabled).length ?? 0
+  const enabledScheduleCount = config?.schedules.filter((item) => item.enabled && !scheduleIsInvalid(item)).length ?? 0
 
   return (
     <section className="page-tabs-manager">

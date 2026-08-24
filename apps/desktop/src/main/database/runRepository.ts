@@ -279,6 +279,9 @@ export class RunRepository {
       if (current.run.status === 'completed') {
         throw new Error('Phiên đã hoàn tất; hãy tạo phiên mới từ Group Set gốc.')
       }
+      if (current.run.status === 'stopped' || current.run.status === 'failed') {
+        throw new Error('Phiên đã kết thúc; hãy tạo phiên mới từ Group Set gốc.')
+      }
 
       const now = Date.now()
       const processingItemsPreserved = current.metrics.processing
@@ -302,6 +305,34 @@ export class RunRepository {
     })
 
     resume()
+    return this.requireRun(runId)
+  }
+
+  stop(runId: number, reason: 'manual' | 'daily_rollover' = 'manual'): RunDetails {
+    const stop = this.client.transaction(() => {
+      const current = this.requireRun(runId)
+      if (current.run.status === 'stopped') return
+      if (current.run.status === 'failed') {
+        throw new Error('Phiên đã thất bại nên không thể Stop lại.')
+      }
+
+      const now = Date.now()
+      this.client.prepare(`
+        UPDATE runs
+        SET status = 'stopped',
+            paused_at = NULL,
+            completed_at = COALESCE(completed_at, ?),
+            updated_at = ?
+        WHERE id = ?
+      `).run(now, now, runId)
+      this.client.prepare(`
+        UPDATE page_tabs SET status = 'stopped', updated_at = ?
+        WHERE id = (SELECT page_tab_id FROM runs WHERE id = ?)
+      `).run(now, runId)
+      this.addEvent(runId, 'run_stopped', { reason }, now)
+    })
+
+    stop()
     return this.requireRun(runId)
   }
 

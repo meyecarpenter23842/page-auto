@@ -65,6 +65,7 @@ export const IPC_CHANNELS = {
   rotationStart: 'rotation:start',
   rotationPause: 'rotation:pause',
   rotationResume: 'rotation:resume',
+  rotationStop: 'rotation:stop',
   executionLogsList: 'execution-logs:list',
   executionLogsRetryItem: 'execution-logs:retry-item',
   executionLogsCleanup: 'execution-logs:cleanup',
@@ -125,6 +126,7 @@ export interface PageAutoIpcContract {
   startPageTabRotation: (payload: RotationPageTabPayload) => Promise<RotationRuntimeSnapshot>
   pausePageTabRotation: (payload: RotationPageTabPayload) => Promise<RotationRuntimeSnapshot>
   resumePageTabRotation: (payload: RotationPageTabPayload) => Promise<RotationRuntimeSnapshot>
+  stopPageTabRotation: (payload: RotationPageTabPayload) => Promise<RotationRuntimeSnapshot>
   listExecutionLogs: (filters?: ExecutionLogFilters) => Promise<ExecutionLogRecord[]>
   retryExecutionLogItem: (payload: RetryRunItemPayload) => Promise<RetryRunItemResult>
   cleanupExecutionLogs: () => Promise<LogCleanupResult>

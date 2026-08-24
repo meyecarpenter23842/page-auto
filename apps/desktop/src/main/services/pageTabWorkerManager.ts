@@ -6,6 +6,7 @@ export interface PageTabRotationController {
   status(payload: RotationPageTabPayload): RotationRuntimeSnapshot
   pause(payload: RotationPageTabPayload): RotationRuntimeSnapshot
   resume(payload: RotationPageTabPayload): RotationRuntimeSnapshot
+  stop(payload: RotationPageTabPayload): RotationRuntimeSnapshot
   dispose(): void
 }
 
@@ -16,7 +17,7 @@ function isMissingRotationSession(error: unknown): boolean {
 }
 
 function isActiveStatus(status: RotationRuntimeStatus): boolean {
-  return status === 'starting' || status === 'running' || status === 'waiting_window'
+  return status === 'starting' || status === 'running' || status === 'waiting_window' || status === 'stopping'
 }
 
 function diagnostic(pageTabId: number, message: string): void {
@@ -71,9 +72,6 @@ export class PageTabWorkerManager {
     const current = controller.status(payload)
     diagnostic(payload.pageTabId, `RESUME current status=${current.status} run=${current.runId ?? 'none'}`)
 
-    // Resume is the operator's "run this tab again" action. A completed run has no
-    // pending items left, so create a fresh run from the current Page Tab config and
-    // original Group Set instead of silently returning `completed` forever.
     if (current.status === 'completed') {
       const snapshot = controller.start(payload)
       diagnostic(payload.pageTabId, `RESUME created fresh run status=${snapshot.status} run=${snapshot.runId ?? 'none'}`)
@@ -93,6 +91,18 @@ export class PageTabWorkerManager {
       const snapshot = controller.start(payload)
       diagnostic(payload.pageTabId, `RESUME fallback START status=${snapshot.status} run=${snapshot.runId ?? 'none'}`)
       return snapshot
+    }
+  }
+
+  stop(payload: RotationPageTabPayload): RotationRuntimeSnapshot {
+    diagnostic(payload.pageTabId, 'STOP requested')
+    try {
+      const snapshot = this.getOrCreate(payload.pageTabId).stop(payload)
+      diagnostic(payload.pageTabId, `STOP accepted status=${snapshot.status} run=${snapshot.runId ?? 'none'}`)
+      return snapshot
+    } catch (error) {
+      diagnostic(payload.pageTabId, `STOP rejected type=${error instanceof Error ? error.name : typeof error}`)
+      throw error
     }
   }
 
