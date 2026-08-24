@@ -32,12 +32,15 @@ export function selectRunPost(snapshot: RunSnapshot, item: RunItem): RunPostMate
     .filter((post) => post.variants.length > 0)
 
   if (posts.length > 0) {
-    const postIndex = snapshot.postMode === 'random'
+    const randomMode = snapshot.postMode === 'random'
+    const postIndex = randomMode
       ? deterministicIndex(`${item.runId}:${item.id}:${item.groupUid}:post`, posts.length)
       : item.sortOrder % posts.length
     const post = posts[postIndex]
     if (!post) return null
-    const variantIndex = deterministicIndex(`${item.runId}:${item.id}:${item.groupUid}:variant:${postIndex}`, post.variants.length)
+    const variantIndex = randomMode
+      ? deterministicIndex(`${item.runId}:${item.id}:${item.groupUid}:variant:${postIndex}`, post.variants.length)
+      : Math.floor(item.sortOrder / posts.length) % post.variants.length
     const content = post.variants[variantIndex]
     if (!content) return null
     return {

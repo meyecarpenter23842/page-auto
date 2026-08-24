@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { pollForReady, readinessAttempts } from './postingReadiness'
+import { isMediaAttachmentReady, pollForReady, readinessAttempts } from './postingReadiness'
 
 describe('posting readiness polling', () => {
   it('returns immediately when the first probe is ready', async () => {
@@ -38,5 +38,18 @@ describe('posting readiness polling', () => {
     expect(readinessAttempts(12_000, 250)).toBe(48)
     expect(readinessAttempts(0, 250)).toBe(1)
     expect(readinessAttempts(1_001, 250)).toBe(5)
+  })
+
+  it('does not treat FileList selection alone as media readiness', () => {
+    const baseline = { previewCount: 2, removeControlCount: 0, busyCount: 0 }
+    expect(isMediaAttachmentReady(baseline, baseline, 1)).toBe(false)
+    expect(isMediaAttachmentReady(baseline, { previewCount: 3, removeControlCount: 0, busyCount: 1 }, 1)).toBe(false)
+  })
+
+  it('requires enough processed attachment markers for every requested image', () => {
+    const baseline = { previewCount: 1, removeControlCount: 0, busyCount: 0 }
+    expect(isMediaAttachmentReady(baseline, { previewCount: 2, removeControlCount: 0, busyCount: 0 }, 2)).toBe(false)
+    expect(isMediaAttachmentReady(baseline, { previewCount: 3, removeControlCount: 0, busyCount: 0 }, 2)).toBe(true)
+    expect(isMediaAttachmentReady(baseline, { previewCount: 1, removeControlCount: 2, busyCount: 0 }, 2)).toBe(true)
   })
 })

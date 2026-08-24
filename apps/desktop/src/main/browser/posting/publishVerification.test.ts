@@ -5,6 +5,7 @@ import {
   groupMyPostedContentUrl,
   isNewFacebookPostHref,
   publishContentFingerprint,
+  publishContentMatches,
   type PublishBaseline
 } from './publishVerification'
 
@@ -28,8 +29,11 @@ describe('strong publish verification helpers', () => {
     expect(isNewFacebookPostHref('/groups/111/posts/333/', baseline)).toBe(false)
   })
 
-  it('normalizes content fingerprints and absolute Facebook URLs', () => {
-    expect(publishContentFingerprint('  hello   world\nagain ')).toBe('hello world again')
+  it('normalizes compact content fingerprints and tolerates invisible Facebook text separators', () => {
+    const long = '  hello   world\nagain ' + 'x'.repeat(100)
+    expect(publishContentFingerprint(long)).toHaveLength(48)
+    expect(publishContentMatches('prefix hello\u200B world again ' + 'x'.repeat(80), long)).toBe(true)
+    expect(publishContentMatches('completely different body', long)).toBe(false)
     expect(absoluteFacebookPostUrl('/groups/111/posts/333/')).toBe('https://www.facebook.com/groups/111/posts/333/')
   })
 

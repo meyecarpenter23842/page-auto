@@ -4,6 +4,24 @@ export interface PollForReadyOptions {
   sleep?: (milliseconds: number) => Promise<void>
 }
 
+export interface MediaReadinessSnapshot {
+  previewCount: number
+  removeControlCount: number
+  busyCount: number
+}
+
+export function isMediaAttachmentReady(
+  baseline: MediaReadinessSnapshot,
+  current: MediaReadinessSnapshot,
+  expectedCount: number
+): boolean {
+  const target = Math.max(1, Math.round(expectedCount))
+  const previewDelta = Math.max(0, current.previewCount - baseline.previewCount)
+  const removeDelta = Math.max(0, current.removeControlCount - baseline.removeControlCount)
+  const attachmentCount = Math.max(previewDelta, removeDelta)
+  return current.busyCount === 0 && attachmentCount >= target
+}
+
 const defaultSleep = (milliseconds: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, milliseconds))
 
 export function readinessAttempts(timeoutMs: number, intervalMs: number): number {

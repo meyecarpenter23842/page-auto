@@ -65,26 +65,41 @@ function snapshot(): RunSnapshot {
 }
 
 describe('selectRunPost', () => {
-  it('runs enabled posts sequentially while choosing one deterministic variant inside each post', () => {
+  it('cycles enabled posts and their variants without consuming either list', () => {
     const source = snapshot()
-    const first = selectRunPost(source, item(0))
-    const second = selectRunPost(source, item(1))
+    const selected = Array.from({ length: 8 }, (_, index) => selectRunPost(source, item(index)))
 
-    expect(first?.postIndex).toBe(0)
-    expect(first?.content.startsWith('A ')).toBe(true)
-    expect(first?.image).toMatchObject({ folderPath: 'D:\\a', imagesPerPost: 2 })
-    expect(second?.postIndex).toBe(1)
-    expect(second?.content.startsWith('B ')).toBe(true)
-    expect(second?.image).toMatchObject({ folderPath: 'D:\\b', imagesPerPost: 4, missingPolicy: 'skip' })
-    expect(selectRunPost(source, item(0))).toEqual(first)
+    expect(selected.map((entry) => [entry?.postIndex, entry?.variantIndex, entry?.content])).toEqual([
+      [0, 0, 'A one'],
+      [1, 0, 'B one'],
+      [0, 1, 'A two'],
+      [1, 1, 'B two'],
+      [0, 2, 'A three'],
+      [1, 0, 'B one'],
+      [0, 0, 'A one'],
+      [1, 1, 'B two']
+    ])
+    expect(selected[0]?.image).toMatchObject({ folderPath: 'D:\\a', imagesPerPost: 2 })
+    expect(selected[1]?.image).toMatchObject({ folderPath: 'D:\\b', imagesPerPost: 4, missingPolicy: 'skip' })
   })
 
-  it('selects a deterministic enabled post in random mode', () => {
+  it('reuses a single post variant forever instead of exhausting content', () => {
+    const source = snapshot()
+    source.posts = [{ ...source.posts![0]!, variants: ['only one'] }]
+
+    for (let index = 0; index < 25; index += 1) {
+      expect(selectRunPost(source, item(index))?.content).toBe('only one')
+    }
+  })
+
+  it('selects random posts and variants with replacement while staying stable for the same run item', () => {
     const source = snapshot()
     source.postMode = 'random'
+    const selections = Array.from({ length: 40 }, (_, index) => selectRunPost(source, item(index, 100 + index)))
+
+    expect(selections.every(Boolean)).toBe(true)
+    expect(selections.every((entry) => entry ? ['D:\\a', 'D:\\b'].includes(entry.image.folderPath) : false)).toBe(true)
     const selected = selectRunPost(source, item(4, 99))
-    expect(selected).not.toBeNull()
-    expect(['D:\\a', 'D:\\b']).toContain(selected?.image.folderPath)
     expect(selectRunPost(source, item(4, 99))).toEqual(selected)
   })
 

@@ -18,7 +18,7 @@ export interface NewPublishedPost {
 }
 
 function normalizeText(value: string): string {
-  return value.replace(/\s+/g, ' ').trim()
+  return value.replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/\s+/g, ' ').trim()
 }
 
 export function groupMyPostedContentUrl(groupUid: string): string {
@@ -27,7 +27,12 @@ export function groupMyPostedContentUrl(groupUid: string): string {
 }
 
 export function publishContentFingerprint(content: string): string {
-  return normalizeText(content).slice(0, 80)
+  return normalizeText(content).slice(0, 48)
+}
+
+export function publishContentMatches(renderedText: string, content: string): boolean {
+  const fingerprint = publishContentFingerprint(content)
+  return fingerprint.length >= 12 && normalizeText(renderedText).includes(fingerprint)
 }
 
 export function facebookPostKey(rawHref: string | null | undefined): string | null {
@@ -86,29 +91,32 @@ export function isNewFacebookPostHref(rawHref: string | null | undefined, baseli
 export async function findNewPublishedPost(
   page: Page,
   content: string,
-  baseline: PublishBaseline
+  baseline: PublishBaseline,
+  allowKeyOnly = false
 ): Promise<NewPublishedPost | null> {
   if (!baseline.captured) return null
-  const fingerprint = publishContentFingerprint(content)
-  if (fingerprint.length < 12) return null
+  if (publishContentFingerprint(content).length < 12) return null
 
-  const articles = page.locator('article, [role="article"]')
-  const articleCount = Math.min(await articles.count(), 200)
-  for (let articleIndex = 0; articleIndex < articleCount; articleIndex += 1) {
-    const article = articles.nth(articleIndex)
+  const links = page.locator(FACEBOOK_POST_LINK_SELECTOR)
+  const linkCount = Math.min(await links.count(), 400)
+  let keyOnlyCandidate: NewPublishedPost | null = null
+
+  for (let linkIndex = 0; linkIndex < linkCount; linkIndex += 1) {
+    const link = links.nth(linkIndex)
+    const href = await link.getAttribute('href').catch(() => null)
+    if (!isNewFacebookPostHref(href, baseline) || !href) continue
+
+    const postKey = facebookPostKey(href)
+    const publishedUrl = absoluteFacebookPostUrl(href)
+    if (!postKey || !publishedUrl) continue
+    const candidate = { postKey, publishedUrl }
+    if (!keyOnlyCandidate) keyOnlyCandidate = candidate
+
+    const article = link.locator('xpath=ancestor::*[self::article or @role="article"][1]')
     if (!await article.isVisible().catch(() => false)) continue
-    const text = normalizeText(await article.innerText().catch(() => ''))
-    if (!text.includes(fingerprint)) continue
-
-    const links = article.locator(FACEBOOK_POST_LINK_SELECTOR)
-    const linkCount = await links.count()
-    for (let linkIndex = 0; linkIndex < linkCount; linkIndex += 1) {
-      const href = await links.nth(linkIndex).getAttribute('href').catch(() => null)
-      if (!isNewFacebookPostHref(href, baseline) || !href) continue
-      const postKey = facebookPostKey(href)
-      const publishedUrl = absoluteFacebookPostUrl(href)
-      if (postKey && publishedUrl) return { postKey, publishedUrl }
-    }
+    const text = await article.innerText().catch(() => '')
+    if (publishContentMatches(text, content)) return candidate
   }
-  return null
+
+  return allowKeyOnly ? keyOnlyCandidate : null
 }
