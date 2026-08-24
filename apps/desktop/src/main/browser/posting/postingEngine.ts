@@ -1,6 +1,7 @@
 import { chromium, type BrowserContext, type Locator, type Page } from 'playwright-core'
 import type { BrowserSettings } from '../../../shared/appSettings'
 import type { PostingJobRequest, PostingJobResult } from '../../../shared/posting'
+import { inspectFacebookAccountIdentity } from '../facebookAccountIdentity'
 import {
   applyFacebookLocale,
   bootstrapFacebookSession,
@@ -11,6 +12,12 @@ import { applyBrowserContextSettings, buildBrowserLaunchOptions, waitForBrowserS
 import { effectiveNavigationTimeoutMs, probeFacebookThroughProxy } from '../proxyPreflight'
 import { activeFacebookProfileId, detectFacebookAccessBlock } from './pageState'
 import { finishPostingEvidence, startPostingTrace } from './postingEvidence'
+import {
+  capturePublishBaseline,
+  findNewPublishedPost,
+  publishContentFingerprint,
+  type PublishBaseline
+} from './publishVerification'
 
 type PostingCode = NonNullable<PostingJobResult['code']>
 
@@ -32,6 +39,19 @@ function beforeRunSessionFailure(session: FacebookSessionResult): PostingJobResu
       phase: 'before_run',
       state: verificationRequired ? 'verification_required' : 'needs_login',
       message: session.message
+    }
+  }
+}
+
+function beforeRunIdentityFailure(message: string): PostingJobResult {
+  return {
+    status: 'needs_login',
+    code: 'needs_login',
+    message,
+    sessionValidation: {
+      phase: 'before_run',
+      state: 'needs_login',
+      message
     }
   }
 }
@@ -187,30 +207,33 @@ export class PublishAction {
   }
 }
 
-export function contentFingerprint(content: string): string {
-  return content.replace(/\s+/g, ' ').trim().slice(0, 80)
-}
+export const contentFingerprint = publishContentFingerprint
 
 export class PublishResultDetector {
   constructor(private readonly page: Page) {}
 
-  async detect(container: Locator, content: string): Promise<PostingJobResult> {
+  captureBaseline(): Promise<PublishBaseline> {
+    return capturePublishBaseline(this.page)
+  }
+
+  async detect(container: Locator, content: string, baseline: PublishBaseline): Promise<PostingJobResult> {
     const deadline = Date.now() + 25_000
-    const fingerprint = contentFingerprint(content)
     while (Date.now() < deadline) {
       const blocked = await detectFacebookAccessBlock(this.page)
       if (blocked === 'login_required') return failure('needs_login', 'Facebook yêu cầu đăng nhập lại sau publish.')
       if (blocked === 'verification_required') return failure('verification_required', 'Facebook yêu cầu checkpoint/xác minh sau publish.')
-      const successToast = this.page.getByText(/your post is now published|your post was shared|bài viết của bạn.*đã được đăng|đã đăng bài/i).first()
+      const successToast = this.page.getByText(/your post is now published|your post was shared|bài viết của bạn.*(?:đã được đăng|đã được chia sẻ|đã chia sẻ)/i).first()
       if (await successToast.isVisible().catch(() => false)) return { status: 'success', message: 'Facebook hiển thị trạng thái publish thành công.' }
 
       const composerClosed = !await container.isVisible().catch(() => false)
-      if (composerClosed && fingerprint.length >= 12) {
-        const publishedText = this.page.getByText(fingerprint, { exact: false }).first()
-        if (await publishedText.isVisible().catch(() => false)) {
-          const link = publishedText.locator('xpath=ancestor-or-self::*[self::div or self::article][1]//a[contains(@href,"/posts/") or contains(@href,"permalink")]').first()
-          const href = await link.getAttribute('href').catch(() => null)
-          return { status: 'success', message: 'Đã xác minh nội dung xuất hiện trong Group sau publish.', ...(href ? { publishedUrl: href.startsWith('http') ? href : `https://www.facebook.com${href}` } : {}) }
+      if (composerClosed) {
+        const publishedPost = await findNewPublishedPost(this.page, content, baseline).catch(() => null)
+        if (publishedPost) {
+          return {
+            status: 'success',
+            message: 'Đã xác minh một post mới có permalink và nội dung khớp xuất hiện sau publish.',
+            publishedUrl: publishedPost.publishedUrl
+          }
         }
       }
       await this.page.waitForTimeout(1_000)
@@ -267,6 +290,11 @@ export async function executePostingJob(job: PostingJobRequest): Promise<Posting
       await applyFacebookLocale(context, job.session.facebookLocale).catch(() => undefined)
     }
 
+    const accountIdentity = await inspectFacebookAccountIdentity(context, job.sessionAccount.uid)
+    if (accountIdentity.state === 'mismatch' || accountIdentity.state === 'missing') {
+      return finish(beforeRunIdentityFailure(accountIdentity.message))
+    }
+
     const identity = await new PageIdentitySwitcher(page, context, runtimeBrowser).switchTo(job.pageUid)
     if (identity.status !== 'success') return finish(identity)
     const navigation = await new GroupNavigator(page, runtimeBrowser).open(job.groupUid)
@@ -277,10 +305,13 @@ export async function executePostingJob(job: PostingJobRequest): Promise<Posting
     if (contentResult.status !== 'success') return finish(contentResult)
     const mediaResult = await new MediaUploader().upload(composer.container, job.imagePaths)
     if (mediaResult.status !== 'success') return finish(mediaResult)
+
+    const resultDetector = new PublishResultDetector(page)
+    const publishBaseline = await resultDetector.captureBaseline()
     const publishResult = await new PublishAction().click(composer.container)
     if (publishResult.status !== 'success') return finish(publishResult)
 
-    const confirmed = await new PublishResultDetector(page).detect(composer.container, job.content)
+    const confirmed = await resultDetector.detect(composer.container, job.content, publishBaseline)
     if (confirmed.status !== 'success' || !job.session.validateAfterRun) return finish(confirmed)
 
     const afterSession = await validateFacebookSession(context, page)

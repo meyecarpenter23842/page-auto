@@ -1,6 +1,7 @@
 import { chromium, type BrowserContext } from 'playwright-core'
 import type { BrowserSettings, SessionSettings } from '../../shared/appSettings'
 import type { PostingProxyConfig } from '../../shared/posting'
+import { inspectFacebookAccountIdentity } from './facebookAccountIdentity'
 import {
   bootstrapFacebookSession,
   type FacebookSessionAccount,
@@ -39,6 +40,22 @@ function sessionError(accountId: number, error: unknown): SessionResultMessage {
     cookieStatus: 'error',
     lastCookieCheck: Date.now(),
     message: error instanceof Error ? error.message : String(error)
+  }
+}
+
+function identityFailure(
+  accountId: number,
+  identity: Awaited<ReturnType<typeof inspectFacebookAccountIdentity>>
+): SessionResultMessage {
+  return {
+    type: 'session-result',
+    accountId,
+    status: 'needs_login',
+    reason: identity.state === 'missing' ? 'login_required' : 'unknown',
+    cookie: null,
+    cookieStatus: 'needs_login',
+    lastCookieCheck: Date.now(),
+    message: identity.message
   }
 }
 
@@ -112,7 +129,14 @@ async function run(): Promise<void> {
         const activeContext = await ensureContext(command)
         const page = activeContext.pages()[0] ?? await activeContext.newPage()
         const session = await bootstrapFacebookSession(activeContext, page, command.account, command.session.facebookLocale)
-        result = { type: 'session-result', ...session }
+        if (session.status === 'valid') {
+          const identity = await inspectFacebookAccountIdentity(activeContext, command.account.uid)
+          result = identity.state === 'mismatch' || identity.state === 'missing'
+            ? identityFailure(command.account.id, identity)
+            : { type: 'session-result', ...session }
+        } else {
+          result = { type: 'session-result', ...session }
+        }
       } catch (error) {
         result = sessionError(command.account.id, error)
       }
