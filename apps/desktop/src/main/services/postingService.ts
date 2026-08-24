@@ -56,7 +56,8 @@ export class PostingService {
     private readonly getSessionSettings: () => SessionSettings = () => ({ ...DEFAULT_APP_SETTINGS.session }),
     private readonly getNetworkSettings: () => NetworkSettings = () => ({ ...DEFAULT_APP_SETTINGS.network }),
     private readonly getRuntimeSettings: () => RuntimeSettings = () => ({ ...DEFAULT_APP_SETTINGS.runtime }),
-    private readonly getLoggingSettings: () => LoggingSettings = () => ({ ...DEFAULT_APP_SETTINGS.logging })
+    private readonly getLoggingSettings: () => LoggingSettings = () => ({ ...DEFAULT_APP_SETTINGS.logging }),
+    private readonly releaseManagedBrowser: (accountId: number) => Promise<void> = async () => undefined
   ) {
     this.accounts = new AccountRepository(database)
     this.runs = new RunRepository(database)
@@ -195,6 +196,7 @@ export class PostingService {
 
   async releaseAccount(accountId: number): Promise<void> {
     await this.workers.closeAccount(accountId)
+    await this.releaseManagedBrowser(accountId)
   }
 
   closeAll(): void {
