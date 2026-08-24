@@ -280,7 +280,7 @@ export class RotationService {
     this.settleCycle()
     if (!this.session.inFlight && (this.session.run.run.status === 'running' || this.session.run.run.status === 'created')) {
       try {
-        this.session.run = this.runs.pause(session.runId)
+        this.session.run = this.runs.pause(this.session.runId)
       } catch {
         // Shutdown should continue even when DB state already changed.
       }
