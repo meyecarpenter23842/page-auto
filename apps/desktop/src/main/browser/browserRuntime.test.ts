@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_APP_SETTINGS } from '../../shared/appSettings'
 import type { BrowserWindowPlacement } from '../../shared/browserWindowLayout'
-import { buildBrowserLaunchOptions, compactDeviceMetrics } from './browserRuntime'
+import {
+  buildBrowserLaunchOptions,
+  compactDeviceMetrics,
+  effectiveCompactContentScale
+} from './browserRuntime'
 
 const placement: BrowserWindowPlacement = {
   displayId: 1,
@@ -48,15 +52,16 @@ describe('buildBrowserLaunchOptions', () => {
     expect(options.args.some((arg) => arg.startsWith('--force-device-scale-factor='))).toBe(false)
   })
 
-  it('keeps desktop layout metrics while scaling the rendered content to the slot ratio', () => {
-    expect(compactDeviceMetrics(placement)).toEqual({
+  it('uses the real inner content area so Chrome toolbar height cannot crop the scaled page', () => {
+    expect(effectiveCompactContentScale(placement, 320, 120)).toBe(0.15)
+    expect(compactDeviceMetrics(placement, 0.15)).toEqual({
       width: 1280,
       height: 800,
       deviceScaleFactor: 1,
       mobile: false,
       screenWidth: 1280,
       screenHeight: 800,
-      scale: 0.25
+      scale: 0.15
     })
   })
 
