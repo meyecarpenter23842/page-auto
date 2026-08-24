@@ -48,6 +48,15 @@ function statusLabel(value: string): string {
   return value.replaceAll('_', ' ')
 }
 
+function profileStatusLabel(value: HotmailDashboardRow['profileStatus']): string {
+  if (value === 'missing') return 'Chưa có profile'
+  if (value === 'not_configured') return 'Chưa cấu hình'
+  if (value === 'available') return 'Sẵn sàng'
+  if (value === 'running') return 'Đang mở'
+  if (value === 'in_use') return 'Đang sử dụng'
+  return statusLabel(value)
+}
+
 function resultSummary(result: HotmailBatchResult): string {
   const success = result.results.filter((item) => item.status === 'success').length
   const failed = result.results.length - success
@@ -75,6 +84,7 @@ export function HotmailAuto() {
 
   const selectedIds = useMemo(() => [...selection], [selection])
   const selectedRows = useMemo(() => rows.filter((row) => selection.has(row.accountId)), [rows, selection])
+  const openMailLabel = selectedRows.some((row) => row.profileStatus === 'missing') ? 'Tạo / mở profile' : 'Mở mail'
 
   const refreshRows = async () => setRows(await window.pageAuto.listHotmailDashboard())
   const refreshSettings = async () => {
@@ -218,7 +228,7 @@ export function HotmailAuto() {
         <div className="hotmail-toolbar-actions">
           <button className="email-button primary" disabled={isBusy('oauth')} onClick={() => void connectOAuth()}>{isBusy('oauth') && <Spinner />}Kết nối Microsoft</button>
           <button className="email-button success" disabled={isBusy('codes')} onClick={() => void getCodes()}>{isBusy('codes') && <Spinner />}Lấy code</button>
-          <button className="email-button primary" disabled={isBusy('open')} onClick={() => void openMail()}>{isBusy('open') && <Spinner />}Mở mail</button>
+          <button className="email-button primary" disabled={isBusy('open')} onClick={() => void openMail()}>{isBusy('open') && <Spinner />}{openMailLabel}</button>
           <button className="email-button secondary" disabled={isBusy('check')} onClick={() => void checkMail()}>{isBusy('check') && <Spinner />}Kiểm tra mail</button>
           <button className="email-button settings" onClick={() => { setSettingsTab('profile'); setSettingsOpen(true) }}>Thiết lập Email</button>
           <button className="email-button secondary" disabled={isBusy('rotate')} onClick={() => void rotateProxy()}>{isBusy('rotate') && <Spinner />}Đổi IP</button>
@@ -261,7 +271,7 @@ export function HotmailAuto() {
                   <td title={recovery.domain ?? ''}><span className={`recovery-chip ${recovery.kind}`}>{recovery.label}</span></td>
                   <td><span className={`hotmail-chip ${row.oauthStatus}`}>{statusLabel(row.oauthStatus)}</span></td>
                   <td><span className={`hotmail-chip ${row.mailStatus}`}>{statusLabel(row.mailStatus)}</span></td>
-                  <td title={row.profileDirectory ?? ''}><span className={`hotmail-chip ${row.profileStatus}`}>{statusLabel(row.profileStatus)}</span></td>
+                  <td title={row.profileDirectory ?? ''}><span className={`hotmail-chip ${row.profileStatus}`}>{profileStatusLabel(row.profileStatus)}</span></td>
                   <td className="code-cell">{row.latestCode ?? '—'}</td>
                   <td>{formatTime(row.lastCodeAt)}</td>
                   <td><span className={`hotmail-chip ${row.runtimeStatus}`}>{statusLabel(row.runtimeStatus)}</span></td>
@@ -276,7 +286,7 @@ export function HotmailAuto() {
 
       {contextMenu ? (
         <div className="email-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onMouseDown={(event) => event.stopPropagation()}>
-          <button onClick={() => { setContextMenu(null); void openMail([contextMenu.accountId]) }}>Mở mail / profile</button>
+          <button onClick={() => { setContextMenu(null); void openMail([contextMenu.accountId]) }}>{rows.find((row) => row.accountId === contextMenu.accountId)?.profileStatus === 'missing' ? 'Tạo / mở profile' : 'Mở mail / profile'}</button>
           <button onClick={() => { setContextMenu(null); void getCodes([contextMenu.accountId]) }}>Lấy code</button>
           <button onClick={() => { setContextMenu(null); void checkMail([contextMenu.accountId]) }}>Kiểm tra mail</button>
           <button onClick={() => { setContextMenu(null); void connectOAuth(contextMenu.accountId) }}>Kết nối lại Microsoft</button>
@@ -303,8 +313,8 @@ export function HotmailAuto() {
               {settingsTab === 'profile' ? (
                 <div className="email-settings-grid">
                   <label className="wide"><span>Email Profile Root (MaxHotmail)</span><div className="input-action"><input value={draft.profileRoot} onChange={(event: ChangeEvent<HTMLInputElement>) => setDraft({ ...draft, profileRoot: event.target.value })} placeholder="F:\\...\\MaxHotmail\\profiles" /><button className="email-button secondary" disabled={isBusy('pick-root')} onClick={() => void pickProfileRoot()}>{isBusy('pick-root') && <Spinner />}Chọn folder</button></div></label>
-                  <label className="wide"><span>Browser executable</span><div className="input-action"><input value={draft.browserExecutable} onChange={(event: ChangeEvent<HTMLInputElement>) => setDraft({ ...draft, browserExecutable: event.target.value })} placeholder="Để trống = dùng browser PAGE-AUTO" /><button className="email-button secondary" disabled={isBusy('pick-browser')} onClick={() => void pickBrowser()}>{isBusy('pick-browser') && <Spinner />}Chọn file</button></div></label>
-                  <p className="email-help wide">Profile luôn resolve đúng <code>root\UID</code>. File DevToolsActivePort chỉ được coi là Running khi endpoint CDP còn sống; file cũ không còn làm kẹt profile.</p>
+                  <label className="wide"><span>Browser executable</span><div className="input-action"><input value={draft.browserExecutable} onChange={(event: ChangeEvent<HTMLInputElement>) => setDraft({ ...draft, browserExecutable: event.target.value })} placeholder="Để trống = tự tìm Browser Email chạy được" /><button className="email-button secondary" disabled={isBusy('pick-browser')} onClick={() => void pickBrowser()}>{isBusy('pick-browser') && <Spinner />}Chọn file</button></div></label>
+                  <p className="email-help wide">Profile luôn resolve đúng <code>root\UID</code>. Account chưa có profile chỉ được tạo khi bấm Tạo / mở profile. Browser được kiểm tra khả năng khởi động trước khi lưu hoặc dùng.</p>
                 </div>
               ) : null}
 

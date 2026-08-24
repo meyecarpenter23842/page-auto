@@ -1,9 +1,9 @@
 import { createServer, type Server } from 'node:http'
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { inspectEmailProfile, resolveEmailProfileDirectory } from './emailProfileResolver'
+import { ensureEmailProfileDirectory, inspectEmailProfile, resolveEmailProfileDirectory } from './emailProfileResolver'
 
 const created: string[] = []
 const servers: Server[] = []
@@ -30,12 +30,35 @@ async function startCdpProbeServer(): Promise<number> {
 }
 
 describe('email profile resolver', () => {
-  it('resolves exactly root/UID and never scans or creates a missing profile', async () => {
+  it('resolves exactly root/UID and never scans or creates a missing profile during inspection', async () => {
     const root = await mkdtemp(join(tmpdir(), 'page-auto-hotmail-'))
     created.push(root)
     expect(resolveEmailProfileDirectory(root, '10001')).toBe(join(root, '10001'))
     expect(resolveEmailProfileDirectory(root, '../escape')).toBeNull()
     expect((await inspectEmailProfile(root, '10001')).status).toBe('missing')
+    await expect(stat(join(root, '10001'))).rejects.toThrow()
+  })
+
+  it('creates exactly root/UID only when explicitly requested and reuses it afterwards', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'page-auto-hotmail-'))
+    created.push(root)
+    const expected = join(root, '20001')
+    expect(await ensureEmailProfileDirectory(root, '20001')).toBe(expected)
+    expect((await stat(expected)).isDirectory()).toBe(true)
+    expect(await ensureEmailProfileDirectory(root, '20001')).toBe(expected)
+    expect((await inspectEmailProfile(root, '20001')).status).toBe('available')
+  })
+
+  it('keeps concurrent creation of the same root/UID idempotent', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'page-auto-hotmail-'))
+    created.push(root)
+    const expected = join(root, '20002')
+    const results = await Promise.all([
+      ensureEmailProfileDirectory(root, '20002'),
+      ensureEmailProfileDirectory(root, '20002')
+    ])
+    expect(results).toEqual([expected, expected])
+    expect((await stat(expected)).isDirectory()).toBe(true)
   })
 
   it('treats a stale DevToolsActivePort as available instead of running', async () => {
