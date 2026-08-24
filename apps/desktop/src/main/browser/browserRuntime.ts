@@ -10,6 +10,28 @@ export interface BrowserLaunchShape {
   channel?: 'chrome'
 }
 
+export interface CompactDeviceMetrics {
+  width: number
+  height: number
+  deviceScaleFactor: number
+  mobile: false
+  screenWidth: number
+  screenHeight: number
+  scale: number
+}
+
+export function compactDeviceMetrics(placement: BrowserWindowPlacement): CompactDeviceMetrics {
+  return {
+    width: placement.viewportWidth,
+    height: placement.viewportHeight,
+    deviceScaleFactor: 1,
+    mobile: false,
+    screenWidth: placement.viewportWidth,
+    screenHeight: placement.viewportHeight,
+    scale: placement.contentScale
+  }
+}
+
 export function buildBrowserLaunchOptions(
   settings: BrowserSettings,
   placement: BrowserWindowPlacement | null = null
@@ -18,13 +40,12 @@ export function buildBrowserLaunchOptions(
   const args = placement
     ? [
         `--window-size=${placement.width},${placement.height}`,
-        `--window-position=${placement.x},${placement.y}`,
-        `--force-device-scale-factor=${placement.contentScale}`,
-        '--high-dpi-support=1'
+        `--window-position=${placement.x},${placement.y}`
       ]
     : [`--window-size=${settings.windowWidth},${settings.windowHeight}`]
 
-  if (settings.mode === 'minimized') args.push('--start-minimized')
+  // Compact/tiled windows must stay visible. Minimized applies only to the normal mode.
+  if (!placement && settings.mode === 'minimized') args.push('--start-minimized')
   if (settings.muteAudio) args.push('--mute-audio')
   if (settings.disableGpu) args.push('--disable-gpu')
 
@@ -55,9 +76,10 @@ export async function applyBrowserContextSettings(
 }
 
 /**
- * Compact mode keeps the Facebook layout at the configured desktop viewport while
- * the real Chrome window is physically tiled much smaller. deviceScaleFactor makes
- * the rendered page shrink with the window instead of exposing only a cropped corner.
+ * Compact mode keeps Facebook on the configured desktop layout viewport while the
+ * real Chrome top-level window is physically much smaller. CDP scales the rendered
+ * view down to the slot, so the operator sees the whole page at a smaller ratio
+ * instead of a large desktop page cropped to one corner.
  */
 export async function applyBrowserWindowPlacement(
   context: BrowserContext,
@@ -66,12 +88,19 @@ export async function applyBrowserWindowPlacement(
 ): Promise<void> {
   const session = await context.newCDPSession(page)
   try {
+    const targetWindow = await session.send('Browser.getWindowForTarget').catch(() => null) as { windowId?: number } | null
+
     if (!placement) {
       await session.send('Emulation.clearDeviceMetricsOverride').catch(() => undefined)
+      if (targetWindow?.windowId !== undefined) {
+        await session.send('Browser.setWindowBounds', {
+          windowId: targetWindow.windowId,
+          bounds: { windowState: 'normal' }
+        }).catch(() => undefined)
+      }
       return
     }
 
-    const targetWindow = await session.send('Browser.getWindowForTarget').catch(() => null) as { windowId?: number } | null
     if (targetWindow?.windowId !== undefined) {
       await session.send('Browser.setWindowBounds', {
         windowId: targetWindow.windowId,
@@ -85,16 +114,7 @@ export async function applyBrowserWindowPlacement(
       }).catch(() => undefined)
     }
 
-    await session.send('Emulation.setDeviceMetricsOverride', {
-      width: placement.viewportWidth,
-      height: placement.viewportHeight,
-      deviceScaleFactor: placement.contentScale,
-      mobile: false,
-      screenWidth: placement.viewportWidth,
-      screenHeight: placement.viewportHeight,
-      positionX: 0,
-      positionY: 0
-    })
+    await session.send('Emulation.setDeviceMetricsOverride', compactDeviceMetrics(placement))
   } finally {
     await session.detach().catch(() => undefined)
   }
