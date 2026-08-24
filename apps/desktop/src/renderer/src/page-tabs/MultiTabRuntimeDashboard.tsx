@@ -11,6 +11,8 @@ const runtimeStatusLabels: Record<RotationRuntimeSnapshot['status'], string> = {
   running: 'Đang chạy',
   paused: 'Tạm dừng',
   waiting_window: 'Chờ khung giờ',
+  stopping: 'Đang Stop',
+  stopped: 'Đã Stop',
   completed: 'Hoàn tất',
   error: 'Lỗi'
 }
@@ -36,7 +38,7 @@ function formatTime(timestamp: number | null): string {
 }
 
 function canStart(status: RotationRuntimeSnapshot['status']): boolean {
-  return status === 'idle' || status === 'completed' || status === 'error'
+  return status === 'idle' || status === 'completed' || status === 'stopped' || status === 'error'
 }
 
 function canPause(status: RotationRuntimeSnapshot['status']): boolean {
@@ -45,6 +47,10 @@ function canPause(status: RotationRuntimeSnapshot['status']): boolean {
 
 function canResume(status: RotationRuntimeSnapshot['status']): boolean {
   return status === 'paused'
+}
+
+function canStop(status: RotationRuntimeSnapshot['status']): boolean {
+  return status === 'starting' || status === 'running' || status === 'paused' || status === 'waiting_window'
 }
 
 interface MultiTabRuntimeDashboardProps {
@@ -110,7 +116,7 @@ export function MultiTabRuntimeDashboard({ pageTabId = null, compact = false }: 
 
   const activeCount = visibleTabs.filter((tab) => {
     const status = runtimeByTab[tab.id]?.status
-    return status === 'starting' || status === 'running' || status === 'waiting_window'
+    return status === 'starting' || status === 'running' || status === 'waiting_window' || status === 'stopping'
   }).length
 
   const runAction = async (
@@ -139,7 +145,7 @@ export function MultiTabRuntimeDashboard({ pageTabId = null, compact = false }: 
         <div>
           <p className="eyebrow">Điều phối Page Tab</p>
           <h2>{compact ? 'Trạng thái Page hiện tại' : 'Trạng thái nhiều Page'}</h2>
-          {!compact ? <p>Mỗi Page Tab có trạng thái riêng; nhiều tab chạy song song, tài khoản trong từng tab vẫn chạy tuần tự.</p> : null}
+          {!compact ? <p>Mỗi Page Tab có trạng thái riêng; Pause giữ tiến độ, Stop kết thúc run và Start sau sẽ chạy lại từ Group gốc.</p> : null}
         </div>
         <div className="multi-runtime-summary">
           {!compact ? <span><strong>{activeCount}</strong> đang chạy</span> : null}
@@ -188,6 +194,11 @@ export function MultiTabRuntimeDashboard({ pageTabId = null, compact = false }: 
                     disabled={busy || !canResume(status)}
                     onClick={() => void runAction(tab.id, window.pageAuto.resumePageTabRotation)}
                   >Tiếp tục</button>
+                  <button
+                    type="button"
+                    disabled={busy || !canStop(status)}
+                    onClick={() => void runAction(tab.id, window.pageAuto.stopPageTabRotation)}
+                  >Stop</button>
                 </div>
               </header>
 
@@ -218,7 +229,7 @@ export function MultiTabRuntimeDashboard({ pageTabId = null, compact = false }: 
         })}
         {visibleTabs.length === 0 ? <div className="multi-runtime-empty">Chưa có Page Tab để chạy.</div> : null}
       </div>
-      {!compact ? <p className="multi-runtime-note">Trạng thái chạy dùng cấu hình đã lưu trong cơ sở dữ liệu. Group, nội dung, ảnh và nhật ký chi tiết nằm trong cấu hình từng Page Tab.</p> : null}
+      {!compact ? <p className="multi-runtime-note">Pause giữ nguyên run hiện tại. Stop kết thúc run. Sang ngày chạy mới, Group Set gốc được clone thành run mới.</p> : null}
     </section>
   )
 }

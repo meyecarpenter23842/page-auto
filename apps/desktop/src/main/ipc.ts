@@ -186,6 +186,7 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
   ipcMain.handle(IPC_CHANNELS.rotationStart, (_event, payload: RotationPageTabPayload) => rotation.start(payload))
   ipcMain.handle(IPC_CHANNELS.rotationPause, (_event, payload: RotationPageTabPayload) => rotation.pause(payload))
   ipcMain.handle(IPC_CHANNELS.rotationResume, (_event, payload: RotationPageTabPayload) => rotation.resume(payload))
+  ipcMain.handle(IPC_CHANNELS.rotationStop, (_event, payload: RotationPageTabPayload) => rotation.stop(payload))
 
   ipcMain.handle(IPC_CHANNELS.executionLogsList, (_event, filters?: ExecutionLogFilters) => executionLogs.list(filters))
   ipcMain.handle(IPC_CHANNELS.executionLogsRetryItem, (_event, payload: RetryRunItemPayload) => recovery.retryFailedItem(payload.runItemId))

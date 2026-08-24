@@ -61,6 +61,7 @@ const api = {
   startPageTabRotation: (payload: RotationPageTabPayload): Promise<RotationRuntimeSnapshot> => ipcRenderer.invoke(IPC_CHANNELS.rotationStart, payload) as Promise<RotationRuntimeSnapshot>,
   pausePageTabRotation: (payload: RotationPageTabPayload): Promise<RotationRuntimeSnapshot> => ipcRenderer.invoke(IPC_CHANNELS.rotationPause, payload) as Promise<RotationRuntimeSnapshot>,
   resumePageTabRotation: (payload: RotationPageTabPayload): Promise<RotationRuntimeSnapshot> => ipcRenderer.invoke(IPC_CHANNELS.rotationResume, payload) as Promise<RotationRuntimeSnapshot>,
+  stopPageTabRotation: (payload: RotationPageTabPayload): Promise<RotationRuntimeSnapshot> => ipcRenderer.invoke(IPC_CHANNELS.rotationStop, payload) as Promise<RotationRuntimeSnapshot>,
   listExecutionLogs: (filters?: ExecutionLogFilters): Promise<ExecutionLogRecord[]> => ipcRenderer.invoke(IPC_CHANNELS.executionLogsList, filters) as Promise<ExecutionLogRecord[]>,
   retryExecutionLogItem: (payload: RetryRunItemPayload): Promise<RetryRunItemResult> => ipcRenderer.invoke(IPC_CHANNELS.executionLogsRetryItem, payload) as Promise<RetryRunItemResult>,
   cleanupExecutionLogs: (): Promise<LogCleanupResult> => ipcRenderer.invoke(IPC_CHANNELS.executionLogsCleanup) as Promise<LogCleanupResult>,

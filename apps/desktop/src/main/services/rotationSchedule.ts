@@ -36,6 +36,22 @@ export function nextScheduleStart(schedules: PageTabScheduleInput[], now: Date):
   return best
 }
 
+export function nextScheduleStartAfterDay(schedules: PageTabScheduleInput[], now: Date): Date {
+  const enabled = enabledSchedules(schedules)
+  if (enabled.length === 0) {
+    const nextDay = new Date(now)
+    nextDay.setHours(0, 0, 0, 0)
+    nextDay.setDate(nextDay.getDate() + 1)
+    return nextDay
+  }
+
+  const endOfDay = new Date(now)
+  endOfDay.setHours(23, 59, 59, 999)
+  const next = nextScheduleStart(enabled, endOfDay)
+  if (!next) throw new Error('Không tìm thấy ngày chạy kế tiếp trong lịch Page Tab.')
+  return next
+}
+
 export function randomDelaySeconds(minSeconds: number, maxSeconds: number, random = Math.random): number {
   const min = Math.max(0, Math.floor(minSeconds))
   const max = Math.max(min, Math.floor(maxSeconds))

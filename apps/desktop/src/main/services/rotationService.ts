@@ -4,8 +4,10 @@ import type { ExecuteSinglePostingJobPayload, ExecuteSinglePostingJobResult } fr
 import type { RotationPageTabPayload, RotationRuntimeSnapshot, RotationRuntimeStatus } from '../../shared/rotation'
 import type { RunDetails, RunSnapshotAccount } from '../../shared/runs'
 import { resolveNetworkFailureDecision } from './networkFailurePolicy'
-import { isWithinSchedule, nextScheduleStart, randomDelaySeconds } from './rotationSchedule'
+import { isWithinSchedule, nextScheduleStart, nextScheduleStartAfterDay, randomDelaySeconds } from './rotationSchedule'
 import { resolveSessionFailureDecision } from './sessionFailurePolicy'
+
+export type RunStopReason = 'manual' | 'daily_rollover'
 
 export interface RotationRunStore {
   getLatestForPageTab(pageTabId: number): RunDetails | null
@@ -13,6 +15,7 @@ export interface RotationRunStore {
   get(runId: number): RunDetails | null
   pause(runId: number): RunDetails
   resume(runId: number): RunDetails
+  stop(runId: number, reason?: RunStopReason): RunDetails
 }
 
 export interface RotationPostingExecutor {
@@ -39,6 +42,9 @@ interface RotationSession {
   lastResult: ExecuteSinglePostingJobResult['result'] | null
   run: RunDetails
   manualPaused: boolean
+  stopRequested: boolean
+  inFlight: boolean
+  activeDateKey: string | null
   disposed: boolean
 }
 
@@ -63,6 +69,22 @@ function isAccountUnavailable(result: ExecuteSinglePostingJobResult): boolean {
   )
 }
 
+function localDateKey(date: Date): string {
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, '0'),
+    String(date.getDate()).padStart(2, '0')
+  ].join('-')
+}
+
+function startedDateKey(run: RunDetails): string | null {
+  return run.run.startedAt === null ? null : localDateKey(new Date(run.run.startedAt))
+}
+
+function isRunExhausted(run: RunDetails): boolean {
+  return run.run.status === 'completed' || run.metrics.remaining === 0
+}
+
 function snapshotSession(session: RotationSession): RotationRuntimeSnapshot {
   return {
     pageTabId: session.pageTabId,
@@ -83,6 +105,8 @@ function snapshotSession(session: RotationSession): RotationRuntimeSnapshot {
 export class RotationService {
   private session: RotationSession | null = null
   private loopPromise: Promise<void> | null = null
+  private cyclePromise: Promise<void> | null = null
+  private resolveCycle: (() => void) | null = null
 
   constructor(
     private readonly runs: RotationRunStore,
@@ -95,7 +119,7 @@ export class RotationService {
 
   start(payload: RotationPageTabPayload): RotationRuntimeSnapshot {
     const existing = this.session
-    if (existing && !['completed', 'error'].includes(existing.status)) {
+    if (existing && !['completed', 'error', 'stopped'].includes(existing.status)) {
       if (existing.pageTabId === payload.pageTabId) return snapshotSession(existing)
       throw new Error(`Page Tab #${existing.pageTabId} đang hoạt động trong bộ điều phối tài khoản.`)
     }
@@ -124,6 +148,9 @@ export class RotationService {
       lastResult: null,
       run,
       manualPaused: false,
+      stopRequested: false,
+      inFlight: false,
+      activeDateKey: startedDateKey(run),
       disposed: false
     }
 
@@ -134,17 +161,28 @@ export class RotationService {
   status(payload: RotationPageTabPayload): RotationRuntimeSnapshot {
     if (this.session?.pageTabId === payload.pageTabId) return snapshotSession(this.session)
     const run = this.runs.getLatestForPageTab(payload.pageTabId)
+    const runStatus = run?.run.status
     return {
       pageTabId: payload.pageTabId,
       runId: run?.run.id ?? null,
-      status: run?.run.status === 'completed' ? 'completed' : run?.run.status === 'paused' ? 'paused' : 'idle',
+      status: runStatus === 'completed'
+        ? 'completed'
+        : runStatus === 'paused'
+          ? 'paused'
+          : runStatus === 'stopped'
+            ? 'stopped'
+            : 'idle',
       currentAccountId: null,
       currentAccountIndex: null,
       slotsCompletedThisTurn: 0,
       targetSlotsThisTurn: 0,
       cycle: 0,
       nextActionAt: null,
-      message: run?.run.status === 'running' ? `Phiên #${run.run.id} đang chạy ngoài bộ điều phối tài khoản.` : null,
+      message: runStatus === 'running'
+        ? `Phiên #${run?.run.id} đang chạy ngoài bộ điều phối tài khoản.`
+        : runStatus === 'stopped'
+          ? 'Page Tab đã Stop. Bấm Bắt đầu để tạo run mới từ Group gốc.'
+          : null,
       lastResult: null,
       run
     }
@@ -152,12 +190,12 @@ export class RotationService {
 
   pause(payload: RotationPageTabPayload): RotationRuntimeSnapshot {
     const session = this.requireSession(payload.pageTabId)
-    if (session.status === 'completed' || session.status === 'error') return snapshotSession(session)
+    if (['completed', 'error', 'stopping', 'stopped'].includes(session.status)) return snapshotSession(session)
     session.manualPaused = true
     session.status = 'paused'
-    session.message = 'Đã tạm dừng thủ công; tác vụ đang chạy (nếu có) sẽ hoàn tất trước khi dừng lượt tiếp theo.'
+    session.message = 'Đã tạm dừng thủ công; tiến độ run hiện tại được giữ nguyên để Tiếp tục sau.'
     session.nextActionAt = null
-    if (session.run.run.status === 'running' || session.run.run.status === 'created') {
+    if (!session.inFlight && (session.run.run.status === 'running' || session.run.run.status === 'created')) {
       session.run = this.runs.pause(session.runId)
     }
     return snapshotSession(session)
@@ -172,37 +210,74 @@ export class RotationService {
       if (restoredAfterRestart) this.session = session
       return snapshotSession(session)
     }
+    if (session.status === 'stopped' || session.run.run.status === 'stopped') {
+      throw new Error('Page Tab đã Stop; hãy bấm Bắt đầu để tạo run mới từ Group gốc.')
+    }
     if (session.status === 'error') throw new Error('Vòng chạy đang lỗi; hãy bắt đầu lại sau khi xử lý nguyên nhân.')
 
     session.manualPaused = false
+    session.stopRequested = false
+    session.disposed = false
     session.message = restoredAfterRestart
       ? 'Đã khôi phục phiên chạy sau khi khởi động lại ứng dụng.'
-      : 'Đang tiếp tục vòng chạy tài khoản.'
+      : 'Đang tiếp tục run hiện tại.'
+
+    const now = this.clock.now()
     const schedules = this.schedulesFor(session)
-    if (isWithinSchedule(schedules, this.clock.now())) {
-      if (session.run.run.status !== 'running') session.run = this.runs.resume(session.runId)
-      session.status = 'running'
-      session.nextActionAt = null
+    const todayKey = localDateKey(now)
+    if (isWithinSchedule(schedules, now)) {
+      if (session.activeDateKey !== null && session.activeDateKey !== todayKey) {
+        this.rolloverForDay(session, todayKey)
+      } else if (session.activeDateKey === null) {
+        session.activeDateKey = todayKey
+      }
+
+      if (isRunExhausted(session.run)) {
+        session.status = 'waiting_window'
+        session.nextActionAt = nextScheduleStartAfterDay(schedules, now).getTime()
+      } else {
+        if (session.run.run.status !== 'running') session.run = this.runs.resume(session.runId)
+        session.status = 'running'
+        session.nextActionAt = null
+      }
     } else {
-      if (session.run.run.status === 'running' || session.run.run.status === 'created') {
+      if (!session.inFlight && (session.run.run.status === 'running' || session.run.run.status === 'created')) {
         session.run = this.runs.pause(session.runId)
       }
       session.status = 'waiting_window'
-      session.nextActionAt = nextScheduleStart(schedules, this.clock.now())?.getTime() ?? null
+      session.nextActionAt = nextScheduleStart(schedules, now)?.getTime() ?? null
     }
 
     if (restoredAfterRestart) this.attachSession(session)
     return snapshotSession(session)
   }
 
+  stop(payload: RotationPageTabPayload): RotationRuntimeSnapshot {
+    const session = this.requireSession(payload.pageTabId)
+    if (session.status === 'stopped') return snapshotSession(session)
+
+    session.stopRequested = true
+    session.manualPaused = false
+    session.nextActionAt = null
+    if (session.inFlight) {
+      session.status = 'stopping'
+      session.message = 'Đang Stop; chờ tác vụ hiện tại kết thúc an toàn rồi dừng run.'
+      return snapshotSession(session)
+    }
+
+    this.finalizeStop(session)
+    return snapshotSession(session)
+  }
+
   async waitForSettled(): Promise<void> {
-    await this.loopPromise
+    await this.cyclePromise
   }
 
   dispose(): void {
     if (!this.session) return
     this.session.disposed = true
-    if (this.session.run.run.status === 'running' || this.session.run.run.status === 'created') {
+    this.settleCycle()
+    if (!this.session.inFlight && (this.session.run.run.status === 'running' || this.session.run.run.status === 'created')) {
       try {
         this.session.run = this.runs.pause(this.session.runId)
       } catch {
@@ -211,10 +286,32 @@ export class RotationService {
     }
   }
 
+  private beginCycleWait(): void {
+    this.cyclePromise = new Promise<void>((resolve) => {
+      this.resolveCycle = resolve
+    })
+  }
+
+  private settleCycle(): void {
+    const resolve = this.resolveCycle
+    this.resolveCycle = null
+    resolve?.()
+  }
+
   private attachSession(session: RotationSession): void {
     this.session = session
+    this.beginCycleWait()
     this.loopPromise = this.runLoop(session).catch((cause) => {
       if (session.disposed) return
+      if (session.stopRequested) {
+        try {
+          this.finalizeStop(session)
+          return
+        } catch {
+          // Fall through and keep the original runtime error visible.
+        }
+      }
+      this.settleCycle()
       session.status = 'error'
       session.message = cause instanceof Error ? cause.message : String(cause)
       session.nextActionAt = null
@@ -254,6 +351,9 @@ export class RotationService {
       lastResult: null,
       run,
       manualPaused: true,
+      stopRequested: false,
+      inFlight: false,
+      activeDateKey: startedDateKey(run),
       disposed: false
     }
   }
@@ -267,6 +367,47 @@ export class RotationService {
 
   private schedulesFor(session: RotationSession): PageTabScheduleInput[] {
     return this.getLiveSchedules(session.pageTabId) ?? session.run.run.snapshot.schedules
+  }
+
+  private finalizeStop(session: RotationSession): void {
+    if (session.run.run.status !== 'stopped') {
+      session.run = this.runs.stop(session.runId, 'manual')
+    }
+    session.status = 'stopped'
+    session.stopRequested = false
+    session.manualPaused = false
+    session.disposed = true
+    session.currentAccountId = null
+    session.currentAccountIndex = null
+    session.nextActionAt = null
+    session.message = 'Đã Stop Page Tab. Lần Bắt đầu tiếp theo sẽ tạo run mới từ Group gốc.'
+    this.settleCycle()
+  }
+
+  private rolloverForDay(session: RotationSession, dateKey: string): void {
+    if (session.activeDateKey === dateKey) return
+    if (session.run.run.status === 'created' || session.run.run.status === 'running' || session.run.run.status === 'paused') {
+      session.run = this.runs.stop(session.runId, 'daily_rollover')
+    }
+
+    const fresh = this.runs.createForPageTab(session.pageTabId)
+    if (sortedEnabledAccounts(fresh).length === 0) {
+      throw new Error('Page Tab không có tài khoản được bật cho ngày chạy mới.')
+    }
+
+    session.run = fresh
+    session.runId = fresh.run.id
+    session.activeDateKey = dateKey
+    session.currentAccountId = null
+    session.currentAccountIndex = null
+    session.slotsCompletedThisTurn = 0
+    session.targetSlotsThisTurn = 0
+    session.cycle = 0
+    session.nextActionAt = null
+    session.lastResult = null
+    session.status = 'starting'
+    session.message = 'Đã sang ngày chạy mới; tạo run mới từ Group gốc.'
+    this.beginCycleWait()
   }
 
   private pauseForSessionFailure(session: RotationSession, accountId: number, kind: 'session_expired' | 'checkpoint'): void {
@@ -292,23 +433,26 @@ export class RotationService {
   }
 
   private async runLoop(session: RotationSession): Promise<void> {
-    const accounts = sortedEnabledAccounts(session.run)
     let accountIndex = 0
     let unavailableStreak = 0
 
-    while (!session.disposed) {
+    runLoop: while (!session.disposed) {
+      const runIdBeforeWait = session.runId
       const ready = await this.waitUntilRunnable(session)
       if (!ready) return
+      if (session.runId !== runIdBeforeWait) {
+        accountIndex = 0
+        unavailableStreak = 0
+      }
 
       const current = this.runs.get(session.runId)
       if (!current) throw new Error(`Không tìm thấy phiên #${session.runId}.`)
       session.run = current
-      if (current.run.status === 'completed' || current.metrics.remaining === 0) {
-        session.status = 'completed'
-        session.message = 'Phiên chạy đã hoàn tất toàn bộ hàng chờ.'
-        session.nextActionAt = null
-        return
-      }
+      if (isRunExhausted(current)) continue
+
+      const accounts = sortedEnabledAccounts(current)
+      if (accounts.length === 0) throw new Error('Page Tab không còn tài khoản được bật để chạy.')
+      if (accountIndex >= accounts.length) accountIndex = 0
 
       const account = accounts[accountIndex]
       if (!account) throw new Error('Không tìm thấy tài khoản tại vị trí hiện tại trong vòng chạy.')
@@ -322,12 +466,30 @@ export class RotationService {
       let usedSlot = false
       let leaveAccountEarly = false
       while (session.slotsCompletedThisTurn < targetSlots && !session.disposed) {
+        const activeRunId = session.runId
         const canPost = await this.waitUntilRunnable(session)
         if (!canPost) return
+        if (session.runId !== activeRunId) {
+          accountIndex = 0
+          unavailableStreak = 0
+          continue runLoop
+        }
 
-        const result = await this.posting.executeSingle({ runId: session.runId, accountId: account.accountId })
+        session.inFlight = true
+        let result: ExecuteSinglePostingJobResult
+        try {
+          result = await this.posting.executeSingle({ runId: session.runId, accountId: account.accountId })
+        } finally {
+          session.inFlight = false
+        }
         session.run = result.run
         session.lastResult = result.result
+
+        if (session.stopRequested) {
+          this.finalizeStop(session)
+          return
+        }
+
         const sessionDecision = resolveSessionFailureDecision(result.result, this.getSessionSettings())
         const networkDecision = resolveNetworkFailureDecision(result.result, this.getNetworkSettings())
 
@@ -347,11 +509,9 @@ export class RotationService {
             leaveAccountEarly = true
             break
           }
-          if (result.result.code === 'no_pending_item' || result.run.run.status === 'completed' || result.run.metrics.remaining === 0) {
-            session.status = 'completed'
-            session.message = 'Phiên chạy không còn Group chờ xử lý.'
-            session.nextActionAt = null
-            return
+          if (result.result.code === 'no_pending_item' || isRunExhausted(result.run)) {
+            this.settleCycle()
+            continue runLoop
           }
           if (isAccountUnavailable(result)) {
             leaveAccountEarly = true
@@ -368,11 +528,9 @@ export class RotationService {
         unavailableStreak = 0
         session.slotsCompletedThisTurn += 1
 
-        if (result.run.run.status === 'completed' || result.run.metrics.remaining === 0) {
-          session.status = 'completed'
-          session.message = 'Phiên chạy đã hoàn tất toàn bộ hàng chờ.'
-          session.nextActionAt = null
-          return
+        if (isRunExhausted(result.run)) {
+          this.settleCycle()
+          continue runLoop
         }
 
         if (sessionDecision) {
@@ -386,15 +544,20 @@ export class RotationService {
         }
 
         if (session.slotsCompletedThisTurn < targetSlots) {
-          await this.waitConfiguredDelay(
+          const sameRun = await this.waitConfiguredDelay(
             session,
             current.run.snapshot.rotation.postDelayMinSeconds,
             current.run.snapshot.rotation.postDelayMaxSeconds,
             'Chờ giữa các bài'
           )
+          if (!sameRun) continue runLoop
         }
       }
 
+      if (session.stopRequested) {
+        this.finalizeStop(session)
+        return
+      }
       if (session.manualPaused) continue
 
       if (!usedSlot) unavailableStreak += 1
@@ -416,20 +579,23 @@ export class RotationService {
 
       if (!leaveAccountEarly && session.run.metrics.remaining > 0) {
         const rotation = session.run.run.snapshot.rotation
-        if (accounts.length > 1) {
-          await this.waitConfiguredDelay(
-            session,
-            rotation.accountDelayMinSeconds,
-            rotation.accountDelayMaxSeconds,
-            'Chờ đổi tài khoản'
-          )
-        } else {
-          await this.waitConfiguredDelay(
-            session,
-            rotation.postDelayMinSeconds,
-            rotation.postDelayMaxSeconds,
-            'Chờ giữa các bài'
-          )
+        const sameRun = accounts.length > 1
+          ? await this.waitConfiguredDelay(
+              session,
+              rotation.accountDelayMinSeconds,
+              rotation.accountDelayMaxSeconds,
+              'Chờ đổi tài khoản'
+            )
+          : await this.waitConfiguredDelay(
+              session,
+              rotation.postDelayMinSeconds,
+              rotation.postDelayMaxSeconds,
+              'Chờ giữa các bài'
+            )
+        if (!sameRun) {
+          accountIndex = 0
+          unavailableStreak = 0
+          continue
         }
       }
     }
@@ -437,10 +603,15 @@ export class RotationService {
 
   private async waitUntilRunnable(session: RotationSession): Promise<boolean> {
     while (!session.disposed) {
+      if (session.stopRequested && !session.inFlight) {
+        this.finalizeStop(session)
+        return false
+      }
+
       if (session.manualPaused) {
         session.status = 'paused'
         session.nextActionAt = null
-        if (session.run.run.status === 'running' || session.run.run.status === 'created') {
+        if (!session.inFlight && (session.run.run.status === 'running' || session.run.run.status === 'created')) {
           session.run = this.runs.pause(session.runId)
         }
         await this.clock.sleep(250)
@@ -449,8 +620,21 @@ export class RotationService {
 
       const now = this.clock.now()
       const schedules = this.schedulesFor(session)
+      const todayKey = localDateKey(now)
+
+      if (isRunExhausted(session.run) && session.activeDateKey === todayKey) {
+        this.settleCycle()
+        const next = nextScheduleStartAfterDay(schedules, now)
+        session.status = 'waiting_window'
+        session.nextActionAt = next.getTime()
+        session.message = `Phiên hôm nay đã xong; chờ ngày chạy kế tiếp ${next.toLocaleString()}.`
+        const waitMs = Math.max(250, Math.min(30_000, next.getTime() - now.getTime()))
+        await this.clock.sleep(waitMs)
+        continue
+      }
+
       if (!isWithinSchedule(schedules, now)) {
-        if (session.run.run.status === 'running' || session.run.run.status === 'created') {
+        if (!session.inFlight && (session.run.run.status === 'running' || session.run.run.status === 'created')) {
           session.run = this.runs.pause(session.runId)
         }
         const next = nextScheduleStart(schedules, now)
@@ -464,6 +648,13 @@ export class RotationService {
         continue
       }
 
+      if (session.activeDateKey !== null && session.activeDateKey !== todayKey) {
+        this.rolloverForDay(session, todayKey)
+      } else if (session.activeDateKey === null) {
+        session.activeDateKey = todayKey
+      }
+
+      if (isRunExhausted(session.run)) continue
       if (session.run.run.status !== 'running') session.run = this.runs.resume(session.runId)
       session.status = 'running'
       session.nextActionAt = null
@@ -477,19 +668,21 @@ export class RotationService {
     minSeconds: number,
     maxSeconds: number,
     label: string
-  ): Promise<void> {
+  ): Promise<boolean> {
+    const expectedRunId = session.runId
     let remainingMs = randomDelaySeconds(minSeconds, maxSeconds, this.clock.random) * 1000
-    if (remainingMs <= 0) return
+    if (remainingMs <= 0) return true
     session.message = `${label}: ${Math.ceil(remainingMs / 1000)}s.`
 
     while (remainingMs > 0 && !session.disposed) {
       const runnable = await this.waitUntilRunnable(session)
-      if (!runnable) return
+      if (!runnable || session.runId !== expectedRunId) return false
       const chunk = Math.min(1000, remainingMs)
       session.nextActionAt = this.clock.now().getTime() + remainingMs
       await this.clock.sleep(chunk)
       remainingMs -= chunk
     }
     session.nextActionAt = null
+    return !session.disposed && session.runId === expectedRunId
   }
 }

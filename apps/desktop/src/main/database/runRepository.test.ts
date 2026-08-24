@@ -140,4 +140,27 @@ describe('RunRepository', () => {
 
     runtime.close()
   })
+
+  it('Stop ends the current run and the next Start can clone the original Group Set from the beginning', () => {
+    const { runtime, tabs, runs, tab } = configureTab(['g1', 'g2', 'g3'])
+    const firstRun = runs.createForPageTab(tab.id)
+    runs.resume(firstRun.run.id)
+
+    const claimed = runs.claimNext(firstRun.run.id)
+    if (!claimed) throw new Error('Expected first item.')
+    runs.completeItem({ runId: firstRun.run.id, itemId: claimed.id, status: 'success' })
+    expect(runs.get(firstRun.run.id)?.metrics.success).toBe(1)
+
+    const stopped = runs.stop(firstRun.run.id, 'manual')
+    expect(stopped.run.status).toBe('stopped')
+    expect(tabs.get(tab.id)?.status).toBe('stopped')
+    expect(tabs.get(tab.id)?.groupUids).toEqual(['g1', 'g2', 'g3'])
+
+    const fresh = runs.createForPageTab(tab.id)
+    expect(fresh.run.id).not.toBe(firstRun.run.id)
+    expect(fresh.metrics).toMatchObject({ total: 3, pending: 3, success: 0, remaining: 3 })
+    expect(runs.listItems(fresh.run.id).map((item) => item.groupUid)).toEqual(['g1', 'g2', 'g3'])
+
+    runtime.close()
+  })
 })

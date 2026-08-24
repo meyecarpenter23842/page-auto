@@ -6,6 +6,7 @@ export interface PageTabRotationController {
   status(payload: RotationPageTabPayload): RotationRuntimeSnapshot
   pause(payload: RotationPageTabPayload): RotationRuntimeSnapshot
   resume(payload: RotationPageTabPayload): RotationRuntimeSnapshot
+  stop(payload: RotationPageTabPayload): RotationRuntimeSnapshot
   dispose(): void
 }
 
@@ -16,7 +17,7 @@ function isMissingRotationSession(error: unknown): boolean {
 }
 
 function isActiveStatus(status: RotationRuntimeStatus): boolean {
-  return status === 'starting' || status === 'running' || status === 'waiting_window'
+  return status === 'starting' || status === 'running' || status === 'waiting_window' || status === 'stopping'
 }
 
 function diagnostic(pageTabId: number, message: string): void {
@@ -71,9 +72,6 @@ export class PageTabWorkerManager {
     const current = controller.status(payload)
     diagnostic(payload.pageTabId, `RESUME current status=${current.status} run=${current.runId ?? 'none'}`)
 
-    // Resume is the operator's "run this tab again" action. A completed run has no
-    // pending items left, so create a fresh run from the current Page Tab config and
-    // original Group Set instead of silently returning `completed` forever.
     if (current.status === 'completed') {
       const snapshot = controller.start(payload)
       diagnostic(payload.pageTabId, `RESUME created fresh run status=${snapshot.status} run=${snapshot.runId ?? 'none'}`)
@@ -92,6 +90,30 @@ export class PageTabWorkerManager {
       diagnostic(payload.pageTabId, 'RESUME missing runtime session; falling back to START')
       const snapshot = controller.start(payload)
       diagnostic(payload.pageTabId, `RESUME fallback START status=${snapshot.status} run=${snapshot.runId ?? 'none'}`)
+      return snapshot
+    }
+  }
+
+  stop(payload: RotationPageTabPayload): RotationRuntimeSnapshot {
+    diagnostic(payload.pageTabId, 'STOP requested')
+    const controller = this.getOrCreate(payload.pageTabId)
+    try {
+      const snapshot = controller.stop(payload)
+      diagnostic(payload.pageTabId, `STOP accepted status=${snapshot.status} run=${snapshot.runId ?? 'none'}`)
+      return snapshot
+    } catch (error) {
+      if (!isMissingRotationSession(error)) {
+        diagnostic(payload.pageTabId, `STOP rejected type=${error instanceof Error ? error.name : typeof error}`)
+        throw error
+      }
+
+      // After an app restart a paused DB run may exist without an in-memory
+      // RotationService session. Resume restores that session synchronously up to
+      // the first scheduler await; Stop immediately marks it before posting can run.
+      diagnostic(payload.pageTabId, 'STOP missing runtime session; restoring paused run before STOP')
+      controller.resume(payload)
+      const snapshot = controller.stop(payload)
+      diagnostic(payload.pageTabId, `STOP restored session status=${snapshot.status} run=${snapshot.runId ?? 'none'}`)
       return snapshot
     }
   }
