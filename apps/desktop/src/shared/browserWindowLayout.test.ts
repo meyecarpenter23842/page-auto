@@ -7,6 +7,7 @@ import {
   compactContentScale,
   computeBrowserWindowPlacement,
   parseStoredBrowserWindowLayout,
+  withBrowserGridDimensions,
   type BrowserDisplayInfo
 } from './browserWindowLayout'
 
@@ -32,11 +33,32 @@ describe('browser window layout', () => {
     expect((fourth?.x ?? 0) + (fourth?.width ?? 0)).toBeLessThanOrEqual(2020)
   })
 
-  it('supports vertical and grid arrangements', () => {
+  it('supports legacy vertical layouts and real two-dimensional grids', () => {
     expect(browserTileGrid({ ...DEFAULT_BROWSER_WINDOW_LAYOUT, enabled: true, tileLayout: 'vertical', tileCount: 5 }))
       .toEqual({ columns: 1, rows: 5, capacity: 5 })
     expect(browserTileGrid({ ...DEFAULT_BROWSER_WINDOW_LAYOUT, enabled: true, tileLayout: 'grid', tileCount: 6, gridColumns: 3 }))
       .toEqual({ columns: 3, rows: 2, capacity: 6 })
+  })
+
+  it('upgrades dimension edits to a 4 x 3 or 2 x 6 grid instead of forcing one full-screen axis', () => {
+    const fourByThree = withBrowserGridDimensions(
+      { ...DEFAULT_BROWSER_WINDOW_LAYOUT, enabled: true, tileLayout: 'horizontal', tileCount: 4 },
+      4,
+      3
+    )
+    const twoBySix = withBrowserGridDimensions(fourByThree, 2, 6)
+
+    expect(fourByThree).toMatchObject({ tileLayout: 'grid', gridColumns: 4, tileCount: 12 })
+    expect(browserTileGrid(fourByThree)).toEqual({ columns: 4, rows: 3, capacity: 12 })
+    expect(twoBySix).toMatchObject({ tileLayout: 'grid', gridColumns: 2, tileCount: 12 })
+    expect(browserTileGrid(twoBySix)).toEqual({ columns: 2, rows: 6, capacity: 12 })
+
+    const topLeft = computeBrowserWindowPlacement(fourByThree, browser, display, 0)
+    const secondRow = computeBrowserWindowPlacement(fourByThree, browser, display, 4)
+    expect(topLeft?.width).toBeLessThan(display.workArea.width)
+    expect(topLeft?.height).toBeLessThan(display.workArea.height)
+    expect(secondRow?.y).toBeGreaterThan(topLeft?.y ?? 0)
+    expect(topLeft?.contentScale).toBeLessThan(1)
   })
 
   it('scales the page content down with the physical slot instead of keeping a huge cropped page', () => {
@@ -45,13 +67,15 @@ describe('browser window layout', () => {
     expect(compactContentScale(browser, 320, 200)).toBe(0.25)
 
     const placement = computeBrowserWindowPlacement(
-      { ...DEFAULT_BROWSER_WINDOW_LAYOUT, enabled: true, tileLayout: 'horizontal', tileCount: 6 },
+      withBrowserGridDimensions({ ...DEFAULT_BROWSER_WINDOW_LAYOUT, enabled: true }, 4, 3),
       browser,
       { ...display, workArea: { x: 0, y: 0, width: 1920, height: 800 } },
       0
     )
     expect(placement?.viewportWidth).toBe(1280)
     expect(placement?.viewportHeight).toBe(800)
+    expect(placement?.width).toBeLessThan(1920)
+    expect(placement?.height).toBeLessThan(800)
     expect(placement?.contentScale).toBeLessThan(1)
   })
 
