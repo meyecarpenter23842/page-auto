@@ -87,7 +87,8 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
     () => appSettings.get().session,
     () => appSettings.get().network,
     () => appSettings.get().runtime,
-    () => appSettings.get().logging
+    () => appSettings.get().logging,
+    (accountId) => browserProfiles.closeAccount(accountId)
   )
   const posting = new ResilientPostingService(
     corePosting,
