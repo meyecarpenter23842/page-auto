@@ -25,6 +25,10 @@ interface BootstrapCommand {
   launch?: BrowserLaunchConfig
 }
 
+interface ShutdownCommand {
+  type: 'shutdown'
+}
+
 interface BrowserReadyMessage {
   type: 'browser-ready'
   accountId: number
@@ -69,14 +73,23 @@ function identityFailure(
   }
 }
 
-function commandFromMessage(event: unknown): BootstrapCommand | null {
-  const payload = event && typeof event === 'object' && 'data' in event
+function messagePayload(event: unknown): unknown {
+  return event && typeof event === 'object' && 'data' in event
     ? (event as { data?: unknown }).data
     : event
+}
+
+function commandFromMessage(event: unknown): BootstrapCommand | null {
+  const payload = messagePayload(event)
   if (!payload || typeof payload !== 'object') return null
   const candidate = payload as Partial<BootstrapCommand>
   if (candidate.type !== 'bootstrap' || !candidate.account || !candidate.browser || !candidate.session) return null
   return candidate as BootstrapCommand
+}
+
+function isShutdownCommand(event: unknown): event is ShutdownCommand {
+  const payload = messagePayload(event)
+  return Boolean(payload && typeof payload === 'object' && (payload as Partial<ShutdownCommand>).type === 'shutdown')
 }
 
 async function resolveCdpEndpoint(profileDirectory: string): Promise<string | null> {
@@ -103,6 +116,18 @@ async function run(): Promise<void> {
   let lifetimeTimer: NodeJS.Timeout | null = null
   let closing = false
   let queue = Promise.resolve()
+
+  const closeBrowserAndExit = async (): Promise<void> => {
+    if (lifetimeTimer) {
+      clearTimeout(lifetimeTimer)
+      lifetimeTimer = null
+    }
+    const activeContext = context
+    context = null
+    cdpEndpoint = null
+    if (activeContext) await activeContext.close().catch(() => undefined)
+    setTimeout(() => process.exit(0), 25)
+  }
 
   const ensureContext = async (command: BootstrapCommand): Promise<BrowserContext> => {
     if (context) {
@@ -158,6 +183,13 @@ async function run(): Promise<void> {
   }
 
   process.parentPort?.on('message', (event) => {
+    if (isShutdownCommand(event)) {
+      if (closing) return
+      closing = true
+      void queue.finally(closeBrowserAndExit)
+      return
+    }
+
     const command = commandFromMessage(event)
     if (!command || closing) return
 
