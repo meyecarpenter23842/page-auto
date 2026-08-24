@@ -11,6 +11,11 @@ import type {
 } from '../shared/accounts'
 import type { AppSettings, AppSettingsPatch } from '../shared/appSettings'
 import type { BrowserExecutableResult, BrowserTestRequest, BrowserTestResult } from '../shared/browserSettings'
+import type {
+  BrowserDisplayInfo,
+  BrowserRetileResult,
+  BrowserWindowLayoutSettings
+} from '../shared/browserWindowLayout'
 import type { CaptchaSettingsView, SaveCaptchaSettingsInput } from '../shared/captchaSettings'
 import type { ConfigBackupExportResult, ConfigBackupRestoreResult } from '../shared/configBackup'
 import type {
@@ -106,6 +111,10 @@ export const IPC_CHANNELS = {
   browserPickExecutable: 'settings:browser:pick-executable',
   browserProbeExecutable: 'settings:browser:probe-executable',
   browserTest: 'settings:browser:test',
+  browserWindowLayoutGet: 'settings:browser-window-layout:get',
+  browserWindowLayoutSave: 'settings:browser-window-layout:save',
+  browserDisplaysList: 'settings:browser-window-layout:displays',
+  browserRetile: 'settings:browser-window-layout:retile',
   captchaSettingsGet: 'settings:captcha:get',
   captchaSettingsSave: 'settings:captcha:save'
 } as const
@@ -181,6 +190,10 @@ export interface PageAutoIpcContract {
   pickChromeExecutable: () => Promise<BrowserExecutableResult>
   probeChromeExecutable: (executablePath: string) => Promise<BrowserExecutableResult>
   testBrowser: (input: BrowserTestRequest) => Promise<BrowserTestResult>
+  getBrowserWindowLayout: () => Promise<BrowserWindowLayoutSettings>
+  saveBrowserWindowLayout: (input: BrowserWindowLayoutSettings) => Promise<BrowserWindowLayoutSettings>
+  listBrowserDisplays: () => Promise<BrowserDisplayInfo[]>
+  retileBrowserWindows: () => Promise<BrowserRetileResult>
   getCaptchaSettings: () => Promise<CaptchaSettingsView>
   saveCaptchaSettings: (input: SaveCaptchaSettingsInput) => Promise<CaptchaSettingsView>
 }

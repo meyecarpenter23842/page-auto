@@ -1,5 +1,6 @@
-import type { BrowserContext } from 'playwright-core'
+import type { BrowserContext, CDPSession, Page } from 'playwright-core'
 import type { BrowserSettings } from '../../shared/appSettings'
+import type { BrowserWindowPlacement } from '../../shared/browserWindowLayout'
 
 export interface BrowserLaunchShape {
   headless: false
@@ -9,11 +10,77 @@ export interface BrowserLaunchShape {
   channel?: 'chrome'
 }
 
-export function buildBrowserLaunchOptions(settings: BrowserSettings): BrowserLaunchShape {
-  const executablePath = settings.executablePath?.trim()
-  const args = [`--window-size=${settings.windowWidth},${settings.windowHeight}`]
+export interface CompactDeviceMetrics {
+  width: number
+  height: number
+  deviceScaleFactor: number
+  mobile: false
+  screenWidth: number
+  screenHeight: number
+  scale: number
+}
 
-  if (settings.mode === 'minimized') args.push('--start-minimized')
+const MIN_COMPACT_SCALE = 0.001
+const compactSessions = new WeakMap<Page, CDPSession>()
+
+async function compactSessionFor(context: BrowserContext, page: Page): Promise<CDPSession> {
+  const existing = compactSessions.get(page)
+  if (existing) return existing
+
+  const session = await context.newCDPSession(page)
+  compactSessions.set(page, session)
+  page.once('close', () => {
+    if (compactSessions.get(page) !== session) return
+    compactSessions.delete(page)
+    void session.detach().catch(() => undefined)
+  })
+  return session
+}
+
+async function releaseCompactSession(page: Page, session: CDPSession): Promise<void> {
+  if (compactSessions.get(page) === session) compactSessions.delete(page)
+  await session.detach().catch(() => undefined)
+}
+
+export function effectiveCompactContentScale(
+  placement: BrowserWindowPlacement,
+  innerWidth: number,
+  innerHeight: number
+): number {
+  const widthScale = Math.max(1, innerWidth) / Math.max(1, placement.viewportWidth)
+  const heightScale = Math.max(1, innerHeight) / Math.max(1, placement.viewportHeight)
+  const scale = Math.min(1, widthScale, heightScale)
+  return Math.max(MIN_COMPACT_SCALE, Math.round(scale * 1000) / 1000)
+}
+
+export function compactDeviceMetrics(
+  placement: BrowserWindowPlacement,
+  actualScale: number = placement.contentScale
+): CompactDeviceMetrics {
+  return {
+    width: placement.viewportWidth,
+    height: placement.viewportHeight,
+    deviceScaleFactor: 1,
+    mobile: false,
+    screenWidth: placement.viewportWidth,
+    screenHeight: placement.viewportHeight,
+    scale: actualScale
+  }
+}
+
+export function buildBrowserLaunchOptions(
+  settings: BrowserSettings,
+  placement: BrowserWindowPlacement | null = null
+): BrowserLaunchShape {
+  const executablePath = settings.executablePath?.trim()
+  const args = placement
+    ? [
+        `--window-size=${placement.width},${placement.height}`,
+        `--window-position=${placement.x},${placement.y}`
+      ]
+    : [`--window-size=${settings.windowWidth},${settings.windowHeight}`]
+
+  if (!placement && settings.mode === 'minimized') args.push('--start-minimized')
   if (settings.muteAudio) args.push('--mute-audio')
   if (settings.disableGpu) args.push('--disable-gpu')
 
@@ -40,6 +107,66 @@ export async function applyBrowserContextSettings(
       }
       await route.continue().catch(() => undefined)
     })
+  }
+}
+
+/**
+ * Compact mode keeps Facebook on the configured desktop layout viewport while the
+ * real Chrome top-level window is physically much smaller. The CDP session must stay
+ * attached while the device-metrics override is active; otherwise Chromium drops the
+ * emulation and the small native viewport crops the page again.
+ */
+export async function applyBrowserWindowPlacement(
+  context: BrowserContext,
+  page: Page,
+  placement: BrowserWindowPlacement | null
+): Promise<void> {
+  const session = await compactSessionFor(context, page)
+  const targetWindow = await session.send('Browser.getWindowForTarget').catch(() => null) as { windowId?: number } | null
+
+  if (!placement) {
+    await session.send('Emulation.clearDeviceMetricsOverride').catch(() => undefined)
+    if (targetWindow?.windowId !== undefined) {
+      await session.send('Browser.setWindowBounds', {
+        windowId: targetWindow.windowId,
+        bounds: { windowState: 'normal' }
+      }).catch(() => undefined)
+    }
+    await releaseCompactSession(page, session)
+    return
+  }
+
+  await session.send('Emulation.clearDeviceMetricsOverride').catch(() => undefined)
+
+  if (targetWindow?.windowId !== undefined) {
+    await session.send('Browser.setWindowBounds', {
+      windowId: targetWindow.windowId,
+      bounds: {
+        left: placement.x,
+        top: placement.y,
+        width: placement.width,
+        height: placement.height,
+        windowState: 'normal'
+      }
+    }).catch(() => undefined)
+  }
+
+  await page.waitForTimeout(60).catch(() => undefined)
+  const inner = await page.evaluate(() => ({
+    width: window.innerWidth,
+    height: window.innerHeight
+  })).catch(() => ({ width: placement.width, height: placement.height }))
+  const actualScale = effectiveCompactContentScale(placement, inner.width, inner.height)
+
+  await session.send('Emulation.setDeviceMetricsOverride', compactDeviceMetrics(placement, actualScale))
+}
+
+export async function applyBrowserPlacementToContext(
+  context: BrowserContext,
+  placement: BrowserWindowPlacement | null
+): Promise<void> {
+  for (const page of context.pages()) {
+    await applyBrowserWindowPlacement(context, page, placement).catch(() => undefined)
   }
 }
 

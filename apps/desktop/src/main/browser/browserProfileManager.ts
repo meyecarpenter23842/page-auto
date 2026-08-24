@@ -3,7 +3,13 @@ import { join } from 'node:path'
 import { utilityProcess, type UtilityProcess } from 'electron'
 import type { AccountRecord, BrowserProfileResult } from '../../shared/accounts'
 import { DEFAULT_APP_SETTINGS, type BrowserSettings, type SessionSettings } from '../../shared/appSettings'
+import {
+  cloneDefaultBrowserWindowLayout,
+  type BrowserWindowLayoutSettings,
+  type BrowserWindowPlacement
+} from '../../shared/browserWindowLayout'
 import type { FacebookSessionAccount, FacebookSessionResult } from './facebookSession'
+import { BrowserWindowLayoutManager } from './browserWindowLayoutManager'
 import {
   clearAllManagedBrowserEndpoints,
   clearManagedBrowserEndpoint,
@@ -86,7 +92,9 @@ export class BrowserProfileManager {
     private readonly dataDirectory: string,
     private readonly onSessionResult?: SessionResultHandler,
     private readonly getBrowserSettings: () => BrowserSettings = () => ({ ...DEFAULT_APP_SETTINGS.browser }),
-    private readonly getSessionSettings: () => SessionSettings = () => ({ ...DEFAULT_APP_SETTINGS.session })
+    private readonly getSessionSettings: () => SessionSettings = () => ({ ...DEFAULT_APP_SETTINGS.session }),
+    private readonly windowLayout?: BrowserWindowLayoutManager,
+    private readonly getWindowLayoutSettings: () => BrowserWindowLayoutSettings = () => cloneDefaultBrowserWindowLayout()
   ) {}
 
   async open(account: AccountRecord): Promise<BrowserProfileResult> {
@@ -115,6 +123,7 @@ export class BrowserProfileManager {
 
     clearManagedBrowserEndpoint(account.id)
     mkdirSync(profileDirectory, { recursive: true })
+    this.windowLayout?.claim(account.id, 'profile')
 
     try {
       const workerPath = join(__dirname, 'browser-profile-worker.js')
@@ -128,6 +137,7 @@ export class BrowserProfileManager {
       worker.once('exit', (code) => {
         entry.closing = true
         clearManagedBrowserEndpoint(account.id)
+        this.windowLayout?.release(account.id, 'profile')
         if (entry.pending) {
           clearTimeout(entry.pending.timer)
           entry.pending.resolve({
@@ -148,6 +158,7 @@ export class BrowserProfileManager {
     } catch (error) {
       this.workers.delete(account.id)
       clearManagedBrowserEndpoint(account.id)
+      this.windowLayout?.release(account.id, 'profile')
       return {
         status: 'error',
         profileDirectory,
@@ -159,7 +170,10 @@ export class BrowserProfileManager {
   async closeAccount(accountId: number): Promise<void> {
     const entry = this.workers.get(accountId)
     clearManagedBrowserEndpoint(accountId)
-    if (!entry) return
+    if (!entry) {
+      this.windowLayout?.release(accountId, 'profile')
+      return
+    }
     if (entry.closePromise) return entry.closePromise
 
     entry.closing = true
@@ -185,6 +199,7 @@ export class BrowserProfileManager {
         if (killSettleTimer) clearTimeout(killSettleTimer)
         if (this.workers.get(accountId) === entry) this.workers.delete(accountId)
         clearManagedBrowserEndpoint(accountId)
+        this.windowLayout?.release(accountId, 'profile')
         resolve()
       }
 
@@ -211,10 +226,27 @@ export class BrowserProfileManager {
     await entry.closePromise
   }
 
+  retile(placements: Map<number, BrowserWindowPlacement>): number {
+    let applied = 0
+    for (const [accountId, entry] of this.workers) {
+      if (entry.closing) continue
+      const placement = placements.get(accountId)
+      if (!placement) continue
+      try {
+        entry.process.postMessage({ type: 'retile', placement })
+        applied += 1
+      } catch {
+        // Worker exit handler will clean the registry if it is already gone.
+      }
+    }
+    return applied
+  }
+
   closeAll(): void {
-    for (const entry of this.workers.values()) {
+    for (const [accountId, entry] of this.workers) {
       entry.closing = true
       entry.process.kill()
+      this.windowLayout?.release(accountId, 'profile')
     }
     this.workers.clear()
     clearAllManagedBrowserEndpoints()
@@ -236,6 +268,8 @@ export class BrowserProfileManager {
     }
 
     const browserSettings = { ...this.getBrowserSettings() }
+    const layoutSettings = { ...this.getWindowLayoutSettings() }
+    const placement = this.windowLayout?.placementFor(account.id, layoutSettings, browserSettings) ?? null
     const sessionSettings = { ...this.getSessionSettings() }
     return new Promise<BrowserProfileResult>((resolve) => {
       const responseTimeout = browserSettings.startupDelayMs
@@ -260,6 +294,7 @@ export class BrowserProfileManager {
           account: sessionAccount(account),
           browser: browserSettings,
           session: sessionSettings,
+          placement,
           launch: {
             ...(proxy ? { proxy } : {}),
             ...(account.userAgent ? { userAgent: account.userAgent } : {})
@@ -281,6 +316,7 @@ export class BrowserProfileManager {
     if (isBrowserClosedMessage(message)) {
       entry.closing = true
       clearManagedBrowserEndpoint(accountId)
+      this.windowLayout?.release(accountId, 'profile')
       const pending = entry.pending
       if (pending) {
         clearTimeout(pending.timer)

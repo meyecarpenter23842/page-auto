@@ -8,12 +8,18 @@ import {
   type RuntimeSettings,
   type SessionSettings
 } from '../../shared/appSettings'
+import {
+  cloneDefaultBrowserWindowLayout,
+  type BrowserWindowLayoutSettings,
+  type BrowserWindowPlacement
+} from '../../shared/browserWindowLayout'
 import type {
   ExecuteSinglePostingJobPayload,
   ExecuteSinglePostingJobResult,
   PostingJobResult
 } from '../../shared/posting'
 import { accountProfileDirectory } from '../browser/browserProfileManager'
+import { BrowserWindowLayoutManager } from '../browser/browserWindowLayoutManager'
 import { resolveAccountProxyState } from '../browser/proxyConfig'
 import { PostingWorkerManager } from '../browser/postingWorkerManager'
 import { AccountRepository } from '../database/accountRepository'
@@ -57,11 +63,13 @@ export class PostingService {
     private readonly getNetworkSettings: () => NetworkSettings = () => ({ ...DEFAULT_APP_SETTINGS.network }),
     private readonly getRuntimeSettings: () => RuntimeSettings = () => ({ ...DEFAULT_APP_SETTINGS.runtime }),
     private readonly getLoggingSettings: () => LoggingSettings = () => ({ ...DEFAULT_APP_SETTINGS.logging }),
-    private readonly releaseManagedBrowser: (accountId: number) => Promise<void> = async () => undefined
+    private readonly releaseManagedBrowser: (accountId: number) => Promise<void> = async () => undefined,
+    windowLayout?: BrowserWindowLayoutManager,
+    getWindowLayoutSettings: () => BrowserWindowLayoutSettings = () => cloneDefaultBrowserWindowLayout()
   ) {
     this.accounts = new AccountRepository(database)
     this.runs = new RunRepository(database)
-    this.workers = new PostingWorkerManager(this.getRuntimeSettings)
+    this.workers = new PostingWorkerManager(this.getRuntimeSettings, windowLayout, getWindowLayoutSettings)
   }
 
   async executeSingle(payload: ExecuteSinglePostingJobPayload): Promise<ExecuteSinglePostingJobResult> {
@@ -197,6 +205,10 @@ export class PostingService {
   async releaseAccount(accountId: number): Promise<void> {
     await this.workers.closeAccount(accountId)
     await this.releaseManagedBrowser(accountId)
+  }
+
+  retileBrowsers(placements: Map<number, BrowserWindowPlacement>): number {
+    return this.workers.retile(placements)
   }
 
   closeAll(): void {

@@ -1,12 +1,18 @@
 import { join } from 'node:path'
 import { utilityProcess, type UtilityProcess } from 'electron'
 import { DEFAULT_APP_SETTINGS, type RuntimeSettings } from '../../shared/appSettings'
+import {
+  cloneDefaultBrowserWindowLayout,
+  type BrowserWindowLayoutSettings,
+  type BrowserWindowPlacement
+} from '../../shared/browserWindowLayout'
 import type {
   PostingJobRequest,
   PostingJobResult,
   PostingWorkerMessage,
   PostingWorkerRequestMessage
 } from '../../shared/posting'
+import { BrowserWindowLayoutManager } from './browserWindowLayoutManager'
 import { getManagedBrowserEndpoint } from './managedBrowserRegistry'
 import { BrowserLaunchGate } from './runtimeLaunchGate'
 
@@ -41,18 +47,36 @@ export class PostingWorkerManager {
   private readonly launchGate = new BrowserLaunchGate()
 
   constructor(
-    private readonly getRuntimeSettings: () => RuntimeSettings = () => ({ ...DEFAULT_APP_SETTINGS.runtime })
+    private readonly getRuntimeSettings: () => RuntimeSettings = () => ({ ...DEFAULT_APP_SETTINGS.runtime }),
+    private readonly windowLayout?: BrowserWindowLayoutManager,
+    private readonly getWindowLayoutSettings: () => BrowserWindowLayoutSettings = () => cloneDefaultBrowserWindowLayout()
   ) {}
 
   async run(job: PostingJobRequest): Promise<PostingJobResult> {
     const runtime = { ...this.getRuntimeSettings() }
+    this.windowLayout?.claim(job.accountId, 'posting')
+    const placement = this.windowLayout?.placementFor(
+      job.accountId,
+      this.getWindowLayoutSettings(),
+      job.browser
+    ) ?? null
+    const runtimeJob: PostingJobRequest = { ...job, browserPlacement: placement }
     let entry = this.workers.get(job.accountId)
 
     if (!entry || entry.shuttingDown) {
       await this.launchGate.wait(runtime.browserLaunchSpacingMs)
-      entry = this.spawnWorker(job)
+      try {
+        entry = this.spawnWorker(runtimeJob)
+      } catch (error) {
+        this.windowLayout?.release(job.accountId, 'posting')
+        return {
+          status: 'failed',
+          code: 'worker_crashed',
+          message: error instanceof Error ? error.message : String(error)
+        }
+      }
     } else {
-      diagnostic(job, 'reuse posting worker hiện có')
+      diagnostic(runtimeJob, 'reuse posting worker hiện có')
     }
 
     if (entry.pending) {
@@ -65,11 +89,12 @@ export class PostingWorkerManager {
 
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
-        if (!entry?.pending || entry.pending.job.itemId !== job.itemId) return
-        diagnostic(job, `TIMEOUT sau ${runtime.maxAccountRuntimeSeconds}s`)
+        if (!entry?.pending || entry.pending.job.itemId !== runtimeJob.itemId) return
+        diagnostic(runtimeJob, `TIMEOUT sau ${runtime.maxAccountRuntimeSeconds}s`)
         const pending = entry.pending
         entry.pending = null
         this.workers.delete(job.accountId)
+        this.windowLayout?.release(job.accountId, 'posting')
         entry.shuttingDown = true
         entry.process.kill()
         pending.resolve({
@@ -79,14 +104,17 @@ export class PostingWorkerManager {
         })
       }, runtime.maxAccountRuntimeSeconds * 1000)
 
-      entry.pending = { job, resolve, timer, sent: false }
+      entry.pending = { job: runtimeJob, resolve, timer, sent: false }
       this.dispatch(entry)
     })
   }
 
   async closeAccount(accountId: number): Promise<void> {
     const entry = this.workers.get(accountId)
-    if (!entry) return
+    if (!entry) {
+      this.windowLayout?.release(accountId, 'posting')
+      return
+    }
     if (entry.pending) {
       throw new Error(`Không thể đóng Chrome account #${accountId} khi posting job vẫn đang chạy.`)
     }
@@ -105,6 +133,7 @@ export class PostingWorkerManager {
         if (forceTimer) clearTimeout(forceTimer)
         if (killSettleTimer) clearTimeout(killSettleTimer)
         if (this.workers.get(accountId) === entry) this.workers.delete(accountId)
+        this.windowLayout?.release(accountId, 'posting')
         resolve()
       }
 
@@ -132,16 +161,34 @@ export class PostingWorkerManager {
     accountDiagnostic(accountId, 'RELEASE complete → Chrome/worker closed')
   }
 
+  retile(placements: Map<number, BrowserWindowPlacement>): number {
+    let applied = 0
+    for (const [accountId, entry] of this.workers) {
+      if (entry.shuttingDown) continue
+      const placement = placements.get(accountId)
+      if (!placement) continue
+      try {
+        entry.process.postMessage({ type: 'retile', placement })
+        applied += 1
+      } catch {
+        // Worker exit handler cleans stale entries.
+      }
+    }
+    return applied
+  }
+
   closeAll(): void {
-    for (const entry of this.workers.values()) {
+    for (const [accountId, entry] of this.workers) {
       entry.shuttingDown = true
       try {
         entry.process.postMessage({ type: 'shutdown' })
       } catch {
         entry.process.kill()
+        this.windowLayout?.release(accountId, 'posting')
         continue
       }
       setTimeout(() => entry.process.kill(), 500)
+      this.windowLayout?.release(accountId, 'posting')
     }
     this.workers.clear()
   }
@@ -183,6 +230,7 @@ export class PostingWorkerManager {
 
     worker.once('exit', (code) => {
       if (this.workers.get(job.accountId) === entry) this.workers.delete(job.accountId)
+      this.windowLayout?.release(job.accountId, 'posting')
       const pending = entry.pending
       entry.pending = null
       if (!pending) return
@@ -210,6 +258,7 @@ export class PostingWorkerManager {
       clearTimeout(pending.timer)
       entry.pending = null
       this.workers.delete(entry.accountId)
+      this.windowLayout?.release(entry.accountId, 'posting')
       entry.shuttingDown = true
       entry.process.kill()
       pending.resolve({

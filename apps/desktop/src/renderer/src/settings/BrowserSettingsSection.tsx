@@ -2,29 +2,48 @@ import { useEffect, useMemo, useState } from 'react'
 import type { AppInfo } from '../../../ipc/channels'
 import { DEFAULT_APP_SETTINGS, type BrowserSettings } from '../../../shared/appSettings'
 import type { BrowserExecutableResult, BrowserTestResult } from '../../../shared/browserSettings'
+import {
+  DEFAULT_BROWSER_WINDOW_LAYOUT,
+  type BrowserDisplayInfo,
+  type BrowserWindowLayoutSettings
+} from '../../../shared/browserWindowLayout'
 import './settingsSections.css'
 
 interface BrowserSettingsSectionProps { appInfo: AppInfo | null }
-type BusyState = 'save' | 'detect' | 'pick' | 'test' | null
+type BusyState = 'save' | 'detect' | 'pick' | 'test' | 'retile' | null
 
 function copyBrowser(settings: BrowserSettings): BrowserSettings { return { ...settings } }
+function copyLayout(settings: BrowserWindowLayoutSettings): BrowserWindowLayoutSettings { return { ...settings } }
 function errorText(caught: unknown): string { return caught instanceof Error ? caught.message : String(caught) }
 
 export function BrowserSettingsSection({ appInfo }: BrowserSettingsSectionProps) {
   const [saved, setSaved] = useState<BrowserSettings | null>(null)
   const [draft, setDraft] = useState<BrowserSettings | null>(null)
+  const [savedLayout, setSavedLayout] = useState<BrowserWindowLayoutSettings | null>(null)
+  const [layout, setLayout] = useState<BrowserWindowLayoutSettings | null>(null)
+  const [displays, setDisplays] = useState<BrowserDisplayInfo[]>([])
   const [probe, setProbe] = useState<BrowserExecutableResult | null>(null)
   const [test, setTest] = useState<BrowserTestResult | null>(null)
   const [busy, setBusy] = useState<BusyState>(null)
   const [feedback, setFeedback] = useState<{ kind: 'ok' | 'bad'; text: string } | null>(null)
 
-  const dirty = useMemo(() => Boolean(saved && draft && JSON.stringify(saved) !== JSON.stringify(draft)), [draft, saved])
+  const dirty = useMemo(() => Boolean(
+    saved && draft && savedLayout && layout
+    && (JSON.stringify(saved) !== JSON.stringify(draft) || JSON.stringify(savedLayout) !== JSON.stringify(layout))
+  ), [draft, layout, saved, savedLayout])
 
   useEffect(() => {
-    void window.pageAuto.getAppSettings().then(async (settings) => {
+    void Promise.all([
+      window.pageAuto.getAppSettings(),
+      window.pageAuto.getBrowserWindowLayout(),
+      window.pageAuto.listBrowserDisplays()
+    ]).then(async ([settings, windowLayout, browserDisplays]) => {
       const browser = copyBrowser(settings.browser)
       setSaved(browser)
       setDraft(copyBrowser(browser))
+      setSavedLayout(copyLayout(windowLayout))
+      setLayout(copyLayout(windowLayout))
+      setDisplays(browserDisplays)
       setProbe(browser.executablePath ? await window.pageAuto.probeChromeExecutable(browser.executablePath) : await window.pageAuto.detectChrome())
     }).catch((caught) => setFeedback({ kind: 'bad', text: errorText(caught) }))
   }, [])
@@ -34,14 +53,21 @@ export function BrowserSettingsSection({ appInfo }: BrowserSettingsSectionProps)
     setFeedback(null)
   }
 
+  const updateLayout = <K extends keyof BrowserWindowLayoutSettings>(key: K, value: BrowserWindowLayoutSettings[K]) => {
+    setLayout((current) => current ? { ...current, [key]: value } : current)
+    setFeedback(null)
+  }
+
   const save = async () => {
-    if (!draft) return
+    if (!draft || !layout) return
     setBusy('save'); setFeedback(null)
     try {
       const next = await window.pageAuto.updateAppSettings({ browser: draft })
+      const nextLayout = await window.pageAuto.saveBrowserWindowLayout(layout)
       const browser = copyBrowser(next.browser)
       setSaved(browser); setDraft(copyBrowser(browser))
-      setFeedback({ kind: 'ok', text: 'Đã lưu cài đặt trình duyệt.' })
+      setSavedLayout(copyLayout(nextLayout)); setLayout(copyLayout(nextLayout))
+      setFeedback({ kind: 'ok', text: 'Đã lưu cài đặt trình duyệt và cách xếp Chrome.' })
     } catch (caught) { setFeedback({ kind: 'bad', text: errorText(caught) }) } finally { setBusy(null) }
   }
 
@@ -74,16 +100,34 @@ export function BrowserSettingsSection({ appInfo }: BrowserSettingsSectionProps)
     } catch (caught) { setFeedback({ kind: 'bad', text: errorText(caught) }) } finally { setBusy(null) }
   }
 
-  if (!draft) return <div className="settings-empty">Đang đọc cài đặt trình duyệt...</div>
+  const retile = async () => {
+    setBusy('retile'); setFeedback(null)
+    try {
+      const result = await window.pageAuto.retileBrowserWindows()
+      setFeedback({ kind: result.status === 'success' ? 'ok' : 'bad', text: result.message })
+    } catch (caught) { setFeedback({ kind: 'bad', text: errorText(caught) }) } finally { setBusy(null) }
+  }
+
+  if (!draft || !layout) return <div className="settings-empty">Đang đọc cài đặt trình duyệt...</div>
 
   return <div className="settings-section settings-section-with-actions">
     <div className="settings-section-content"><div className="browser-section">
       <div className="browser-status-grid"><div><span>Phiên bản Chrome</span><strong>{probe?.version ?? 'Chưa đọc được'}</strong></div><div><span>Tình trạng Chrome</span><strong className={probe?.status === 'found' ? 'status-ok' : ''}>{probe?.status === 'found' ? 'Đã tìm thấy' : 'Chưa sẵn sàng'}</strong></div><div className="path-card"><span>Thư mục dữ liệu</span><strong title={appInfo?.dataDirectory ?? ''}>{appInfo?.dataDirectory ?? 'Đang đọc...'}</strong></div></div>
       <div className="browser-form-grid">
         <label className="field span-3"><span>Đường dẫn Chrome</span><div className="path-input-row"><input value={draft.executablePath ?? ''} onChange={(event) => update('executablePath', event.target.value || null)} placeholder="Chọn chrome.exe" /><button className="settings-button" type="button" disabled={busy !== null} onClick={() => void pickChrome()}>Chọn file</button><button className="settings-button" type="button" disabled={busy !== null} onClick={() => void detectChrome()}>{busy === 'detect' ? 'Đang tìm...' : 'Tự tìm Chrome'}</button><button className="settings-button primary" type="button" disabled={busy !== null} onClick={() => void testChrome()}>{busy === 'test' ? 'Đang kiểm tra...' : 'Kiểm tra Chrome'}</button></div></label>
-        <label className="field"><span>Cách mở Chrome</span><select value={draft.mode} onChange={(event) => update('mode', event.target.value as BrowserSettings['mode'])}><option value="visible">Hiện Chrome</option><option value="minimized">Thu nhỏ Chrome</option></select></label>
-        <label className="field"><span>Kích thước cửa sổ</span><select value={`${draft.windowWidth}x${draft.windowHeight}`} onChange={(event) => { const [width, height] = event.target.value.split('x').map(Number); if (width && height) { update('windowWidth', width); update('windowHeight', height) } }}><option value="1280x720">1280 x 720</option><option value="1280x800">1280 x 800</option><option value="1366x768">1366 x 768</option><option value="1440x900">1440 x 900</option><option value="1920x1080">1920 x 1080</option></select></label>
+        <label className="field"><span>Cách mở Chrome</span><select value={draft.mode} onChange={(event) => { const mode = event.target.value as BrowserSettings['mode']; update('mode', mode); if (mode === 'minimized') updateLayout('enabled', false) }}><option value="visible">Hiện Chrome</option><option value="minimized">Ẩn xuống taskbar</option></select></label>
+        <div className="field"><span>Khung automation</span><div className="test-result ok">Desktop ổn định · tự scale</div></div>
         <div className="field"><span>Kết quả kiểm tra</span><div className={`test-result ${test?.status === 'success' ? 'ok' : test ? 'bad' : ''}`}>{test ? (test.status === 'success' ? `Hoạt động · ${test.launchDurationMs ?? 0} ms` : 'Không mở được') : 'Chưa kiểm tra'}</div></div>
+
+        <label className="toggle-card span-3"><div><strong>Compact / xếp nhiều Chrome</strong><small>Chrome nhỏ thì toàn bộ Facebook bên trong cũng thu nhỏ theo tỷ lệ; không cắt mất góc trang.</small></div><input type="checkbox" checked={layout.enabled} onChange={(event) => { updateLayout('enabled', event.target.checked); if (event.target.checked) update('mode', 'visible') }} /></label>
+        {layout.enabled && <>
+          <label className="field"><span>Kiểu xếp</span><select value={layout.tileLayout} onChange={(event) => updateLayout('tileLayout', event.target.value as BrowserWindowLayoutSettings['tileLayout'])}><option value="horizontal">Chia ngang</option><option value="vertical">Chia dọc</option><option value="grid">Grid / lưới</option></select></label>
+          <label className="number-field"><span>Số Chrome / layout</span><div><input type="number" min="1" max="32" value={layout.tileCount} onChange={(event) => updateLayout('tileCount', Math.max(1, Math.min(32, Number(event.target.value) || 1)))} /><em>ô</em></div></label>
+          {layout.tileLayout === 'grid' ? <label className="number-field"><span>Số cột Grid</span><div><input type="number" min="1" max="16" value={layout.gridColumns} onChange={(event) => updateLayout('gridColumns', Math.max(1, Math.min(16, Number(event.target.value) || 1)))} /><em>cột</em></div></label> : <div className="field"><span>Tỷ lệ nội dung</span><div className="test-result ok">Tự tính theo ô</div></div>}
+          <label className="field span-2"><span>Màn hình đích</span><select value={layout.targetDisplayId ?? ''} onChange={(event) => updateLayout('targetDisplayId', event.target.value ? Number(event.target.value) : null)}><option value="">Màn hình tại vị trí chuột</option>{displays.map((display) => <option key={display.id} value={display.id}>{display.label}{display.isPrimary ? ' · Chính' : ''}</option>)}</select></label>
+          <div className="field"><span>Chrome đang mở</span><button type="button" className="settings-button" disabled={busy !== null || dirty} onClick={() => void retile()}>{busy === 'retile' ? 'Đang xếp...' : 'Sắp xếp lại Chrome'}</button></div>
+        </>}
+
         <label className="toggle-card"><div><strong>Không tải ảnh</strong><small>Giảm băng thông khi chạy.</small></div><input type="checkbox" checked={draft.disableImageLoading} onChange={(event) => update('disableImageLoading', event.target.checked)} /></label>
         <label className="toggle-card"><div><strong>Tắt âm thanh</strong><small>Chrome không phát âm thanh.</small></div><input type="checkbox" checked={draft.muteAudio} onChange={(event) => update('muteAudio', event.target.checked)} /></label>
         <div className="toggle-card muted"><div><strong>Tăng tốc phần cứng</strong><small>Chỉnh trong mục Nâng cao.</small></div><span>{draft.disableGpu ? 'Đang tắt' : 'Đang bật'}</span></div>
@@ -94,6 +138,6 @@ export function BrowserSettingsSection({ appInfo }: BrowserSettingsSectionProps)
         <label className="number-field"><span>Tự đóng Chrome sau</span><div><input type="number" min="1" value={draft.maxLifetimeMinutes} onChange={(event) => update('maxLifetimeMinutes', Number(event.target.value))} /><em>phút</em></div></label>
       </div>
     </div></div>
-    <div className="inline-settings-actions"><span className={`inline-settings-feedback ${feedback?.kind ?? ''}`}>{feedback?.text ?? 'Các lần mở Chrome tiếp theo sẽ dùng cấu hình đã lưu.'}</span><div><button type="button" className="settings-button" disabled={busy !== null} onClick={() => setDraft(copyBrowser(DEFAULT_APP_SETTINGS.browser))}>Mặc định</button><button type="button" className="settings-button" disabled={!dirty || busy !== null} onClick={() => saved && setDraft(copyBrowser(saved))}>Hủy</button><button type="button" className="settings-button primary" disabled={!dirty || busy !== null} onClick={() => void save()}>{busy === 'save' ? 'Đang lưu...' : 'Lưu cài đặt'}</button></div></div>
+    <div className="inline-settings-actions"><span className={`inline-settings-feedback ${feedback?.kind ?? ''}`}>{feedback?.text ?? (dirty ? 'Có thay đổi chưa lưu.' : 'Chrome mở mới sẽ tự vào ô trống; kéo tay vẫn được cho tới khi bấm Sắp xếp lại.')}</span><div><button type="button" className="settings-button" disabled={busy !== null} onClick={() => { setDraft(copyBrowser(DEFAULT_APP_SETTINGS.browser)); setLayout(copyLayout(DEFAULT_BROWSER_WINDOW_LAYOUT)) }}>Mặc định</button><button type="button" className="settings-button" disabled={!dirty || busy !== null} onClick={() => { if (saved) setDraft(copyBrowser(saved)); if (savedLayout) setLayout(copyLayout(savedLayout)) }}>Hủy</button><button type="button" className="settings-button primary" disabled={!dirty || busy !== null} onClick={() => void save()}>{busy === 'save' ? 'Đang lưu...' : 'Lưu cài đặt'}</button></div></div>
   </div>
 }

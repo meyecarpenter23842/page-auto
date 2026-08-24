@@ -2,6 +2,7 @@ import { readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { chromium, type BrowserContext } from 'playwright-core'
 import type { BrowserSettings, SessionSettings } from '../../shared/appSettings'
+import type { BrowserWindowPlacement } from '../../shared/browserWindowLayout'
 import type { PostingProxyConfig } from '../../shared/posting'
 import { inspectFacebookAccountIdentity } from './facebookAccountIdentity'
 import { readFacebookDisplayName } from './facebookProfileInfo'
@@ -10,7 +11,13 @@ import {
   type FacebookSessionAccount,
   type FacebookSessionResult
 } from './facebookSession'
-import { applyBrowserContextSettings, buildBrowserLaunchOptions, waitForBrowserStartupDelay } from './browserRuntime'
+import {
+  applyBrowserContextSettings,
+  applyBrowserPlacementToContext,
+  applyBrowserWindowPlacement,
+  buildBrowserLaunchOptions,
+  waitForBrowserStartupDelay
+} from './browserRuntime'
 
 interface BrowserLaunchConfig {
   proxy?: PostingProxyConfig
@@ -23,6 +30,12 @@ interface BootstrapCommand {
   browser: BrowserSettings
   session: SessionSettings
   launch?: BrowserLaunchConfig
+  placement: BrowserWindowPlacement | null
+}
+
+interface RetileCommand {
+  type: 'retile'
+  placement: BrowserWindowPlacement | null
 }
 
 interface ShutdownCommand {
@@ -84,7 +97,22 @@ function commandFromMessage(event: unknown): BootstrapCommand | null {
   if (!payload || typeof payload !== 'object') return null
   const candidate = payload as Partial<BootstrapCommand>
   if (candidate.type !== 'bootstrap' || !candidate.account || !candidate.browser || !candidate.session) return null
-  return candidate as BootstrapCommand
+  return {
+    ...candidate,
+    type: 'bootstrap',
+    account: candidate.account,
+    browser: candidate.browser,
+    session: candidate.session,
+    placement: candidate.placement ?? null
+  }
+}
+
+function retileCommandFromMessage(event: unknown): RetileCommand | null {
+  const payload = messagePayload(event)
+  if (!payload || typeof payload !== 'object') return null
+  const candidate = payload as Partial<RetileCommand>
+  if (candidate.type !== 'retile') return null
+  return { type: 'retile', placement: candidate.placement ?? null }
 }
 
 function isShutdownCommand(event: unknown): event is ShutdownCommand {
@@ -113,6 +141,7 @@ async function run(): Promise<void> {
 
   let context: BrowserContext | null = null
   let cdpEndpoint: string | null = null
+  let activePlacement: BrowserWindowPlacement | null = null
   let lifetimeTimer: NodeJS.Timeout | null = null
   let closing = false
   let queue = Promise.resolve()
@@ -125,18 +154,21 @@ async function run(): Promise<void> {
     const activeContext = context
     context = null
     cdpEndpoint = null
+    activePlacement = null
     if (activeContext) await activeContext.close().catch(() => undefined)
     setTimeout(() => process.exit(0), 25)
   }
 
   const ensureContext = async (command: BootstrapCommand): Promise<BrowserContext> => {
+    activePlacement = command.placement
     if (context) {
       if (!cdpEndpoint) cdpEndpoint = await resolveCdpEndpoint(profileDirectory)
+      await applyBrowserPlacementToContext(context, activePlacement)
       return context
     }
 
     await waitForBrowserStartupDelay(command.browser)
-    const launchShape = buildBrowserLaunchOptions(command.browser)
+    const launchShape = buildBrowserLaunchOptions(command.browser, activePlacement)
     await rm(join(profileDirectory, 'DevToolsActivePort'), { force: true }).catch(() => undefined)
     const launchOptions: NonNullable<Parameters<typeof chromium.launchPersistentContext>[1]> = {
       ...launchShape,
@@ -159,6 +191,10 @@ async function run(): Promise<void> {
     const opened = await chromium.launchPersistentContext(profileDirectory, launchOptions)
     await applyBrowserContextSettings(opened, command.browser)
     context = opened
+    await applyBrowserPlacementToContext(opened, activePlacement)
+    opened.on('page', (page) => {
+      void applyBrowserWindowPlacement(opened, page, activePlacement).catch(() => undefined)
+    })
     cdpEndpoint = await resolveCdpEndpoint(profileDirectory)
 
     if (lifetimeTimer) clearTimeout(lifetimeTimer)
@@ -169,6 +205,7 @@ async function run(): Promise<void> {
     opened.once('close', () => {
       context = null
       cdpEndpoint = null
+      activePlacement = null
       if (lifetimeTimer) {
         clearTimeout(lifetimeTimer)
         lifetimeTimer = null
@@ -190,6 +227,15 @@ async function run(): Promise<void> {
       return
     }
 
+    const retile = retileCommandFromMessage(event)
+    if (retile && !closing) {
+      activePlacement = retile.placement
+      queue = queue.then(async () => {
+        if (context) await applyBrowserPlacementToContext(context, activePlacement)
+      })
+      return
+    }
+
     const command = commandFromMessage(event)
     if (!command || closing) return
 
@@ -207,6 +253,7 @@ async function run(): Promise<void> {
         }
 
         const page = activeContext.pages()[0] ?? await activeContext.newPage()
+        await applyBrowserWindowPlacement(activeContext, page, activePlacement).catch(() => undefined)
         const session = await bootstrapFacebookSession(activeContext, page, command.account, command.session.facebookLocale)
         if (session.status === 'valid') {
           const identity = await inspectFacebookAccountIdentity(activeContext, command.account.uid)
