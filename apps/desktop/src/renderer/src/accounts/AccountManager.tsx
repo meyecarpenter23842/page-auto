@@ -4,7 +4,8 @@ import {
   useMemo,
   useState,
   type FormEvent,
-  type MouseEvent as ReactMouseEvent
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent
 } from 'react'
 import {
   ACCOUNT_IMPORT_FIELDS,
@@ -514,6 +515,7 @@ export function AccountManager() {
   const [statusFilter, setStatusFilter] = useState<'all' | AccountRecord['status']>('all')
   const [categoryFilter, setCategoryFilter] = useState('')
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
+  const [paintValue, setPaintValue] = useState<boolean | null>(null)
   const [layout, setLayout] = useState<AccountColumnLayout>(defaultLayout)
   const [columnManagerOpen, setColumnManagerOpen] = useState(false)
   const [editorAccount, setEditorAccount] = useState<AccountRecord | null | undefined>(undefined)
@@ -548,14 +550,31 @@ export function AccountManager() {
   }, [])
 
   useEffect(() => {
+    const stopPaint = () => setPaintValue(null)
+    window.addEventListener('pointerup', stopPaint)
+    window.addEventListener('pointercancel', stopPaint)
+    window.addEventListener('blur', stopPaint)
+    return () => {
+      window.removeEventListener('pointerup', stopPaint)
+      window.removeEventListener('pointercancel', stopPaint)
+      window.removeEventListener('blur', stopPaint)
+    }
+  }, [])
+
+  useEffect(() => {
     if (!contextMenu) return
     const close = () => setContextMenu(null)
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') close()
+    }
     window.addEventListener('pointerdown', close)
+    window.addEventListener('keydown', closeOnEscape)
     window.addEventListener('blur', close)
     window.addEventListener('resize', close)
     window.addEventListener('scroll', close, true)
     return () => {
       window.removeEventListener('pointerdown', close)
+      window.removeEventListener('keydown', closeOnEscape)
       window.removeEventListener('blur', close)
       window.removeEventListener('resize', close)
       window.removeEventListener('scroll', close, true)
@@ -590,6 +609,51 @@ export function AccountManager() {
   const toggleSort = (id: ColumnId) => setSort((current) => current.id === id
     ? { id, direction: current.direction === 'asc' ? 'desc' : 'asc' }
     : { id, direction: 'asc' })
+
+  const setAccountSelected = (accountId: number, value: boolean) => {
+    setSelectedIds((current) => {
+      const next = new Set(current)
+      if (value) next.add(accountId)
+      else next.delete(accountId)
+      return next
+    })
+  }
+
+  const beginPaint = (event: ReactPointerEvent<HTMLElement>, accountId: number) => {
+    if (event.button !== 0 || event.detail > 1) return
+    event.preventDefault()
+    const value = !selectedIds.has(accountId)
+    setAccountSelected(accountId, value)
+    setPaintValue(value)
+    setContextMenu(null)
+  }
+
+  const paintRow = (accountId: number) => {
+    if (paintValue === null) return
+    setAccountSelected(accountId, paintValue)
+  }
+
+  const selectAllFiltered = () => {
+    setSelectedIds(new Set(sortedAccounts.map((account) => account.id)))
+    setContextMenu(null)
+  }
+
+  const clearSelection = () => {
+    setSelectedIds(new Set())
+    setContextMenu(null)
+  }
+
+  const copySelectedUids = async () => {
+    if (selected.length === 0) return
+    const text = selected.map((account) => account.uid).join('\n')
+    try {
+      await navigator.clipboard.writeText(text)
+      setNotice(`Đã sao chép ${selected.length} UID.`)
+    } catch {
+      window.prompt('Sao chép UID:', text)
+    }
+    setContextMenu(null)
+  }
 
   const deleteSelected = async () => {
     if (selectedIds.size === 0 || !window.confirm(`Xóa ${selectedIds.size} tài khoản đã chọn?`)) return
@@ -654,24 +718,13 @@ export function AccountManager() {
     )
   }
 
-  const selectRow = (account: AccountRecord, event: ReactMouseEvent<HTMLTableRowElement>) => {
-    if (event.target instanceof Element && event.target.closest('button,input,select,a')) return
-    setSelectedIds((current) => {
-      if (event.ctrlKey || event.metaKey) {
-        const next = new Set(current)
-        if (next.has(account.id)) next.delete(account.id); else next.add(account.id)
-        return next
-      }
-      return new Set([account.id])
-    })
-  }
-
   const openContextMenu = (account: AccountRecord, event: ReactMouseEvent<HTMLTableRowElement>) => {
     event.preventDefault()
     event.stopPropagation()
+    setPaintValue(null)
     setSelectedIds((current) => current.has(account.id) ? current : new Set([account.id]))
-    const menuWidth = 190
-    const menuHeight = 176
+    const menuWidth = 220
+    const menuHeight = 318
     setContextMenu({
       x: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
       y: Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8))
@@ -720,11 +773,26 @@ export function AccountManager() {
                 <tr
                   key={account.id}
                   className={selectedIds.has(account.id) ? 'selected-row' : ''}
-                  onClick={(event) => selectRow(account, event)}
+                  onPointerDown={(event) => {
+                    const target = event.target as HTMLElement
+                    if (target.closest('input,button,select,a')) return
+                    beginPaint(event, account.id)
+                  }}
+                  onPointerEnter={() => paintRow(account.id)}
                   onContextMenu={(event) => openContextMenu(account, event)}
-                  onDoubleClick={() => setEditorAccount(account)}
+                  onDoubleClick={() => { setPaintValue(null); setEditorAccount(account) }}
                 >
-                  <td className="select-column"><input type="checkbox" checked={selectedIds.has(account.id)} onClick={(event) => event.stopPropagation()} onChange={() => setSelectedIds((current) => { const next = new Set(current); if (next.has(account.id)) next.delete(account.id); else next.add(account.id); return next })} /></td>
+                  <td className="select-column">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(account.id)}
+                      onChange={() => undefined}
+                      onPointerDown={(event) => {
+                        event.stopPropagation()
+                        beginPaint(event, account.id)
+                      }}
+                    />
+                  </td>
                   {visibleColumns.map((column) => <td key={column.id} style={{ width: layout.widths[column.id], maxWidth: layout.widths[column.id] }}>{renderCell(account, column)}</td>)}
                 </tr>
               ))}
@@ -736,9 +804,15 @@ export function AccountManager() {
 
       {contextMenu ? (
         <div className="account-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onPointerDown={(event) => event.stopPropagation()}>
+          <div className="context-menu-meta">Đã chọn {selected.length} tài khoản</div>
           <button type="button" disabled={selected.length !== 1} onClick={() => { setEditorAccount(selected[0] ?? null); setContextMenu(null) }}>Sửa tài khoản</button>
           <button type="button" disabled={selected.length !== 1} onClick={() => void openProfile()}>Mở Chrome</button>
+          <button type="button" disabled title="Kiểm tra phiên được thực hiện khi mở Chrome hoặc trước mỗi lượt đăng">Kiểm tra phiên</button>
           <button type="button" disabled={selectedIds.size === 0} onClick={() => void assignCategory()}>Gán nhóm</button>
+          <button type="button" disabled={selectedIds.size === 0} onClick={() => void copySelectedUids()}>Sao chép UID</button>
+          <div className="context-menu-separator" />
+          <button type="button" disabled={sortedAccounts.length === 0} onClick={selectAllFiltered}>Chọn tất cả đang lọc</button>
+          <button type="button" disabled={selectedIds.size === 0} onClick={clearSelection}>Bỏ chọn tất cả</button>
           <div className="context-menu-separator" />
           <button className="context-danger" type="button" disabled={selectedIds.size === 0} onClick={() => void deleteSelected()}>Xóa tài khoản</button>
         </div>
