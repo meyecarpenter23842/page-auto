@@ -53,6 +53,9 @@ function canStop(status: RotationRuntimeSnapshot['status']): boolean {
   return status === 'starting' || status === 'running' || status === 'paused' || status === 'waiting_window'
 }
 
+type RuntimeAction = (payload: { pageTabId: number }) => Promise<RotationRuntimeSnapshot>
+type RuntimeEligibility = (status: RotationRuntimeSnapshot['status']) => boolean
+
 interface MultiTabRuntimeDashboardProps {
   pageTabId?: number | null
   compact?: boolean
@@ -63,6 +66,7 @@ export function MultiTabRuntimeDashboard({ pageTabId = null, compact = false }: 
   const [accounts, setAccounts] = useState<AccountRecord[]>([])
   const [runtimeByTab, setRuntimeByTab] = useState<Record<number, RotationRuntimeSnapshot>>({})
   const [busyTabs, setBusyTabs] = useState<Set<number>>(() => new Set())
+  const [selectedTabIds, setSelectedTabIds] = useState<Set<number>>(() => new Set())
   const [error, setError] = useState<string | null>(null)
   const [now, setNow] = useState(Date.now())
 
@@ -72,8 +76,10 @@ export function MultiTabRuntimeDashboard({ pageTabId = null, compact = false }: 
         window.pageAuto.listPageTabs(),
         window.pageAuto.listAccounts()
       ])
+      const validIds = new Set(nextTabs.map((tab) => tab.id))
       setTabs(nextTabs)
       setAccounts(nextAccounts)
+      setSelectedTabIds((current) => new Set([...current].filter((id) => validIds.has(id))))
       setError(null)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
@@ -114,6 +120,12 @@ export function MultiTabRuntimeDashboard({ pageTabId = null, compact = false }: 
     [pageTabId, tabs]
   )
 
+  const selectedIds = useMemo(() => [...selectedTabIds], [selectedTabIds])
+  const statusFor = useCallback((id: number): RotationRuntimeSnapshot['status'] => runtimeByTab[id]?.status ?? 'idle', [runtimeByTab])
+  const anySelectedCan = useCallback((eligibility: RuntimeEligibility): boolean => (
+    selectedIds.some((id) => !busyTabs.has(id) && eligibility(statusFor(id)))
+  ), [busyTabs, selectedIds, statusFor])
+
   const activeCount = visibleTabs.filter((tab) => {
     const status = runtimeByTab[tab.id]?.status
     return status === 'starting' || status === 'running' || status === 'waiting_window' || status === 'stopping'
@@ -121,7 +133,7 @@ export function MultiTabRuntimeDashboard({ pageTabId = null, compact = false }: 
 
   const runAction = async (
     currentPageTabId: number,
-    action: (payload: { pageTabId: number }) => Promise<RotationRuntimeSnapshot>
+    action: RuntimeAction
   ) => {
     setBusyTabs((current) => new Set(current).add(currentPageTabId))
     setError(null)
@@ -139,6 +151,52 @@ export function MultiTabRuntimeDashboard({ pageTabId = null, compact = false }: 
     }
   }
 
+  const runBulkAction = async (
+    action: RuntimeAction,
+    eligibility: RuntimeEligibility,
+    label: string
+  ) => {
+    const targetIds = selectedIds.filter((id) => !busyTabs.has(id) && eligibility(statusFor(id)))
+    if (targetIds.length === 0) return
+
+    setBusyTabs((current) => new Set([...current, ...targetIds]))
+    setError(null)
+    try {
+      // Fire every selected Page Tab request in the same turn. Main/worker owns the
+      // actual concurrency limit and browserLaunchSpacingMs staggers first Chrome
+      // launches; renderer must not serialize Page Tabs by awaiting one before next.
+      const results = await Promise.allSettled(targetIds.map(async (id) => {
+        const snapshot = await action({ pageTabId: id })
+        setRuntimeByTab((current) => ({ ...current, [id]: snapshot }))
+        return snapshot
+      }))
+      const failed = results.filter((result) => result.status === 'rejected')
+      if (failed.length > 0) {
+        const first = failed[0]
+        const detail = first?.status === 'rejected'
+          ? (first.reason instanceof Error ? first.reason.message : String(first.reason))
+          : ''
+        setError(`${label}: ${failed.length}/${targetIds.length} Page Tab lỗi.${detail ? ` ${detail}` : ''}`)
+      }
+    } finally {
+      setBusyTabs((current) => {
+        const next = new Set(current)
+        for (const id of targetIds) next.delete(id)
+        return next
+      })
+      void refreshRuntime()
+    }
+  }
+
+  const toggleSelectedTab = (id: number, checked: boolean) => {
+    setSelectedTabIds((current) => {
+      const next = new Set(current)
+      if (checked) next.add(id)
+      else next.delete(id)
+      return next
+    })
+  }
+
   return (
     <section className={compact ? 'multi-runtime-shell compact' : 'multi-runtime-shell'}>
       <div className="multi-runtime-heading">
@@ -153,6 +211,32 @@ export function MultiTabRuntimeDashboard({ pageTabId = null, compact = false }: 
           <button type="button" onClick={() => { void refreshStatic(); void refreshRuntime() }}>Làm mới</button>
         </div>
       </div>
+
+      {compact && tabs.length > 0 ? (
+        <div className="multi-runtime-bulk">
+          <div className="multi-runtime-bulk-tabs" aria-label="Chọn nhiều Page Tab để điều khiển cùng lúc">
+            {tabs.map((tab) => (
+              <label className={tab.id === pageTabId ? 'multi-runtime-bulk-tab current' : 'multi-runtime-bulk-tab'} key={tab.id}>
+                <input
+                  type="checkbox"
+                  checked={selectedTabIds.has(tab.id)}
+                  onChange={(event) => toggleSelectedTab(tab.id, event.target.checked)}
+                />
+                <span title={`${tab.name} · ${tab.pageUid}`}>{tab.name}</span>
+              </label>
+            ))}
+          </div>
+          <div className="multi-runtime-bulk-actions">
+            <span className="multi-runtime-bulk-count">Đã chọn {selectedIds.length}/{tabs.length}</span>
+            <button type="button" onClick={() => setSelectedTabIds(new Set(tabs.map((tab) => tab.id)))}>Chọn tất cả</button>
+            <button type="button" disabled={!anySelectedCan(canStart)} onClick={() => void runBulkAction(window.pageAuto.startPageTabRotation, canStart, 'Start nhiều Page Tab')}>Start đã chọn</button>
+            <button type="button" disabled={!anySelectedCan(canPause)} onClick={() => void runBulkAction(window.pageAuto.pausePageTabRotation, canPause, 'Pause nhiều Page Tab')}>Pause</button>
+            <button type="button" disabled={!anySelectedCan(canResume)} onClick={() => void runBulkAction(window.pageAuto.resumePageTabRotation, canResume, 'Resume nhiều Page Tab')}>Tiếp tục</button>
+            <button type="button" disabled={!anySelectedCan(canStop)} onClick={() => void runBulkAction(window.pageAuto.stopPageTabRotation, canStop, 'Stop nhiều Page Tab')}>Stop</button>
+            <button type="button" disabled={selectedIds.length === 0} onClick={() => setSelectedTabIds(new Set())}>Bỏ chọn</button>
+          </div>
+        </div>
+      ) : null}
 
       {error ? <div className="multi-runtime-error">{error}</div> : null}
 

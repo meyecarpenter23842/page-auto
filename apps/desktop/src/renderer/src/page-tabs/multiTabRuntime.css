@@ -52,7 +52,8 @@
 
 .multi-runtime-summary span,
 .multi-runtime-summary button,
-.multi-runtime-actions button {
+.multi-runtime-actions button,
+.multi-runtime-bulk-actions button {
   min-height: 27px;
   padding: 4px 8px;
   border: 1px solid #cfd8e3;
@@ -64,8 +65,88 @@
 }
 
 .multi-runtime-summary button,
-.multi-runtime-actions button { cursor: pointer; }
-.multi-runtime-actions button:disabled { cursor: not-allowed; opacity: 0.42; }
+.multi-runtime-actions button,
+.multi-runtime-bulk-actions button { cursor: pointer; }
+.multi-runtime-actions button:disabled,
+.multi-runtime-bulk-actions button:disabled { cursor: not-allowed; opacity: 0.42; }
+
+.multi-runtime-bulk {
+  display: grid;
+  gap: 6px;
+  padding: 7px;
+  border: 1px solid #cdd9e8;
+  border-radius: 4px;
+  background: #f7faff;
+}
+
+.multi-runtime-bulk-tabs {
+  display: flex;
+  gap: 5px;
+  overflow-x: auto;
+  padding-bottom: 1px;
+}
+
+.multi-runtime-bulk-tab {
+  flex: 0 0 auto;
+  max-width: 150px;
+  min-height: 26px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 7px;
+  border: 1px solid #d8e0ea;
+  border-radius: 3px;
+  background: #ffffff;
+  color: #344054;
+  font-size: 9px;
+  font-weight: 700;
+  cursor: pointer;
+  user-select: none;
+}
+
+.multi-runtime-bulk-tab.current {
+  border-color: #93b4ec;
+  background: #edf4ff;
+}
+
+.multi-runtime-bulk-tab input {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  flex: 0 0 auto;
+}
+
+.multi-runtime-bulk-tab span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.multi-runtime-bulk-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.multi-runtime-bulk-actions button:nth-of-type(2) {
+  border-color: #75a1ea;
+  background: #175cd3;
+  color: #ffffff;
+}
+
+.multi-runtime-bulk-actions button:nth-of-type(5) {
+  border-color: #e6a7a1;
+  color: #b42318;
+}
+
+.multi-runtime-bulk-count {
+  margin-right: 2px;
+  color: #475467;
+  font-size: 9px;
+  font-weight: 800;
+  white-space: nowrap;
+}
 
 .multi-runtime-error {
   padding: 7px 9px;
