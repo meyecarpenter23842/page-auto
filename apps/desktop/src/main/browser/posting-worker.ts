@@ -1,5 +1,11 @@
+import type { BrowserWindowPlacement } from '../../shared/browserWindowLayout'
 import type { PostingWorkerRequestMessage } from '../../shared/posting'
-import { closeManagedPostingBrowser, installManagedBrowserReuse } from './managedBrowserBridge'
+import {
+  closeManagedPostingBrowser,
+  installManagedBrowserReuse,
+  retileManagedPostingBrowser,
+  setManagedBrowserPlacement
+} from './managedBrowserBridge'
 
 const parentPort = process.parentPort
 if (!parentPort) {
@@ -11,8 +17,17 @@ const postingEngine = import('./posting/postingEngine')
 let queue = Promise.resolve()
 let shuttingDown = false
 
+interface RetileRequest {
+  type: 'retile'
+  placement: BrowserWindowPlacement | null
+}
+
+function isRetileRequest(payload: unknown): payload is RetileRequest {
+  return Boolean(payload && typeof payload === 'object' && (payload as { type?: unknown }).type === 'retile')
+}
+
 parentPort.on('message', (event) => {
-  const payload = event.data as PostingWorkerRequestMessage | { type?: string }
+  const payload = event.data as PostingWorkerRequestMessage | RetileRequest | { type?: string }
   if (payload?.type === 'shutdown') {
     if (shuttingDown) return
     shuttingDown = true
@@ -20,6 +35,11 @@ parentPort.on('message', (event) => {
       await closeManagedPostingBrowser()
       setTimeout(() => process.exit(0), 25)
     })
+    return
+  }
+
+  if (isRetileRequest(payload) && !shuttingDown) {
+    queue = queue.then(() => retileManagedPostingBrowser(payload.placement))
     return
   }
 
@@ -33,6 +53,7 @@ parentPort.on('message', (event) => {
 
   const message = payload as PostingWorkerRequestMessage
   queue = queue.then(async () => {
+    setManagedBrowserPlacement(message.job.browserPlacement ?? null)
     const result = await postingEngine
       .then(({ executePostingJob }) => executePostingJob(message.job))
       .catch((error) => ({

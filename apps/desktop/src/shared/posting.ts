@@ -1,4 +1,5 @@
 import type { BrowserSettings, LoggingSettings, NetworkSettings, SessionSettings } from './appSettings'
+import type { BrowserWindowPlacement } from './browserWindowLayout'
 import type { RunDetails, RunItem } from './runs'
 
 export const POSTING_RESULT_STATUSES = ['success', 'failed', 'needs_login', 'skipped'] as const
@@ -67,6 +68,7 @@ export interface PostingJobRequest {
   content: string
   imagePaths: string[]
   browser: BrowserSettings
+  browserPlacement?: BrowserWindowPlacement | null
   session: SessionSettings
   network: NetworkSettings
   logging: LoggingSettings

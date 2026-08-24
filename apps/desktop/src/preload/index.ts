@@ -20,6 +20,7 @@ import type {
 } from '../shared/accounts'
 import type { AppSettings, AppSettingsPatch } from '../shared/appSettings'
 import type { BrowserExecutableResult, BrowserTestRequest, BrowserTestResult } from '../shared/browserSettings'
+import type { BrowserDisplayInfo, BrowserRetileResult, BrowserWindowLayoutSettings } from '../shared/browserWindowLayout'
 import type { CaptchaSettingsView, SaveCaptchaSettingsInput } from '../shared/captchaSettings'
 import type { ConfigBackupExportResult, ConfigBackupRestoreResult } from '../shared/configBackup'
 import type { ExecutionLogFilters, ExecutionLogRecord, RetryRunItemPayload, RetryRunItemResult } from '../shared/executionLogs'
@@ -100,6 +101,10 @@ const api = {
   pickChromeExecutable: (): Promise<BrowserExecutableResult> => ipcRenderer.invoke(IPC_CHANNELS.browserPickExecutable) as Promise<BrowserExecutableResult>,
   probeChromeExecutable: (executablePath: string): Promise<BrowserExecutableResult> => ipcRenderer.invoke(IPC_CHANNELS.browserProbeExecutable, executablePath) as Promise<BrowserExecutableResult>,
   testBrowser: (input: BrowserTestRequest): Promise<BrowserTestResult> => ipcRenderer.invoke(IPC_CHANNELS.browserTest, input) as Promise<BrowserTestResult>,
+  getBrowserWindowLayout: (): Promise<BrowserWindowLayoutSettings> => ipcRenderer.invoke(IPC_CHANNELS.browserWindowLayoutGet) as Promise<BrowserWindowLayoutSettings>,
+  saveBrowserWindowLayout: (input: BrowserWindowLayoutSettings): Promise<BrowserWindowLayoutSettings> => ipcRenderer.invoke(IPC_CHANNELS.browserWindowLayoutSave, input) as Promise<BrowserWindowLayoutSettings>,
+  listBrowserDisplays: (): Promise<BrowserDisplayInfo[]> => ipcRenderer.invoke(IPC_CHANNELS.browserDisplaysList) as Promise<BrowserDisplayInfo[]>,
+  retileBrowserWindows: (): Promise<BrowserRetileResult> => ipcRenderer.invoke(IPC_CHANNELS.browserRetile) as Promise<BrowserRetileResult>,
   getCaptchaSettings: (): Promise<CaptchaSettingsView> => ipcRenderer.invoke(IPC_CHANNELS.captchaSettingsGet) as Promise<CaptchaSettingsView>,
   saveCaptchaSettings: (input: SaveCaptchaSettingsInput): Promise<CaptchaSettingsView> => ipcRenderer.invoke(IPC_CHANNELS.captchaSettingsSave, input) as Promise<CaptchaSettingsView>
 }
