@@ -1,3 +1,8 @@
+.account-grid tbody tr {
+  cursor: default;
+  user-select: none;
+}
+
 .account-grid tbody tr td {
   transition: background-color 120ms ease, box-shadow 120ms ease;
 }
@@ -13,13 +18,20 @@
 .account-context-menu {
   position: fixed;
   z-index: 160;
-  width: 190px;
+  width: 220px;
   padding: 5px;
   background: rgba(255, 255, 255, 0.98);
   border: 1px solid #cfd8e3;
   border-radius: 7px;
   box-shadow: 0 14px 36px rgba(16, 24, 40, 0.22);
   backdrop-filter: blur(10px);
+}
+
+.context-menu-meta {
+  padding: 4px 8px 6px;
+  color: #667085;
+  font-size: 9.5px;
+  font-weight: 700;
 }
 
 .account-context-menu button {
