@@ -12,6 +12,7 @@ import { applyBrowserContextSettings, buildBrowserLaunchOptions, waitForBrowserS
 import { effectiveNavigationTimeoutMs, probeFacebookThroughProxy } from '../proxyPreflight'
 import { activeFacebookProfileId, detectFacebookAccessBlock } from './pageState'
 import { finishPostingEvidence, startPostingTrace } from './postingEvidence'
+import { pollForReady, readinessAttempts } from './postingReadiness'
 import {
   capturePublishBaseline,
   findNewPublishedPost,
@@ -21,6 +22,13 @@ import {
 } from './publishVerification'
 
 type PostingCode = NonNullable<PostingJobResult['code']>
+
+const ACTION_SETTLE_MS = 700
+const READINESS_POLL_MS = 250
+const COMPOSER_READY_TIMEOUT_MS = 12_000
+const CONTENT_READY_TIMEOUT_MS = 3_000
+const MEDIA_READY_TIMEOUT_MS = 12_000
+const PUBLISH_READY_TIMEOUT_MS = 20_000
 
 function failure(code: PostingCode, message: string): PostingJobResult {
   return {
@@ -79,6 +87,27 @@ async function firstVisibleMatch(candidates: Locator[]): Promise<Locator | null>
     }
   }
   return null
+}
+
+async function visibleCount(candidate: Locator): Promise<number> {
+  const count = await candidate.count().catch(() => 0)
+  let visible = 0
+  for (let index = 0; index < count; index += 1) {
+    if (await candidate.nth(index).isVisible().catch(() => false)) visible += 1
+  }
+  return visible
+}
+
+async function pollPage<T>(page: Page, timeoutMs: number, probe: () => Promise<T | null>): Promise<T | null> {
+  return pollForReady(probe, {
+    attempts: readinessAttempts(timeoutMs, READINESS_POLL_MS),
+    intervalMs: READINESS_POLL_MS,
+    sleep: (milliseconds) => page.waitForTimeout(milliseconds)
+  })
+}
+
+async function settleAction(page: Page): Promise<void> {
+  await page.waitForTimeout(ACTION_SETTLE_MS)
 }
 
 async function settlePage(page: Page, settings: BrowserSettings): Promise<void> {
@@ -176,18 +205,24 @@ export class ComposerDetector {
     ])
   }
 
-  async open(): Promise<ComposerHandle | null> {
-    const trigger = await firstVisible([
-      this.page.getByRole('button', { name: /write something|bạn viết gì|create post|tạo bài viết|create a public post|tạo bài viết công khai/i }).first(),
-      this.page.getByText(/write something|bạn viết gì|create a public post|tạo bài viết công khai/i).first()
-    ])
-    if (trigger) await trigger.click({ timeout: 15_000 }).catch(() => undefined)
-
+  private async findComposerDialog(): Promise<Locator | null> {
     const dialogs = this.page.getByRole('dialog')
-    const dialogCount = await dialogs.count()
-    for (let index = dialogCount - 1; index >= 0; index -= 1) {
+    const count = await dialogs.count().catch(() => 0)
+    for (let index = count - 1; index >= 0; index -= 1) {
       const dialog = dialogs.nth(index)
       if (!await dialog.isVisible().catch(() => false)) continue
+      const signal = await firstVisibleMatch([
+        dialog.getByRole('heading', { name: /create post|tạo bài viết/i }),
+        dialog.getByText(/create a public post|write something|bạn viết gì|tạo bài viết công khai/i)
+      ])
+      if (signal) return dialog
+    }
+    return null
+  }
+
+  private async findOpenComposer(): Promise<ComposerHandle | null> {
+    const dialog = await this.findComposerDialog()
+    if (dialog) {
       const textbox = await this.findTextbox(dialog)
       if (textbox) return { container: dialog, textbox }
     }
@@ -197,10 +232,58 @@ export class ComposerDetector {
     const container = textbox.locator('xpath=ancestor::*[@role="dialog"][1]')
     return await container.isVisible().catch(() => false) ? { container, textbox } : null
   }
+
+  private async focusComposerPlaceholder(): Promise<boolean> {
+    const dialog = await this.findComposerDialog()
+    if (!dialog) return false
+    const placeholder = await firstVisibleMatch([
+      dialog.getByText(/create a public post|write something|bạn viết gì|tạo bài viết công khai/i),
+      dialog.locator('[data-lexical-editor="true"]'),
+      dialog.locator('[contenteditable="true"]')
+    ])
+    if (!placeholder) return false
+    return placeholder.click({ timeout: 5_000 }).then(() => true).catch(() => false)
+  }
+
+  async open(): Promise<ComposerHandle | null> {
+    const existing = await this.findOpenComposer()
+    if (existing) return existing
+
+    const alreadyOpen = await this.findComposerDialog()
+    if (!alreadyOpen) {
+      const trigger = await firstVisibleMatch([
+        this.page.getByRole('button', { name: /write something|bạn viết gì|create post|tạo bài viết|create a public post|tạo bài viết công khai/i }),
+        this.page.getByText(/write something|bạn viết gì|create a public post|tạo bài viết công khai/i)
+      ])
+      if (!trigger) return null
+      await trigger.click({ timeout: 15_000 }).catch(() => undefined)
+      await settleAction(this.page)
+    }
+
+    let probeCount = 0
+    let focusTried = false
+    return pollPage(this.page, COMPOSER_READY_TIMEOUT_MS, async () => {
+      const handle = await this.findOpenComposer()
+      if (handle) return handle
+
+      probeCount += 1
+      if (!focusTried && probeCount >= 6) {
+        focusTried = true
+        if (await this.focusComposerPlaceholder()) await settleAction(this.page)
+      }
+      return null
+    })
+  }
 }
 
 export class PostComposer {
   constructor(private readonly page: Page) {}
+
+  private waitForContent(textbox: Locator, content: string): Promise<boolean | null> {
+    return pollPage(this.page, CONTENT_READY_TIMEOUT_MS, async () => (
+      await composerContainsText(textbox, content) ? true : null
+    ))
+  }
 
   async fill(textbox: Locator, content: string): Promise<PostingJobResult> {
     const normalized = content.trim()
@@ -208,20 +291,21 @@ export class PostComposer {
 
     try {
       await textbox.fill(normalized, { timeout: 8_000 }).catch(() => undefined)
-      if (await composerContainsText(textbox, normalized)) {
-        return { status: 'success', message: 'Đã điền nội dung vào composer.' }
+      if (await this.waitForContent(textbox, normalized)) {
+        await settleAction(this.page)
+        return { status: 'success', message: 'Đã điền và xác nhận nội dung trong composer.' }
       }
 
       await textbox.click({ timeout: 10_000 })
       await this.page.keyboard.press('Control+A').catch(() => undefined)
       await this.page.keyboard.press('Backspace').catch(() => undefined)
       await this.page.keyboard.insertText(normalized)
-      await this.page.waitForTimeout(300)
+      await settleAction(this.page)
 
-      if (!await composerContainsText(textbox, normalized)) {
+      if (!await this.waitForContent(textbox, normalized)) {
         return failure('content_failed', 'Composer đã mở nhưng nội dung chưa xuất hiện sau cả fill và keyboard fallback.')
       }
-      return { status: 'success', message: 'Đã điền nội dung bằng keyboard fallback.' }
+      return { status: 'success', message: 'Đã điền và xác nhận nội dung bằng keyboard fallback.' }
     } catch (error) {
       return failure('content_failed', error instanceof Error ? error.message : String(error))
     }
@@ -246,34 +330,78 @@ export class MediaUploader {
     return false
   }
 
+  private async selectedFileCount(container: Locator): Promise<number> {
+    const countFiles = async (inputs: Locator): Promise<number> => inputs.evaluateAll((elements) => {
+      let max = 0
+      for (const element of elements) {
+        const files = (element as HTMLInputElement).files?.length ?? 0
+        if (files > max) max = files
+      }
+      return max
+    }).catch(() => 0)
+
+    return Math.max(
+      await countFiles(container.locator('input[type="file"]')),
+      await countFiles(this.page.locator('input[type="file"]'))
+    )
+  }
+
+  private async mediaMarkerCount(container: Locator): Promise<number> {
+    const previews = container.locator('img[src^="blob:"], img[src*="scontent"], img[src*="fbcdn"]')
+    const removeControls = container.getByRole('button', { name: /remove (photo|image)|xóa (ảnh|hình)|gỡ (ảnh|hình)/i })
+    return await visibleCount(previews) + await visibleCount(removeControls)
+  }
+
+  private async waitForMediaReady(container: Locator, expectedCount: number, baselineMarkers: number): Promise<boolean> {
+    const ready = await pollPage(this.page, MEDIA_READY_TIMEOUT_MS, async () => {
+      const markers = await this.mediaMarkerCount(container)
+      if (markers > baselineMarkers) return true
+      const selectedFiles = await this.selectedFileCount(container)
+      return selectedFiles >= expectedCount ? true : null
+    })
+    if (!ready) return false
+    await settleAction(this.page)
+    return true
+  }
+
   async upload(container: Locator, imagePaths: string[]): Promise<PostingJobResult> {
     if (imagePaths.length === 0) return { status: 'success', message: 'Job không có ảnh cần upload.' }
 
     try {
+      const baselineMarkers = await this.mediaMarkerCount(container)
       if (await this.setInputFiles(container, imagePaths)) {
-        return { status: 'success', message: `Đã chọn ${imagePaths.length} ảnh.` }
+        if (!await this.waitForMediaReady(container, imagePaths.length, baselineMarkers)) {
+          return failure('media_failed', 'Đã chọn ảnh nhưng Facebook chưa xác nhận media sẵn sàng trong composer.')
+        }
+        return { status: 'success', message: `Đã chọn và chờ ${imagePaths.length} ảnh sẵn sàng.` }
       }
 
-      const mediaButton = await firstVisible([
-        container.getByRole('button', { name: /photo\s*\/?\s*video|photo|video|ảnh/i }).first(),
-        container.getByLabel(/photo\s*\/?\s*video|photo|video|ảnh/i).first(),
-        container.getByText(/photo\s*\/?\s*video|ảnh\s*\/?\s*video/i).first()
+      const mediaButton = await firstVisibleMatch([
+        container.getByRole('button', { name: /photo\s*\/?\s*video|photo|video|ảnh/i }),
+        container.getByLabel(/photo\s*\/?\s*video|photo|video|ảnh/i),
+        container.getByText(/photo\s*\/?\s*video|ảnh\s*\/?\s*video/i)
       ])
       if (!mediaButton) return failure('media_failed', 'Không tìm thấy control Photo/Video trong composer.')
 
       const chooserPromise = this.page.waitForEvent('filechooser', { timeout: 5_000 }).catch(() => null)
       await mediaButton.click({ timeout: 10_000 })
+      await settleAction(this.page)
       const chooser = await chooserPromise
       if (chooser) {
         await chooser.setFiles(imagePaths)
-        return { status: 'success', message: `Đã chọn ${imagePaths.length} ảnh qua file chooser.` }
+        if (!await this.waitForMediaReady(container, imagePaths.length, baselineMarkers)) {
+          return failure('media_failed', 'Đã chọn ảnh qua file chooser nhưng Facebook chưa xác nhận media sẵn sàng.')
+        }
+        return { status: 'success', message: `Đã chọn và chờ ${imagePaths.length} ảnh qua file chooser.` }
       }
 
-      await this.page.waitForTimeout(300)
       if (!await this.setInputFiles(container, imagePaths)) {
         return failure('media_failed', 'Đã mở Photo/Video nhưng không tìm thấy file chooser hoặc file input.')
       }
-      return { status: 'success', message: `Đã chọn ${imagePaths.length} ảnh sau khi mở Photo/Video.` }
+      if (!await this.waitForMediaReady(container, imagePaths.length, baselineMarkers)) {
+        return failure('media_failed', 'Đã chọn ảnh sau khi mở Photo/Video nhưng Facebook chưa xác nhận media sẵn sàng.')
+      }
+      return { status: 'success', message: `Đã chọn và chờ ${imagePaths.length} ảnh sau khi mở Photo/Video.` }
     } catch (error) {
       return failure('media_failed', error instanceof Error ? error.message : String(error))
     }
@@ -281,12 +409,35 @@ export class MediaUploader {
 }
 
 export class PublishAction {
+  constructor(private readonly page: Page) {}
+
   async click(container: Locator): Promise<PostingJobResult> {
     try {
-      const button = container.getByRole('button', { name: /^(post|đăng)$/i }).last()
-      if (!await button.isVisible().catch(() => false)) return failure('publish_action_failed', 'Không tìm thấy nút Đăng/Post trong composer.')
-      if (!await button.isEnabled().catch(() => false)) return failure('publish_action_failed', 'Nút Đăng/Post chưa sẵn sàng.')
+      let sawVisibleButton = false
+      const button = await pollPage(this.page, PUBLISH_READY_TIMEOUT_MS, async () => {
+        const candidate = await firstVisibleMatch([
+          container.getByRole('button', { name: /^(post|đăng)$/i })
+        ])
+        if (!candidate) return null
+        sawVisibleButton = true
+        return await candidate.isEnabled().catch(() => false) ? candidate : null
+      })
+
+      if (!button) {
+        return failure(
+          'publish_action_failed',
+          sawVisibleButton
+            ? 'Nút Đăng/Post vẫn chưa sẵn sàng sau thời gian chờ Facebook xử lý composer/media.'
+            : 'Không tìm thấy nút Đăng/Post trong composer.'
+        )
+      }
+
+      await settleAction(this.page)
+      if (!await button.isEnabled().catch(() => false)) {
+        return failure('publish_action_failed', 'Nút Đăng/Post vừa chuyển về trạng thái chưa sẵn sàng trước khi click.')
+      }
       await button.click({ timeout: 15_000 })
+      await settleAction(this.page)
       return { status: 'success', message: 'Đã gửi hành động publish; đang chờ xác minh kết quả.' }
     } catch (error) {
       return failure('publish_action_failed', error instanceof Error ? error.message : String(error))
@@ -468,25 +619,26 @@ export async function executePostingJob(job: PostingJobRequest): Promise<Posting
     const navigation = await new GroupNavigator(page, runtimeBrowser).open(job.groupUid)
     if (navigation.status !== 'success') return finish(navigation)
 
+    engineDiagnostic(job, `material ready contentLength=${job.content.trim().length} imageCount=${job.imagePaths.length}`)
     const resultDetector = new PublishResultDetector(page, runtimeBrowser, job.groupUid)
     const publishBaseline = await resultDetector.captureBaseline()
     engineDiagnostic(job, `verification baseline captured=${publishBaseline.captured} posts=${publishBaseline.postKeys.size}`)
 
     const composer = await new ComposerDetector(page).open()
-    if (!composer) return finish(failure('composer_not_found', 'Modal Create post đã mở nhưng không phát hiện được editor contenteditable trong composer.'))
-    engineDiagnostic(job, 'composer editor detected')
+    if (!composer) return finish(failure('composer_not_found', 'Không phát hiện được editor sẵn sàng trong modal Create post sau thời gian chờ.'))
+    engineDiagnostic(job, 'composer editor ready')
 
     const contentResult = await new PostComposer(page).fill(composer.textbox, job.content)
     if (contentResult.status !== 'success') return finish(contentResult)
-    engineDiagnostic(job, `content filled length=${job.content.length}`)
+    engineDiagnostic(job, `content confirmed length=${job.content.trim().length}`)
 
     const mediaResult = await new MediaUploader(page).upload(composer.container, job.imagePaths)
     if (mediaResult.status !== 'success') return finish(mediaResult)
     engineDiagnostic(job, `media ready count=${job.imagePaths.length}`)
 
-    const publishResult = await new PublishAction().click(composer.container)
+    const publishResult = await new PublishAction(page).click(composer.container)
     if (publishResult.status !== 'success') return finish(publishResult)
-    engineDiagnostic(job, 'publish clicked; verifying my_posted_content')
+    engineDiagnostic(job, 'publish clicked after readiness wait; verifying my_posted_content')
 
     const confirmed = await resultDetector.detect(composer.container, job.content, publishBaseline)
     if (confirmed.status !== 'success' || !job.session.validateAfterRun) return finish(confirmed)
