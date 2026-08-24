@@ -1,4 +1,6 @@
 import { chromium, type Browser, type BrowserContext } from 'playwright-core'
+import type { BrowserWindowPlacement } from '../../shared/browserWindowLayout'
+import { applyBrowserPlacementToContext, applyBrowserWindowPlacement } from './browserRuntime'
 
 const MANAGED_CDP_ARG_PREFIX = '--page-auto-managed-cdp='
 
@@ -6,12 +8,30 @@ let installed = false
 let persistentContext: BrowserContext | null = null
 let persistentProxy: BrowserContext | null = null
 let attachedBrowser: Browser | null = null
+let activePlacement: BrowserWindowPlacement | null = null
 
 function managedCdpEndpointFromArgs(argv: string[] = process.argv): string | null {
   const raw = argv.find((item) => item.startsWith(MANAGED_CDP_ARG_PREFIX))
   if (!raw) return null
   const endpoint = raw.slice(MANAGED_CDP_ARG_PREFIX.length).trim()
   return endpoint || null
+}
+
+function compactLaunchArgs(args: string[] | undefined, placement: BrowserWindowPlacement | null): string[] | undefined {
+  if (!placement) return args
+  const retained = (args ?? []).filter((arg) =>
+    !arg.startsWith('--window-size=')
+    && !arg.startsWith('--window-position=')
+    && !arg.startsWith('--force-device-scale-factor=')
+    && arg !== '--high-dpi-support=1'
+  )
+  return [
+    ...retained,
+    `--window-size=${placement.width},${placement.height}`,
+    `--window-position=${placement.x},${placement.y}`,
+    `--force-device-scale-factor=${placement.contentScale}`,
+    '--high-dpi-support=1'
+  ]
 }
 
 function keepManagedBrowserOpen(context: BrowserContext): BrowserContext {
@@ -24,10 +44,17 @@ function keepManagedBrowserOpen(context: BrowserContext): BrowserContext {
   })
 }
 
+async function applyCurrentPlacement(context: BrowserContext): Promise<void> {
+  await applyBrowserPlacementToContext(context, activePlacement)
+}
+
 function rememberContext(context: BrowserContext, browser: Browser | null): BrowserContext {
   persistentContext = context
   persistentProxy = keepManagedBrowserOpen(context)
   attachedBrowser = browser
+  context.on('page', (page) => {
+    void applyBrowserWindowPlacement(context, page, activePlacement).catch(() => undefined)
+  })
   context.once('close', () => {
     if (persistentContext !== context) return
     persistentContext = null
@@ -35,6 +62,15 @@ function rememberContext(context: BrowserContext, browser: Browser | null): Brow
     attachedBrowser = null
   })
   return persistentProxy
+}
+
+export function setManagedBrowserPlacement(placement: BrowserWindowPlacement | null): void {
+  activePlacement = placement
+}
+
+export async function retileManagedPostingBrowser(placement: BrowserWindowPlacement | null): Promise<void> {
+  activePlacement = placement
+  if (persistentContext) await applyCurrentPlacement(persistentContext)
 }
 
 /**
@@ -50,7 +86,10 @@ export function installManagedBrowserReuse(): void {
   const endpoint = managedCdpEndpointFromArgs()
   const originalLaunchPersistentContext = chromium.launchPersistentContext.bind(chromium)
   const managedLaunch: typeof chromium.launchPersistentContext = async (userDataDir, options) => {
-    if (persistentProxy && persistentContext) return persistentProxy
+    if (persistentProxy && persistentContext) {
+      await applyCurrentPlacement(persistentContext)
+      return persistentProxy
+    }
 
     if (endpoint) {
       try {
@@ -62,15 +101,22 @@ export function installManagedBrowserReuse(): void {
           await browser.close().catch(() => undefined)
           throw new Error('Chrome đang mở không có browser context mặc định.')
         }
-        return rememberContext(context, browser)
+        const proxy = rememberContext(context, browser)
+        await applyCurrentPlacement(context)
+        return proxy
       } catch {
         // Browser may have been closed between registry lookup and job start.
         // Fall back to launching the same persistent account profile below.
       }
     }
 
-    const context = await originalLaunchPersistentContext(userDataDir, options)
-    return rememberContext(context, null)
+    const compactOptions = activePlacement
+      ? { ...options, args: compactLaunchArgs(options?.args, activePlacement) }
+      : options
+    const context = await originalLaunchPersistentContext(userDataDir, compactOptions)
+    const proxy = rememberContext(context, null)
+    await applyCurrentPlacement(context)
+    return proxy
   }
 
   Object.defineProperty(chromium, 'launchPersistentContext', {
@@ -85,6 +131,7 @@ export async function closeManagedPostingBrowser(): Promise<void> {
   persistentContext = null
   persistentProxy = null
   attachedBrowser = null
+  activePlacement = null
 
   if (browser) {
     await browser.close().catch(() => undefined)
