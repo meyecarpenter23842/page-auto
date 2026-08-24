@@ -229,6 +229,13 @@ export function compactContentScale(
   return Math.max(MIN_RENDER_SCALE, Math.round(scale * 1000) / 1000)
 }
 
+/**
+ * Compact windows are physically square. We choose the largest square side that can
+ * fit the complete N × N grid inside the selected display work area, then center the
+ * grid. Chrome's own title bar / automation infobar is intentionally left intact;
+ * browserRuntime measures the real inner content area after launch and fits Facebook
+ * into the remaining space instead of pretending the browser chrome does not exist.
+ */
 export function computeBrowserWindowPlacement(
   layout: BrowserWindowLayoutSettings,
   browser: BrowserSettings,
@@ -242,19 +249,24 @@ export function computeBrowserWindowPlacement(
 
   const gapX = TILE_GAP_PX * Math.max(0, grid.columns - 1)
   const gapY = TILE_GAP_PX * Math.max(0, grid.rows - 1)
-  const slotWidth = Math.max(1, Math.floor((display.workArea.width - gapX) / grid.columns))
-  const slotHeight = Math.max(1, Math.floor((display.workArea.height - gapY) / grid.rows))
+  const usableWidth = Math.max(1, display.workArea.width - gapX)
+  const usableHeight = Math.max(1, display.workArea.height - gapY)
+  const side = Math.max(1, Math.floor(Math.min(usableWidth / grid.columns, usableHeight / grid.rows)))
+  const gridWidth = side * grid.columns + gapX
+  const gridHeight = side * grid.rows + gapY
+  const originX = display.workArea.x + Math.max(0, Math.floor((display.workArea.width - gridWidth) / 2))
+  const originY = display.workArea.y + Math.max(0, Math.floor((display.workArea.height - gridHeight) / 2))
   const column = slotIndex % grid.columns
   const row = Math.floor(slotIndex / grid.columns)
 
   return {
     displayId: display.id,
     slotIndex,
-    x: display.workArea.x + column * (slotWidth + TILE_GAP_PX),
-    y: display.workArea.y + row * (slotHeight + TILE_GAP_PX),
-    width: slotWidth,
-    height: slotHeight,
-    contentScale: compactContentScale(browser, slotWidth, slotHeight),
+    x: originX + column * (side + TILE_GAP_PX),
+    y: originY + row * (side + TILE_GAP_PX),
+    width: side,
+    height: side,
+    contentScale: compactContentScale(browser, side, side),
     viewportWidth: browser.windowWidth,
     viewportHeight: browser.windowHeight
   }
