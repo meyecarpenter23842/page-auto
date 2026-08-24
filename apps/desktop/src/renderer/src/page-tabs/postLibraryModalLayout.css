@@ -1,0 +1,135 @@
+/*
+ * Post Library modal layout contract.
+ *
+ * Keep these selectors more specific than the generic `.page-tab-modal`
+ * rule in pageTabs.css. The generic modal is intentionally 470px wide;
+ * Post Library is a two-pane workspace and must never inherit that width.
+ */
+.page-tab-modal.pt-post-library-modal {
+  width: min(1180px, calc(100vw - 48px));
+  max-width: min(1180px, calc(100vw - 48px));
+  min-width: 0;
+  height: min(780px, calc(100vh - 48px));
+  max-height: calc(100vh - 48px);
+  box-sizing: border-box;
+  gap: 0;
+}
+
+.page-tab-modal.pt-post-library-modal .pt-post-library-header,
+.page-tab-modal.pt-post-library-modal .pt-post-library-layout,
+.page-tab-modal.pt-post-library-modal .pt-post-library-footer {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.page-tab-modal.pt-post-library-modal .pt-post-library-layout {
+  grid-template-columns: minmax(300px, 340px) minmax(560px, 1fr);
+  overflow: hidden;
+}
+
+.page-tab-modal.pt-post-library-modal .pt-post-list-pane,
+.page-tab-modal.pt-post-library-modal .pt-post-editor-pane {
+  min-width: 0;
+  min-height: 0;
+}
+
+.page-tab-modal.pt-post-library-modal .pt-post-list-pane {
+  overflow: hidden;
+}
+
+.page-tab-modal.pt-post-library-modal .pt-post-list,
+.page-tab-modal.pt-post-library-modal .pt-post-editor-pane {
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.page-tab-modal.pt-post-library-modal .pt-post-editor-section,
+.page-tab-modal.pt-post-library-modal .pt-post-section-title,
+.page-tab-modal.pt-post-library-modal .pt-post-editor-help,
+.page-tab-modal.pt-post-library-modal .pt-post-preview,
+.page-tab-modal.pt-post-library-modal .pt-post-editor-commit {
+  min-width: 0;
+}
+
+.page-tab-modal.pt-post-library-modal .pt-post-editor-pane input,
+.page-tab-modal.pt-post-library-modal .pt-post-editor-pane select,
+.page-tab-modal.pt-post-library-modal .pt-post-editor-pane textarea,
+.page-tab-modal.pt-post-library-modal .pt-post-editor-pane .pt-folder-row,
+.page-tab-modal.pt-post-library-modal .pt-post-editor-pane .pt-form-grid,
+.page-tab-modal.pt-post-library-modal .pt-post-editor-pane .pt-stack-field {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.page-tab-modal.pt-post-library-modal .pt-post-editor-pane .pt-folder-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.page-tab-modal.pt-post-library-modal .pt-post-editor-pane .pt-folder-row .pt-button {
+  width: auto;
+  white-space: nowrap;
+}
+
+.page-tab-modal.pt-post-library-modal .pt-post-editor-pane .pt-form-grid.three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+/*
+ * The desktop app normally cannot become this narrow (BrowserWindow has a
+ * larger minWidth), but devtools/OS scaling can expose a smaller CSS viewport.
+ * Stack the panes instead of crushing the editor into a 20–40px strip.
+ */
+@media (max-width: 940px) {
+  .page-tab-modal.pt-post-library-modal {
+    width: calc(100vw - 24px);
+    max-width: calc(100vw - 24px);
+    height: calc(100vh - 24px);
+    max-height: calc(100vh - 24px);
+  }
+
+  .page-tab-modal.pt-post-library-modal .pt-post-library-layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(210px, 34%) minmax(0, 1fr);
+  }
+
+  .page-tab-modal.pt-post-library-modal .pt-post-list-pane {
+    border-right: 0;
+    border-bottom: 1px solid #dfe6ef;
+  }
+
+  .page-tab-modal.pt-post-library-modal .pt-post-list-toolbar {
+    grid-template-columns: minmax(150px, 180px) minmax(0, 1fr);
+    align-items: center;
+  }
+}
+
+@media (max-width: 700px) {
+  .page-tab-modal.pt-post-library-modal .pt-post-library-header {
+    padding-inline: 12px;
+  }
+
+  .page-tab-modal.pt-post-library-modal .pt-post-header-stats > span {
+    display: none;
+  }
+
+  .page-tab-modal.pt-post-library-modal .pt-post-list-toolbar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .page-tab-modal.pt-post-library-modal .pt-post-editor-pane .pt-form-grid.three {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .page-tab-modal.pt-post-library-modal .pt-post-library-footer {
+    flex-wrap: wrap;
+  }
+
+  .page-tab-modal.pt-post-library-modal .pt-post-library-footer .pt-modal-save-note {
+    flex-basis: 100%;
+    margin-right: 0;
+  }
+}
