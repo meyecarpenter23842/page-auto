@@ -20,7 +20,9 @@ function managedCdpEndpointFromArgs(argv: string[] = process.argv): string | nul
 function compactLaunchArgs(args: string[] | undefined, placement: BrowserWindowPlacement | null): string[] | undefined {
   if (!placement) return args
   const retained = (args ?? []).filter((arg) =>
-    !arg.startsWith('--window-size=') && !arg.startsWith('--window-position=')
+    !arg.startsWith('--window-size=')
+    && !arg.startsWith('--window-position=')
+    && arg !== '--start-minimized'
   )
   return [
     ...retained,
