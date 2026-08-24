@@ -25,6 +25,12 @@ interface BootstrapCommand {
   launch?: BrowserLaunchConfig
 }
 
+interface BrowserReadyMessage {
+  type: 'browser-ready'
+  accountId: number
+  cdpEndpoint: string
+}
+
 interface SessionResultMessage extends FacebookSessionResult {
   type: 'session-result'
   cdpEndpoint?: string
@@ -159,6 +165,15 @@ async function run(): Promise<void> {
       let result: SessionResultMessage
       try {
         const activeContext = await ensureContext(command)
+        if (cdpEndpoint) {
+          const ready: BrowserReadyMessage = {
+            type: 'browser-ready',
+            accountId: command.account.id,
+            cdpEndpoint
+          }
+          process.parentPort?.postMessage(ready)
+        }
+
         const page = activeContext.pages()[0] ?? await activeContext.newPage()
         const session = await bootstrapFacebookSession(activeContext, page, command.account, command.session.facebookLocale)
         if (session.status === 'valid') {
