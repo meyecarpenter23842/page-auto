@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_APP_SETTINGS } from './appSettings'
 import {
+  CHROME_MIN_COMPACT_OUTER_SIDE_PX,
   DEFAULT_BROWSER_WINDOW_LAYOUT,
   browserTileGrid,
   compactBrowserSlotAssignments,
   compactContentScale,
   computeBrowserWindowPlacement,
+  effectiveSquareBrowserTileGrid,
+  maximumTrueSquareRows,
   parseStoredBrowserWindowLayout,
   squareBrowserTileGrid,
   withSquareBrowserRows,
@@ -30,7 +33,7 @@ describe('browser window layout', () => {
       .toEqual({ columns: 1, rows: 5, capacity: 5 })
   })
 
-  it('uses the FPlus-style N by N rule from only the selected vertical rows', () => {
+  it('stores the requested FPlus-style N by N rule from the selected vertical rows', () => {
     const two = withSquareBrowserRows({ ...DEFAULT_BROWSER_WINDOW_LAYOUT, enabled: true }, 2)
     const three = withSquareBrowserRows(two, 3)
     const four = withSquareBrowserRows(three, 4)
@@ -42,7 +45,7 @@ describe('browser window layout', () => {
     expect(squareBrowserTileGrid(five)).toEqual({ columns: 5, rows: 5, capacity: 25 })
   })
 
-  it('stores matching rows, columns and capacity after a user changes the row count', () => {
+  it('stores matching rows, columns and requested capacity after a user changes the row count', () => {
     expect(withSquareBrowserRows(DEFAULT_BROWSER_WINDOW_LAYOUT, 4)).toMatchObject({
       tileLayout: 'grid',
       rowCount: 4,
@@ -52,32 +55,42 @@ describe('browser window layout', () => {
     })
   })
 
-  it('places every compact Chrome as a true square and centers the N by N grid', () => {
+  it('limits the real grid before Chrome can clamp a too-small square into a rectangle', () => {
     const layout = withSquareBrowserRows({ ...DEFAULT_BROWSER_WINDOW_LAYOUT, enabled: true }, 4)
-    const topLeft = computeBrowserWindowPlacement(layout, browser, display, 0)
-    const secondRow = computeBrowserWindowPlacement(layout, browser, display, 4)
-    const last = computeBrowserWindowPlacement(layout, browser, display, 15)
 
-    expect(topLeft).not.toBeNull()
-    expect(topLeft?.width).toBe(topLeft?.height)
-    expect(topLeft?.width).toBe(257)
-    expect(topLeft?.x).toBe(540)
-    expect(topLeft?.y).toBe(40)
-    expect(secondRow?.y).toBe((topLeft?.y ?? 0) + 261)
-    expect(last?.width).toBe(last?.height)
-    expect(last).not.toBeNull()
-    expect(computeBrowserWindowPlacement(layout, browser, display, 16)).toBeNull()
+    expect(CHROME_MIN_COMPACT_OUTER_SIDE_PX).toBe(500)
+    expect(maximumTrueSquareRows(display)).toBe(2)
+    expect(effectiveSquareBrowserTileGrid(layout, display)).toEqual({ columns: 2, rows: 2, capacity: 4 })
   })
 
-  it('uses display height as the limiting axis on a landscape screen instead of stretching Chrome wide', () => {
-    const layout = withSquareBrowserRows({ ...DEFAULT_BROWSER_WINDOW_LAYOUT, enabled: true }, 2)
-    const first = computeBrowserWindowPlacement(layout, browser, display, 0)
+  it('places every real compact Chrome as a true square on a 1080p-class work area', () => {
+    const layout = withSquareBrowserRows({ ...DEFAULT_BROWSER_WINDOW_LAYOUT, enabled: true }, 4)
+    const topLeft = computeBrowserWindowPlacement(layout, browser, display, 0)
     const second = computeBrowserWindowPlacement(layout, browser, display, 1)
-    const third = computeBrowserWindowPlacement(layout, browser, display, 2)
+    const secondRow = computeBrowserWindowPlacement(layout, browser, display, 2)
+    const last = computeBrowserWindowPlacement(layout, browser, display, 3)
 
-    expect(first).toMatchObject({ width: 518, height: 518 })
-    expect(second?.x).toBe((first?.x ?? 0) + 522)
-    expect(third?.y).toBe((first?.y ?? 0) + 522)
+    expect(topLeft).toMatchObject({ width: 518, height: 518, x: 540, y: 40 })
+    expect(second?.x).toBe((topLeft?.x ?? 0) + 522)
+    expect(secondRow?.y).toBe((topLeft?.y ?? 0) + 522)
+    expect(last?.width).toBe(last?.height)
+    expect(last).not.toBeNull()
+    expect(computeBrowserWindowPlacement(layout, browser, display, 4)).toBeNull()
+  })
+
+  it('does not reduce a requested grid when the display can fit Chrome minimum-width squares', () => {
+    const largeDisplay: BrowserDisplayInfo = {
+      ...display,
+      workArea: { x: 0, y: 0, width: 3200, height: 2000 }
+    }
+    const layout = withSquareBrowserRows({ ...DEFAULT_BROWSER_WINDOW_LAYOUT, enabled: true }, 3)
+
+    expect(maximumTrueSquareRows(largeDisplay)).toBe(3)
+    expect(effectiveSquareBrowserTileGrid(layout, largeDisplay)).toEqual({ columns: 3, rows: 3, capacity: 9 })
+    const placement = computeBrowserWindowPlacement(layout, browser, largeDisplay, 8)
+    expect(placement).not.toBeNull()
+    expect(placement?.width).toBe(placement?.height)
+    expect(placement?.width).toBeGreaterThanOrEqual(CHROME_MIN_COMPACT_OUTER_SIDE_PX)
   })
 
   it('scales page content down with the physical slot instead of keeping a huge cropped page', () => {
@@ -86,13 +99,12 @@ describe('browser window layout', () => {
     expect(compactContentScale(browser, 320, 200)).toBe(0.25)
   })
 
-  it('supports square layouts up to 8 by 8', () => {
+  it('keeps requested layouts up to 8 by 8 but clamps physical placement to the display limit', () => {
     const layout = withSquareBrowserRows({ ...DEFAULT_BROWSER_WINDOW_LAYOUT, enabled: true }, 8)
     expect(squareBrowserTileGrid(layout)).toEqual({ columns: 8, rows: 8, capacity: 64 })
-    const last = computeBrowserWindowPlacement(layout, browser, display, 63)
-    expect(last).not.toBeNull()
-    expect(last?.width).toBe(last?.height)
-    expect(computeBrowserWindowPlacement(layout, browser, display, 64)).toBeNull()
+    expect(effectiveSquareBrowserTileGrid(layout, display)).toEqual({ columns: 2, rows: 2, capacity: 4 })
+    expect(computeBrowserWindowPlacement(layout, browser, display, 3)).not.toBeNull()
+    expect(computeBrowserWindowPlacement(layout, browser, display, 4)).toBeNull()
   })
 
   it('compacts sparse active slots before retiling so browsers fill holes', () => {
