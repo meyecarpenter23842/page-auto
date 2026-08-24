@@ -20,6 +20,12 @@ export interface CompactDeviceMetrics {
   scale: number
 }
 
+export interface CompactViewportFit {
+  width: number
+  height: number
+  scale: number
+}
+
 const MIN_COMPACT_SCALE = 0.001
 const compactSessions = new WeakMap<Page, CDPSession>()
 
@@ -53,17 +59,39 @@ export function effectiveCompactContentScale(
   return Math.max(MIN_COMPACT_SCALE, Math.round(scale * 1000) / 1000)
 }
 
+/**
+ * Keep at least the configured desktop viewport, but expand the logical viewport on
+ * the axis that would otherwise leave empty letterbox space. This makes the rendered
+ * Facebook page fill the real Chrome content area while preserving desktop breakpoints.
+ */
+export function fitCompactViewportToInnerArea(
+  placement: BrowserWindowPlacement,
+  innerWidth: number,
+  innerHeight: number
+): CompactViewportFit {
+  const safeInnerWidth = Math.max(1, innerWidth)
+  const safeInnerHeight = Math.max(1, innerHeight)
+  const scale = effectiveCompactContentScale(placement, safeInnerWidth, safeInnerHeight)
+  return {
+    width: Math.max(placement.viewportWidth, Math.round(safeInnerWidth / scale)),
+    height: Math.max(placement.viewportHeight, Math.round(safeInnerHeight / scale)),
+    scale
+  }
+}
+
 export function compactDeviceMetrics(
   placement: BrowserWindowPlacement,
-  actualScale: number = placement.contentScale
+  actualScale: number = placement.contentScale,
+  viewportWidth: number = placement.viewportWidth,
+  viewportHeight: number = placement.viewportHeight
 ): CompactDeviceMetrics {
   return {
-    width: placement.viewportWidth,
-    height: placement.viewportHeight,
+    width: viewportWidth,
+    height: viewportHeight,
     deviceScaleFactor: 1,
     mobile: false,
-    screenWidth: placement.viewportWidth,
-    screenHeight: placement.viewportHeight,
+    screenWidth: viewportWidth,
+    screenHeight: viewportHeight,
     scale: actualScale
   }
 }
@@ -111,10 +139,10 @@ export async function applyBrowserContextSettings(
 }
 
 /**
- * Compact mode keeps Facebook on the configured desktop layout viewport while the
- * real Chrome top-level window is physically much smaller. The CDP session must stay
- * attached while the device-metrics override is active; otherwise Chromium drops the
- * emulation and the small native viewport crops the page again.
+ * Compact mode keeps a desktop-class logical viewport while the real Chrome window
+ * is physically smaller. The CDP session stays attached while device emulation is
+ * active. The logical viewport is expanded to the real content-area aspect ratio so
+ * the page fills the tile instead of leaving a large blank strip.
  */
 export async function applyBrowserWindowPlacement(
   context: BrowserContext,
@@ -156,9 +184,12 @@ export async function applyBrowserWindowPlacement(
     width: window.innerWidth,
     height: window.innerHeight
   })).catch(() => ({ width: placement.width, height: placement.height }))
-  const actualScale = effectiveCompactContentScale(placement, inner.width, inner.height)
+  const fit = fitCompactViewportToInnerArea(placement, inner.width, inner.height)
 
-  await session.send('Emulation.setDeviceMetricsOverride', compactDeviceMetrics(placement, actualScale))
+  await session.send(
+    'Emulation.setDeviceMetricsOverride',
+    compactDeviceMetrics(placement, fit.scale, fit.width, fit.height)
+  )
 }
 
 export async function applyBrowserPlacementToContext(
