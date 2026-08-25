@@ -2,9 +2,12 @@ import { describe, expect, it } from 'vitest'
 import {
   classifyPageIdentityUid,
   formatPageIdentityDiagnostics,
+  isAccountMenuAccessibleName,
   resolvePageIdentityAction,
   safePageIdentityUrl,
+  shouldRetryPageIdentityAfterControlFailure,
   shouldRetryPageIdentityFromHome,
+  targetIdentityScope,
   type PageIdentityEvidence
 } from './pageIdentitySwitcher'
 
@@ -47,6 +50,12 @@ describe('Page identity state machine', () => {
     expect(shouldRetryPageIdentityFromHome(evidence({ uidState: 'match' }), false)).toBe(false)
   })
 
+  it('runs Home fallback after all account-menu click candidates fail, but only once', () => {
+    expect(shouldRetryPageIdentityAfterControlFailure('open_account_menu', 'page_surface', false)).toBe(true)
+    expect(shouldRetryPageIdentityAfterControlFailure('open_account_menu', 'page_surface', true)).toBe(false)
+    expect(shouldRetryPageIdentityAfterControlFailure('select_target_name', 'account_menu', false)).toBe(false)
+  })
+
   it('prefers UID, then See all profiles, then exact Page name in the account menu', () => {
     expect(resolvePageIdentityAction(evidence({
       stage: 'account_menu',
@@ -72,6 +81,19 @@ describe('Page identity state machine', () => {
     }))).toBe('select_target_name')
   })
 
+  it('keeps Page UID/name lookup scoped to the active chooser until all-profiles is verified', () => {
+    expect(targetIdentityScope('page_surface')).toBe('none')
+    expect(targetIdentityScope('account_menu')).toBe('overlay-only')
+    expect(targetIdentityScope('all_profiles')).toBe('verified-all-profiles-surface')
+  })
+
+  it('does not classify generic account-related controls as the account-menu control', () => {
+    expect(isAccountMenuAccessibleName('Account')).toBe(true)
+    expect(isAccountMenuAccessibleName('Your profile')).toBe(true)
+    expect(isAccountMenuAccessibleName('Account settings')).toBe(false)
+    expect(isAccountMenuAccessibleName('Accounts Center')).toBe(false)
+  })
+
   it('fails deterministically when a stage has no supported control after fallback is exhausted', () => {
     expect(resolvePageIdentityAction(evidence())).toBe('fail')
     expect(resolvePageIdentityAction(evidence({ stage: 'account_menu' }))).toBe('fail')
@@ -80,7 +102,7 @@ describe('Page identity state machine', () => {
 })
 
 describe('Page identity diagnostics', () => {
-  it('strips query/hash and reports i_user state instead of a raw foreign UID', () => {
+  it('strips query/hash, reports i_user state, and includes attempted candidate strategies', () => {
     expect(safePageIdentityUrl('https://www.facebook.com/profile.php?id=90001&token=secret#x')).toBe('https://www.facebook.com/profile.php')
     const message = formatPageIdentityDiagnostics({
       stage: 'all_profiles',
@@ -93,12 +115,14 @@ describe('Page identity diagnostics', () => {
       directAttempted: true,
       homeFallbackAttempted: true,
       targetNameAvailable: true,
+      candidateAttempts: ['open_account_menu:account-semantic-button[0]:click-failed'],
       url: 'https://www.facebook.com/profile.php?id=90001&token=secret#x'
     })
 
     expect(message).toContain('i_user=other')
     expect(message).toContain('controls{direct=1,account=1,seeAll=1,uid=0,name=2}')
     expect(message).toContain('homeFallback=yes')
+    expect(message).toContain('attempts=open_account_menu:account-semantic-button[0]:click-failed')
     expect(message).toContain('https://www.facebook.com/profile.php')
     expect(message).not.toContain('token=secret')
   })
