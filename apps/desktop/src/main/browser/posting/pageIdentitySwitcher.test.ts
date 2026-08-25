@@ -4,13 +4,16 @@ import {
   formatPageIdentityDiagnostics,
   isAccountMenuAccessibleName,
   isDirectSwitchAccessibleName,
+  isTargetProfileAccessibleName,
   pageIdentityActionRequiresSurfaceVerification,
+  pageIdentitySurfaceAdvanced,
   resolvePageIdentityAction,
   safePageIdentityUrl,
   shouldRetryPageIdentityAfterControlFailure,
   shouldRetryPageIdentityFromHome,
   targetIdentityScope,
-  type PageIdentityEvidence
+  type PageIdentityEvidence,
+  type PageIdentitySurfaceSnapshot
 } from './pageIdentitySwitcher'
 
 function evidence(overrides: Partial<PageIdentityEvidence> = {}): PageIdentityEvidence {
@@ -23,6 +26,19 @@ function evidence(overrides: Partial<PageIdentityEvidence> = {}): PageIdentityEv
     targetUidCount: 0,
     targetNameCount: 0,
     directAttempted: false,
+    ...overrides
+  }
+}
+
+function surface(overrides: Partial<PageIdentitySurfaceSnapshot> = {}): PageIdentitySurfaceSnapshot {
+  return {
+    url: 'https://www.facebook.com/',
+    chooserRootCount: 1,
+    dialogCount: 0,
+    chooserMarkerCount: 1,
+    targetUidCount: 0,
+    targetNameCount: 0,
+    seeAllProfilesCount: 1,
     ...overrides
   }
 }
@@ -41,12 +57,19 @@ describe('Page identity state machine', () => {
     expect(resolvePageIdentityAction(evidence({ seeAllProfilesCount: 1 }))).toBe('click_see_all_profiles')
   })
 
-  it('keeps Switch to this Page in the supported direct-switch names', () => {
-    expect(isDirectSwitchAccessibleName('Switch now')).toBe(true)
-    expect(isDirectSwitchAccessibleName('Switch into this Page')).toBe(true)
-    expect(isDirectSwitchAccessibleName('Switch to this Page')).toBe(true)
-    expect(isDirectSwitchAccessibleName('Chuyển sang trang này')).toBe(true)
-    expect(isDirectSwitchAccessibleName('Accounts Center')).toBe(false)
+  it('selects a target already visible in the account menu before opening See all profiles', () => {
+    expect(resolvePageIdentityAction(evidence({
+      stage: 'account_menu',
+      targetUidCount: 1,
+      targetNameCount: 1,
+      seeAllProfilesCount: 1
+    }))).toBe('select_target_uid')
+
+    expect(resolvePageIdentityAction(evidence({
+      stage: 'account_menu',
+      targetNameCount: 1,
+      seeAllProfilesCount: 1
+    }))).toBe('select_target_name')
   })
 
   it('retries a control-less Page surface or empty first account menu through Facebook home exactly once', () => {
@@ -60,45 +83,20 @@ describe('Page identity state machine', () => {
     expect(shouldRetryPageIdentityFromHome(evidence({ uidState: 'match' }), false)).toBe(false)
   })
 
-  it('runs Home fallback after all account-menu click candidates fail, but only once', () => {
+  it('runs Home fallback after account-menu failure, but only once', () => {
     expect(shouldRetryPageIdentityAfterControlFailure('open_account_menu', 'page_surface', false)).toBe(true)
     expect(shouldRetryPageIdentityAfterControlFailure('open_account_menu', 'page_surface', true)).toBe(false)
     expect(shouldRetryPageIdentityAfterControlFailure('select_target_name', 'account_menu', false)).toBe(false)
   })
 
-  it('requires verified post-conditions before advancing menu surfaces', () => {
+  it('requires verified post-conditions before advancing chooser surfaces', () => {
     expect(pageIdentityActionRequiresSurfaceVerification('open_account_menu')).toBe(true)
     expect(pageIdentityActionRequiresSurfaceVerification('click_see_all_profiles')).toBe(true)
     expect(pageIdentityActionRequiresSurfaceVerification('select_target_uid')).toBe(false)
     expect(pageIdentityActionRequiresSurfaceVerification('click_direct_switch')).toBe(false)
   })
 
-  it('prefers UID, then See all profiles, then exact Page name in the account menu', () => {
-    expect(resolvePageIdentityAction(evidence({
-      stage: 'account_menu',
-      targetUidCount: 1,
-      seeAllProfilesCount: 1,
-      targetNameCount: 1
-    }))).toBe('select_target_uid')
-
-    expect(resolvePageIdentityAction(evidence({
-      stage: 'account_menu',
-      seeAllProfilesCount: 1,
-      targetNameCount: 1
-    }))).toBe('click_see_all_profiles')
-
-    expect(resolvePageIdentityAction(evidence({
-      stage: 'account_menu',
-      targetNameCount: 1
-    }))).toBe('select_target_name')
-
-    expect(resolvePageIdentityAction(evidence({
-      stage: 'all_profiles',
-      targetNameCount: 1
-    }))).toBe('select_target_name')
-  })
-
-  it('keeps Page UID/name lookup scoped to the active chooser until all-profiles is verified', () => {
+  it('keeps Page UID/name lookup scoped until all-profiles is verified', () => {
     expect(targetIdentityScope('page_surface')).toBe('none')
     expect(targetIdentityScope('account_menu')).toBe('overlay-only')
     expect(targetIdentityScope('all_profiles')).toBe('verified-all-profiles-surface')
@@ -113,10 +111,60 @@ describe('Page identity state machine', () => {
     expect(isAccountMenuAccessibleName('Accounts Center')).toBe(false)
   })
 
+  it('keeps all supported direct-switch labels actionable', () => {
+    expect(isDirectSwitchAccessibleName('Switch now')).toBe(true)
+    expect(isDirectSwitchAccessibleName('Switch into this Page')).toBe(true)
+    expect(isDirectSwitchAccessibleName('Switch to this Page')).toBe(true)
+    expect(isDirectSwitchAccessibleName('Chuyển sang Trang này')).toBe(true)
+  })
+
+  it('matches Page rows that append Page/Profile metadata but not unrelated similar names', () => {
+    expect(isTargetProfileAccessibleName('Hưng Phát', 'Hưng Phát')).toBe(true)
+    expect(isTargetProfileAccessibleName('Hưng Phát', 'Hưng Phát · Page')).toBe(true)
+    expect(isTargetProfileAccessibleName('Hưng Phát', 'Hưng Phát - Trang')).toBe(true)
+    expect(isTargetProfileAccessibleName('Hưng Phát', 'Hưng Phát Profile')).toBe(true)
+    expect(isTargetProfileAccessibleName('Hưng Phát', 'Hưng Phát Store')).toBe(false)
+    expect(isTargetProfileAccessibleName('Hưng Phát', 'Shop Hưng Phát')).toBe(false)
+  })
+
   it('fails deterministically when a stage has no supported control after fallback is exhausted', () => {
     expect(resolvePageIdentityAction(evidence())).toBe('fail')
     expect(resolvePageIdentityAction(evidence({ stage: 'account_menu' }))).toBe('fail')
     expect(resolvePageIdentityAction(evidence({ stage: 'all_profiles' }))).toBe('fail')
+  })
+})
+
+describe('Page identity chooser transitions', () => {
+  it('accepts a target appearing in the same chooser root after See all profiles', () => {
+    expect(pageIdentitySurfaceAdvanced(
+      surface(),
+      surface({ targetNameCount: 1 })
+    )).toBe(true)
+  })
+
+  it('accepts a new chooser/dialog surface with chooser evidence', () => {
+    expect(pageIdentitySurfaceAdvanced(
+      surface({ chooserRootCount: 1, dialogCount: 0 }),
+      surface({ chooserRootCount: 2, dialogCount: 1, chooserMarkerCount: 1 })
+    )).toBe(true)
+  })
+
+  it('accepts a verified full-page chooser route transition', () => {
+    expect(pageIdentitySurfaceAdvanced(
+      surface({ url: 'https://www.facebook.com/' }),
+      surface({ url: 'https://www.facebook.com/profiles/select/', targetUidCount: 1 })
+    )).toBe(true)
+  })
+
+  it('accepts See all profiles being consumed into a target list even when the root shape is unchanged', () => {
+    expect(pageIdentitySurfaceAdvanced(
+      surface({ seeAllProfilesCount: 1, targetNameCount: 1 }),
+      surface({ seeAllProfilesCount: 0, targetNameCount: 1 })
+    )).toBe(true)
+  })
+
+  it('rejects a no-op See all profiles click that leaves the same old menu visible', () => {
+    expect(pageIdentitySurfaceAdvanced(surface(), surface())).toBe(false)
   })
 })
 
