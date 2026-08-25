@@ -441,7 +441,10 @@ export class RotationService {
 
   private async releaseIdleCurrentAccount(session: RotationSession): Promise<void> {
     if (session.inFlight || session.currentAccountId === null) return
-    await this.releaseAccountTurn(session.currentAccountId)
+    const accountId = session.currentAccountId
+    session.currentAccountId = null
+    session.currentAccountIndex = null
+    await this.releaseAccountTurn(accountId)
   }
 
   private finalizeStop(session: RotationSession): void {
@@ -555,6 +558,7 @@ export class RotationService {
 
       let usedSlot = false
       let leaveAccountEarly = false
+      let accountUnavailable = false
       try {
         while (session.slotsCompletedThisTurn < targetSlots && !session.disposed) {
           const activeRunId = session.runId
@@ -567,6 +571,8 @@ export class RotationService {
             continue runLoop
           }
 
+          session.currentAccountId = account.accountId
+          session.currentAccountIndex = accountIndex
           session.inFlight = true
           let result: ExecuteSinglePostingJobResult
           try {
@@ -592,6 +598,7 @@ export class RotationService {
               break
             }
             if (networkDecision?.action === 'switch_account') {
+              accountUnavailable = true
               session.message = `Proxy của tài khoản #${account.accountId} lỗi; chuyển sang tài khoản kế tiếp theo chính sách mạng.`
               leaveAccountEarly = true
               break
@@ -605,6 +612,7 @@ export class RotationService {
               continue runLoop
             }
             if (isAccountUnavailable(result)) {
+              accountUnavailable = true
               leaveAccountEarly = true
               if (sessionDecision) {
                 session.message = `Tài khoản #${account.accountId} chưa thể đăng nhập/xác minh; chuyển sang tài khoản kế tiếp theo chính sách.`
@@ -620,6 +628,7 @@ export class RotationService {
             if (sessionDecision.action === 'stop') {
               this.pauseForSessionFailure(session, account.accountId, sessionDecision.kind)
             } else {
+              accountUnavailable = true
               session.message = `Tài khoản #${account.accountId} chưa thể đăng nhập/xác minh; chuyển sang tài khoản kế tiếp theo chính sách.`
             }
             break
@@ -666,7 +675,8 @@ export class RotationService {
       }
       if (session.manualPaused) continue
 
-      if (!usedSlot) unavailableStreak += 1
+      if (accountUnavailable) unavailableStreak += 1
+      else if (!usedSlot) unavailableStreak = 0
       if (unavailableStreak >= cycleAccounts.length) {
         session.manualPaused = true
         session.status = 'paused'

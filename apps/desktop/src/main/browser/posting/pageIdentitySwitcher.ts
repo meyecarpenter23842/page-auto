@@ -34,6 +34,7 @@ export interface PageIdentityDiagnostics {
   targetUidCount: number
   targetNameCount: number
   directAttempted: boolean
+  homeFallbackAttempted: boolean
   targetNameAvailable: boolean
   url: string
 }
@@ -83,6 +84,16 @@ export function resolvePageIdentityAction(evidence: PageIdentityEvidence): PageI
   return 'fail'
 }
 
+export function shouldRetryPageIdentityFromHome(
+  evidence: PageIdentityEvidence,
+  homeFallbackAttempted: boolean
+): boolean {
+  return !homeFallbackAttempted
+    && evidence.stage === 'page_surface'
+    && evidence.uidState !== 'match'
+    && resolvePageIdentityAction(evidence) === 'fail'
+}
+
 export function safePageIdentityUrl(rawUrl: string): string {
   try {
     const parsed = new URL(rawUrl)
@@ -101,6 +112,7 @@ export function formatPageIdentityDiagnostics(input: PageIdentityDiagnostics): s
     `i_user=${input.uidState}`,
     `controls{direct=${input.directSwitchCount},account=${input.accountMenuCount},seeAll=${input.seeAllProfilesCount},uid=${input.targetUidCount},name=${input.targetNameCount}}`,
     `directAttempted=${input.directAttempted ? 'yes' : 'no'}`,
+    `homeFallback=${input.homeFallbackAttempted ? 'yes' : 'no'}`,
     `targetName=${input.targetNameAvailable ? 'available' : 'missing'}`,
     `url=${safePageIdentityUrl(input.url)}`
   ].join(' ')
@@ -167,7 +179,11 @@ export class PageIdentitySwitcher {
   private accountMenuCandidates(): Locator[] {
     return [
       this.page.getByRole('button', { name: ACCOUNT_MENU_PATTERN }),
-      this.page.getByRole('link', { name: ACCOUNT_MENU_PATTERN })
+      this.page.getByRole('link', { name: ACCOUNT_MENU_PATTERN }),
+      this.page.locator('[role="banner"] [role="button"][aria-haspopup="menu"]').last(),
+      this.page.locator('[role="banner"] [role="button"]:has(img)').last(),
+      this.page.locator('header [role="button"]:has(img)').last(),
+      this.page.locator('[role="navigation"] [role="button"]:has(img)').last()
     ]
   }
 
@@ -285,13 +301,15 @@ export class PageIdentitySwitcher {
     stage: PageIdentityStage,
     pageUid: string,
     targetName: string | null,
-    directAttempted: boolean
+    directAttempted: boolean,
+    homeFallbackAttempted: boolean
   ): Promise<string> {
     return activeFacebookProfileId(this.context).catch(() => null).then((active) => formatPageIdentityDiagnostics({
       stage,
       uidState: classifyPageIdentityUid(pageUid, active),
       ...this.seenCounts,
       directAttempted,
+      homeFallbackAttempted,
       targetNameAvailable: Boolean(targetName),
       url: this.page.url()
     }))
@@ -300,6 +318,23 @@ export class PageIdentitySwitcher {
   private async settleAction(): Promise<void> {
     await this.page.waitForLoadState('domcontentloaded', { timeout: 5_000 }).catch(() => undefined)
     await this.page.waitForTimeout(ACTION_SETTLE_MS)
+  }
+
+  private async openHomeSurface(): Promise<PostingJobResult | null> {
+    try {
+      await this.page.goto('https://www.facebook.com/', {
+        waitUntil: 'domcontentloaded',
+        timeout: this.browser.navigationTimeoutMs
+      })
+      if (this.browser.pageSettleDelayMs > 0) await this.page.waitForTimeout(this.browser.pageSettleDelayMs)
+    } catch (error) {
+      return failure('page_navigation_failed', `Không mở được Facebook home để tìm profile chooser: ${error instanceof Error ? error.message : String(error)}`)
+    }
+
+    const blocked = await detectFacebookAccessBlock(this.page)
+    if (blocked === 'login_required') return failure('needs_login', 'Facebook yêu cầu đăng nhập lại khi mở home để chuyển Page.')
+    if (blocked === 'verification_required') return failure('verification_required', 'Facebook yêu cầu checkpoint/xác minh thủ công khi mở home để chuyển Page.')
+    return null
   }
 
   async switchTo(pageUid: string): Promise<PostingJobResult> {
@@ -321,8 +356,9 @@ export class PageIdentitySwitcher {
     const targetName = await this.readTargetPageName()
     let stage: PageIdentityStage = 'page_surface'
     let directAttempted = false
+    let homeFallbackAttempted = false
 
-    for (let step = 0; step < 7; step += 1) {
+    for (let step = 0; step < 10; step += 1) {
       const blocked = await detectFacebookAccessBlock(this.page)
       if (blocked === 'login_required') return failure('needs_login', 'Facebook yêu cầu đăng nhập lại trong lúc chuyển Page.')
       if (blocked === 'verification_required') return failure('verification_required', 'Facebook yêu cầu checkpoint/xác minh thủ công trong lúc chuyển Page.')
@@ -333,7 +369,14 @@ export class PageIdentitySwitcher {
         return { status: 'success', message: 'Page identity đã active và khớp i_user.' }
       }
       if (action === 'fail') {
-        const diagnostics = await this.diagnosticMessage(stage, normalizedUid, targetName, directAttempted)
+        if (shouldRetryPageIdentityFromHome(evidence, homeFallbackAttempted)) {
+          homeFallbackAttempted = true
+          const homeFailure = await this.openHomeSurface()
+          if (homeFailure) return homeFailure
+          stage = 'page_surface'
+          continue
+        }
+        const diagnostics = await this.diagnosticMessage(stage, normalizedUid, targetName, directAttempted, homeFallbackAttempted)
         return failure('page_identity_unconfirmed', `Không xác minh được Page identity. ${diagnostics}`)
       }
 
@@ -352,7 +395,7 @@ export class PageIdentitySwitcher {
       }
 
       if (!control) {
-        const diagnostics = await this.diagnosticMessage(stage, normalizedUid, targetName, directAttempted)
+        const diagnostics = await this.diagnosticMessage(stage, normalizedUid, targetName, directAttempted, homeFallbackAttempted)
         return failure('page_identity_unconfirmed', `Control chuyển Page vừa biến mất trước khi thao tác. ${diagnostics}`)
       }
 
@@ -361,7 +404,7 @@ export class PageIdentitySwitcher {
         .catch(() => false)
       if (!clicked) {
         if (action === 'click_direct_switch') continue
-        const diagnostics = await this.diagnosticMessage(stage, normalizedUid, targetName, directAttempted)
+        const diagnostics = await this.diagnosticMessage(stage, normalizedUid, targetName, directAttempted, homeFallbackAttempted)
         return failure('page_identity_unconfirmed', `Không thể click control ${action}. ${diagnostics}`)
       }
 
@@ -392,11 +435,11 @@ export class PageIdentitySwitcher {
         return { status: 'success', message: 'Đã chọn Page trong profile chooser và xác minh i_user đúng Page UID.' }
       }
 
-      const diagnostics = await this.diagnosticMessage(stage, normalizedUid, targetName, directAttempted)
+      const diagnostics = await this.diagnosticMessage(stage, normalizedUid, targetName, directAttempted, homeFallbackAttempted)
       return failure('page_identity_unconfirmed', `Đã chọn Page nhưng i_user chưa chuyển sang Page UID yêu cầu. ${diagnostics}`)
     }
 
-    const diagnostics = await this.diagnosticMessage(stage, normalizedUid, targetName, directAttempted)
+    const diagnostics = await this.diagnosticMessage(stage, normalizedUid, targetName, directAttempted, homeFallbackAttempted)
     return failure('page_identity_unconfirmed', `Hết số bước state machine chuyển Page mà chưa xác minh được identity. ${diagnostics}`)
   }
 }

@@ -10,6 +10,12 @@ import {
 } from '../facebookSession'
 import { applyBrowserContextSettings, buildBrowserLaunchOptions, waitForBrowserStartupDelay } from '../browserRuntime'
 import { effectiveNavigationTimeoutMs, probeFacebookThroughProxy } from '../proxyPreflight'
+import {
+  COMPOSER_MEDIA_PATTERN,
+  COMPOSER_TITLE_PATTERN,
+  COMPOSER_TRIGGER_PATTERN,
+  formatComposerDiagnostics
+} from './composerSurface'
 import { PageIdentitySwitcher } from './pageIdentitySwitcher'
 import { detectFacebookAccessBlock } from './pageState'
 import { finishPostingEvidence, startPostingTrace } from './postingEvidence'
@@ -97,6 +103,12 @@ async function visibleCount(candidate: Locator): Promise<number> {
   return visible
 }
 
+async function visibleCountAcross(candidates: Locator[]): Promise<number> {
+  let total = 0
+  for (const candidate of candidates) total += await visibleCount(candidate)
+  return total
+}
+
 async function pollPage<T>(page: Page, timeoutMs: number, probe: () => Promise<T | null>): Promise<T | null> {
   return pollForReady(probe, {
     attempts: readinessAttempts(timeoutMs, READINESS_POLL_MS),
@@ -163,10 +175,26 @@ export class ComposerDetector {
     ])
   }
 
+  private triggerCandidates(): Locator[] {
+    return [
+      this.page.getByRole('button', { name: COMPOSER_TRIGGER_PATTERN }),
+      this.page.locator('[role="button"]').filter({ hasText: COMPOSER_TRIGGER_PATTERN }),
+      this.page.locator([
+        '[role="button"][aria-label*="create post" i]',
+        '[role="button"][aria-label*="create a public post" i]',
+        '[role="button"][aria-label*="write something" i]',
+        '[role="button"][aria-label*="tạo bài viết" i]',
+        '[role="button"][aria-label*="bạn viết" i]',
+        '[role="button"][aria-label*="viết gì" i]'
+      ].join(', ')),
+      this.page.getByText(COMPOSER_TRIGGER_PATTERN)
+    ]
+  }
+
   private async isComposerSurface(dialog: Locator): Promise<boolean> {
     const titleOrPlaceholder = await firstVisibleMatch([
-      dialog.getByRole('heading', { name: /create post|tạo bài viết/i }),
-      dialog.getByText(/create a public post|write something|what'?s on your mind|bạn viết gì|bạn đang nghĩ gì|tạo bài viết công khai/i)
+      dialog.getByRole('heading', { name: COMPOSER_TITLE_PATTERN }),
+      dialog.getByText(COMPOSER_TRIGGER_PATTERN)
     ])
     if (titleOrPlaceholder) return true
 
@@ -176,52 +204,76 @@ export class ComposerDetector {
     if (!publishButton) return false
 
     return Boolean(await firstVisibleMatch([
-      dialog.getByRole('button', { name: /photo\s*\/?\s*video|photo|video|ảnh/i }),
-      dialog.getByText(/photo\s*\/?\s*video|ảnh\s*\/?\s*video/i)
+      dialog.getByRole('button', { name: COMPOSER_MEDIA_PATTERN }),
+      dialog.getByText(COMPOSER_MEDIA_PATTERN)
     ]))
   }
 
-  private async findComposerDialog(): Promise<Locator | null> {
+  private async findComposerDialog(allowTextboxFallback = false): Promise<Locator | null> {
     const dialogs = this.page.locator('[role="dialog"], [aria-modal="true"]')
     const count = await dialogs.count().catch(() => 0)
     for (let index = count - 1; index >= 0; index -= 1) {
       const dialog = dialogs.nth(index)
       if (!await dialog.isVisible().catch(() => false)) continue
       if (await this.isComposerSurface(dialog)) return dialog
+      if (!allowTextboxFallback) continue
+
+      const textbox = await this.findTextbox(dialog)
+      if (!textbox) continue
+      const publishButton = await firstVisibleMatch([
+        dialog.getByRole('button', { name: /^(post|đăng)$/i })
+      ])
+      const mediaControl = await firstVisibleMatch([
+        dialog.getByRole('button', { name: COMPOSER_MEDIA_PATTERN }),
+        dialog.getByLabel(COMPOSER_MEDIA_PATTERN),
+        dialog.getByText(COMPOSER_MEDIA_PATTERN)
+      ])
+      const fileInputCount = await dialog.locator('input[type="file"]').count().catch(() => 0)
+      if (publishButton || mediaControl || fileInputCount > 0) return dialog
     }
     return null
   }
 
-  private async findOpenComposer(): Promise<ComposerHandle | null> {
-    const dialog = await this.findComposerDialog()
+  private async findOpenComposer(allowTextboxFallback = false): Promise<ComposerHandle | null> {
+    const dialog = await this.findComposerDialog(allowTextboxFallback)
     if (!dialog) return null
     const textbox = await this.findTextbox(dialog)
     return textbox ? { container: dialog, textbox } : null
   }
 
   private async focusComposerPlaceholder(): Promise<boolean> {
-    const dialog = await this.findComposerDialog()
+    const dialog = await this.findComposerDialog(true)
     if (!dialog) return false
     const placeholder = await firstVisibleMatch([
-      dialog.getByText(/create a public post|write something|what'?s on your mind|bạn viết gì|bạn đang nghĩ gì|tạo bài viết công khai/i),
+      dialog.getByText(COMPOSER_TRIGGER_PATTERN),
       dialog.locator('[data-lexical-editor="true"]'),
+      dialog.locator('[role="textbox"][contenteditable="true"]'),
       dialog.locator('[contenteditable="true"]')
     ])
     if (!placeholder) return false
     return placeholder.click({ timeout: 5_000 }).then(() => true).catch(() => false)
   }
 
+  async diagnostics(): Promise<string> {
+    const dialogs = this.page.locator('[role="dialog"], [aria-modal="true"]')
+    const textboxes = this.page.locator('[role="textbox"], [contenteditable="true"]')
+    const publishButtons = this.page.getByRole('button', { name: /^(post|đăng)$/i })
+    return formatComposerDiagnostics({
+      dialogCount: await visibleCount(dialogs),
+      textboxCount: await visibleCount(textboxes),
+      triggerCount: await visibleCountAcross(this.triggerCandidates()),
+      publishButtonCount: await visibleCount(publishButtons),
+      fileInputCount: await this.page.locator('input[type="file"]').count().catch(() => 0),
+      url: this.page.url()
+    })
+  }
+
   async open(): Promise<ComposerHandle | null> {
-    const existing = await this.findOpenComposer()
+    const existing = await this.findOpenComposer(true)
     if (existing) return existing
 
-    if (!await this.findComposerDialog()) {
-      const triggerPattern = /write something|what'?s on your mind|create post|create a public post|bạn viết gì|bạn đang nghĩ gì|tạo bài viết|tạo bài viết công khai/i
-      const trigger = await firstVisibleMatch([
-        this.page.getByRole('button', { name: triggerPattern }),
-        this.page.locator('[role="button"]').filter({ hasText: triggerPattern }),
-        this.page.getByText(triggerPattern)
-      ])
+    if (!await this.findComposerDialog(true)) {
+      const trigger = await firstVisibleMatch(this.triggerCandidates())
       if (!trigger) return null
       if (!await trigger.click({ timeout: 15_000 }).then(() => true).catch(() => false)) return null
       await settleAction(this.page)
@@ -229,7 +281,7 @@ export class ComposerDetector {
 
     let probeCount = 0
     return pollPage(this.page, COMPOSER_READY_TIMEOUT_MS, async () => {
-      const handle = await this.findOpenComposer()
+      const handle = await this.findOpenComposer(true)
       if (handle) return handle
 
       probeCount += 1
@@ -606,8 +658,13 @@ export async function executePostingJob(job: PostingJobRequest): Promise<Posting
     const publishBaseline = await resultDetector.captureBaseline()
     engineDiagnostic(job, `verification baseline captured=${publishBaseline.captured} posts=${publishBaseline.postKeys.size}`)
 
-    const composer = await new ComposerDetector(page).open()
-    if (!composer) return finish(failure('composer_not_found', 'Không phát hiện được editor sẵn sàng trong modal Create post sau thời gian chờ.'))
+    const composerDetector = new ComposerDetector(page)
+    const composer = await composerDetector.open()
+    if (!composer) {
+      const diagnostics = await composerDetector.diagnostics()
+      engineDiagnostic(job, `composer detection failed ${diagnostics}`)
+      return finish(failure('composer_not_found', `Không phát hiện được editor sẵn sàng trong modal Create post sau thời gian chờ. ${diagnostics}`))
+    }
     engineDiagnostic(job, 'composer editor ready')
 
     const contentResult = await new PostComposer(page).fill(composer.textbox, job.content)
