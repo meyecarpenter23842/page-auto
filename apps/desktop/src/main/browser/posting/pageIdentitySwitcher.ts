@@ -1,6 +1,7 @@
 import type { BrowserContext, Locator, Page } from 'playwright-core'
 import type { BrowserSettings } from '../../../shared/appSettings'
 import type { PostingJobResult } from '../../../shared/posting'
+import { tryManagedPagesSwitch } from './managedPagesSwitcher'
 import { activeFacebookProfileId, detectFacebookAccessBlock } from './pageState'
 
 export type PageIdentityUidState = 'match' | 'missing' | 'other'
@@ -622,6 +623,11 @@ export class PageIdentitySwitcher {
 
   async switchTo(pageUid: string): Promise<PostingJobResult> {
     const uid = pageUid.trim()
+
+    const managedPages = await tryManagedPagesSwitch(this.page, this.context, this.browser, uid)
+    this.remember(`managed-pages:${managedPages.diagnostic}`)
+    if (managedPages.result) return managedPages.result
+
     try {
       await this.page.goto(`https://www.facebook.com/${encodeURIComponent(uid)}`, {
         waitUntil: 'domcontentloaded',
@@ -664,7 +670,7 @@ export class PageIdentitySwitcher {
 
     return failure(
       'page_identity_unconfirmed',
-      `Không chuyển được Page sau direct path và một lần Home fallback. ${await this.diagnostics(uid)}`
+      `Không chuyển được Page sau managed Pages route, direct path và một lần Home fallback. ${await this.diagnostics(uid)}`
     )
   }
 }
