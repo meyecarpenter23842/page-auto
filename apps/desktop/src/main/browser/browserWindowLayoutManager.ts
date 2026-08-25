@@ -1,7 +1,6 @@
 import { screen } from 'electron'
 import type { BrowserSettings } from '../../shared/appSettings'
 import {
-  compactBrowserSlotAssignments,
   computeBrowserWindowPlacement,
   rectangularBrowserTileGrid,
   type BrowserDisplayInfo,
@@ -9,13 +8,9 @@ import {
   type BrowserWindowPlacement
 } from '../../shared/browserWindowLayout'
 import { applyWholeChromeAutoFit } from '../../shared/browserWholeChromeScale'
+import { BrowserSlotPool, type BrowserWindowOwner } from './browserSlotPool'
 
-export type BrowserWindowOwner = 'profile' | 'posting'
-
-interface BrowserSlotEntry {
-  slotIndex: number
-  owners: Set<BrowserWindowOwner>
-}
+export type { BrowserWindowOwner } from './browserSlotPool'
 
 export interface BrowserPlacementSnapshot {
   placements: Map<number, BrowserWindowPlacement>
@@ -23,26 +18,22 @@ export interface BrowserPlacementSnapshot {
 }
 
 export class BrowserWindowLayoutManager {
-  private readonly entries = new Map<number, BrowserSlotEntry>()
+  private readonly slots = new BrowserSlotPool()
 
   claim(accountId: number, owner: BrowserWindowOwner): void {
-    const existing = this.entries.get(accountId)
-    if (existing) {
-      existing.owners.add(owner)
-      return
-    }
-
-    const used = new Set([...this.entries.values()].map((entry) => entry.slotIndex))
-    let slotIndex = 0
-    while (used.has(slotIndex)) slotIndex += 1
-    this.entries.set(accountId, { slotIndex, owners: new Set([owner]) })
+    const result = this.slots.claim(accountId, owner)
+    if (result.status === 'existing') return
+    console.info(
+      `[PAGE-AUTO slots] account=${accountId} owner=${owner} slot=${result.slotIndex} claim=${result.status}`
+    )
   }
 
   release(accountId: number, owner: BrowserWindowOwner): void {
-    const entry = this.entries.get(accountId)
-    if (!entry) return
-    entry.owners.delete(owner)
-    if (entry.owners.size === 0) this.entries.delete(accountId)
+    const result = this.slots.release(accountId, owner)
+    if (result.status === 'missing' || result.status === 'owner_missing' || result.slotIndex === null) return
+    console.info(
+      `[PAGE-AUTO slots] account=${accountId} owner=${owner} slot=${result.slotIndex} release=${result.status}`
+    )
   }
 
   listDisplays(): BrowserDisplayInfo[] {
@@ -68,10 +59,10 @@ export class BrowserWindowLayoutManager {
     layout: BrowserWindowLayoutSettings,
     browser: BrowserSettings
   ): BrowserWindowPlacement | null {
-    const entry = this.entries.get(accountId)
-    if (!entry || !layout.enabled) return null
+    const slotIndex = this.slots.slotFor(accountId)
+    if (slotIndex === null || !layout.enabled) return null
     const display = this.resolveDisplay(layout)
-    const placement = computeBrowserWindowPlacement(layout, browser, display, entry.slotIndex)
+    const placement = computeBrowserWindowPlacement(layout, browser, display, slotIndex)
     return applyWholeChromeAutoFit(layout, placement)
   }
 
@@ -82,18 +73,18 @@ export class BrowserWindowLayoutManager {
     const placements = new Map<number, BrowserWindowPlacement>()
     if (!layout.enabled) return { placements, overflowCount: 0 }
 
-    const normalized = compactBrowserSlotAssignments(
-      [...this.entries].map(([accountId, entry]) => ({ accountId, slotIndex: entry.slotIndex }))
-    )
-    for (const assignment of normalized) {
-      const entry = this.entries.get(assignment.accountId)
-      if (entry) entry.slotIndex = assignment.slotIndex
+    // snapshot() is used by the explicit operator "Sắp xếp lại Chrome" action.
+    // Normal claim/release never compacts, so unrelated active Chrome stay in place.
+    const compactedCount = this.slots.compact()
+    if (compactedCount > 0) {
+      console.info(`[PAGE-AUTO slots] retile compacted=${compactedCount} active=${this.slots.activeCount()}`)
     }
 
+    const assignments = this.slots.snapshot()
     const display = this.resolveDisplay(layout)
     const visibleCapacity = rectangularBrowserTileGrid(layout, display, browser).capacity
     let overflowCount = 0
-    for (const assignment of normalized) {
+    for (const assignment of assignments) {
       if (assignment.slotIndex >= visibleCapacity) overflowCount += 1
       const placement = computeBrowserWindowPlacement(layout, browser, display, assignment.slotIndex)
       const fittedPlacement = applyWholeChromeAutoFit(layout, placement)
@@ -103,7 +94,7 @@ export class BrowserWindowLayoutManager {
   }
 
   activeCount(): number {
-    return this.entries.size
+    return this.slots.activeCount()
   }
 
   private resolveDisplay(layout: BrowserWindowLayoutSettings): BrowserDisplayInfo {
