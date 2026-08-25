@@ -1,5 +1,6 @@
 import { chromium, type Browser, type BrowserContext } from 'playwright-core'
 import type { BrowserWindowPlacement } from '../../shared/browserWindowLayout'
+import { sameWholeChromeScale, wholeChromeScaleForLaunch } from '../../shared/browserWholeChromeScale'
 import {
   applyBrowserPlacementToContext,
   applyBrowserWindowPlacement,
@@ -14,6 +15,7 @@ let persistentContext: BrowserContext | null = null
 let persistentProxy: BrowserContext | null = null
 let attachedBrowser: Browser | null = null
 let activePlacement: BrowserWindowPlacement | null = null
+let launchedWholeChromeScale: number | null = null
 let stopResizeWatch: (() => void) | null = null
 
 function managedCdpEndpointFromArgs(argv: string[] = process.argv): string | null {
@@ -23,16 +25,22 @@ function managedCdpEndpointFromArgs(argv: string[] = process.argv): string | nul
   return endpoint || null
 }
 
-function compactLaunchArgs(args: string[] | undefined, placement: BrowserWindowPlacement): string[] {
+export function managedCompactLaunchArgs(
+  args: string[] | undefined,
+  placement: BrowserWindowPlacement
+): string[] {
+  const scale = wholeChromeScaleForLaunch(placement)
   const retained = (args ?? []).filter((arg) =>
     !arg.startsWith('--window-size=')
     && !arg.startsWith('--window-position=')
+    && !arg.startsWith('--force-device-scale-factor=')
     && arg !== '--start-minimized'
   )
   return [
     ...retained,
     `--window-size=${placement.width},${placement.height}`,
-    `--window-position=${placement.x},${placement.y}`
+    `--window-position=${placement.x},${placement.y}`,
+    ...(scale !== null ? [`--force-device-scale-factor=${scale}`] : [])
   ]
 }
 
@@ -62,7 +70,21 @@ function armResizeWatch(context: BrowserContext): void {
   }, 350, { width: placement.width, height: placement.height })
 }
 
+function scaleMatchesRunningChrome(placement: BrowserWindowPlacement | null): boolean {
+  return sameWholeChromeScale(launchedWholeChromeScale, wholeChromeScaleForLaunch(placement))
+}
+
+function logReopenRequired(placement: BrowserWindowPlacement | null): void {
+  console.info(
+    `[PAGE-AUTO compact-scale] reopen-required running=${launchedWholeChromeScale ?? 1} requested=${wholeChromeScaleForLaunch(placement) ?? 1}`
+  )
+}
+
 async function applyCurrentPlacement(context: BrowserContext): Promise<void> {
+  if (!scaleMatchesRunningChrome(activePlacement)) {
+    logReopenRequired(activePlacement)
+    return
+  }
   await runWithResizeWatcherPaused(
     stopWatchingResize,
     () => applyBrowserPlacementToContext(context, activePlacement),
@@ -70,11 +92,17 @@ async function applyCurrentPlacement(context: BrowserContext): Promise<void> {
   )
 }
 
-function rememberContext(context: BrowserContext, browser: Browser | null): BrowserContext {
+function rememberContext(
+  context: BrowserContext,
+  browser: Browser | null,
+  launchScale: number | null
+): BrowserContext {
   persistentContext = context
   persistentProxy = keepManagedBrowserOpen(context)
   attachedBrowser = browser
+  launchedWholeChromeScale = launchScale
   context.on('page', (page) => {
+    if (!scaleMatchesRunningChrome(activePlacement)) return
     void applyBrowserWindowPlacement(context, page, activePlacement).catch(() => undefined)
   })
   context.once('close', () => {
@@ -84,6 +112,7 @@ function rememberContext(context: BrowserContext, browser: Browser | null): Brow
     persistentProxy = null
     attachedBrowser = null
     activePlacement = null
+    launchedWholeChromeScale = null
   })
   return persistentProxy
 }
@@ -94,8 +123,12 @@ export function setManagedBrowserPlacement(placement: BrowserWindowPlacement | n
   activePlacement = placement
 }
 
-/** Explicit user re-tile action. This is the only operation that repositions an existing posting browser. */
+/** Explicit user re-tile action. Scale changes require closing/reopening Chrome. */
 export async function retileManagedPostingBrowser(placement: BrowserWindowPlacement | null): Promise<void> {
+  if (persistentContext && !scaleMatchesRunningChrome(placement)) {
+    logReopenRequired(placement)
+    return
+  }
   activePlacement = placement
   if (persistentContext) await applyCurrentPlacement(persistentContext)
 }
@@ -104,7 +137,7 @@ export async function retileManagedPostingBrowser(placement: BrowserWindowPlacem
  * Reuse one persistent account browser for every Group/post inside the current
  * account turn. Placement is applied once when the browser is opened/attached and
  * later only when the operator explicitly requests re-tile. A manual resize clears
- * compact emulation for that window until the next explicit re-tile.
+ * compact control for that window until the next explicit re-tile.
  */
 export function installManagedBrowserReuse(): void {
   if (installed) return
@@ -115,6 +148,7 @@ export function installManagedBrowserReuse(): void {
   const managedLaunch: typeof chromium.launchPersistentContext = async (userDataDir, options) => {
     if (persistentProxy && persistentContext) return persistentProxy
 
+    const requestedScale = wholeChromeScaleForLaunch(activePlacement)
     if (endpoint) {
       try {
         const browser = await chromium.connectOverCDP(endpoint, {
@@ -125,7 +159,7 @@ export function installManagedBrowserReuse(): void {
           await browser.close().catch(() => undefined)
           throw new Error('Chrome đang mở không có browser context mặc định.')
         }
-        const proxy = rememberContext(context, browser)
+        const proxy = rememberContext(context, browser, requestedScale)
         await applyCurrentPlacement(context)
         return proxy
       } catch {
@@ -135,10 +169,15 @@ export function installManagedBrowserReuse(): void {
     }
 
     const compactOptions = activePlacement
-      ? { ...options, args: compactLaunchArgs(options?.args, activePlacement) }
+      ? { ...options, args: managedCompactLaunchArgs(options?.args, activePlacement) }
       : options
     const context = await originalLaunchPersistentContext(userDataDir, compactOptions)
-    const proxy = rememberContext(context, null)
+    const proxy = rememberContext(context, null, requestedScale)
+    if (requestedScale !== null && activePlacement) {
+      console.info(
+        `[PAGE-AUTO compact-scale] factor=${requestedScale} logical=${activePlacement.width}x${activePlacement.height}`
+      )
+    }
     await applyCurrentPlacement(context)
     return proxy
   }
@@ -157,6 +196,7 @@ export async function closeManagedPostingBrowser(): Promise<void> {
   persistentProxy = null
   attachedBrowser = null
   activePlacement = null
+  launchedWholeChromeScale = null
 
   if (browser) {
     await browser.close().catch(() => undefined)

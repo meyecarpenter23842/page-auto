@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { chromium, type BrowserContext } from 'playwright-core'
 import type { BrowserSettings, SessionSettings } from '../../shared/appSettings'
 import type { BrowserWindowPlacement } from '../../shared/browserWindowLayout'
+import { sameWholeChromeScale, wholeChromeScaleForLaunch } from '../../shared/browserWholeChromeScale'
 import type { PostingProxyConfig } from '../../shared/posting'
 import { inspectFacebookAccountIdentity } from './facebookAccountIdentity'
 import { readFacebookDisplayName } from './facebookProfileInfo'
@@ -144,6 +145,7 @@ async function run(): Promise<void> {
   let context: BrowserContext | null = null
   let cdpEndpoint: string | null = null
   let activePlacement: BrowserWindowPlacement | null = null
+  let launchedWholeChromeScale: number | null = null
   let manualResizeDetached = false
   let stopResizeWatch: (() => void) | null = null
   let lifetimeTimer: NodeJS.Timeout | null = null
@@ -168,6 +170,16 @@ async function run(): Promise<void> {
     }, 350, { width: placement.width, height: placement.height })
   }
 
+  const scaleMatchesRunningChrome = (placement: BrowserWindowPlacement | null): boolean => {
+    return sameWholeChromeScale(launchedWholeChromeScale, wholeChromeScaleForLaunch(placement))
+  }
+
+  const logReopenRequired = (placement: BrowserWindowPlacement | null): void => {
+    console.info(
+      `[PAGE-AUTO compact-scale] reopen-required running=${launchedWholeChromeScale ?? 1} requested=${wholeChromeScaleForLaunch(placement) ?? 1}`
+    )
+  }
+
   const closeBrowserAndExit = async (): Promise<void> => {
     stopWatchingResize()
     if (lifetimeTimer) {
@@ -178,6 +190,7 @@ async function run(): Promise<void> {
     context = null
     cdpEndpoint = null
     activePlacement = null
+    launchedWholeChromeScale = null
     manualResizeDetached = false
     if (activeContext) await activeContext.close().catch(() => undefined)
     setTimeout(() => process.exit(0), 25)
@@ -187,12 +200,16 @@ async function run(): Promise<void> {
     if (context) {
       const activeContext = context
       if (!manualResizeDetached) {
-        activePlacement = command.placement
-        await runWithResizeWatcherPaused(
-          stopWatchingResize,
-          () => applyBrowserPlacementToContext(activeContext, activePlacement),
-          armResizeWatch
-        )
+        if (scaleMatchesRunningChrome(command.placement)) {
+          activePlacement = command.placement
+          await runWithResizeWatcherPaused(
+            stopWatchingResize,
+            () => applyBrowserPlacementToContext(activeContext, activePlacement),
+            armResizeWatch
+          )
+        } else {
+          logReopenRequired(command.placement)
+        }
       }
       if (!cdpEndpoint) cdpEndpoint = await resolveCdpEndpoint(profileDirectory)
       return activeContext
@@ -200,6 +217,7 @@ async function run(): Promise<void> {
 
     manualResizeDetached = false
     activePlacement = command.placement
+    launchedWholeChromeScale = wholeChromeScaleForLaunch(activePlacement)
     await waitForBrowserStartupDelay(command.browser)
     const launchShape = buildBrowserLaunchOptions(command.browser, activePlacement)
     await rm(join(profileDirectory, 'DevToolsActivePort'), { force: true }).catch(() => undefined)
@@ -207,11 +225,19 @@ async function run(): Promise<void> {
       ...launchShape,
       args: [
         ...launchShape.args,
+        ...(launchedWholeChromeScale !== null
+          ? [`--force-device-scale-factor=${launchedWholeChromeScale}`]
+          : []),
         '--remote-debugging-address=127.0.0.1',
         '--remote-debugging-port=0'
       ],
       viewport: null,
       ...(command.launch?.userAgent ? { userAgent: command.launch.userAgent } : {})
+    }
+    if (launchedWholeChromeScale !== null && activePlacement) {
+      console.info(
+        `[PAGE-AUTO compact-scale] factor=${launchedWholeChromeScale} logical=${activePlacement.width}x${activePlacement.height} viewport=${activePlacement.viewportWidth}x${activePlacement.viewportHeight}`
+      )
     }
     if (command.launch?.proxy) {
       launchOptions.proxy = {
@@ -244,6 +270,7 @@ async function run(): Promise<void> {
       context = null
       cdpEndpoint = null
       activePlacement = null
+      launchedWholeChromeScale = null
       manualResizeDetached = false
       if (lifetimeTimer) {
         clearTimeout(lifetimeTimer)
@@ -271,8 +298,12 @@ async function run(): Promise<void> {
       const placement = retile.placement
       queue = queue.then(async () => {
         manualResizeDetached = false
-        activePlacement = placement
         const activeContext = context
+        if (activeContext && !scaleMatchesRunningChrome(placement)) {
+          logReopenRequired(placement)
+          return
+        }
+        activePlacement = placement
         if (activeContext) {
           await runWithResizeWatcherPaused(
             stopWatchingResize,
