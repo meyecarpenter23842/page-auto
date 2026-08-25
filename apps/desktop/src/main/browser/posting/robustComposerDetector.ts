@@ -11,7 +11,7 @@ const POLL_MS = 250
 const INITIAL_OBSERVE_MS = 1_500
 const OPEN_TIMEOUT_MS = 18_000
 const ACTION_SETTLE_MS = 850
-const MAX_ANCESTOR_DEPTH = 14
+const MAX_ANCESTOR_DEPTH = 48
 
 export interface RobustComposerHandle {
   container: Locator
@@ -83,7 +83,7 @@ async function textboxLabelMatches(textbox: Locator): Promise<boolean> {
 export class RobustComposerDetector {
   constructor(private readonly page: Page) {}
 
-  private triggerCandidates(): Locator[] {
+  private strongTriggerCandidates(): Locator[] {
     return [
       this.page.getByRole('button', { name: COMPOSER_TRIGGER_PATTERN }),
       this.page.locator('[role="button"]').filter({ hasText: COMPOSER_TRIGGER_PATTERN }),
@@ -95,6 +95,13 @@ export class RobustComposerDetector {
         '[role="button"][aria-label*="bạn viết" i]',
         '[role="button"][aria-label*="viết gì" i]'
       ].join(', ')),
+      this.page.getByRole('textbox', { name: COMPOSER_TRIGGER_PATTERN })
+    ]
+  }
+
+  private triggerCandidates(): Locator[] {
+    return [
+      ...this.strongTriggerCandidates(),
       this.page.getByText(COMPOSER_TRIGGER_PATTERN)
     ]
   }
@@ -105,8 +112,9 @@ export class RobustComposerDetector {
       container.getByText(COMPOSER_TITLE_PATTERN)
     ]))
     const triggerVisible = Boolean(await firstVisibleMatch([
-      container.getByText(COMPOSER_TRIGGER_PATTERN),
-      container.locator('[aria-label]').filter({ hasText: COMPOSER_TRIGGER_PATTERN })
+      container.getByRole('button', { name: COMPOSER_TRIGGER_PATTERN }),
+      container.getByRole('textbox', { name: COMPOSER_TRIGGER_PATTERN }),
+      container.getByText(COMPOSER_TRIGGER_PATTERN)
     ]))
     const publishVisible = Boolean(await firstVisibleMatch([
       container.getByRole('button', { name: PUBLISH_PATTERN })
@@ -220,12 +228,17 @@ export class RobustComposerDetector {
     const existing = await this.waitForHandle(INITIAL_OBSERVE_MS)
     if (existing) return existing
 
-    if (!await this.hasOpenComposerFootprint()) {
-      const trigger = await firstVisibleMatch(this.triggerCandidates())
-      if (!trigger) return null
+    // Keep the local OFF fix: always click a real composer entry control when
+    // Facebook exposes one. Avoid generic text clicks because compact layouts can
+    // render duplicate prompt text in unrelated regions and cause viewport jumps.
+    const trigger = await firstVisibleMatch(this.strongTriggerCandidates())
+    if (trigger) {
+      await trigger.scrollIntoViewIfNeeded({ timeout: 4_000 }).catch(() => undefined)
       const clicked = await trigger.click({ timeout: 15_000 }).then(() => true).catch(() => false)
       if (!clicked) return null
       await this.page.waitForTimeout(ACTION_SETTLE_MS).catch(() => undefined)
+    } else if (!await this.hasOpenComposerFootprint()) {
+      return null
     }
 
     return this.waitForHandle(OPEN_TIMEOUT_MS)

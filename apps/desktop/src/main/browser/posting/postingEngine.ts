@@ -314,7 +314,12 @@ export class PostComposer {
         return { status: 'success', message: 'Đã điền và xác nhận nội dung trong composer.' }
       }
 
+      // Keyboard fallback: scroll textbox into view first so compact-scaled
+      // viewports don't clip it, then wait briefly for focus to settle before
+      // typing – otherwise insertText lands on a backgrounded element.
+      await textbox.scrollIntoViewIfNeeded({ timeout: 5_000 }).catch(() => undefined)
       await textbox.click({ timeout: 10_000 })
+      await this.page.waitForTimeout(300)
       await this.page.keyboard.press('Control+A').catch(() => undefined)
       await this.page.keyboard.press('Backspace').catch(() => undefined)
       await this.page.keyboard.insertText(normalized)
