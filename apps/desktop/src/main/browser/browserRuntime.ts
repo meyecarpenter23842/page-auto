@@ -231,6 +231,15 @@ export async function applyBrowserContextSettings(
   }
 }
 
+/**
+ * Compact mode only controls the native Chrome window bounds.
+ *
+ * Older builds also used Emulation.setDeviceMetricsOverride to keep a desktop-width
+ * logical viewport and visually scale it into the compact tile. That makes Compact ON
+ * use a different layout/hit-test model from Compact OFF and has proven unsafe for
+ * Facebook's live composer. Always clear stale emulation and let Chrome/Facebook reflow
+ * natively at the real compact window size.
+ */
 export async function applyBrowserWindowPlacement(
   context: BrowserContext,
   page: Page,
@@ -239,8 +248,9 @@ export async function applyBrowserWindowPlacement(
   const session = await compactSessionFor(context, page)
   const targetWindow = await session.send('Browser.getWindowForTarget').catch(() => null) as { windowId?: number } | null
 
+  await session.send('Emulation.clearDeviceMetricsOverride').catch(() => undefined)
+
   if (!placement) {
-    await session.send('Emulation.clearDeviceMetricsOverride').catch(() => undefined)
     if (targetWindow?.windowId !== undefined) {
       await session.send('Browser.setWindowBounds', {
         windowId: targetWindow.windowId,
@@ -250,8 +260,6 @@ export async function applyBrowserWindowPlacement(
     await releaseCompactSession(page, session)
     return
   }
-
-  await session.send('Emulation.clearDeviceMetricsOverride').catch(() => undefined)
 
   if (targetWindow?.windowId !== undefined) {
     await session.send('Browser.setWindowBounds', {
@@ -265,18 +273,6 @@ export async function applyBrowserWindowPlacement(
       }
     }).catch(() => undefined)
   }
-
-  await page.waitForTimeout(60).catch(() => undefined)
-  const inner = await page.evaluate(() => ({
-    width: window.innerWidth,
-    height: window.innerHeight
-  })).catch(() => ({ width: placement.width, height: placement.height }))
-  const fit = fitCompactViewportToInnerArea(placement, inner.width, inner.height)
-
-  await session.send(
-    'Emulation.setDeviceMetricsOverride',
-    compactDeviceMetrics(placement, fit.scale, fit.width, fit.height)
-  )
 }
 
 export async function applyBrowserPlacementToContext(

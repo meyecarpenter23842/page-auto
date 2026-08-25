@@ -3,6 +3,8 @@ import {
   classifyPageIdentityUid,
   formatPageIdentityDiagnostics,
   isAccountMenuAccessibleName,
+  isDirectSwitchAccessibleName,
+  pageIdentityActionRequiresSurfaceVerification,
   resolvePageIdentityAction,
   safePageIdentityUrl,
   shouldRetryPageIdentityAfterControlFailure,
@@ -39,6 +41,14 @@ describe('Page identity state machine', () => {
     expect(resolvePageIdentityAction(evidence({ seeAllProfilesCount: 1 }))).toBe('click_see_all_profiles')
   })
 
+  it('keeps Switch to this Page in the supported direct-switch names', () => {
+    expect(isDirectSwitchAccessibleName('Switch now')).toBe(true)
+    expect(isDirectSwitchAccessibleName('Switch into this Page')).toBe(true)
+    expect(isDirectSwitchAccessibleName('Switch to this Page')).toBe(true)
+    expect(isDirectSwitchAccessibleName('Chuyển sang trang này')).toBe(true)
+    expect(isDirectSwitchAccessibleName('Accounts Center')).toBe(false)
+  })
+
   it('retries a control-less Page surface or empty first account menu through Facebook home exactly once', () => {
     const emptySurface = evidence()
     const emptyAccountMenu = evidence({ stage: 'account_menu' })
@@ -54,6 +64,13 @@ describe('Page identity state machine', () => {
     expect(shouldRetryPageIdentityAfterControlFailure('open_account_menu', 'page_surface', false)).toBe(true)
     expect(shouldRetryPageIdentityAfterControlFailure('open_account_menu', 'page_surface', true)).toBe(false)
     expect(shouldRetryPageIdentityAfterControlFailure('select_target_name', 'account_menu', false)).toBe(false)
+  })
+
+  it('requires verified post-conditions before advancing menu surfaces', () => {
+    expect(pageIdentityActionRequiresSurfaceVerification('open_account_menu')).toBe(true)
+    expect(pageIdentityActionRequiresSurfaceVerification('click_see_all_profiles')).toBe(true)
+    expect(pageIdentityActionRequiresSurfaceVerification('select_target_uid')).toBe(false)
+    expect(pageIdentityActionRequiresSurfaceVerification('click_direct_switch')).toBe(false)
   })
 
   it('prefers UID, then See all profiles, then exact Page name in the account menu', () => {
@@ -87,9 +104,11 @@ describe('Page identity state machine', () => {
     expect(targetIdentityScope('all_profiles')).toBe('verified-all-profiles-surface')
   })
 
-  it('does not classify generic account-related controls as the account-menu control', () => {
+  it('accepts real profile-menu accessible-name suffixes without matching generic account settings', () => {
     expect(isAccountMenuAccessibleName('Account')).toBe(true)
     expect(isAccountMenuAccessibleName('Your profile')).toBe(true)
+    expect(isAccountMenuAccessibleName('Your profile, 2 notifications')).toBe(true)
+    expect(isAccountMenuAccessibleName('Account menu, 1 notification')).toBe(true)
     expect(isAccountMenuAccessibleName('Account settings')).toBe(false)
     expect(isAccountMenuAccessibleName('Accounts Center')).toBe(false)
   })
@@ -115,14 +134,14 @@ describe('Page identity diagnostics', () => {
       directAttempted: true,
       homeFallbackAttempted: true,
       targetNameAvailable: true,
-      candidateAttempts: ['open_account_menu:account-semantic-button[0]:click-failed'],
+      candidateAttempts: ['open_account_menu:account-semantic-button[0]:no-postcondition'],
       url: 'https://www.facebook.com/profile.php?id=90001&token=secret#x'
     })
 
     expect(message).toContain('i_user=other')
     expect(message).toContain('controls{direct=1,account=1,seeAll=1,uid=0,name=2}')
     expect(message).toContain('homeFallback=yes')
-    expect(message).toContain('attempts=open_account_menu:account-semantic-button[0]:click-failed')
+    expect(message).toContain('attempts=open_account_menu:account-semantic-button[0]:no-postcondition')
     expect(message).toContain('https://www.facebook.com/profile.php')
     expect(message).not.toContain('token=secret')
   })

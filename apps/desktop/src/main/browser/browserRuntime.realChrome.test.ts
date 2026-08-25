@@ -49,7 +49,7 @@ const sixthPlacement = computeBrowserWindowPlacement(
 if (!firstPlacement || !fifthPlacement || !sixthPlacement) throw new Error('Expected six real compact placements for CI.')
 
 realChromeDescribe('browserRuntime real Chrome on Windows', () => {
-  it('keeps the sixth Chrome square, removes warning switches, and preserves webdriver state', async () => {
+  it('tiles the sixth Chrome natively without a synthetic desktop viewport', async () => {
     const profileDirectory = await mkdtemp(join(tmpdir(), 'page-auto-compact-chrome-'))
     let context: BrowserContext | null = null
     let controlSession: CDPSession | null = null
@@ -99,8 +99,11 @@ realChromeDescribe('browserRuntime real Chrome on Windows', () => {
         width: window.innerWidth,
         height: window.innerHeight
       }))
-      expect(compactViewport.width).toBe(sixthPlacement.viewportWidth)
-      expect(compactViewport.height).toBeGreaterThan(600)
+      expect(compactViewport.width).toBeGreaterThan(300)
+      expect(compactViewport.width).toBeLessThanOrEqual(sixthPlacement.width)
+      expect(compactViewport.height).toBeGreaterThan(250)
+      expect(compactViewport.height).toBeLessThanOrEqual(sixthPlacement.height)
+      expect(compactViewport.width).not.toBe(sixthPlacement.viewportWidth)
 
       let detached = false
       stopResizeWatch = watchForManualBrowserResize(
