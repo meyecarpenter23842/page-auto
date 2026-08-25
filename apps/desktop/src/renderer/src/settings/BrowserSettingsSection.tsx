@@ -17,6 +17,12 @@ import './settingsSections.css'
 interface BrowserSettingsSectionProps { appInfo: AppInfo | null }
 type BusyState = 'save' | 'detect' | 'pick' | 'test' | 'retile' | null
 
+const COMPACT_SIZE_PRESETS = [
+  { label: 'Nhỏ', sidePx: 500 },
+  { label: 'Vừa', sidePx: 600 },
+  { label: 'Lớn', sidePx: 800 }
+] as const
+
 function copyBrowser(settings: BrowserSettings): BrowserSettings { return { ...settings } }
 function copyLayout(settings: BrowserWindowLayoutSettings): BrowserWindowLayoutSettings { return { ...settings } }
 function errorText(caught: unknown): string { return caught instanceof Error ? caught.message : String(caught) }
@@ -149,7 +155,8 @@ export function BrowserSettingsSection({ appInfo }: BrowserSettingsSectionProps)
 
         <label className="toggle-card span-3"><div><strong>Compact / xếp nhiều Chrome</strong><small>Chọn kích thước ô vuông. App tự xếp số cột × hàng theo working area thật của màn hình; không ép lưới N×N.</small></div><input type="checkbox" checked={layout.enabled} onChange={(event) => { updateLayout('enabled', event.target.checked); if (event.target.checked) update('mode', 'visible') }} /></label>
         {layout.enabled && <>
-          <label className="number-field"><span>Kích thước Chrome</span><div><input type="number" min={CHROME_MIN_COMPACT_OUTER_SIDE_PX} max={MAX_COMPACT_OUTER_SIDE_PX} step="50" value={tileSidePx} onChange={(event) => updateTileSide(Number(event.target.value) || DEFAULT_COMPACT_OUTER_SIDE_PX)} /><em>px</em></div></label>
+          <div className="field span-2"><span>Mức kích thước Chrome</span><div className="path-input-row">{COMPACT_SIZE_PRESETS.map((preset) => <button key={preset.sidePx} type="button" className={`settings-button ${tileSidePx === preset.sidePx ? 'primary' : ''}`} onClick={() => updateTileSide(preset.sidePx)}>{preset.label} · {preset.sidePx}px</button>)}</div></div>
+          <label className="number-field"><span>Tùy chỉnh kích thước</span><div><input type="number" min={CHROME_MIN_COMPACT_OUTER_SIDE_PX} max={MAX_COMPACT_OUTER_SIDE_PX} step="50" value={tileSidePx} onChange={(event) => updateTileSide(Number(event.target.value) || DEFAULT_COMPACT_OUTER_SIDE_PX)} /><em>px</em></div></label>
           <div className="field"><span>Bố cục thực tế</span><div className="test-result ok">{grid ? `${grid.columns} cột × ${grid.rows} hàng` : 'Theo màn hình đích'}</div></div>
           <div className="field"><span>Sức chứa/lớp</span><div className="test-result ok">{grid ? `${grid.capacity} Chrome` : 'Tự tính khi mở'}</div></div>
           <label className="field span-2"><span>Màn hình đích</span><select value={layout.targetDisplayId ?? ''} onChange={(event) => updateLayout('targetDisplayId', event.target.value ? Number(event.target.value) : null)}><option value="">Màn hình tại vị trí chuột</option>{displays.map((display) => <option key={display.id} value={display.id}>{display.label}{display.isPrimary ? ' · Chính' : ''}</option>)}</select></label>

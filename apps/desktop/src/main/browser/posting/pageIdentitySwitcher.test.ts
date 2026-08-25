@@ -4,6 +4,7 @@ import {
   formatPageIdentityDiagnostics,
   resolvePageIdentityAction,
   safePageIdentityUrl,
+  shouldRetryPageIdentityFromHome,
   type PageIdentityEvidence
 } from './pageIdentitySwitcher'
 
@@ -35,6 +36,14 @@ describe('Page identity state machine', () => {
     expect(resolvePageIdentityAction(evidence({ seeAllProfilesCount: 1 }))).toBe('click_see_all_profiles')
   })
 
+  it('retries a control-less Page surface through Facebook home exactly once', () => {
+    const emptySurface = evidence()
+    expect(shouldRetryPageIdentityFromHome(emptySurface, false)).toBe(true)
+    expect(shouldRetryPageIdentityFromHome(emptySurface, true)).toBe(false)
+    expect(shouldRetryPageIdentityFromHome(evidence({ stage: 'account_menu' }), false)).toBe(false)
+    expect(shouldRetryPageIdentityFromHome(evidence({ uidState: 'match' }), false)).toBe(false)
+  })
+
   it('prefers UID evidence inside the chooser and only uses Page name on the all-profiles surface', () => {
     expect(resolvePageIdentityAction(evidence({
       stage: 'account_menu',
@@ -53,7 +62,7 @@ describe('Page identity state machine', () => {
     }))).toBe('select_target_name')
   })
 
-  it('fails deterministically when a stage has no supported control', () => {
+  it('fails deterministically when a stage has no supported control after fallback is exhausted', () => {
     expect(resolvePageIdentityAction(evidence())).toBe('fail')
     expect(resolvePageIdentityAction(evidence({ stage: 'account_menu' }))).toBe('fail')
     expect(resolvePageIdentityAction(evidence({ stage: 'all_profiles' }))).toBe('fail')
@@ -72,12 +81,14 @@ describe('Page identity diagnostics', () => {
       targetUidCount: 0,
       targetNameCount: 2,
       directAttempted: true,
+      homeFallbackAttempted: true,
       targetNameAvailable: true,
       url: 'https://www.facebook.com/profile.php?id=90001&token=secret#x'
     })
 
     expect(message).toContain('i_user=other')
     expect(message).toContain('controls{direct=1,account=1,seeAll=1,uid=0,name=2}')
+    expect(message).toContain('homeFallback=yes')
     expect(message).toContain('https://www.facebook.com/profile.php')
     expect(message).not.toContain('token=secret')
   })
