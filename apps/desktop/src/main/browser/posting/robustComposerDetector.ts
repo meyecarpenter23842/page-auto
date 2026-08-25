@@ -221,6 +221,10 @@ export class RobustComposerDetector {
     if (existing) return existing
 
     if (!await this.hasOpenComposerFootprint()) {
+      // Compact mode scales the viewport down, which can push the composer
+      // trigger button below the visible area. Scroll to the top first so
+      // isVisible() reliably detects it before we give up.
+      await this.page.evaluate(() => window.scrollTo(0, 0)).catch(() => undefined)
       const trigger = await firstVisibleMatch(this.triggerCandidates())
       if (!trigger) return null
       const clicked = await trigger.click({ timeout: 15_000 }).then(() => true).catch(() => false)
