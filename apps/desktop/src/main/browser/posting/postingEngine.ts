@@ -1,5 +1,5 @@
 import { chromium, type BrowserContext, type Locator, type Page } from 'playwright-core'
-import type { BrowserSettings } from '../../../shared/appSettings'
+import { randomBrowserActionDelayMs, type BrowserSettings } from '../../../shared/appSettings'
 import type { PostingJobRequest, PostingJobResult } from '../../../shared/posting'
 import { inspectFacebookAccountIdentity } from '../facebookAccountIdentity'
 import { readFacebookDisplayName } from '../facebookProfileInfo'
@@ -80,6 +80,18 @@ function engineDiagnostic(job: PostingJobRequest, message: string): void {
   console.info(
     `[PAGE-AUTO posting-engine] run=${job.runId} item=${job.itemId} account=${job.accountId} group=${job.groupUid} ${message}`
   )
+}
+
+async function waitActionPacing(
+  page: Page,
+  browser: BrowserSettings,
+  job: PostingJobRequest,
+  boundary: string
+): Promise<void> {
+  const delayMs = randomBrowserActionDelayMs(browser)
+  if (delayMs <= 0) return
+  engineDiagnostic(job, `pacing=${boundary} delayMs=${delayMs}`)
+  await page.waitForTimeout(delayMs)
 }
 
 async function firstVisibleMatch(candidates: Locator[]): Promise<Locator | null> {
@@ -569,12 +581,16 @@ export async function executePostingJob(job: PostingJobRequest): Promise<Posting
       accountName = await readFacebookDisplayName(page).catch(() => null)
     }
 
+    await waitActionPacing(page, runtimeBrowser, job, 'login-to-page')
     const identity = await new PageIdentitySwitcher(page, context, runtimeBrowser).switchTo(job.pageUid)
     if (identity.status !== 'success') return finish(identity)
+
+    await waitActionPacing(page, runtimeBrowser, job, 'page-to-group')
     const navigation = await new GroupNavigator(page, runtimeBrowser).open(job.groupUid)
     if (navigation.status !== 'success') return finish(navigation)
     engineDiagnostic(job, 'state=group_surface ready')
 
+    await waitActionPacing(page, runtimeBrowser, job, 'group-to-composer')
     engineDiagnostic(job, `material ready contentLength=${job.content.trim().length} imageCount=${job.imagePaths.length}`)
     const resultDetector = new PublishResultDetector(page, runtimeBrowser, job.groupUid)
     const publishBaseline = await resultDetector.captureBaseline()
@@ -599,6 +615,7 @@ export async function executePostingJob(job: PostingJobRequest): Promise<Posting
     engineDiagnostic(job, `state=media_ready count=${job.imagePaths.length}`)
     engineDiagnostic(job, `publish candidates after media ${await composerDetector.publishDiagnostics()}`)
 
+    await waitActionPacing(page, runtimeBrowser, job, 'media-to-publish')
     const publishResult = await new PublishAction(page, composerDetector).click(composer.container)
     if (publishResult.status !== 'success') return finish(publishResult)
     engineDiagnostic(job, 'state=publish_click sent; verifying my_posted_content')
