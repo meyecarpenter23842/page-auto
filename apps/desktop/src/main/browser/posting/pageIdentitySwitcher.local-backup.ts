@@ -200,25 +200,18 @@ export class PageIdentitySwitcher {
     return this.page.locator('[role="menu"]:visible, [role="dialog"]:visible, [aria-modal="true"]:visible')
   }
 
-  private targetUidCandidates(pageUid: string, stage: PageIdentityStage): Locator[] {
-    const uid = escapeCssAttribute(pageUid.trim())
+  private targetUidCandidates(pageUid: string): Locator[] {
     if (!uid) return []
     const dataSelector = `[data-profileid="${uid}"], [data-profile-id="${uid}"], [data-pageid="${uid}"], [data-page-id="${uid}"]`
     const overlays = this.chooserOverlays()
-    const scoped = [
-      overlays.locator(`a[href*="${uid}"]`),
-      overlays.locator(dataSelector)
-    ]
-    if (stage === 'account_menu') return scoped
-    return [
-      ...scoped,
+    // Always search both in overlay menus/dialogs AND page-wide. Facebook's
+    // account switcher menu may not use role="menu" or role="dialog", so the
       this.page.locator(`a[href*="${uid}"]`),
       this.page.locator(dataSelector)
     ]
   }
 
   private targetNameCandidates(targetName: string | null): Locator[] {
-    const normalized = targetName?.trim()
     if (!normalized) return []
     const exact = new RegExp(`^${escapeRegex(normalized)}$`, 'i')
     const overlays = this.chooserOverlays()
@@ -289,7 +282,7 @@ export class PageIdentitySwitcher {
       directSwitchCount: await visibleCountAcross(this.directSwitchCandidates()),
       accountMenuCount: await visibleCountAcross(this.accountMenuCandidates()),
       seeAllProfilesCount: await visibleCountAcross(this.seeAllProfilesCandidates()),
-      targetUidCount: stage === 'page_surface' ? 0 : await visibleCountAcross(this.targetUidCandidates(pageUid, stage)),
+      targetUidCount: stage === 'page_surface' ? 0 : await visibleCountAcross(this.targetUidCandidates(pageUid)),
       targetNameCount: stage === 'all_profiles' ? await visibleCountAcross(this.targetNameCandidates(targetName)) : 0,
       directAttempted
     }
@@ -297,7 +290,6 @@ export class PageIdentitySwitcher {
     return evidence
   }
 
-  private diagnosticMessage(
     stage: PageIdentityStage,
     pageUid: string,
     targetName: string | null,
@@ -363,6 +355,11 @@ export class PageIdentitySwitcher {
       if (blocked === 'login_required') return failure('needs_login', 'Facebook yêu cầu đăng nhập lại trong lúc chuyển Page.')
       if (blocked === 'verification_required') return failure('verification_required', 'Facebook yêu cầu checkpoint/xác minh thủ công trong lúc chuyển Page.')
 
+      // Compact mode scales the viewport, pushing the page header (where the
+      // "Switch now" button and account menu live) off-screen. Scroll to top
+      // before collecting evidence so isVisible() returns true for those controls.
+      await this.page.evaluate(() => window.scrollTo(0, 0)).catch(() => undefined)
+
       const evidence = await this.collectEvidence(stage, normalizedUid, targetName, directAttempted)
       const action = resolvePageIdentityAction(evidence)
       if (action === 'success') {
@@ -389,7 +386,7 @@ export class PageIdentitySwitcher {
       } else if (action === 'click_see_all_profiles') {
         control = await firstVisibleMatch(this.seeAllProfilesCandidates())
       } else if (action === 'select_target_uid') {
-        control = await firstVisibleMatch(this.targetUidCandidates(normalizedUid, stage))
+        control = await firstVisibleMatch(this.targetUidCandidates(normalizedUid))
       } else if (action === 'select_target_name') {
         control = await firstVisibleMatch(this.targetNameCandidates(targetName))
       }
@@ -398,7 +395,6 @@ export class PageIdentitySwitcher {
         const diagnostics = await this.diagnosticMessage(stage, normalizedUid, targetName, directAttempted, homeFallbackAttempted)
         return failure('page_identity_unconfirmed', `Control chuyển Page vừa biến mất trước khi thao tác. ${diagnostics}`)
       }
-
       const clicked = await control.click({ timeout: Math.min(this.browser.navigationTimeoutMs, 15_000) })
         .then(() => true)
         .catch(() => false)
