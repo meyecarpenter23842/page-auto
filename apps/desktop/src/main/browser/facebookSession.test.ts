@@ -3,6 +3,7 @@ import type { BrowserContext, Locator, Page } from 'playwright-core'
 import {
   bootstrapFacebookSession,
   canUseStoredFacebookCookies,
+  classifyFacebookSessionGate,
   facebookUserIdMatchesExpected,
   generateTotp,
   parseFacebookCookies,
@@ -57,8 +58,48 @@ describe('generateTotp', () => {
   })
 })
 
+describe('saved-profile session gates', () => {
+  it('does not treat /login/ URL alone as a credential form', () => {
+    expect(classifyFacebookSessionGate({
+      url: 'https://www.facebook.com/login/',
+      hasUserCookie: false,
+      loginFormVisible: false,
+      twoFactorVisible: false,
+      manualVerificationTextVisible: false
+    })).toBe('unknown')
+  })
+
+  it('classifies saved-profile Continue and password-only as explicit states', () => {
+    expect(classifyFacebookSessionGate({
+      url: 'https://www.facebook.com/login/',
+      hasUserCookie: false,
+      loginFormVisible: false,
+      savedProfileVisible: true,
+      twoFactorVisible: false,
+      manualVerificationTextVisible: false
+    })).toBe('saved_profile')
+
+    expect(classifyFacebookSessionGate({
+      url: 'https://www.facebook.com/login/',
+      hasUserCookie: false,
+      loginFormVisible: false,
+      savedProfileVisible: true,
+      passwordOnlyVisible: true,
+      twoFactorVisible: false,
+      manualVerificationTextVisible: false
+    })).toBe('password_only')
+  })
+})
+
 type LoginOutcome = 'success' | 'two_factor' | 'mismatch'
-type FakeMode = 'home' | 'login' | 'two_factor' | 'valid'
+type EntryMode = 'login' | 'saved_profile'
+type FakeMode = 'home' | 'login' | 'saved_profile' | 'password_only' | 'two_factor' | 'valid'
+
+interface FakeFacebookOptions {
+  entryMode?: EntryMode
+  savedProfileRequiresPassword?: boolean
+  initialCUser?: string | null
+}
 
 class FakeLocator {
   constructor(
@@ -76,17 +117,37 @@ class FakeLocator {
   async press(key: string): Promise<void> { this.onPress(key) }
 }
 
-function fakeFacebook(outcome: LoginOutcome, expectedUid = '123'): {
+function accessibleNameMatches(expected: unknown, actual: string): boolean {
+  if (expected instanceof RegExp) {
+    expected.lastIndex = 0
+    return expected.test(actual)
+  }
+  return typeof expected === 'string' && expected === actual
+}
+
+function fakeFacebook(outcome: LoginOutcome, expectedUid = '123', options: FakeFacebookOptions = {}): {
   context: BrowserContext
   page: Page
   visits: string[]
-  submitted: { identifier: string; password: string; twoFactor: string }
+  submitted: {
+    identifier: string
+    password: string
+    twoFactor: string
+    savedProfileContinue: number
+    useAnotherProfile: number
+  }
 } {
   let mode: FakeMode = 'home'
   let currentUrl = 'about:blank'
-  let cUser: string | null = null
+  let cUser: string | null = options.initialCUser ?? null
   const visits: string[] = []
-  const submitted = { identifier: '', password: '', twoFactor: '' }
+  const submitted = {
+    identifier: '',
+    password: '',
+    twoFactor: '',
+    savedProfileContinue: 0,
+    useAnotherProfile: 0
+  }
 
   const finishLogin = (): void => {
     if (outcome === 'two_factor') {
@@ -105,13 +166,29 @@ function fakeFacebook(outcome: LoginOutcome, expectedUid = '123'): {
     currentUrl = 'https://www.facebook.com/'
   }
 
+  const continueSavedProfile = (): void => {
+    submitted.savedProfileContinue += 1
+    if (options.savedProfileRequiresPassword) {
+      mode = 'password_only'
+      currentUrl = 'https://www.facebook.com/login/device-based/validate-password/'
+      return
+    }
+    finishLogin()
+  }
+
+  const useAnotherProfile = (): void => {
+    submitted.useAnotherProfile += 1
+    mode = 'login'
+    currentUrl = 'https://www.facebook.com/login/'
+  }
+
   const locator = (selector: string): Locator => {
     if (selector.includes('input[name="email"]') || selector === '#email') {
       return new FakeLocator(() => mode === 'login', (value) => { submitted.identifier = value }) as unknown as Locator
     }
     if (selector.includes('input[name="pass"]') || selector === '#pass') {
       return new FakeLocator(
-        () => mode === 'login',
+        () => mode === 'login' || mode === 'password_only',
         (value) => { submitted.password = value },
         () => undefined,
         (key) => { if (key === 'Enter') finishLogin() }
@@ -124,7 +201,43 @@ function fakeFacebook(outcome: LoginOutcome, expectedUid = '123'): {
       return new FakeLocator(() => mode === 'login', () => undefined, finishLogin) as unknown as Locator
     }
     if (selector.includes('button[type="submit"]') || selector.includes('input[type="submit"]')) {
-      return new FakeLocator(() => mode === 'two_factor', () => undefined, finishTwoFactor) as unknown as Locator
+      return new FakeLocator(
+        () => mode === 'two_factor' || mode === 'password_only',
+        () => undefined,
+        () => { if (mode === 'two_factor') finishTwoFactor(); else finishLogin() }
+      ) as unknown as Locator
+    }
+    return new FakeLocator(() => false) as unknown as Locator
+  }
+
+  const roleLocator = (role: string, roleOptions?: { name?: string | RegExp }): Locator => {
+    const name = roleOptions?.name
+    if (role === 'button' && accessibleNameMatches(name, 'Continue')) {
+      return new FakeLocator(
+        () => mode === 'saved_profile' || mode === 'password_only' || mode === 'two_factor',
+        () => undefined,
+        () => {
+          if (mode === 'saved_profile') continueSavedProfile()
+          else if (mode === 'password_only') finishLogin()
+          else if (mode === 'two_factor') finishTwoFactor()
+        }
+      ) as unknown as Locator
+    }
+    if (role === 'button' && accessibleNameMatches(name, 'Use another profile')) {
+      return new FakeLocator(() => mode === 'saved_profile', () => undefined, useAnotherProfile) as unknown as Locator
+    }
+    if (role === 'button' && accessibleNameMatches(name, 'Log in')) {
+      return new FakeLocator(() => mode === 'login', () => undefined, finishLogin) as unknown as Locator
+    }
+    return new FakeLocator(() => false) as unknown as Locator
+  }
+
+  const textLocator = (text: string | RegExp): Locator => {
+    if (accessibleNameMatches(text, 'Use another profile')) {
+      return new FakeLocator(() => mode === 'saved_profile', () => undefined, useAnotherProfile) as unknown as Locator
+    }
+    if (accessibleNameMatches(text, 'Continue')) {
+      return new FakeLocator(() => mode === 'saved_profile', () => undefined, continueSavedProfile) as unknown as Locator
     }
     return new FakeLocator(() => false) as unknown as Locator
   }
@@ -134,14 +247,15 @@ function fakeFacebook(outcome: LoginOutcome, expectedUid = '123'): {
     goto: async (url: string) => {
       visits.push(url)
       currentUrl = url
-      mode = url.includes('/login/') ? 'login' : 'home'
+      if (url.includes('/login/')) mode = options.entryMode ?? 'login'
+      else mode = 'home'
       return null
     },
     waitForTimeout: async () => undefined,
     waitForLoadState: async () => undefined,
     locator,
-    getByText: () => new FakeLocator(() => false),
-    getByRole: () => new FakeLocator(() => false)
+    getByText: (text: string | RegExp) => textLocator(text),
+    getByRole: (role: string, roleOptions?: { name?: string | RegExp }) => roleLocator(role, roleOptions)
   } as unknown as Page
 
   const context = {
@@ -166,6 +280,35 @@ const account: FacebookSessionAccount = {
   twoFactorSecret: null
 }
 
+describe('bootstrapFacebookSession recovery priority', () => {
+  it('prefers a matching stored cookie before opening interactive login', async () => {
+    const fake = fakeFacebook('success', '123', { entryMode: 'saved_profile' })
+    const result = await bootstrapFacebookSession(fake.context, fake.page, {
+      ...account,
+      cookie: 'c_user=123; xs=saved-cookie'
+    })
+
+    expect(fake.visits).toEqual(['https://www.facebook.com/'])
+    expect(fake.submitted.savedProfileContinue).toBe(0)
+    expect(fake.submitted.identifier).toBe('')
+    expect(result.status).toBe('valid')
+    expect(result.cookie).toContain('c_user=123')
+  })
+
+  it('lets a matching stored cookie replace a mismatched persistent c_user for a numeric account', async () => {
+    const fake = fakeFacebook('success', '123', { initialCUser: '999', entryMode: 'saved_profile' })
+    const result = await bootstrapFacebookSession(fake.context, fake.page, {
+      ...account,
+      cookie: 'c_user=123; xs=saved-cookie'
+    })
+
+    expect(fake.visits).toEqual(['https://www.facebook.com/'])
+    expect(fake.submitted.savedProfileContinue).toBe(0)
+    expect(result.status).toBe('valid')
+    expect(result.cookie).toContain('c_user=123')
+  })
+})
+
 describe('bootstrapFacebookSession credential fallback', () => {
   it('recovers logged-out home unknown state by opening the explicit login page and submitting credentials', async () => {
     const fake = fakeFacebook('success')
@@ -173,6 +316,35 @@ describe('bootstrapFacebookSession credential fallback', () => {
 
     expect(fake.visits).toEqual(['https://www.facebook.com/', 'https://www.facebook.com/login/'])
     expect(fake.submitted.identifier).toBe('account-login')
+    expect(fake.submitted.password).toBe('secret-password')
+    expect(result.status).toBe('valid')
+    expect(result.cookie).toContain('c_user=123')
+  })
+
+  it('continues a remembered Facebook profile before falling back to credentials', async () => {
+    const fake = fakeFacebook('success', '123', { entryMode: 'saved_profile' })
+    const result = await bootstrapFacebookSession(fake.context, fake.page, {
+      ...account,
+      password: null
+    })
+
+    expect(fake.visits).toEqual(['https://www.facebook.com/', 'https://www.facebook.com/login/'])
+    expect(fake.submitted.savedProfileContinue).toBe(1)
+    expect(fake.submitted.identifier).toBe('')
+    expect(fake.submitted.password).toBe('')
+    expect(result.status).toBe('valid')
+    expect(result.cookie).toContain('c_user=123')
+  })
+
+  it('handles saved-profile Continue followed by a password-only screen', async () => {
+    const fake = fakeFacebook('success', '123', {
+      entryMode: 'saved_profile',
+      savedProfileRequiresPassword: true
+    })
+    const result = await bootstrapFacebookSession(fake.context, fake.page, account)
+
+    expect(fake.submitted.savedProfileContinue).toBe(1)
+    expect(fake.submitted.identifier).toBe('')
     expect(fake.submitted.password).toBe('secret-password')
     expect(result.status).toBe('valid')
     expect(result.cookie).toContain('c_user=123')
@@ -188,6 +360,16 @@ describe('bootstrapFacebookSession credential fallback', () => {
     expect(fake.submitted.twoFactor).toBe('123456')
     expect(result.status).toBe('valid')
     expect(result.cookie).toContain('c_user=123')
+  })
+
+  it('rejects a saved-profile Continue that produces a c_user for a different numeric account', async () => {
+    const fake = fakeFacebook('mismatch', '123', { entryMode: 'saved_profile' })
+    const result = await bootstrapFacebookSession(fake.context, fake.page, account)
+
+    expect(fake.submitted.savedProfileContinue).toBe(1)
+    expect(result.status).toBe('needs_login')
+    expect(result.reason).toBe('login_failed')
+    expect(result.message).toContain('không khớp account UID 123')
   })
 
   it('rejects a credential login that produces a c_user for a different numeric account', async () => {
