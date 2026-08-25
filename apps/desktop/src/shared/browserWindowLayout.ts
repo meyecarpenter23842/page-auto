@@ -11,10 +11,17 @@ const TILE_GAP_PX = 4
 const MIN_RENDER_SCALE = 0.001
 const OVERFLOW_CASCADE_STEP_PX = 24
 const OVERFLOW_CASCADE_STEPS = 4
-/** Chrome desktop currently clamps normal browser windows to roughly 500px minimum width. */
-export const CHROME_MIN_COMPACT_OUTER_SIDE_PX = 500
+/** Batch 2A live/CI evidence: Chrome clamps requested width below 500, while 300px height is accepted. */
+export const CHROME_MIN_COMPACT_OUTER_WIDTH_PX = 500
+export const CHROME_MIN_COMPACT_OUTER_HEIGHT_PX = 300
+/** Legacy square constant retained for stored config/import compatibility. */
+export const CHROME_MIN_COMPACT_OUTER_SIDE_PX = CHROME_MIN_COMPACT_OUTER_WIDTH_PX
 export const DEFAULT_COMPACT_OUTER_SIDE_PX = 500
+export const DEFAULT_COMPACT_OUTER_WIDTH_PX = 500
+export const DEFAULT_COMPACT_OUTER_HEIGHT_PX = 500
 export const MAX_COMPACT_OUTER_SIDE_PX = 1600
+export const MAX_COMPACT_OUTER_WIDTH_PX = MAX_COMPACT_OUTER_SIDE_PX
+export const MAX_COMPACT_OUTER_HEIGHT_PX = MAX_COMPACT_OUTER_SIDE_PX
 
 export interface BrowserWindowLayoutSettings {
   enabled: boolean
@@ -24,8 +31,12 @@ export interface BrowserWindowLayoutSettings {
   rowCount: number
   minimumCapacity: number
   targetDisplayId: number | null
-  /** Physical square side requested for each compact Chrome window. Optional for stored-layout compatibility. */
+  /** Legacy square side. New saves use tileWidthPx/tileHeightPx. */
   tileSidePx?: number
+  tileWidthPx?: number
+  tileHeightPx?: number
+  /** Keep width native and derive height from the configured desktop automation aspect ratio. */
+  autoFit?: boolean
 }
 
 export const DEFAULT_BROWSER_WINDOW_LAYOUT: Readonly<BrowserWindowLayoutSettings> = {
@@ -36,7 +47,9 @@ export const DEFAULT_BROWSER_WINDOW_LAYOUT: Readonly<BrowserWindowLayoutSettings
   rowCount: 2,
   minimumCapacity: 1,
   targetDisplayId: null,
-  tileSidePx: DEFAULT_COMPACT_OUTER_SIDE_PX
+  tileWidthPx: DEFAULT_COMPACT_OUTER_WIDTH_PX,
+  tileHeightPx: DEFAULT_COMPACT_OUTER_HEIGHT_PX,
+  autoFit: false
 }
 
 export interface BrowserWorkArea {
@@ -62,6 +75,8 @@ export interface BrowserWindowPlacement {
   width: number
   height: number
   contentScale: number
+  /** Runtime-only whole-Chrome device scale. Omitted for manual/native Compact placement. */
+  wholeChromeScale?: number
   viewportWidth: number
   viewportHeight: number
 }
@@ -84,6 +99,12 @@ export interface BrowserTileGrid {
   capacity: number
 }
 
+export interface BrowserTileSize {
+  width: number
+  height: number
+  autoFit: boolean
+}
+
 function clampInteger(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min
   return Math.min(max, Math.max(min, Math.floor(value)))
@@ -97,12 +118,51 @@ export function cloneDefaultBrowserWindowLayout(): BrowserWindowLayoutSettings {
   return { ...DEFAULT_BROWSER_WINDOW_LAYOUT }
 }
 
+function requestedTileWidth(settings: BrowserWindowLayoutSettings): number {
+  return settings.tileWidthPx ?? settings.tileSidePx ?? DEFAULT_COMPACT_OUTER_WIDTH_PX
+}
+
+function requestedTileHeight(settings: BrowserWindowLayoutSettings): number {
+  return settings.tileHeightPx ?? settings.tileSidePx ?? DEFAULT_COMPACT_OUTER_HEIGHT_PX
+}
+
+/** Legacy helper: returns the requested width for old square callers. */
 export function compactBrowserTileSidePx(settings: BrowserWindowLayoutSettings): number {
   return clampInteger(
-    settings.tileSidePx ?? DEFAULT_COMPACT_OUTER_SIDE_PX,
-    CHROME_MIN_COMPACT_OUTER_SIDE_PX,
-    MAX_COMPACT_OUTER_SIDE_PX
+    requestedTileWidth(settings),
+    CHROME_MIN_COMPACT_OUTER_WIDTH_PX,
+    MAX_COMPACT_OUTER_WIDTH_PX
   )
+}
+
+export function compactBrowserTileSize(
+  settings: BrowserWindowLayoutSettings,
+  browser?: BrowserSettings,
+  display?: BrowserDisplayInfo
+): BrowserTileSize {
+  const width = clampInteger(
+    requestedTileWidth(settings),
+    CHROME_MIN_COMPACT_OUTER_WIDTH_PX,
+    MAX_COMPACT_OUTER_WIDTH_PX
+  )
+  let height = clampInteger(
+    requestedTileHeight(settings),
+    CHROME_MIN_COMPACT_OUTER_HEIGHT_PX,
+    MAX_COMPACT_OUTER_HEIGHT_PX
+  )
+  const autoFit = settings.autoFit === true
+
+  if (autoFit && browser) {
+    const aspectHeight = Math.round(width * Math.max(1, browser.windowHeight) / Math.max(1, browser.windowWidth))
+    height = clampInteger(aspectHeight, CHROME_MIN_COMPACT_OUTER_HEIGHT_PX, MAX_COMPACT_OUTER_HEIGHT_PX)
+  }
+
+  if (!display) return { width, height, autoFit }
+  return {
+    width: Math.max(1, Math.min(width, Math.max(1, display.workArea.width))),
+    height: Math.max(1, Math.min(height, Math.max(1, display.workArea.height))),
+    autoFit
+  }
 }
 
 export function assertValidBrowserWindowLayoutSettings(value: BrowserWindowLayoutSettings): void {
@@ -123,12 +183,29 @@ export function assertValidBrowserWindowLayoutSettings(value: BrowserWindowLayou
   if (value.targetDisplayId !== null && !Number.isInteger(value.targetDisplayId)) {
     throw new Error('Màn hình đích không hợp lệ.')
   }
+  if (value.autoFit !== undefined && typeof value.autoFit !== 'boolean') {
+    throw new Error('Auto Fit Chrome không hợp lệ.')
+  }
   if (value.tileSidePx !== undefined && (
     !Number.isInteger(value.tileSidePx)
     || value.tileSidePx < CHROME_MIN_COMPACT_OUTER_SIDE_PX
     || value.tileSidePx > MAX_COMPACT_OUTER_SIDE_PX
   )) {
-    throw new Error(`Kích thước Chrome phải từ ${CHROME_MIN_COMPACT_OUTER_SIDE_PX} đến ${MAX_COMPACT_OUTER_SIDE_PX}px.`)
+    throw new Error(`Kích thước vuông cũ phải từ ${CHROME_MIN_COMPACT_OUTER_SIDE_PX} đến ${MAX_COMPACT_OUTER_SIDE_PX}px.`)
+  }
+  if (value.tileWidthPx !== undefined && (
+    !Number.isInteger(value.tileWidthPx)
+    || value.tileWidthPx < CHROME_MIN_COMPACT_OUTER_WIDTH_PX
+    || value.tileWidthPx > MAX_COMPACT_OUTER_WIDTH_PX
+  )) {
+    throw new Error(`Chiều rộng Chrome phải từ ${CHROME_MIN_COMPACT_OUTER_WIDTH_PX} đến ${MAX_COMPACT_OUTER_WIDTH_PX}px.`)
+  }
+  if (value.tileHeightPx !== undefined && (
+    !Number.isInteger(value.tileHeightPx)
+    || value.tileHeightPx < CHROME_MIN_COMPACT_OUTER_HEIGHT_PX
+    || value.tileHeightPx > MAX_COMPACT_OUTER_HEIGHT_PX
+  )) {
+    throw new Error(`Chiều cao Chrome phải từ ${CHROME_MIN_COMPACT_OUTER_HEIGHT_PX} đến ${MAX_COMPACT_OUTER_HEIGHT_PX}px.`)
   }
 }
 
@@ -167,8 +244,12 @@ export function parseStoredBrowserWindowLayout(raw: string | undefined): Browser
     assertStoredNumberInRange(parsed.rowCount, 1, MAX_SQUARE_SIDE)
     assertStoredNumberInRange(parsed.minimumCapacity, 1, MAX_TILE_COUNT)
     assertStoredNumberInRange(parsed.tileSidePx, CHROME_MIN_COMPACT_OUTER_SIDE_PX, MAX_COMPACT_OUTER_SIDE_PX)
+    assertStoredNumberInRange(parsed.tileWidthPx, CHROME_MIN_COMPACT_OUTER_WIDTH_PX, MAX_COMPACT_OUTER_WIDTH_PX)
+    assertStoredNumberInRange(parsed.tileHeightPx, CHROME_MIN_COMPACT_OUTER_HEIGHT_PX, MAX_COMPACT_OUTER_HEIGHT_PX)
+    if (parsed.autoFit !== undefined && typeof parsed.autoFit !== 'boolean') throw new Error('Stored autoFit is invalid.')
 
     const nextRows = migratedRows(parsed)
+    const legacySide = parsed.tileSidePx
     const next: BrowserWindowLayoutSettings = {
       ...cloneDefaultBrowserWindowLayout(),
       ...parsed,
@@ -177,8 +258,11 @@ export function parseStoredBrowserWindowLayout(raw: string | undefined): Browser
       gridColumns: nextRows,
       tileCount: nextRows * nextRows,
       minimumCapacity: nextRows * nextRows,
-      tileSidePx: parsed.tileSidePx ?? DEFAULT_COMPACT_OUTER_SIDE_PX
+      tileWidthPx: parsed.tileWidthPx ?? legacySide ?? DEFAULT_COMPACT_OUTER_WIDTH_PX,
+      tileHeightPx: parsed.tileHeightPx ?? legacySide ?? DEFAULT_COMPACT_OUTER_HEIGHT_PX,
+      autoFit: parsed.autoFit ?? false
     }
+    delete next.tileSidePx
     assertValidBrowserWindowLayoutSettings(next)
     return next
   } catch {
@@ -208,12 +292,12 @@ export function squareBrowserTileGrid(settings: BrowserWindowLayoutSettings): Br
 
 /** Compatibility helper retained for old tests/config migration. */
 export function maximumTrueSquareRows(display: BrowserDisplayInfo): number {
-  const widthRows = Math.floor((Math.max(1, display.workArea.width) + TILE_GAP_PX) / (CHROME_MIN_COMPACT_OUTER_SIDE_PX + TILE_GAP_PX))
-  const heightRows = Math.floor((Math.max(1, display.workArea.height) + TILE_GAP_PX) / (CHROME_MIN_COMPACT_OUTER_SIDE_PX + TILE_GAP_PX))
+  const widthRows = Math.floor((Math.max(1, display.workArea.width) + TILE_GAP_PX) / (CHROME_MIN_COMPACT_OUTER_WIDTH_PX + TILE_GAP_PX))
+  const heightRows = Math.floor((Math.max(1, display.workArea.height) + TILE_GAP_PX) / (DEFAULT_COMPACT_OUTER_HEIGHT_PX + TILE_GAP_PX))
   return clampInteger(Math.min(widthRows, heightRows), 1, MAX_SQUARE_SIDE)
 }
 
-/** Compatibility helper retained for old callers; new physical placement uses rectangular packing by tile side. */
+/** Compatibility helper retained for old callers. */
 export function effectiveSquareBrowserTileGrid(
   settings: BrowserWindowLayoutSettings,
   display: BrowserDisplayInfo
@@ -255,35 +339,48 @@ export function withAutoBalancedBrowserRows(
   return withSquareBrowserRows(settings, rows)
 }
 
+/** Legacy square setter retained for callers outside the settings screen. */
 export function withCompactBrowserTileSide(
   settings: BrowserWindowLayoutSettings,
   sidePx: number
 ): BrowserWindowLayoutSettings {
-  return {
-    ...settings,
-    tileSidePx: clampInteger(sidePx, CHROME_MIN_COMPACT_OUTER_SIDE_PX, MAX_COMPACT_OUTER_SIDE_PX)
-  }
+  const side = clampInteger(sidePx, CHROME_MIN_COMPACT_OUTER_SIDE_PX, MAX_COMPACT_OUTER_SIDE_PX)
+  return withCompactBrowserTileSize(settings, side, side, false)
 }
 
+export function withCompactBrowserTileSize(
+  settings: BrowserWindowLayoutSettings,
+  widthPx: number,
+  heightPx: number,
+  autoFit: boolean = settings.autoFit === true
+): BrowserWindowLayoutSettings {
+  const next = {
+    ...settings,
+    tileWidthPx: clampInteger(widthPx, CHROME_MIN_COMPACT_OUTER_WIDTH_PX, MAX_COMPACT_OUTER_WIDTH_PX),
+    tileHeightPx: clampInteger(heightPx, CHROME_MIN_COMPACT_OUTER_HEIGHT_PX, MAX_COMPACT_OUTER_HEIGHT_PX),
+    autoFit
+  }
+  delete next.tileSidePx
+  return next
+}
+
+/** Legacy helper: returns effective width. */
 export function effectiveBrowserTileSidePx(
   settings: BrowserWindowLayoutSettings,
   display: BrowserDisplayInfo
 ): number {
-  const requested = compactBrowserTileSidePx(settings)
-  return Math.max(1, Math.min(requested, Math.max(1, display.workArea.width), Math.max(1, display.workArea.height)))
+  return compactBrowserTileSize(settings, undefined, display).width
 }
 
-/**
- * Pack physical square Chrome windows into the rectangular monitor work area.
- * The window remains square; only the number of columns/rows follows the display shape.
- */
+/** Pack physical Width×Height Chrome windows into the rectangular monitor work area. */
 export function rectangularBrowserTileGrid(
   settings: BrowserWindowLayoutSettings,
-  display: BrowserDisplayInfo
+  display: BrowserDisplayInfo,
+  browser?: BrowserSettings
 ): BrowserTileGrid {
-  const side = effectiveBrowserTileSidePx(settings, display)
-  const columns = Math.max(1, Math.floor((Math.max(1, display.workArea.width) + TILE_GAP_PX) / (side + TILE_GAP_PX)))
-  const rows = Math.max(1, Math.floor((Math.max(1, display.workArea.height) + TILE_GAP_PX) / (side + TILE_GAP_PX)))
+  const size = compactBrowserTileSize(settings, browser, display)
+  const columns = Math.max(1, Math.floor((Math.max(1, display.workArea.width) + TILE_GAP_PX) / (size.width + TILE_GAP_PX)))
+  const rows = Math.max(1, Math.floor((Math.max(1, display.workArea.height) + TILE_GAP_PX) / (size.height + TILE_GAP_PX)))
   return { columns, rows, capacity: columns * rows }
 }
 
@@ -305,9 +402,8 @@ export function compactContentScale(
 }
 
 /**
- * Compact windows use a fixed physical square side and rectangular packing. When the
- * visible layer is full, later browsers reuse deterministic slots with an inward
- * cascade offset instead of returning null and letting Chrome open at a random/default size.
+ * Compact windows use fixed physical Width×Height bounds. When the visible layer is full,
+ * later browsers reuse deterministic slots with an inward cascade offset.
  */
 export function computeBrowserWindowPlacement(
   layout: BrowserWindowLayoutSettings,
@@ -318,21 +414,21 @@ export function computeBrowserWindowPlacement(
   if (!layout.enabled) return null
   if (!Number.isInteger(slotIndex) || slotIndex < 0) return null
 
-  const grid = rectangularBrowserTileGrid(layout, display)
-  const side = effectiveBrowserTileSidePx(layout, display)
+  const size = compactBrowserTileSize(layout, browser, display)
+  const grid = rectangularBrowserTileGrid(layout, display, browser)
   const visibleSlotIndex = slotIndex % grid.capacity
   const layerIndex = Math.floor(slotIndex / grid.capacity)
 
   const gapX = TILE_GAP_PX * Math.max(0, grid.columns - 1)
   const gapY = TILE_GAP_PX * Math.max(0, grid.rows - 1)
-  const gridWidth = side * grid.columns + gapX
-  const gridHeight = side * grid.rows + gapY
+  const gridWidth = size.width * grid.columns + gapX
+  const gridHeight = size.height * grid.rows + gapY
   const originX = display.workArea.x + Math.max(0, Math.floor((display.workArea.width - gridWidth) / 2))
   const originY = display.workArea.y + Math.max(0, Math.floor((display.workArea.height - gridHeight) / 2))
   const column = visibleSlotIndex % grid.columns
   const row = Math.floor(visibleSlotIndex / grid.columns)
-  const baseX = originX + column * (side + TILE_GAP_PX)
-  const baseY = originY + row * (side + TILE_GAP_PX)
+  const baseX = originX + column * (size.width + TILE_GAP_PX)
+  const baseY = originY + row * (size.height + TILE_GAP_PX)
 
   let x = baseX
   let y = baseY
@@ -342,8 +438,8 @@ export function computeBrowserWindowPlacement(
     const directionY = row === grid.rows - 1 ? -1 : 1
     const minX = display.workArea.x
     const minY = display.workArea.y
-    const maxX = display.workArea.x + Math.max(0, display.workArea.width - side)
-    const maxY = display.workArea.y + Math.max(0, display.workArea.height - side)
+    const maxX = display.workArea.x + Math.max(0, display.workArea.width - size.width)
+    const maxY = display.workArea.y + Math.max(0, display.workArea.height - size.height)
     x = clampPosition(baseX + directionX * cascadeStep, minX, maxX)
     y = clampPosition(baseY + directionY * cascadeStep, minY, maxY)
   }
@@ -353,9 +449,9 @@ export function computeBrowserWindowPlacement(
     slotIndex,
     x,
     y,
-    width: side,
-    height: side,
-    contentScale: compactContentScale(browser, side, side),
+    width: size.width,
+    height: size.height,
+    contentScale: compactContentScale(browser, size.width, size.height),
     viewportWidth: browser.windowWidth,
     viewportHeight: browser.windowHeight
   }

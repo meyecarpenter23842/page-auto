@@ -3,12 +3,16 @@ import type { AppInfo } from '../../../ipc/channels'
 import { DEFAULT_APP_SETTINGS, type BrowserSettings } from '../../../shared/appSettings'
 import type { BrowserExecutableResult, BrowserTestResult } from '../../../shared/browserSettings'
 import {
-  CHROME_MIN_COMPACT_OUTER_SIDE_PX,
+  CHROME_MIN_COMPACT_OUTER_HEIGHT_PX,
+  CHROME_MIN_COMPACT_OUTER_WIDTH_PX,
   DEFAULT_BROWSER_WINDOW_LAYOUT,
-  DEFAULT_COMPACT_OUTER_SIDE_PX,
-  MAX_COMPACT_OUTER_SIDE_PX,
+  DEFAULT_COMPACT_OUTER_HEIGHT_PX,
+  DEFAULT_COMPACT_OUTER_WIDTH_PX,
+  MAX_COMPACT_OUTER_HEIGHT_PX,
+  MAX_COMPACT_OUTER_WIDTH_PX,
+  compactBrowserTileSize,
   rectangularBrowserTileGrid,
-  withCompactBrowserTileSide,
+  withCompactBrowserTileSize,
   type BrowserDisplayInfo,
   type BrowserWindowLayoutSettings
 } from '../../../shared/browserWindowLayout'
@@ -18,9 +22,9 @@ interface BrowserSettingsSectionProps { appInfo: AppInfo | null }
 type BusyState = 'save' | 'detect' | 'pick' | 'test' | 'retile' | null
 
 const COMPACT_SIZE_PRESETS = [
-  { label: 'Nhỏ', sidePx: 500 },
-  { label: 'Vừa', sidePx: 600 },
-  { label: 'Lớn', sidePx: 800 }
+  { label: 'Gọn', width: 500, height: 350 },
+  { label: 'Vừa', width: 600, height: 450 },
+  { label: 'Lớn', width: 800, height: 600 }
 ] as const
 
 function copyBrowser(settings: BrowserSettings): BrowserSettings { return { ...settings } }
@@ -51,11 +55,20 @@ export function BrowserSettingsSection({ appInfo }: BrowserSettingsSectionProps)
     }
     return displays.find((display) => display.isPrimary) ?? displays[0] ?? null
   }, [displays, layout])
+
   const grid = useMemo(() => {
-    if (!layout || !previewDisplay) return null
-    return rectangularBrowserTileGrid(layout, previewDisplay)
-  }, [layout, previewDisplay])
-  const tileSidePx = layout?.tileSidePx ?? DEFAULT_COMPACT_OUTER_SIDE_PX
+    if (!layout || !previewDisplay || !draft) return null
+    return rectangularBrowserTileGrid(layout, previewDisplay, draft)
+  }, [draft, layout, previewDisplay])
+
+  const tileSize = useMemo(() => {
+    if (!layout || !draft) return {
+      width: DEFAULT_COMPACT_OUTER_WIDTH_PX,
+      height: DEFAULT_COMPACT_OUTER_HEIGHT_PX,
+      autoFit: false
+    }
+    return compactBrowserTileSize(layout, draft, previewDisplay ?? undefined)
+  }, [draft, layout, previewDisplay])
 
   useEffect(() => {
     void Promise.all([
@@ -83,8 +96,8 @@ export function BrowserSettingsSection({ appInfo }: BrowserSettingsSectionProps)
     setFeedback(null)
   }
 
-  const updateTileSide = (sidePx: number) => {
-    setLayout((current) => current ? withCompactBrowserTileSide(current, sidePx) : current)
+  const updateTileSize = (width: number, height: number, autoFit: boolean = layout?.autoFit === true) => {
+    setLayout((current) => current ? withCompactBrowserTileSize(current, width, height, autoFit) : current)
     setFeedback(null)
   }
 
@@ -141,8 +154,8 @@ export function BrowserSettingsSection({ appInfo }: BrowserSettingsSectionProps)
   if (!draft || !layout) return <div className="settings-empty">Đang đọc cài đặt trình duyệt...</div>
 
   const compactSummary = grid
-    ? `${tileSidePx}px · ${grid.columns} cột × ${grid.rows} hàng · ${grid.capacity} Chrome/lớp. Vượt sức chứa sẽ xếp lớp lệch vị trí ổn định.`
-    : `${tileSidePx}px · sức chứa được tính theo màn hình đích khi mở Chrome.`
+    ? `${tileSize.width}×${tileSize.height}px${tileSize.autoFit ? ' · Auto Fit' : ''} · ${grid.columns} cột × ${grid.rows} hàng · ${grid.capacity} Chrome/lớp.`
+    : `${tileSize.width}×${tileSize.height}px${tileSize.autoFit ? ' · Auto Fit' : ''} · sức chứa tính theo màn hình đích.`
 
   return <div className="settings-section settings-section-with-actions">
     <div className="settings-section-content"><div className="browser-section">
@@ -150,13 +163,16 @@ export function BrowserSettingsSection({ appInfo }: BrowserSettingsSectionProps)
       <div className="browser-form-grid">
         <label className="field span-3"><span>Đường dẫn Chrome</span><div className="path-input-row"><input value={draft.executablePath ?? ''} onChange={(event) => update('executablePath', event.target.value || null)} placeholder="Chọn chrome.exe" /><button className="settings-button" type="button" disabled={busy !== null} onClick={() => void pickChrome()}>Chọn file</button><button className="settings-button" type="button" disabled={busy !== null} onClick={() => void detectChrome()}>{busy === 'detect' ? 'Đang tìm...' : 'Tự tìm Chrome'}</button><button className="settings-button primary" type="button" disabled={busy !== null} onClick={() => void testChrome()}>{busy === 'test' ? 'Đang kiểm tra...' : 'Kiểm tra Chrome'}</button></div></label>
         <label className="field"><span>Cách mở Chrome</span><select value={draft.mode} onChange={(event) => { const mode = event.target.value as BrowserSettings['mode']; update('mode', mode); if (mode === 'minimized') updateLayout('enabled', false) }}><option value="visible">Hiện Chrome</option><option value="minimized">Ẩn xuống taskbar</option></select></label>
-        <div className="field"><span>Khung automation</span><div className="test-result ok">Desktop ổn định · tự scale</div></div>
+        <div className="field"><span>Khung automation</span><div className="test-result ok">Desktop ổn định · native bounds</div></div>
         <div className="field"><span>Kết quả kiểm tra</span><div className={`test-result ${test?.status === 'success' ? 'ok' : test ? 'bad' : ''}`}>{test ? (test.status === 'success' ? `Hoạt động · ${test.launchDurationMs ?? 0} ms` : 'Không mở được') : 'Chưa kiểm tra'}</div></div>
 
-        <label className="toggle-card span-3"><div><strong>Compact / xếp nhiều Chrome</strong><small>Chọn kích thước ô vuông. App tự xếp số cột × hàng theo working area thật của màn hình; không ép lưới N×N.</small></div><input type="checkbox" checked={layout.enabled} onChange={(event) => { updateLayout('enabled', event.target.checked); if (event.target.checked) update('mode', 'visible') }} /></label>
+        <label className="toggle-card span-3"><div><strong>Compact / xếp nhiều Chrome</strong><small>Đặt Width × Height native thật. Chrome có thể clamp width theo giới hạn Windows; app không giả viewport.</small></div><input type="checkbox" checked={layout.enabled} onChange={(event) => { updateLayout('enabled', event.target.checked); if (event.target.checked) update('mode', 'visible') }} /></label>
         {layout.enabled && <>
-          <div className="field span-2"><span>Mức kích thước Chrome</span><div className="path-input-row">{COMPACT_SIZE_PRESETS.map((preset) => <button key={preset.sidePx} type="button" className={`settings-button ${tileSidePx === preset.sidePx ? 'primary' : ''}`} onClick={() => updateTileSide(preset.sidePx)}>{preset.label} · {preset.sidePx}px</button>)}</div></div>
-          <label className="number-field"><span>Tùy chỉnh kích thước</span><div><input type="number" min={CHROME_MIN_COMPACT_OUTER_SIDE_PX} max={MAX_COMPACT_OUTER_SIDE_PX} step="50" value={tileSidePx} onChange={(event) => updateTileSide(Number(event.target.value) || DEFAULT_COMPACT_OUTER_SIDE_PX)} /><em>px</em></div></label>
+          <div className="field span-2"><span>Preset Width × Height</span><div className="path-input-row">{COMPACT_SIZE_PRESETS.map((preset) => <button key={`${preset.width}x${preset.height}`} type="button" className={`settings-button ${!layout.autoFit && tileSize.width === preset.width && tileSize.height === preset.height ? 'primary' : ''}`} onClick={() => updateTileSize(preset.width, preset.height, false)}>{preset.label} · {preset.width}×{preset.height}</button>)}</div></div>
+          <label className="toggle-card"><div><strong>Auto Fit</strong><small>Giữ Width và tự tính Height theo tỷ lệ {draft.windowWidth}×{draft.windowHeight}. Không zoom/emulation.</small></div><input type="checkbox" checked={layout.autoFit === true} onChange={(event) => updateTileSize(layout.tileWidthPx ?? DEFAULT_COMPACT_OUTER_WIDTH_PX, layout.tileHeightPx ?? DEFAULT_COMPACT_OUTER_HEIGHT_PX, event.target.checked)} /></label>
+          <label className="number-field"><span>Width</span><div><input type="number" min={CHROME_MIN_COMPACT_OUTER_WIDTH_PX} max={MAX_COMPACT_OUTER_WIDTH_PX} step="50" value={layout.tileWidthPx ?? DEFAULT_COMPACT_OUTER_WIDTH_PX} onChange={(event) => updateTileSize(Number(event.target.value) || DEFAULT_COMPACT_OUTER_WIDTH_PX, layout.tileHeightPx ?? DEFAULT_COMPACT_OUTER_HEIGHT_PX)} /><em>px</em></div></label>
+          <label className="number-field"><span>Height</span><div><input type="number" min={CHROME_MIN_COMPACT_OUTER_HEIGHT_PX} max={MAX_COMPACT_OUTER_HEIGHT_PX} step="25" disabled={layout.autoFit === true} value={layout.autoFit ? tileSize.height : (layout.tileHeightPx ?? DEFAULT_COMPACT_OUTER_HEIGHT_PX)} onChange={(event) => updateTileSize(layout.tileWidthPx ?? DEFAULT_COMPACT_OUTER_WIDTH_PX, Number(event.target.value) || DEFAULT_COMPACT_OUTER_HEIGHT_PX)} /><em>px</em></div></label>
+          <div className="field"><span>Kích thước native mục tiêu</span><div className="test-result ok">{tileSize.width} × {tileSize.height}px</div></div>
           <div className="field"><span>Bố cục thực tế</span><div className="test-result ok">{grid ? `${grid.columns} cột × ${grid.rows} hàng` : 'Theo màn hình đích'}</div></div>
           <div className="field"><span>Sức chứa/lớp</span><div className="test-result ok">{grid ? `${grid.capacity} Chrome` : 'Tự tính khi mở'}</div></div>
           <label className="field span-2"><span>Màn hình đích</span><select value={layout.targetDisplayId ?? ''} onChange={(event) => updateLayout('targetDisplayId', event.target.value ? Number(event.target.value) : null)}><option value="">Màn hình tại vị trí chuột</option>{displays.map((display) => <option key={display.id} value={display.id}>{display.label}{display.isPrimary ? ' · Chính' : ''}</option>)}</select></label>

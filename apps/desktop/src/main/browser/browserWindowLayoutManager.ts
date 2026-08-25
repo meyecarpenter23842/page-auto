@@ -8,6 +8,7 @@ import {
   type BrowserWindowLayoutSettings,
   type BrowserWindowPlacement
 } from '../../shared/browserWindowLayout'
+import { applyWholeChromeAutoFit } from '../../shared/browserWholeChromeScale'
 
 export type BrowserWindowOwner = 'profile' | 'posting'
 
@@ -70,7 +71,8 @@ export class BrowserWindowLayoutManager {
     const entry = this.entries.get(accountId)
     if (!entry || !layout.enabled) return null
     const display = this.resolveDisplay(layout)
-    return computeBrowserWindowPlacement(layout, browser, display, entry.slotIndex)
+    const placement = computeBrowserWindowPlacement(layout, browser, display, entry.slotIndex)
+    return applyWholeChromeAutoFit(layout, placement)
   }
 
   snapshot(
@@ -89,12 +91,13 @@ export class BrowserWindowLayoutManager {
     }
 
     const display = this.resolveDisplay(layout)
-    const visibleCapacity = rectangularBrowserTileGrid(layout, display).capacity
+    const visibleCapacity = rectangularBrowserTileGrid(layout, display, browser).capacity
     let overflowCount = 0
     for (const assignment of normalized) {
       if (assignment.slotIndex >= visibleCapacity) overflowCount += 1
       const placement = computeBrowserWindowPlacement(layout, browser, display, assignment.slotIndex)
-      if (placement) placements.set(assignment.accountId, placement)
+      const fittedPlacement = applyWholeChromeAutoFit(layout, placement)
+      if (fittedPlacement) placements.set(assignment.accountId, fittedPlacement)
     }
     return { placements, overflowCount }
   }
