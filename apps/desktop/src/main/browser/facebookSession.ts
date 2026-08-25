@@ -244,13 +244,16 @@ async function loginInputVisibility(page: Page): Promise<{ loginFormVisible: boo
   }
 }
 
+function isTwoFactorVerificationUrl(url: string): boolean {
+  return url.toLowerCase().includes('/two_step_verification/')
+}
+
 function isManualVerificationUrl(url: string): boolean {
   const normalized = url.toLowerCase()
   return normalized.includes('/checkpoint/')
     || normalized.includes('/recover/')
     || normalized.includes('/confirmemail')
     || normalized.includes('/identity/')
-    || normalized.includes('/two_step_verification/')
 }
 
 async function hasManualVerificationText(page: Page): Promise<boolean> {
@@ -294,18 +297,25 @@ async function findUseAnotherProfile(page: Page): Promise<Locator | null> {
 }
 
 async function findTwoFactorInput(page: Page): Promise<Locator | null> {
-  const approvalsInput = await firstVisible([
+  const directInput = await firstVisible([
     page.locator('input[name="approvals_code"]').first(),
-    page.locator('input[name="approvalsCode"]').first()
-  ])
-  if (approvalsInput) return approvalsInput
-  if (!await hasAuthenticatorPrompt(page)) return null
-
-  return firstVisible([
+    page.locator('input[name="approvalsCode"]').first(),
     page.locator('input[name="code"]').first(),
     page.locator('input[autocomplete="one-time-code"]').first(),
     page.locator('input[inputmode="numeric"]').first(),
-    page.locator('input[type="tel"]').first()
+    page.locator('input[type="tel"]').first(),
+    page.locator('input[name*="otp" i]').first(),
+    page.locator('input[id*="code" i]').first(),
+    page.locator('input[placeholder*="code" i]').first(),
+    page.locator('input[aria-label*="code" i]').first()
+  ])
+  if (directInput) return directInput
+
+  if (!isTwoFactorVerificationUrl(page.url()) && !await hasAuthenticatorPrompt(page)) return null
+
+  return firstVisible([
+    page.locator('input[type="text"]:visible').first(),
+    page.locator('input:not([type]):visible').first()
   ])
 }
 

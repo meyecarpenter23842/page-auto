@@ -1,6 +1,10 @@
 import type { BrowserContext, Locator, Page } from 'playwright-core'
 import { describe, expect, it } from 'vitest'
-import { bootstrapFacebookSession, type FacebookSessionAccount } from './facebookSession'
+import {
+  bootstrapFacebookSession,
+  classifyFacebookSessionGate,
+  type FacebookSessionAccount
+} from './facebookSession'
 
 function hiddenLocator(): Locator {
   const stub: Partial<Locator> = {
@@ -68,5 +72,77 @@ describe('Facebook 2FA bootstrap flow', () => {
     expect(submitted).toBe(1)
     expect(result).toMatchObject({ accountId: 7, status: 'valid', reason: 'valid', cookieStatus: 'valid' })
     expect(result.cookie).toContain('c_user=10001')
+  })
+
+  it('does not classify two_step_verification as manual checkpoint while the 2FA input is still rendering', () => {
+    expect(classifyFacebookSessionGate({
+      url: 'https://www.facebook.com/two_step_verification/two_factor/authentication/',
+      hasUserCookie: false,
+      loginFormVisible: false,
+      passwordOnlyVisible: false,
+      savedProfileVisible: false,
+      twoFactorVisible: false,
+      manualVerificationTextVisible: false
+    })).toBe('unknown')
+  })
+
+  it('fills the current Facebook generic Code field on two_step_verification and continues the same account', async () => {
+    const twoFactorUrl = 'https://www.facebook.com/two_step_verification/two_factor/authentication/'
+    let loggedIn = false
+    let currentUrl = twoFactorUrl
+    let filledCode: string | null = null
+    let submitted = 0
+
+    const otpInput: Partial<Locator> = {
+      first: () => otpInput as Locator,
+      isVisible: async () => !loggedIn,
+      fill: async (value: string) => { filledCode = value },
+      press: async () => { submitted += 1; loggedIn = true; currentUrl = 'https://www.facebook.com/' }
+    }
+    const submitButton: Partial<Locator> = {
+      first: () => submitButton as Locator,
+      isVisible: async () => !loggedIn,
+      click: async () => { submitted += 1; loggedIn = true; currentUrl = 'https://www.facebook.com/' }
+    }
+
+    const page = {
+      url: () => currentUrl,
+      goto: async () => { currentUrl = loggedIn ? 'https://www.facebook.com/' : twoFactorUrl },
+      waitForTimeout: async () => undefined,
+      waitForLoadState: async () => undefined,
+      locator: (selector: string) => {
+        if (selector.includes('placeholder*="code"')) return otpInput as Locator
+        if (selector.includes('button[type="submit"]')) return submitButton as Locator
+        return hiddenLocator()
+      },
+      getByText: () => hiddenLocator(),
+      getByRole: (role: string) => role === 'button' ? submitButton as Locator : hiddenLocator()
+    } as unknown as Page
+
+    const context = {
+      cookies: async () => loggedIn
+        ? [
+            { name: 'c_user', value: '20002', domain: '.facebook.com', path: '/', expires: -1, httpOnly: false, secure: true, sameSite: 'Lax' },
+            { name: 'xs', value: 'session-cookie-2', domain: '.facebook.com', path: '/', expires: -1, httpOnly: true, secure: true, sameSite: 'Lax' }
+          ]
+        : [],
+      addCookies: async () => undefined
+    } as unknown as BrowserContext
+
+    const account: FacebookSessionAccount = {
+      id: 8,
+      uid: '20002',
+      username: null,
+      password: null,
+      cookie: null,
+      twoFactorSecret: '654321'
+    }
+
+    const result = await bootstrapFacebookSession(context, page, account, 'auto')
+
+    expect(filledCode).toBe('654321')
+    expect(submitted).toBe(1)
+    expect(result).toMatchObject({ accountId: 8, status: 'valid', reason: 'valid', cookieStatus: 'valid' })
+    expect(result.cookie).toContain('c_user=20002')
   })
 })
