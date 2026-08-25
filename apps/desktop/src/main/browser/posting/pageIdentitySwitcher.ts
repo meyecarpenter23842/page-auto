@@ -32,8 +32,17 @@ export interface PageIdentityDiagnostics extends PageIdentityEvidence {
   url: string
 }
 
+export interface PageIdentitySurfaceSnapshot {
+  url: string
+  chooserRootCount: number
+  dialogCount: number
+  chooserMarkerCount: number
+  targetUidCount: number
+  targetNameCount: number
+  seeAllProfilesCount: number
+}
+
 type PostingCode = NonNullable<PostingJobResult['code']>
-type IdentityWaitResult = 'matched' | 'login_required' | 'verification_required' | 'timeout'
 type VerifyClick = () => Promise<boolean>
 
 interface NamedLocator {
@@ -44,11 +53,15 @@ interface NamedLocator {
 const DIRECT_SWITCH_PATTERN = /switch now|switch into(?: this page)?|switch to(?: this page)?|chuyển ngay|chuyển sang(?: trang này)?/i
 const SEE_ALL_PROFILES_PATTERN = /see all profiles|xem tất cả trang cá nhân|xem tất cả hồ sơ|xem tất cả trang/i
 const ACCOUNT_MENU_PATTERN = /^(?:your profile(?:\b.*)?|profile picture(?:\b.*)?|account controls(?:\b.*)?|account menu(?:\b.*)?|account|tài khoản|menu tài khoản|ảnh đại diện(?:\b.*)?|trang cá nhân(?:\b.*)?)$/i
-const PROFILE_CHOOSER_PATTERN = /see all profiles|switch profile|your profiles|profiles and pages|xem tất cả trang cá nhân|xem tất cả hồ sơ|chuyển trang cá nhân|trang và trang cá nhân/i
-const ACTION_SETTLE_MS = 700
-const POLL_MS = 250
-const SURFACE_TIMEOUT_MS = 3_000
-const MAX_ATTEMPTS = 20
+const CHOOSER_MARKER_PATTERN = /see all profiles|switch profile|select profile|your profiles|profiles and pages|xem tất cả trang cá nhân|xem tất cả hồ sơ|chuyển trang cá nhân|chọn trang cá nhân|trang và trang cá nhân/i
+const PROFILE_KIND_PATTERN = /^(?:page|profile|trang|trang cá nhân)(?:\b.*)?$/i
+const POLL_MS = 200
+const ACTION_SETTLE_MS = 650
+const DISCOVERY_TIMEOUT_MS = 3_000
+const SURFACE_TIMEOUT_MS = 4_000
+const IDENTITY_TIMEOUT_MS = 8_000
+const MAX_ACTION_CANDIDATES = 24
+const MAX_DIAGNOSTIC_ATTEMPTS = 28
 
 function failure(code: PostingCode, message: string): PostingJobResult {
   return {
@@ -56,6 +69,18 @@ function failure(code: PostingCode, message: string): PostingJobResult {
     code,
     message
   }
+}
+
+function normalizeText(value: string): string {
+  return value.replace(/\s+/g, ' ').trim()
+}
+
+function escapeCss(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 export function classifyPageIdentityUid(
@@ -69,11 +94,23 @@ export function classifyPageIdentityUid(
 }
 
 export function isAccountMenuAccessibleName(value: string): boolean {
-  return ACCOUNT_MENU_PATTERN.test(value.replace(/\s+/g, ' ').trim())
+  return ACCOUNT_MENU_PATTERN.test(normalizeText(value))
 }
 
 export function isDirectSwitchAccessibleName(value: string): boolean {
-  return DIRECT_SWITCH_PATTERN.test(value.replace(/\s+/g, ' ').trim())
+  return DIRECT_SWITCH_PATTERN.test(normalizeText(value))
+}
+
+export function isTargetProfileAccessibleName(targetName: string, value: string): boolean {
+  const target = normalizeText(targetName)
+  const candidate = normalizeText(value)
+  if (!target || !candidate) return false
+  if (candidate.localeCompare(target, undefined, { sensitivity: 'accent' }) === 0) return true
+
+  const suffix = candidate.match(
+    new RegExp(`^${escapeRegex(target)}\\s*(?:[·•|—–,:-]\\s*)?(.+)$`, 'i')
+  )?.[1]?.trim()
+  return Boolean(suffix && PROFILE_KIND_PATTERN.test(suffix))
 }
 
 export function targetIdentityScope(
@@ -94,8 +131,8 @@ export function resolvePageIdentityAction(evidence: PageIdentityEvidence): PageI
   }
   if (evidence.stage === 'account_menu') {
     if (evidence.targetUidCount > 0) return 'select_target_uid'
-    if (evidence.seeAllProfilesCount > 0) return 'click_see_all_profiles'
     if (evidence.targetNameCount > 0) return 'select_target_name'
+    if (evidence.seeAllProfilesCount > 0) return 'click_see_all_profiles'
     return 'fail'
   }
   if (evidence.targetUidCount > 0) return 'select_target_uid'
@@ -123,6 +160,23 @@ export function shouldRetryPageIdentityAfterControlFailure(
 
 export function pageIdentityActionRequiresSurfaceVerification(action: PageIdentityAction): boolean {
   return action === 'open_account_menu' || action === 'click_see_all_profiles'
+}
+
+export function pageIdentitySurfaceAdvanced(
+  before: PageIdentitySurfaceSnapshot,
+  after: PageIdentitySurfaceSnapshot
+): boolean {
+  if (after.targetUidCount > before.targetUidCount || after.targetNameCount > before.targetNameCount) return true
+
+  const seeAllConsumed = before.seeAllProfilesCount > after.seeAllProfilesCount
+    && (after.targetUidCount > 0 || after.targetNameCount > 0)
+  if (seeAllConsumed) return true
+
+  const rootExpanded = after.chooserRootCount > before.chooserRootCount || after.dialogCount > before.dialogCount
+  if (rootExpanded && (after.chooserMarkerCount > 0 || after.targetUidCount > 0 || after.targetNameCount > 0)) return true
+
+  const urlChanged = safePageIdentityUrl(after.url) !== safePageIdentityUrl(before.url)
+  return urlChanged && (after.chooserMarkerCount > 0 || after.targetUidCount > 0 || after.targetNameCount > 0)
 }
 
 export function safePageIdentityUrl(rawUrl: string): string {
@@ -165,14 +219,6 @@ async function countAcross(candidates: NamedLocator[]): Promise<number> {
   return total
 }
 
-function escapeCss(value: string): string {
-  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
-}
-
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-
 function sanitize(value: string | null): string {
   if (!value) return 'missing'
   return value
@@ -201,6 +247,7 @@ export class PageIdentitySwitcher {
   private homeFallbackAttempted = false
   private targetName: string | null = null
   private currentStage: PageIdentityStage = 'page_surface'
+  private allProfilesVerified = false
 
   constructor(
     private readonly page: Page,
@@ -209,81 +256,112 @@ export class PageIdentitySwitcher {
   ) {}
 
   private remember(value: string): void {
-    if (this.attempts.length < MAX_ATTEMPTS) this.attempts.push(value.replace(/\s+/g, '_').slice(0, 180))
+    if (this.attempts.length < MAX_DIAGNOSTIC_ATTEMPTS) {
+      this.attempts.push(value.replace(/\s+/g, '_').slice(0, 180))
+    }
+  }
+
+  private chooserRoots(): Locator {
+    return this.page.locator('[role="menu"]:visible, [role="dialog"]:visible, [aria-modal="true"]:visible')
+  }
+
+  private dialogRoots(): Locator {
+    return this.page.locator('[role="dialog"]:visible, [aria-modal="true"]:visible')
   }
 
   private directCandidates(): NamedLocator[] {
     return [
-      { strategy: 'legacy-switch-now', locator: this.page.getByRole('button', { name: /switch now|chuyển ngay/i }).first() },
-      { strategy: 'legacy-switch-into', locator: this.page.getByRole('button', { name: /switch into|chuyển sang/i }).first() },
-      { strategy: 'legacy-switch-text', locator: this.page.getByText(/switch into this page|chuyển sang trang này/i).first() },
-      { strategy: 'direct-role-button', locator: this.page.getByRole('button', { name: DIRECT_SWITCH_PATTERN }) },
-      { strategy: 'direct-role-link', locator: this.page.getByRole('link', { name: DIRECT_SWITCH_PATTERN }) },
-      { strategy: 'direct-text', locator: this.page.getByText(DIRECT_SWITCH_PATTERN) }
+      { strategy: 'switch-button', locator: this.page.getByRole('button', { name: DIRECT_SWITCH_PATTERN }) },
+      { strategy: 'switch-link', locator: this.page.getByRole('link', { name: DIRECT_SWITCH_PATTERN }) },
+      { strategy: 'switch-text', locator: this.page.getByText(DIRECT_SWITCH_PATTERN) }
     ]
   }
 
   private accountCandidates(): NamedLocator[] {
     return [
-      { strategy: 'account-semantic-button', locator: this.page.getByRole('button', { name: ACCOUNT_MENU_PATTERN }) },
-      { strategy: 'account-semantic-link', locator: this.page.getByRole('link', { name: ACCOUNT_MENU_PATTERN }) },
+      { strategy: 'account-button', locator: this.page.getByRole('button', { name: ACCOUNT_MENU_PATTERN }) },
+      { strategy: 'account-link', locator: this.page.getByRole('link', { name: ACCOUNT_MENU_PATTERN }) },
       { strategy: 'account-banner-menu-image', locator: this.page.locator('[role="banner"] [role="button"][aria-haspopup="menu"]:has(img)') },
       { strategy: 'account-banner-image', locator: this.page.locator('[role="banner"] [role="button"]:has(img)') }
     ]
   }
 
-  private seeAllCandidates(): NamedLocator[] {
+  private seeAllCandidates(root?: Locator): NamedLocator[] {
+    const scope = root ?? this.page
     return [
-      { strategy: 'see-all-role-button', locator: this.page.getByRole('button', { name: SEE_ALL_PROFILES_PATTERN }) },
-      { strategy: 'see-all-menuitem', locator: this.page.getByRole('menuitem', { name: SEE_ALL_PROFILES_PATTERN }) },
-      { strategy: 'see-all-role-link', locator: this.page.getByRole('link', { name: SEE_ALL_PROFILES_PATTERN }) },
-      { strategy: 'see-all-text', locator: this.page.getByText(SEE_ALL_PROFILES_PATTERN) }
+      { strategy: root ? 'see-all-root-button' : 'see-all-button', locator: scope.getByRole('button', { name: SEE_ALL_PROFILES_PATTERN }) },
+      { strategy: root ? 'see-all-root-menuitem' : 'see-all-menuitem', locator: scope.getByRole('menuitem', { name: SEE_ALL_PROFILES_PATTERN }) },
+      { strategy: root ? 'see-all-root-link' : 'see-all-link', locator: scope.getByRole('link', { name: SEE_ALL_PROFILES_PATTERN }) },
+      { strategy: root ? 'see-all-root-text' : 'see-all-text', locator: scope.getByText(SEE_ALL_PROFILES_PATTERN) }
     ]
   }
 
-  private overlays(): Locator {
-    return this.page.locator('[role="menu"]:visible, [role="dialog"]:visible, [aria-modal="true"]:visible')
+  private targetNamePattern(): RegExp | null {
+    const name = normalizeText(this.targetName ?? '')
+    if (!name) return null
+    return new RegExp(`^${escapeRegex(name)}(?:\\s*(?:[·•|—–,:-]\\s*)?(?:page|profile|trang|trang cá nhân)\\b.*)?$`, 'i')
   }
 
-  private uidCandidates(pageUid: string, stage: PageIdentityStage): NamedLocator[] {
+  private targetCandidates(pageUid: string, stage: PageIdentityStage): NamedLocator[] {
     if (stage === 'page_surface') return []
     const uid = escapeCss(pageUid.trim())
-    if (!uid) return []
-    const data = `[data-profileid="${uid}"],[data-profile-id="${uid}"],[data-pageid="${uid}"],[data-page-id="${uid}"]`
-    const overlay = this.overlays()
-    const scoped: NamedLocator[] = [
-      { strategy: 'target-uid-overlay-link', locator: overlay.locator(`a[href*="${uid}"]`) },
-      { strategy: 'target-uid-overlay-data', locator: overlay.locator(data) }
-    ]
-    return stage === 'account_menu'
-      ? scoped
-      : [
-          ...scoped,
-          { strategy: 'target-uid-all-link', locator: this.page.locator(`a[href*="${uid}"]`) },
-          { strategy: 'target-uid-all-data', locator: this.page.locator(data) }
-        ]
+    const pattern = this.targetNamePattern()
+    const roots = this.chooserRoots()
+    const candidates: NamedLocator[] = []
+
+    if (uid) {
+      const data = `[data-profileid="${uid}"],[data-profile-id="${uid}"],[data-pageid="${uid}"],[data-page-id="${uid}"]`
+      candidates.push(
+        { strategy: 'target-root-uid-link', locator: roots.locator(`a[href*="${uid}"]`) },
+        { strategy: 'target-root-uid-data', locator: roots.locator(data) }
+      )
+      if (stage === 'all_profiles' && this.allProfilesVerified) {
+        candidates.push(
+          { strategy: 'target-page-uid-link', locator: this.page.locator(`a[href*="${uid}"]`) },
+          { strategy: 'target-page-uid-data', locator: this.page.locator(data) }
+        )
+      }
+    }
+
+    if (pattern) {
+      candidates.push(
+        { strategy: 'target-root-name-menuitem', locator: roots.getByRole('menuitem', { name: pattern }) },
+        { strategy: 'target-root-name-button', locator: roots.getByRole('button', { name: pattern }) },
+        { strategy: 'target-root-name-link', locator: roots.getByRole('link', { name: pattern }) },
+        { strategy: 'target-root-name-text', locator: roots.getByText(this.targetName!, { exact: true }) }
+      )
+      if (stage === 'all_profiles' && this.allProfilesVerified) {
+        candidates.push(
+          { strategy: 'target-page-name-menuitem', locator: this.page.getByRole('menuitem', { name: pattern }) },
+          { strategy: 'target-page-name-button', locator: this.page.getByRole('button', { name: pattern }) },
+          { strategy: 'target-page-name-link', locator: this.page.getByRole('link', { name: pattern }) },
+          { strategy: 'target-page-name-text', locator: this.page.getByText(this.targetName!, { exact: true }) }
+        )
+      }
+    }
+    return candidates
   }
 
-  private nameCandidates(stage: PageIdentityStage): NamedLocator[] {
-    const name = this.targetName?.trim()
-    if (!name || stage === 'page_surface') return []
-    const exact = new RegExp(`^${escapeRegex(name)}$`, 'i')
-    const overlay = this.overlays()
-    const scoped: NamedLocator[] = [
-      { strategy: 'target-name-overlay-menuitem', locator: overlay.getByRole('menuitem', { name: exact }) },
-      { strategy: 'target-name-overlay-button', locator: overlay.getByRole('button', { name: exact }) },
-      { strategy: 'target-name-overlay-link', locator: overlay.getByRole('link', { name: exact }) },
-      { strategy: 'target-name-overlay-text', locator: overlay.getByText(name, { exact: true }) }
-    ]
-    return stage === 'account_menu'
-      ? scoped
-      : [
-          ...scoped,
-          { strategy: 'target-name-all-menuitem', locator: this.page.getByRole('menuitem', { name: exact }) },
-          { strategy: 'target-name-all-button', locator: this.page.getByRole('button', { name: exact }) },
-          { strategy: 'target-name-all-link', locator: this.page.getByRole('link', { name: exact }) },
-          { strategy: 'target-name-all-text', locator: this.page.getByText(name, { exact: true }) }
-        ]
+  private transitionTargetCandidates(pageUid: string): NamedLocator[] {
+    const uid = escapeCss(pageUid.trim())
+    const pattern = this.targetNamePattern()
+    const candidates: NamedLocator[] = []
+    if (uid) {
+      const data = `[data-profileid="${uid}"],[data-profile-id="${uid}"],[data-pageid="${uid}"],[data-page-id="${uid}"]`
+      candidates.push(
+        { strategy: 'transition-uid-link', locator: this.page.locator(`a[href*="${uid}"]`) },
+        { strategy: 'transition-uid-data', locator: this.page.locator(data) }
+      )
+    }
+    if (pattern) {
+      candidates.push(
+        { strategy: 'transition-name-menuitem', locator: this.page.getByRole('menuitem', { name: pattern }) },
+        { strategy: 'transition-name-button', locator: this.page.getByRole('button', { name: pattern }) },
+        { strategy: 'transition-name-link', locator: this.page.getByRole('link', { name: pattern }) },
+        { strategy: 'transition-name-text', locator: this.page.getByText(this.targetName!, { exact: true }) }
+      )
+    }
+    return candidates
   }
 
   private async readTargetName(): Promise<string | null> {
@@ -292,13 +370,13 @@ export class PageIdentitySwitcher {
       for (let index = 0; index < count; index += 1) {
         const item = candidate.nth(index)
         if (!await item.isVisible().catch(() => false)) continue
-        const text = (await item.innerText().catch(() => '')).replace(/\s+/g, ' ').trim()
+        const text = normalizeText(await item.innerText().catch(() => ''))
         if (text && text.length <= 120) return text
       }
     }
-    const meta = (await this.page.locator('meta[property="og:title"]').first().getAttribute('content').catch(() => null))?.trim()
+    const meta = normalizeText((await this.page.locator('meta[property="og:title"]').first().getAttribute('content').catch(() => null)) ?? '')
     if (meta && meta.length <= 120) return meta
-    const title = (await this.page.title().catch(() => '')).replace(/\s*\|\s*Facebook\s*$/i, '').trim()
+    const title = normalizeText((await this.page.title().catch(() => '')).replace(/\s*\|\s*Facebook\s*$/i, ''))
     return title && title.length <= 120 ? title : null
   }
 
@@ -309,23 +387,14 @@ export class PageIdentitySwitcher {
     return null
   }
 
-  private async waitIdentity(pageUid: string, timeoutMs: number): Promise<IdentityWaitResult> {
-    const deadline = Date.now() + Math.max(500, timeoutMs)
+  private async identityMatches(pageUid: string, timeoutMs = IDENTITY_TIMEOUT_MS): Promise<boolean> {
+    const deadline = Date.now() + Math.max(500, Math.min(timeoutMs, this.browser.navigationTimeoutMs))
     while (Date.now() < deadline) {
-      const blocked = await detectFacebookAccessBlock(this.page)
-      if (blocked === 'login_required') return 'login_required'
-      if (blocked === 'verification_required') return 'verification_required'
-      const active = await activeFacebookProfileId(this.context).catch(() => null)
-      if (classifyPageIdentityUid(pageUid, active) === 'match') return 'matched'
+      if (classifyPageIdentityUid(pageUid, await activeFacebookProfileId(this.context).catch(() => null)) === 'match') return true
+      if (await detectFacebookAccessBlock(this.page)) return false
       await this.page.waitForTimeout(POLL_MS)
     }
-    return 'timeout'
-  }
-
-  private waitFailure(waited: IdentityWaitResult, suffix: string): PostingJobResult | null {
-    if (waited === 'login_required') return failure('needs_login', `Facebook yêu cầu đăng nhập lại${suffix}.`)
-    if (waited === 'verification_required') return failure('verification_required', `Facebook yêu cầu checkpoint/xác minh thủ công${suffix}.`)
-    return null
+    return false
   }
 
   private async settle(): Promise<void> {
@@ -343,71 +412,118 @@ export class PageIdentitySwitcher {
     }).then(() => true).catch(() => false)
   }
 
-  private async clickCandidates(
+  private async clickFreshCandidates(
     action: string,
-    candidates: NamedLocator[],
-    verify?: VerifyClick
+    buildCandidates: () => NamedLocator[],
+    verify: VerifyClick,
+    discoveryTimeoutMs = DISCOVERY_TIMEOUT_MS
   ): Promise<boolean> {
-    for (const candidate of candidates) {
-      const count = await candidate.locator.count().catch(() => 0)
-      const reverse = candidate.strategy.startsWith('account-banner-')
-      for (let step = 0; step < count; step += 1) {
-        const index = reverse ? count - 1 - step : step
-        const item = candidate.locator.nth(index)
-        if (!await item.isVisible().catch(() => false)) continue
-        const info = await descriptor(item)
-        if (!await item.isEnabled().catch(() => true)) {
-          this.remember(`${action}:${candidate.strategy}[${index}]:disabled:${info}`)
-          continue
+    const discoveryDeadline = Date.now() + discoveryTimeoutMs
+    while (Date.now() <= discoveryDeadline) {
+      if (await countAcross(buildCandidates()) > 0) break
+      await this.page.waitForTimeout(POLL_MS).catch(() => undefined)
+    }
+
+    const attempted = new Set<string>()
+    for (let round = 0; round < MAX_ACTION_CANDIDATES; round += 1) {
+      const candidates = buildCandidates()
+      let candidateFound = false
+
+      for (const candidate of candidates) {
+        const count = await candidate.locator.count().catch(() => 0)
+        const reverse = candidate.strategy.startsWith('account-banner-')
+        for (let step = 0; step < count; step += 1) {
+          const index = reverse ? count - 1 - step : step
+          const item = candidate.locator.nth(index)
+          if (!await item.isVisible().catch(() => false)) continue
+
+          const info = await descriptor(item)
+          const key = `${candidate.strategy}[${index}]:${info}`
+          if (attempted.has(key)) continue
+          attempted.add(key)
+          candidateFound = true
+
+          if (!await item.isEnabled().catch(() => true)) {
+            this.remember(`${action}:${key}:disabled`)
+            break
+          }
+
+          let clicked = await item.click({ timeout: Math.min(this.browser.navigationTimeoutMs, 5_000) })
+            .then(() => true)
+            .catch(() => false)
+          this.remember(`${action}:${key}:${clicked ? 'clicked' : 'click-failed'}`)
+          if (!clicked) {
+            clicked = await this.domClick(item)
+            this.remember(`${action}:${key}:${clicked ? 'dom-clicked' : 'dom-click-failed'}`)
+          }
+          if (!clicked) break
+
+          await this.settle()
+          if (await verify()) return true
+
+          this.remember(`${action}:${key}:no-postcondition`)
+          await this.page.keyboard.press('Escape').catch(() => undefined)
+          await this.page.waitForTimeout(POLL_MS).catch(() => undefined)
+          break
         }
-
-        let clicked = await item.click({ timeout: Math.min(this.browser.navigationTimeoutMs, 5_000) })
-          .then(() => true)
-          .catch(() => false)
-        this.remember(`${action}:${candidate.strategy}[${index}]:${clicked ? 'clicked' : 'click-failed'}:${info}`)
-
-        if (!clicked) {
-          clicked = await this.domClick(item)
-          this.remember(`${action}:${candidate.strategy}[${index}]:${clicked ? 'dom-clicked' : 'dom-click-failed'}:${info}`)
-        }
-        if (!clicked) continue
-
-        await this.settle()
-        if (!verify || await verify()) return true
-
-        this.remember(`${action}:${candidate.strategy}[${index}]:no-postcondition`)
-        await this.page.keyboard.press('Escape').catch(() => undefined)
-        await this.page.waitForTimeout(200).catch(() => undefined)
+        if (candidateFound) break
       }
+
+      if (!candidateFound) return false
     }
     return false
   }
 
-  private async verifyChooser(pageUid: string): Promise<boolean> {
+  private async targetCounts(pageUid: string, stage: PageIdentityStage): Promise<{ uid: number; name: number }> {
+    const candidates = this.targetCandidates(pageUid, stage)
+    return {
+      uid: await countAcross(candidates.filter((item) => item.strategy.includes('uid-'))),
+      name: await countAcross(candidates.filter((item) => item.strategy.includes('name-')))
+    }
+  }
+
+  private async transitionTargetCounts(pageUid: string): Promise<{ uid: number; name: number }> {
+    const candidates = this.transitionTargetCandidates(pageUid)
+    return {
+      uid: await countAcross(candidates.filter((item) => item.strategy.includes('uid-'))),
+      name: await countAcross(candidates.filter((item) => item.strategy.includes('name-')))
+    }
+  }
+
+  private async chooserMarkerCount(): Promise<number> {
+    return visibleCount(this.chooserRoots().getByText(CHOOSER_MARKER_PATTERN))
+  }
+
+  private async surfaceSnapshot(pageUid: string): Promise<PageIdentitySurfaceSnapshot> {
+    const target = await this.transitionTargetCounts(pageUid)
+    return {
+      url: this.page.url(),
+      chooserRootCount: await visibleCount(this.chooserRoots()),
+      dialogCount: await visibleCount(this.dialogRoots()),
+      chooserMarkerCount: await this.chooserMarkerCount(),
+      targetUidCount: target.uid,
+      targetNameCount: target.name,
+      seeAllProfilesCount: await countAcross(this.seeAllCandidates())
+    }
+  }
+
+  private async verifyChooser(pageUid: string, beforePageWideSeeAllCount: number): Promise<boolean> {
     const deadline = Date.now() + SURFACE_TIMEOUT_MS
     while (Date.now() < deadline) {
-      if (await countAcross(this.seeAllCandidates()) > 0) return true
-      if (await countAcross(this.uidCandidates(pageUid, 'account_menu')) > 0) return true
-      if (await countAcross(this.nameCandidates('account_menu')) > 0) return true
-      if (await visibleCount(this.overlays().getByText(PROFILE_CHOOSER_PATTERN)) > 0) return true
+      if (await countAcross(this.seeAllCandidates(this.chooserRoots())) > 0) return true
+      const target = await this.targetCounts(pageUid, 'account_menu')
+      if (target.uid > 0 || target.name > 0) return true
+      if (await this.chooserMarkerCount() > 0) return true
+      if (await countAcross(this.seeAllCandidates()) > beforePageWideSeeAllCount) return true
       await this.page.waitForTimeout(POLL_MS)
     }
     return false
   }
 
-  private async verifyAllProfiles(pageUid: string): Promise<boolean> {
+  private async verifySurfaceAdvance(pageUid: string, before: PageIdentitySurfaceSnapshot): Promise<boolean> {
     const deadline = Date.now() + SURFACE_TIMEOUT_MS
-    const modal = this.page.locator('[role="dialog"]:visible, [aria-modal="true"]:visible')
-    const uid = escapeCss(pageUid.trim())
-    const name = this.targetName?.trim()
-    const exactName = name ? new RegExp(`^${escapeRegex(name)}$`, 'i') : null
-
     while (Date.now() < deadline) {
-      if (uid && await visibleCount(modal.locator(`a[href*="${uid}"], [data-profileid="${uid}"], [data-profile-id="${uid}"], [data-pageid="${uid}"], [data-page-id="${uid}"]`)) > 0) {
-        return true
-      }
-      if (exactName && await visibleCount(modal.getByText(exactName)) > 0) return true
-      if (await visibleCount(modal.getByText(PROFILE_CHOOSER_PATTERN)) > 0) return true
+      if (pageIdentitySurfaceAdvanced(before, await this.surfaceSnapshot(pageUid))) return true
       await this.page.waitForTimeout(POLL_MS)
     }
     return false
@@ -415,79 +531,64 @@ export class PageIdentitySwitcher {
 
   private async tryDirect(pageUid: string): Promise<PostingJobResult | null> {
     this.directAttempted = true
-    for (const candidate of this.directCandidates()) {
-      const count = await candidate.locator.count().catch(() => 0)
-      for (let index = 0; index < count; index += 1) {
-        const item = candidate.locator.nth(index)
-        if (!await item.isVisible().catch(() => false)) continue
-        const clicked = await this.clickCandidates('direct', [{ ...candidate, locator: item }])
-        if (!clicked) continue
-
-        const waited = await this.waitIdentity(pageUid, Math.min(this.browser.navigationTimeoutMs, 10_000))
-        const waitFailure = this.waitFailure(waited, ' sau khi bấm switch trực tiếp')
-        if (waitFailure) return waitFailure
-        if (waited === 'matched') {
-          return { status: 'success', message: 'Đã chuyển sang Page identity bằng direct switch và xác minh i_user.' }
-        }
-        this.remember(`direct:${candidate.strategy}[${index}]:i_user-timeout`)
-      }
-    }
-    return null
+    const matched = await this.clickFreshCandidates(
+      'direct',
+      () => this.directCandidates(),
+      () => this.identityMatches(pageUid, 10_000),
+      SURFACE_TIMEOUT_MS
+    )
+    if (matched) return { status: 'success', message: 'Đã chuyển sang Page identity bằng direct switch và xác minh i_user.' }
+    return (await this.blocked()) ?? null
   }
 
   private async selectTarget(pageUid: string, stage: PageIdentityStage): Promise<PostingJobResult | null> {
-    const candidates = [...this.uidCandidates(pageUid, stage), ...this.nameCandidates(stage)]
-    for (const candidate of candidates) {
-      const count = await candidate.locator.count().catch(() => 0)
-      for (let index = 0; index < count; index += 1) {
-        const item = candidate.locator.nth(index)
-        if (!await item.isVisible().catch(() => false)) continue
-        const clicked = await this.clickCandidates('select-target', [{ ...candidate, locator: item }])
-        if (!clicked) continue
-
-        const waited = await this.waitIdentity(pageUid, Math.min(this.browser.navigationTimeoutMs, 12_000))
-        const waitFailure = this.waitFailure(waited, ' sau khi chọn Page trong profile chooser')
-        if (waitFailure) return waitFailure
-        if (waited === 'matched') {
-          return { status: 'success', message: 'Đã chọn Page trong profile chooser và xác minh i_user đúng Page UID.' }
-        }
-        this.remember(`select-target:${candidate.strategy}[${index}]:i_user-timeout`)
-      }
-    }
-    return null
+    const matched = await this.clickFreshCandidates(
+      'select-target',
+      () => this.targetCandidates(pageUid, stage),
+      () => this.identityMatches(pageUid, 12_000),
+      SURFACE_TIMEOUT_MS
+    )
+    if (matched) return { status: 'success', message: 'Đã chọn Page trong profile chooser và xác minh i_user đúng Page UID.' }
+    return (await this.blocked()) ?? null
   }
 
   private async runChooser(pageUid: string): Promise<PostingJobResult | null> {
     this.currentStage = 'account_menu'
+    this.allProfilesVerified = false
 
     const directTarget = await this.selectTarget(pageUid, 'account_menu')
     if (directTarget) return directTarget
 
-    const seeAllVisible = await countAcross(this.seeAllCandidates()) > 0
-    if (!seeAllVisible) return null
+    const root = this.chooserRoots()
+    const scopedSeeAll = await countAcross(this.seeAllCandidates(root))
+    const pageWideSeeAll = await countAcross(this.seeAllCandidates())
+    if (scopedSeeAll === 0 && pageWideSeeAll === 0) return null
 
-    const openedAll = await this.clickCandidates(
+    const before = await this.surfaceSnapshot(pageUid)
+    const opened = await this.clickFreshCandidates(
       'see-all',
-      this.seeAllCandidates(),
-      () => this.verifyAllProfiles(pageUid)
+      () => scopedSeeAll > 0 ? this.seeAllCandidates(this.chooserRoots()) : this.seeAllCandidates(),
+      () => this.verifySurfaceAdvance(pageUid, before)
     )
-    if (!openedAll) return null
+    if (!opened) return null
 
+    this.allProfilesVerified = true
     this.currentStage = 'all_profiles'
     return this.selectTarget(pageUid, 'all_profiles')
   }
 
   private async openChooser(pageUid: string): Promise<boolean> {
-    return this.clickCandidates(
+    const beforeSeeAll = await countAcross(this.seeAllCandidates())
+    return this.clickFreshCandidates(
       'open-account-menu',
-      this.accountCandidates(),
-      () => this.verifyChooser(pageUid)
+      () => this.accountCandidates(),
+      () => this.verifyChooser(pageUid, beforeSeeAll)
     )
   }
 
-  private async openHome(reason: string): Promise<PostingJobResult | null> {
+  private async openHome(): Promise<PostingJobResult | null> {
     this.homeFallbackAttempted = true
-    this.remember(`home-fallback:${reason}`)
+    this.remember('home-fallback')
     try {
       await this.page.goto('https://www.facebook.com/', {
         waitUntil: 'domcontentloaded',
@@ -502,21 +603,21 @@ export class PageIdentitySwitcher {
 
   private async diagnostics(pageUid: string): Promise<string> {
     const active = await activeFacebookProfileId(this.context).catch(() => null)
-    const evidence: PageIdentityDiagnostics = {
+    const target = await this.targetCounts(pageUid, this.currentStage)
+    return formatPageIdentityDiagnostics({
       stage: this.currentStage,
       uidState: classifyPageIdentityUid(pageUid, active),
       directSwitchCount: await countAcross(this.directCandidates()),
       accountMenuCount: await countAcross(this.accountCandidates()),
       seeAllProfilesCount: await countAcross(this.seeAllCandidates()),
-      targetUidCount: await countAcross(this.uidCandidates(pageUid, this.currentStage)),
-      targetNameCount: await countAcross(this.nameCandidates(this.currentStage)),
+      targetUidCount: target.uid,
+      targetNameCount: target.name,
       directAttempted: this.directAttempted,
       homeFallbackAttempted: this.homeFallbackAttempted,
       targetNameAvailable: Boolean(this.targetName),
       candidateAttempts: [...this.attempts],
       url: this.page.url()
-    }
-    return formatPageIdentityDiagnostics(evidence)
+    })
   }
 
   async switchTo(pageUid: string): Promise<PostingJobResult> {
@@ -533,26 +634,28 @@ export class PageIdentitySwitcher {
 
     const initialBlock = await this.blocked()
     if (initialBlock) return initialBlock
-
-    const active = await activeFacebookProfileId(this.context).catch(() => null)
-    if (classifyPageIdentityUid(uid, active) === 'match') {
-      return { status: 'success', message: 'Page identity đã active và khớp i_user.' }
-    }
+    if (await this.identityMatches(uid, 500)) return { status: 'success', message: 'Page identity đã active và khớp i_user.' }
 
     this.targetName = await this.readTargetName()
-
     const direct = await this.tryDirect(uid)
     if (direct) return direct
 
-    this.currentStage = 'page_surface'
     if (await this.openChooser(uid)) {
       const chooserResult = await this.runChooser(uid)
       if (chooserResult) return chooserResult
     }
 
-    const homeFailure = await this.openHome('page-surface-chooser-not-confirmed')
+    if (await this.identityMatches(uid, 1_500)) {
+      return { status: 'success', message: 'Page identity đã chuyển chậm nhưng đã xác minh i_user trước Home fallback.' }
+    }
+
+    const homeFailure = await this.openHome()
     if (homeFailure) return homeFailure
     this.currentStage = 'page_surface'
+
+    if (await this.identityMatches(uid, 1_500)) {
+      return { status: 'success', message: 'Page identity đã xác minh i_user sau Home transition.' }
+    }
 
     if (await this.openChooser(uid)) {
       const chooserResult = await this.runChooser(uid)
