@@ -76,6 +76,7 @@ export function resolvePageIdentityAction(evidence: PageIdentityEvidence): PageI
   if (evidence.stage === 'account_menu') {
     if (evidence.targetUidCount > 0) return 'select_target_uid'
     if (evidence.seeAllProfilesCount > 0) return 'click_see_all_profiles'
+    if (evidence.targetNameCount > 0) return 'select_target_name'
     return 'fail'
   }
 
@@ -200,36 +201,39 @@ export class PageIdentitySwitcher {
     return this.page.locator('[role="menu"]:visible, [role="dialog"]:visible, [aria-modal="true"]:visible')
   }
 
-  private targetUidCandidates(pageUid: string, stage: PageIdentityStage): Locator[] {
+  private targetUidCandidates(pageUid: string): Locator[] {
     const uid = escapeCssAttribute(pageUid.trim())
     if (!uid) return []
     const dataSelector = `[data-profileid="${uid}"], [data-profile-id="${uid}"], [data-pageid="${uid}"], [data-page-id="${uid}"]`
     const overlays = this.chooserOverlays()
-    const scoped = [
-      overlays.locator(`a[href*="${uid}"]`),
-      overlays.locator(dataSelector)
-    ]
-    if (stage === 'account_menu') return scoped
     return [
-      ...scoped,
+      overlays.locator(`a[href*="${uid}"]`),
+      overlays.locator(dataSelector),
       this.page.locator(`a[href*="${uid}"]`),
       this.page.locator(dataSelector)
     ]
   }
 
-  private targetNameCandidates(targetName: string | null): Locator[] {
+  private targetNameCandidates(targetName: string | null, stage: PageIdentityStage): Locator[] {
     const normalized = targetName?.trim()
     if (!normalized) return []
     const exact = new RegExp(`^${escapeRegex(normalized)}$`, 'i')
     const overlays = this.chooserOverlays()
-    return [
+    const scoped = [
       overlays.getByRole('menuitem', { name: exact }),
       overlays.getByRole('button', { name: exact }),
-      overlays.getByRole('link', { name: exact }),
-      overlays.getByText(normalized, { exact: true }),
+      overlays.getByRole('link', { name: exact })
+    ]
+    const clickablePageWide = [
       this.page.getByRole('menuitem', { name: exact }),
       this.page.getByRole('button', { name: exact }),
-      this.page.getByRole('link', { name: exact }),
+      this.page.getByRole('link', { name: exact })
+    ]
+    if (stage === 'account_menu') return [...scoped, ...clickablePageWide]
+    return [
+      ...scoped,
+      overlays.getByText(normalized, { exact: true }),
+      ...clickablePageWide,
       this.page.getByText(normalized, { exact: true })
     ]
   }
@@ -289,8 +293,8 @@ export class PageIdentitySwitcher {
       directSwitchCount: await visibleCountAcross(this.directSwitchCandidates()),
       accountMenuCount: await visibleCountAcross(this.accountMenuCandidates()),
       seeAllProfilesCount: await visibleCountAcross(this.seeAllProfilesCandidates()),
-      targetUidCount: stage === 'page_surface' ? 0 : await visibleCountAcross(this.targetUidCandidates(pageUid, stage)),
-      targetNameCount: stage === 'all_profiles' ? await visibleCountAcross(this.targetNameCandidates(targetName)) : 0,
+      targetUidCount: stage === 'page_surface' ? 0 : await visibleCountAcross(this.targetUidCandidates(pageUid)),
+      targetNameCount: stage === 'page_surface' ? 0 : await visibleCountAcross(this.targetNameCandidates(targetName, stage)),
       directAttempted
     }
     this.mergeSeen(evidence)
@@ -389,9 +393,9 @@ export class PageIdentitySwitcher {
       } else if (action === 'click_see_all_profiles') {
         control = await firstVisibleMatch(this.seeAllProfilesCandidates())
       } else if (action === 'select_target_uid') {
-        control = await firstVisibleMatch(this.targetUidCandidates(normalizedUid, stage))
+        control = await firstVisibleMatch(this.targetUidCandidates(normalizedUid))
       } else if (action === 'select_target_name') {
-        control = await firstVisibleMatch(this.targetNameCandidates(targetName))
+        control = await firstVisibleMatch(this.targetNameCandidates(targetName, stage))
       }
 
       if (!control) {

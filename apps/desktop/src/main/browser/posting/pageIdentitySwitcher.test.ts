@@ -47,17 +47,24 @@ describe('Page identity state machine', () => {
     expect(shouldRetryPageIdentityFromHome(evidence({ uidState: 'match' }), false)).toBe(false)
   })
 
-  it('prefers UID evidence inside the chooser and only uses Page name on the all-profiles surface', () => {
+  it('prefers UID, then See all profiles, then exact Page name in the account menu', () => {
     expect(resolvePageIdentityAction(evidence({
       stage: 'account_menu',
       targetUidCount: 1,
-      seeAllProfilesCount: 1
+      seeAllProfilesCount: 1,
+      targetNameCount: 1
     }))).toBe('select_target_uid')
 
     expect(resolvePageIdentityAction(evidence({
       stage: 'account_menu',
+      seeAllProfilesCount: 1,
       targetNameCount: 1
-    }))).toBe('fail')
+    }))).toBe('click_see_all_profiles')
+
+    expect(resolvePageIdentityAction(evidence({
+      stage: 'account_menu',
+      targetNameCount: 1
+    }))).toBe('select_target_name')
 
     expect(resolvePageIdentityAction(evidence({
       stage: 'all_profiles',
