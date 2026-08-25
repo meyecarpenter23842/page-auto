@@ -21,7 +21,14 @@ export type FacebookSessionReason =
   | 'login_failed'
   | 'unknown'
 
-export type FacebookSessionGate = 'valid' | 'login' | 'two_factor' | 'manual_verification' | 'unknown'
+export type FacebookSessionGate =
+  | 'valid'
+  | 'login'
+  | 'saved_profile'
+  | 'password_only'
+  | 'two_factor'
+  | 'manual_verification'
+  | 'unknown'
 
 export interface FacebookSessionResult {
   accountId: number
@@ -51,6 +58,8 @@ export interface FacebookSessionGateInput {
   loginFormVisible: boolean
   twoFactorVisible: boolean
   manualVerificationTextVisible: boolean
+  savedProfileVisible?: boolean
+  passwordOnlyVisible?: boolean
 }
 
 export interface FacebookSessionValidation {
@@ -59,6 +68,11 @@ export interface FacebookSessionValidation {
 }
 
 type ContextCookie = FacebookCookieInput
+
+const SAVED_PROFILE_CONTINUE_PATTERN = /^(continue|tiếp tục|lanjutkan)$/i
+const USE_ANOTHER_PROFILE_PATTERN = /use another (?:profile|account)|dùng (?:một )?(?:trang cá nhân|hồ sơ|tài khoản) khác|sử dụng (?:một )?(?:trang cá nhân|hồ sơ|tài khoản) khác|gunakan (?:profil|akun) lain/i
+const LOGIN_ACTION_PATTERN = /^(log in|login|đăng nhập|masuk)$/i
+const PASSWORD_SUBMIT_PATTERN = /^(continue|tiếp tục|lanjutkan|log in|login|đăng nhập|masuk)$/i
 
 function normalizeSameSite(value: unknown): FacebookCookieInput['sameSite'] | undefined {
   if (value === 'Strict' || value === 'Lax' || value === 'None') return value
@@ -211,10 +225,23 @@ async function serializeFacebookCookies(context: BrowserContext): Promise<string
   return facebookCookies.map((cookie) => `${cookie.name}=${cookie.value}`).join('; ')
 }
 
-async function isLoginFormVisible(page: Page): Promise<boolean> {
-  const email = page.locator('input[name="email"], #email').first()
-  const password = page.locator('input[name="pass"], #pass').first()
-  return (await email.isVisible().catch(() => false)) || (await password.isVisible().catch(() => false))
+function loginIdentifierInput(page: Page): Locator {
+  return page.locator('input[name="email"], #email').first()
+}
+
+function loginPasswordInput(page: Page): Locator {
+  return page.locator('input[name="pass"], #pass').first()
+}
+
+async function loginInputVisibility(page: Page): Promise<{ loginFormVisible: boolean; passwordOnlyVisible: boolean }> {
+  const [identifierVisible, passwordVisible] = await Promise.all([
+    loginIdentifierInput(page).isVisible().catch(() => false),
+    loginPasswordInput(page).isVisible().catch(() => false)
+  ])
+  return {
+    loginFormVisible: identifierVisible && passwordVisible,
+    passwordOnlyVisible: !identifierVisible && passwordVisible
+  }
 }
 
 function isManualVerificationUrl(url: string): boolean {
@@ -243,6 +270,29 @@ async function firstVisible(candidates: Locator[]): Promise<Locator | null> {
   return null
 }
 
+async function findSavedProfileContinue(page: Page): Promise<Locator | null> {
+  const useAnotherProfile = await firstVisible([
+    page.getByRole('button', { name: USE_ANOTHER_PROFILE_PATTERN }).first(),
+    page.getByRole('link', { name: USE_ANOTHER_PROFILE_PATTERN }).first(),
+    page.getByText(USE_ANOTHER_PROFILE_PATTERN).first()
+  ])
+  if (!useAnotherProfile) return null
+
+  return firstVisible([
+    page.getByRole('button', { name: SAVED_PROFILE_CONTINUE_PATTERN }).first(),
+    page.getByRole('link', { name: SAVED_PROFILE_CONTINUE_PATTERN }).first(),
+    page.getByText(SAVED_PROFILE_CONTINUE_PATTERN).first()
+  ])
+}
+
+async function findUseAnotherProfile(page: Page): Promise<Locator | null> {
+  return firstVisible([
+    page.getByRole('button', { name: USE_ANOTHER_PROFILE_PATTERN }).first(),
+    page.getByRole('link', { name: USE_ANOTHER_PROFILE_PATTERN }).first(),
+    page.getByText(USE_ANOTHER_PROFILE_PATTERN).first()
+  ])
+}
+
 async function findTwoFactorInput(page: Page): Promise<Locator | null> {
   const approvalsInput = await firstVisible([
     page.locator('input[name="approvals_code"]').first(),
@@ -262,23 +312,28 @@ async function findTwoFactorInput(page: Page): Promise<Locator | null> {
 export function classifyFacebookSessionGate(input: FacebookSessionGateInput): FacebookSessionGate {
   if (input.twoFactorVisible) return 'two_factor'
   if (isManualVerificationUrl(input.url) || input.manualVerificationTextVisible) return 'manual_verification'
-  if (input.loginFormVisible || input.url.toLowerCase().includes('/login/')) return 'login'
+  if (input.passwordOnlyVisible) return 'password_only'
+  if (input.savedProfileVisible) return 'saved_profile'
+  if (input.loginFormVisible) return 'login'
   if (input.hasUserCookie) return 'valid'
   return 'unknown'
 }
 
 export async function inspectFacebookSessionGate(context: BrowserContext, page: Page): Promise<FacebookSessionGate> {
-  const [userId, loginFormVisible, twoFactorInput, manualVerificationTextVisible] = await Promise.all([
+  const [userId, loginInputs, twoFactorInput, manualVerificationTextVisible, savedProfileContinue] = await Promise.all([
     currentFacebookUserId(context),
-    isLoginFormVisible(page),
+    loginInputVisibility(page),
     findTwoFactorInput(page),
-    hasManualVerificationText(page)
+    hasManualVerificationText(page),
+    findSavedProfileContinue(page)
   ])
 
   return classifyFacebookSessionGate({
     url: page.url(),
     hasUserCookie: Boolean(userId),
-    loginFormVisible,
+    loginFormVisible: loginInputs.loginFormVisible,
+    passwordOnlyVisible: loginInputs.passwordOnlyVisible,
+    savedProfileVisible: Boolean(savedProfileContinue),
     twoFactorVisible: Boolean(twoFactorInput),
     manualVerificationTextVisible
   })
@@ -289,7 +344,27 @@ async function waitForPostLoginGate(context: BrowserContext, page: Page, timeout
   let latest: FacebookSessionGate = 'unknown'
   while (Date.now() < deadline) {
     latest = await inspectFacebookSessionGate(context, page)
-    if (latest === 'valid' || latest === 'two_factor' || latest === 'manual_verification') return latest
+    if (
+      latest === 'valid'
+      || latest === 'two_factor'
+      || latest === 'manual_verification'
+      || latest === 'password_only'
+    ) return latest
+    await page.waitForTimeout(250)
+  }
+  return latest
+}
+
+async function waitForLoginSurfaceGate(
+  context: BrowserContext,
+  page: Page,
+  timeoutMs = 12_000
+): Promise<FacebookSessionGate> {
+  const deadline = Date.now() + timeoutMs
+  let latest: FacebookSessionGate = 'unknown'
+  while (Date.now() < deadline) {
+    latest = await inspectFacebookSessionGate(context, page)
+    if (latest !== 'unknown') return latest
     await page.waitForTimeout(250)
   }
   return latest
@@ -304,21 +379,40 @@ async function openExplicitFacebookLoginSurface(
     waitUntil: 'domcontentloaded',
     timeout: 45_000
   }).catch(() => undefined)
+  return waitForLoginSurfaceGate(context, page, timeoutMs)
+}
 
-  const deadline = Date.now() + timeoutMs
-  let latest: FacebookSessionGate = 'unknown'
-  while (Date.now() < deadline) {
-    latest = await inspectFacebookSessionGate(context, page)
-    if (latest === 'valid' || latest === 'two_factor' || latest === 'manual_verification') return latest
-    if (latest === 'login' && await isLoginFormVisible(page)) return 'login'
-    await page.waitForTimeout(250)
+async function clickSavedProfileContinue(page: Page): Promise<boolean> {
+  const continueAction = await findSavedProfileContinue(page)
+  if (!continueAction) return false
+  try {
+    await continueAction.scrollIntoViewIfNeeded().catch(() => undefined)
+    await continueAction.click({ timeout: 15_000 })
+  } catch {
+    return false
   }
-  return latest === 'login' && await isLoginFormVisible(page) ? 'login' : 'unknown'
+  await page.waitForLoadState('domcontentloaded', { timeout: 20_000 }).catch(() => undefined)
+  await page.waitForTimeout(700)
+  return true
+}
+
+async function clickUseAnotherProfile(page: Page): Promise<boolean> {
+  const action = await findUseAnotherProfile(page)
+  if (!action) return false
+  try {
+    await action.scrollIntoViewIfNeeded().catch(() => undefined)
+    await action.click({ timeout: 15_000 })
+  } catch {
+    return false
+  }
+  await page.waitForLoadState('domcontentloaded', { timeout: 20_000 }).catch(() => undefined)
+  await page.waitForTimeout(500)
+  return true
 }
 
 async function submitLogin(page: Page, identifier: string, password: string): Promise<void> {
-  const emailInput = page.locator('input[name="email"], #email').first()
-  const passwordInput = page.locator('input[name="pass"], #pass').first()
+  const emailInput = loginIdentifierInput(page)
+  const passwordInput = loginPasswordInput(page)
   if (!await emailInput.isVisible().catch(() => false) || !await passwordInput.isVisible().catch(() => false)) {
     throw new Error('Không tìm thấy form đăng nhập Facebook.')
   }
@@ -329,7 +423,7 @@ async function submitLogin(page: Page, identifier: string, password: string): Pr
   const loginButton = await firstVisible([
     page.locator('button[name="login"]:visible').first(),
     page.locator('[data-testid="royal_login_button"]:visible').first(),
-    page.getByRole('button', { name: /^(log in|login|đăng nhập)$/i }).first(),
+    page.getByRole('button', { name: LOGIN_ACTION_PATTERN }).first(),
     page.locator('input[name="login"][type="submit"]:visible').first(),
     page.locator('button[type="submit"]:visible').first()
   ])
@@ -347,6 +441,33 @@ async function submitLogin(page: Page, identifier: string, password: string): Pr
 
   await page.waitForLoadState('domcontentloaded', { timeout: 20_000 }).catch(() => undefined)
   await page.waitForTimeout(1_000)
+}
+
+async function submitPasswordOnly(page: Page, password: string): Promise<void> {
+  const passwordInput = loginPasswordInput(page)
+  if (!await passwordInput.isVisible().catch(() => false)) {
+    throw new Error('Không tìm thấy ô password của saved profile Facebook.')
+  }
+  await passwordInput.fill(password)
+
+  const submit = await firstVisible([
+    page.getByRole('button', { name: PASSWORD_SUBMIT_PATTERN }).first(),
+    page.locator('button[type="submit"]:visible').first(),
+    page.locator('input[type="submit"]:visible').first()
+  ])
+  if (submit) {
+    try {
+      await submit.scrollIntoViewIfNeeded().catch(() => undefined)
+      await submit.click({ timeout: 15_000 })
+    } catch {
+      await passwordInput.press('Enter')
+    }
+  } else {
+    await passwordInput.press('Enter')
+  }
+
+  await page.waitForLoadState('domcontentloaded', { timeout: 20_000 }).catch(() => undefined)
+  await page.waitForTimeout(800)
 }
 
 async function submitTotp(page: Page, secret: string): Promise<boolean> {
@@ -432,6 +553,21 @@ async function completeTwoFactor(
   return needsLoginResult(account.id, 'two_factor_failed', 'Đã nhập mã 2FA nhưng Facebook chưa xác nhận session; cần kiểm tra thủ công trên browser.')
 }
 
+async function resolveAuthenticatedGate(
+  context: BrowserContext,
+  page: Page,
+  account: FacebookSessionAccount,
+  gate: FacebookSessionGate,
+  successMessage: string
+): Promise<FacebookSessionResult | null> {
+  if (gate === 'valid') return verifiedSuccessResult(account, context, successMessage)
+  if (gate === 'two_factor') return completeTwoFactor(context, page, account, successMessage)
+  if (gate === 'manual_verification') {
+    return needsLoginResult(account.id, 'checkpoint', 'Facebook yêu cầu checkpoint/xác minh danh tính; cần xử lý thủ công trên browser đang mở.')
+  }
+  return null
+}
+
 export async function validateFacebookSession(context: BrowserContext, page: Page): Promise<FacebookSessionValidation> {
   const gate = await inspectFacebookSessionGate(context, page)
   if (gate === 'valid') return { state: 'valid', message: 'Session Facebook hợp lệ.' }
@@ -464,7 +600,10 @@ export async function bootstrapFacebookSession(
   const existingUserId = await currentFacebookUserId(context).catch(() => null)
   let storedCookieApplied = false
 
-  if (!existingUserId && storedCookies.length > 0) {
+  // A stored cookie whose c_user matches this numeric account is preferred over a
+  // missing or mismatched persistent c_user. This keeps cookie restore ahead of
+  // interactive login without trusting a cookie belonging to another UID.
+  if (!facebookUserIdMatchesExpected(existingUserId, account.uid) && storedCookies.length > 0) {
     await context.addCookies(storedCookies).catch(() => undefined)
     storedCookieApplied = true
   }
@@ -472,52 +611,103 @@ export async function bootstrapFacebookSession(
   await navigateFacebookHome(page)
 
   let gate = await inspectFacebookSessionGate(context, page)
-  if (gate === 'two_factor') {
-    return completeTwoFactor(context, page, account, 'Đã xác thực 2FA và session Facebook hợp lệ.')
-  }
-  if (gate === 'manual_verification') {
-    return needsLoginResult(account.id, 'checkpoint', 'Facebook yêu cầu checkpoint/xác minh danh tính; cần xử lý thủ công trên browser đang mở.')
-  }
-  if (gate === 'valid') {
-    return verifiedSuccessResult(account, context, 'Session Facebook hợp lệ từ persistent profile/cookie.')
-  }
+  const initialResolved = await resolveAuthenticatedGate(
+    context,
+    page,
+    account,
+    gate,
+    'Session Facebook hợp lệ từ persistent profile/cookie.'
+  )
+  if (initialResolved) return initialResolved
 
   if (!storedCookieApplied && storedCookies.length > 0) {
     await context.addCookies(storedCookies).catch(() => undefined)
     await navigateFacebookHome(page)
     gate = await inspectFacebookSessionGate(context, page)
-    if (gate === 'valid') {
-      return verifiedSuccessResult(account, context, 'Đã khôi phục session Facebook bằng cookie đã lưu.')
+    const cookieResolved = await resolveAuthenticatedGate(
+      context,
+      page,
+      account,
+      gate,
+      'Đã khôi phục session Facebook bằng cookie đã lưu.'
+    )
+    if (cookieResolved) return cookieResolved
+  }
+
+  if (gate === 'unknown') {
+    gate = await openExplicitFacebookLoginSurface(context, page)
+    const explicitResolved = await resolveAuthenticatedGate(
+      context,
+      page,
+      account,
+      gate,
+      'Facebook đã khôi phục session khi mở trang đăng nhập.'
+    )
+    if (explicitResolved) return explicitResolved
+  }
+
+  if (gate === 'saved_profile') {
+    const continued = await clickSavedProfileContinue(page)
+    if (continued) {
+      gate = await waitForPostLoginGate(context, page)
+      const continuedResolved = await resolveAuthenticatedGate(
+        context,
+        page,
+        account,
+        gate,
+        'Đã đăng nhập bằng saved profile Facebook và xác minh đúng account.'
+      )
+      if (continuedResolved) return continuedResolved
     }
-    if (gate === 'two_factor') {
-      return completeTwoFactor(context, page, account, 'Đã khôi phục cookie và xác thực 2FA thành công.')
-    }
-    if (gate === 'manual_verification') {
-      return needsLoginResult(account.id, 'checkpoint', 'Cookie đã đưa tới checkpoint/xác minh danh tính; cần xử lý thủ công.')
+
+    if (gate === 'saved_profile' || gate === 'unknown') {
+      if (await clickUseAnotherProfile(page)) {
+        gate = await waitForLoginSurfaceGate(context, page)
+        const fallbackResolved = await resolveAuthenticatedGate(
+          context,
+          page,
+          account,
+          gate,
+          'Facebook đã khôi phục session sau khi chọn profile đăng nhập khác.'
+        )
+        if (fallbackResolved) return fallbackResolved
+      }
     }
   }
 
   const identifier = account.username?.trim() || account.uid.trim()
   const password = account.password?.trim()
-  if (!identifier || !password) {
-    return needsLoginResult(account.id, 'login_required', 'Cookie không khôi phục được session và account thiếu UID/UserName hoặc password để tự đăng nhập.')
+
+  if (gate === 'password_only') {
+    if (!password) {
+      return needsLoginResult(account.id, 'login_required', 'Saved profile Facebook yêu cầu password nhưng account chưa có password để tự đăng nhập.')
+    }
+    try {
+      await submitPasswordOnly(page, password)
+    } catch (error) {
+      return needsLoginResult(account.id, 'login_failed', error instanceof Error ? error.message : String(error))
+    }
+
+    gate = await waitForPostLoginGate(context, page)
+    const passwordOnlyResolved = await resolveAuthenticatedGate(
+      context,
+      page,
+      account,
+      gate,
+      'Đăng nhập saved profile Facebook bằng password thành công.'
+    )
+    if (passwordOnlyResolved) return passwordOnlyResolved
+    if (gate === 'password_only') {
+      return needsLoginResult(account.id, 'login_failed', 'Facebook vẫn yêu cầu password cho saved profile; kiểm tra password hoặc thông báo trên browser.')
+    }
   }
 
-  if (gate === 'unknown') {
-    gate = await openExplicitFacebookLoginSurface(context, page)
-    if (gate === 'valid') {
-      return verifiedSuccessResult(account, context, 'Facebook đã khôi phục session khi mở trang đăng nhập.')
-    }
-    if (gate === 'two_factor') {
-      return completeTwoFactor(context, page, account, 'Đã xác thực 2FA từ trang đăng nhập và session Facebook hợp lệ.')
-    }
-    if (gate === 'manual_verification') {
-      return needsLoginResult(account.id, 'checkpoint', 'Facebook chuyển sang checkpoint/xác minh danh tính khi mở trang đăng nhập; cần xử lý thủ công.')
-    }
+  if (!identifier || !password) {
+    return needsLoginResult(account.id, 'login_required', 'Cookie/saved profile không khôi phục được session và account thiếu UID/UserName hoặc password để tự đăng nhập.')
   }
 
   if (gate !== 'login') {
-    return needsLoginResult(account.id, 'unknown', 'Facebook chưa hiển thị được form đăng nhập sau khi mở trang login; browser được giữ mở để xử lý thủ công.')
+    return needsLoginResult(account.id, 'unknown', 'Facebook chưa hiển thị được form đăng nhập sau khi thử cookie/saved profile; browser được giữ mở để xử lý thủ công.')
   }
 
   try {
@@ -538,6 +728,9 @@ export async function bootstrapFacebookSession(
   }
   if (gate === 'login') {
     return needsLoginResult(account.id, 'login_failed', 'Facebook vẫn hiển thị màn đăng nhập; kiểm tra UID/UserName, password hoặc thông báo trên browser.')
+  }
+  if (gate === 'password_only') {
+    return needsLoginResult(account.id, 'login_failed', 'Facebook chuyển sang màn password-only sau login nhưng chưa tạo session hợp lệ; cần kiểm tra trên browser.')
   }
   return needsLoginResult(account.id, 'unknown', 'Facebook chưa tạo session hợp lệ sau login; browser được giữ mở để kiểm tra thủ công.')
 }
