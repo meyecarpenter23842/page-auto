@@ -73,6 +73,7 @@ const SAVED_PROFILE_CONTINUE_PATTERN = /^(continue|tiếp tục|lanjutkan)$/i
 const USE_ANOTHER_PROFILE_PATTERN = /use another (?:profile|account)|dùng (?:một )?(?:trang cá nhân|hồ sơ|tài khoản) khác|sử dụng (?:một )?(?:trang cá nhân|hồ sơ|tài khoản) khác|gunakan (?:profil|akun) lain/i
 const LOGIN_ACTION_PATTERN = /^(log in|login|đăng nhập|masuk)$/i
 const PASSWORD_SUBMIT_PATTERN = /^(continue|tiếp tục|lanjutkan|log in|login|đăng nhập|masuk)$/i
+const TWO_FACTOR_SUBMIT_PATTERN = /^(continue|tiếp tục|submit|gửi|confirm|xác nhận)$/i
 
 function normalizeSameSite(value: unknown): FacebookCookieInput['sameSite'] | undefined {
   if (value === 'Strict' || value === 'Lax' || value === 'None') return value
@@ -273,6 +274,28 @@ async function firstVisible(candidates: Locator[]): Promise<Locator | null> {
   return null
 }
 
+async function firstVisibleEnabled(candidates: Locator[]): Promise<Locator | null> {
+  for (const candidate of candidates) {
+    const count = await candidate.count().catch(() => 0)
+    for (let index = 0; index < count; index += 1) {
+      const item = candidate.nth(index)
+      if (!await item.isVisible().catch(() => false)) continue
+      if (await item.isEnabled().catch(() => true)) return item
+    }
+  }
+  return null
+}
+
+async function domClick(locator: Locator): Promise<boolean> {
+  return locator.evaluate((element) => {
+    if (element instanceof HTMLElement) {
+      element.click()
+      return true
+    }
+    return element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }))
+  }).then(() => true).catch(() => false)
+}
+
 async function findSavedProfileContinue(page: Page): Promise<Locator | null> {
   const useAnotherProfile = await firstVisible([
     page.getByRole('button', { name: USE_ANOTHER_PROFILE_PATTERN }).first(),
@@ -317,6 +340,22 @@ async function findTwoFactorInput(page: Page): Promise<Locator | null> {
     page.locator('input[type="text"]:visible').first(),
     page.locator('input:not([type]):visible').first()
   ])
+}
+
+async function findTwoFactorSubmit(page: Page, timeoutMs = 4_000): Promise<Locator | null> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() <= deadline) {
+    const submit = await firstVisibleEnabled([
+      page.getByRole('button', { name: TWO_FACTOR_SUBMIT_PATTERN }),
+      page.getByRole('link', { name: TWO_FACTOR_SUBMIT_PATTERN }),
+      page.locator('button[type="submit"]:visible'),
+      page.locator('input[type="submit"]:visible'),
+      page.getByText(TWO_FACTOR_SUBMIT_PATTERN, { exact: true })
+    ])
+    if (submit) return submit
+    await page.waitForTimeout(200)
+  }
+  return null
 }
 
 export function classifyFacebookSessionGate(input: FacebookSessionGateInput): FacebookSessionGate {
@@ -484,17 +523,21 @@ async function submitTotp(page: Page, secret: string): Promise<boolean> {
   const input = await findTwoFactorInput(page)
   if (!input) return false
   await input.fill(resolveTwoFactorCode(secret))
+  await page.waitForTimeout(250)
 
-  const submit = await firstVisible([
-    page.getByRole('button', { name: /continue|tiếp tục|submit|gửi|confirm|xác nhận/i }).first(),
-    page.locator('button[type="submit"]:visible').first(),
-    page.locator('input[type="submit"]:visible').first()
-  ])
+  const submit = await findTwoFactorSubmit(page)
+  let submitted = false
   if (submit) {
-    await submit.click({ timeout: 15_000 })
-  } else {
-    await input.press('Enter')
+    await submit.scrollIntoViewIfNeeded().catch(() => undefined)
+    submitted = await submit.click({ timeout: 5_000 }).then(() => true).catch(() => false)
+    if (!submitted) submitted = await domClick(submit)
   }
+
+  if (!submitted) {
+    submitted = await input.press('Enter').then(() => true).catch(() => false)
+  }
+  if (!submitted) return false
+
   await page.waitForLoadState('domcontentloaded', { timeout: 20_000 }).catch(() => undefined)
   await page.waitForTimeout(800)
   return true
@@ -549,10 +592,10 @@ async function completeTwoFactor(
 
   try {
     if (!await submitTotp(page, account.twoFactorSecret)) {
-      return needsLoginResult(account.id, 'two_factor_failed', 'Không phát hiện được ô nhập mã 2FA để tiếp tục đăng nhập.')
+      return needsLoginResult(account.id, 'two_factor_failed', 'Không phát hiện/click được nút Continue sau khi nhập mã 2FA; giữ account hiện tại để kiểm tra.')
     }
   } catch {
-    return needsLoginResult(account.id, 'two_factor_failed', 'Không thể tạo/nhập mã 2FA từ dữ liệu 2FA của account.')
+    return needsLoginResult(account.id, 'two_factor_failed', 'Không thể tạo/nhập/gửi mã 2FA từ dữ liệu 2FA của account.')
   }
 
   const gate = await waitForPostLoginGate(context, page)
@@ -560,7 +603,7 @@ async function completeTwoFactor(
   if (gate === 'manual_verification') {
     return needsLoginResult(account.id, 'checkpoint', 'Facebook yêu cầu checkpoint/xác minh danh tính sau 2FA; cần xử lý thủ công.')
   }
-  return needsLoginResult(account.id, 'two_factor_failed', 'Đã nhập mã 2FA nhưng Facebook chưa xác nhận session; cần kiểm tra thủ công trên browser.')
+  return needsLoginResult(account.id, 'two_factor_failed', 'Đã nhập/gửi mã 2FA nhưng Facebook chưa xác nhận session; giữ account hiện tại để kiểm tra thủ công trên browser.')
 }
 
 async function resolveAuthenticatedGate(
