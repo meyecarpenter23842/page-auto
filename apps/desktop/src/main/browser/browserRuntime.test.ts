@@ -3,6 +3,7 @@ import { DEFAULT_APP_SETTINGS } from '../../shared/appSettings'
 import type { BrowserWindowPlacement } from '../../shared/browserWindowLayout'
 import {
   applyBrowserWindowPlacement,
+  browserNativeBoundsRecord,
   buildBrowserLaunchOptions,
   compactDeviceMetrics,
   compactWindowSizeChanged,
@@ -25,6 +26,7 @@ const placement: BrowserWindowPlacement = {
 
 afterEach(() => {
   vi.useRealTimers()
+  vi.restoreAllMocks()
 })
 
 describe('buildBrowserLaunchOptions', () => {
@@ -90,8 +92,38 @@ describe('buildBrowserLaunchOptions', () => {
     expect(compactWindowSizeChanged({ width: 500, height: 300 }, { width: 620, height: 420 })).toBe(true)
   })
 
-  it('tiles native Chrome without enabling device-metrics emulation', async () => {
-    const send = vi.fn(async (method: string) => method === 'Browser.getWindowForTarget' ? { windowId: 7 } : {})
+  it('distinguishes a Chrome/Windows clamp from an accepted native size', () => {
+    expect(browserNativeBoundsRecord(
+      { width: 500, height: 500 },
+      { width: 500, height: 500 }
+    )).toEqual({
+      requested: { width: 500, height: 500 },
+      actual: { width: 500, height: 500 },
+      clamped: false
+    })
+    expect(browserNativeBoundsRecord(
+      { width: 450, height: 450 },
+      { width: 516, height: 450 }
+    )).toEqual({
+      requested: { width: 450, height: 450 },
+      actual: { width: 516, height: 450 },
+      clamped: true
+    })
+  })
+
+  it('waits for native Chrome bounds to settle before reporting clamp and never enables device-metrics emulation', async () => {
+    vi.useFakeTimers()
+    let boundsRead = 0
+    const send = vi.fn(async (method: string) => {
+      if (method === 'Browser.getWindowForTarget') return { windowId: 7 }
+      if (method === 'Browser.getWindowBounds') {
+        boundsRead += 1
+        return boundsRead <= 2
+          ? { bounds: { width: 500, height: 500 } }
+          : { bounds: { width: 516, height: 500 } }
+      }
+      return {}
+    })
     const detach = vi.fn(async () => undefined)
     const session = { send, detach }
     const context = {
@@ -100,8 +132,11 @@ describe('buildBrowserLaunchOptions', () => {
     const page = {
       once: vi.fn()
     } as unknown as Parameters<typeof applyBrowserWindowPlacement>[1]
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined)
 
-    await applyBrowserWindowPlacement(context, page, placement)
+    const applying = applyBrowserWindowPlacement(context, page, placement)
+    await vi.runAllTimersAsync()
+    await applying
 
     expect(send).toHaveBeenCalledWith('Emulation.clearDeviceMetricsOverride')
     expect(send).toHaveBeenCalledWith('Browser.setWindowBounds', {
@@ -114,6 +149,12 @@ describe('buildBrowserLaunchOptions', () => {
         windowState: 'normal'
       }
     })
+    expect(boundsRead).toBeGreaterThanOrEqual(4)
+    expect(send).toHaveBeenCalledWith('Browser.getWindowBounds', { windowId: 7 })
+    const setIndex = send.mock.calls.findIndex(([method]) => method === 'Browser.setWindowBounds')
+    const readIndex = send.mock.calls.findIndex(([method]) => method === 'Browser.getWindowBounds')
+    expect(readIndex).toBeGreaterThan(setIndex)
+    expect(info).toHaveBeenCalledWith('[PAGE-AUTO compact] requested=500x500 actual=516x500 clamped=true')
     expect(send).not.toHaveBeenCalledWith(
       'Emulation.setDeviceMetricsOverride',
       expect.anything()

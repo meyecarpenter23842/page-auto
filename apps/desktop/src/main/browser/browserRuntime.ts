@@ -32,9 +32,18 @@ export interface BrowserOuterSize {
   height: number
 }
 
+export interface BrowserNativeBoundsRecord {
+  requested: BrowserOuterSize
+  actual: BrowserOuterSize
+  clamped: boolean
+}
+
 const MIN_COMPACT_SCALE = 0.001
 const MANUAL_RESIZE_TOLERANCE_PX = 12
 const RESIZE_WATCH_SETTLE_MS = 700
+const NATIVE_BOUNDS_MIN_SETTLE_MS = 300
+const NATIVE_BOUNDS_SETTLE_INTERVAL_MS = 100
+const NATIVE_BOUNDS_SETTLE_TIMEOUT_MS = 1_200
 const compactSessions = new WeakMap<Page, CDPSession>()
 const placementQueues = new WeakMap<BrowserContext, Promise<void>>()
 
@@ -108,17 +117,67 @@ export function compactWindowSizeChanged(
     || Math.abs(current.height - baseline.height) > tolerancePx
 }
 
-async function readBrowserOuterSize(context: BrowserContext, page: Page): Promise<BrowserOuterSize | null> {
-  const session = await compactSessionFor(context, page)
-  const targetWindow = await session.send('Browser.getWindowForTarget').catch(() => null) as { windowId?: number } | null
-  if (targetWindow?.windowId === undefined) return null
-  const result = await session.send('Browser.getWindowBounds', { windowId: targetWindow.windowId }).catch(() => null) as {
+export function browserNativeBoundsRecord(
+  requested: BrowserOuterSize,
+  actual: BrowserOuterSize
+): BrowserNativeBoundsRecord {
+  return {
+    requested: { ...requested },
+    actual: { ...actual },
+    clamped: requested.width !== actual.width || requested.height !== actual.height
+  }
+}
+
+async function readBrowserWindowBounds(session: CDPSession, windowId: number): Promise<BrowserOuterSize | null> {
+  const result = await session.send('Browser.getWindowBounds', { windowId }).catch(() => null) as {
     bounds?: { width?: number; height?: number }
   } | null
   const width = result?.bounds?.width
   const height = result?.bounds?.height
   if (typeof width !== 'number' || typeof height !== 'number') return null
   return { width, height }
+}
+
+async function readStableBrowserWindowBounds(
+  session: CDPSession,
+  windowId: number,
+  timeoutMs: number = NATIVE_BOUNDS_SETTLE_TIMEOUT_MS,
+  intervalMs: number = NATIVE_BOUNDS_SETTLE_INTERVAL_MS
+): Promise<BrowserOuterSize | null> {
+  const startedAt = Date.now()
+  const deadline = startedAt + Math.max(NATIVE_BOUNDS_MIN_SETTLE_MS, timeoutMs)
+  let previous: BrowserOuterSize | null = null
+  let latest: BrowserOuterSize | null = null
+  let stableReads = 0
+
+  while (Date.now() <= deadline) {
+    const current = await readBrowserWindowBounds(session, windowId)
+    if (current) {
+      latest = current
+      if (previous && previous.width === current.width && previous.height === current.height) {
+        stableReads += 1
+      } else {
+        stableReads = 0
+      }
+      previous = current
+
+      if (Date.now() - startedAt >= NATIVE_BOUNDS_MIN_SETTLE_MS && stableReads >= 1) {
+        return current
+      }
+    }
+
+    if (Date.now() >= deadline) break
+    await new Promise<void>((resolve) => setTimeout(resolve, Math.max(25, intervalMs)))
+  }
+
+  return latest
+}
+
+async function readBrowserOuterSize(context: BrowserContext, page: Page): Promise<BrowserOuterSize | null> {
+  const session = await compactSessionFor(context, page)
+  const targetWindow = await session.send('Browser.getWindowForTarget').catch(() => null) as { windowId?: number } | null
+  if (targetWindow?.windowId === undefined) return null
+  return readBrowserWindowBounds(session, targetWindow.windowId)
 }
 
 export function watchForManualBrowserResize(
@@ -239,6 +298,10 @@ export async function applyBrowserContextSettings(
  * use a different layout/hit-test model from Compact OFF and has proven unsafe for
  * Facebook's live composer. Always clear stale emulation and let Chrome/Facebook reflow
  * natively at the real compact window size.
+ *
+ * Chrome/Windows may clamp a requested native size. After every Compact placement we
+ * wait for Browser.getWindowBounds to settle and report requested vs actual instead of
+ * treating an initial transient bound as the final native window size.
  */
 export async function applyBrowserWindowPlacement(
   context: BrowserContext,
@@ -262,7 +325,7 @@ export async function applyBrowserWindowPlacement(
   }
 
   if (targetWindow?.windowId !== undefined) {
-    await session.send('Browser.setWindowBounds', {
+    const applied = await session.send('Browser.setWindowBounds', {
       windowId: targetWindow.windowId,
       bounds: {
         left: placement.x,
@@ -271,7 +334,21 @@ export async function applyBrowserWindowPlacement(
         height: placement.height,
         windowState: 'normal'
       }
-    }).catch(() => undefined)
+    }).then(() => true).catch(() => false)
+
+    if (applied) {
+      const actual = await readStableBrowserWindowBounds(session, targetWindow.windowId)
+      if (actual) {
+        const record = browserNativeBoundsRecord(
+          { width: placement.width, height: placement.height },
+          actual
+        )
+        console.info(
+          `[PAGE-AUTO compact] requested=${record.requested.width}x${record.requested.height} `
+          + `actual=${record.actual.width}x${record.actual.height} clamped=${record.clamped}`
+        )
+      }
+    }
   }
 }
 
