@@ -36,11 +36,14 @@ describe('Page identity state machine', () => {
     expect(resolvePageIdentityAction(evidence({ seeAllProfilesCount: 1 }))).toBe('click_see_all_profiles')
   })
 
-  it('retries a control-less Page surface through Facebook home exactly once', () => {
+  it('retries a control-less Page surface or empty first account menu through Facebook home exactly once', () => {
     const emptySurface = evidence()
+    const emptyAccountMenu = evidence({ stage: 'account_menu' })
     expect(shouldRetryPageIdentityFromHome(emptySurface, false)).toBe(true)
+    expect(shouldRetryPageIdentityFromHome(emptyAccountMenu, false)).toBe(true)
     expect(shouldRetryPageIdentityFromHome(emptySurface, true)).toBe(false)
-    expect(shouldRetryPageIdentityFromHome(evidence({ stage: 'account_menu' }), false)).toBe(false)
+    expect(shouldRetryPageIdentityFromHome(emptyAccountMenu, true)).toBe(false)
+    expect(shouldRetryPageIdentityFromHome(evidence({ stage: 'all_profiles' }), false)).toBe(false)
     expect(shouldRetryPageIdentityFromHome(evidence({ uidState: 'match' }), false)).toBe(false)
   })
 
