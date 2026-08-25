@@ -32,6 +32,7 @@ import {
   publishContentFingerprint,
   type PublishBaseline
 } from './publishVerification'
+import { RobustComposerDetector } from './robustComposerDetector'
 
 type PostingCode = NonNullable<PostingJobResult['code']>
 
@@ -658,12 +659,12 @@ export async function executePostingJob(job: PostingJobRequest): Promise<Posting
     const publishBaseline = await resultDetector.captureBaseline()
     engineDiagnostic(job, `verification baseline captured=${publishBaseline.captured} posts=${publishBaseline.postKeys.size}`)
 
-    const composerDetector = new ComposerDetector(page)
+    const composerDetector = new RobustComposerDetector(page)
     const composer = await composerDetector.open()
     if (!composer) {
       const diagnostics = await composerDetector.diagnostics()
       engineDiagnostic(job, `composer detection failed ${diagnostics}`)
-      return finish(failure('composer_not_found', `Không phát hiện được editor sẵn sàng trong modal Create post sau thời gian chờ. ${diagnostics}`))
+      return finish(failure('composer_not_found', `Không phát hiện được editor sẵn sàng trong Create post surface sau thời gian chờ. ${diagnostics}`))
     }
     engineDiagnostic(job, 'composer editor ready')
 

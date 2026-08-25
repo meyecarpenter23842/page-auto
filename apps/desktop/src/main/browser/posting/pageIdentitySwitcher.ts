@@ -89,7 +89,7 @@ export function shouldRetryPageIdentityFromHome(
   homeFallbackAttempted: boolean
 ): boolean {
   return !homeFallbackAttempted
-    && evidence.stage === 'page_surface'
+    && (evidence.stage === 'page_surface' || evidence.stage === 'account_menu')
     && evidence.uidState !== 'match'
     && resolvePageIdentityAction(evidence) === 'fail'
 }
