@@ -9,10 +9,22 @@ export interface SessionFailureDecision {
   action: SessionFailureAction
 }
 
+function isUnresolvedTwoFactor(result: PostingJobResult): boolean {
+  if (result.status !== 'needs_login') return false
+  const text = `${result.message} ${result.sessionValidation?.message ?? ''}`
+  return /\b2fa\b|two[- ]factor|authentication app|authenticator app|mã xác thực/i.test(text)
+}
+
 export function resolveSessionFailureDecision(
   result: PostingJobResult,
   settings: SessionSettings
 ): SessionFailureDecision | null {
+  // 2FA vẫn thuộc lượt đăng nhập của account hiện tại. Nếu không hoàn tất được,
+  // dừng Page Tab và giữ browser account đó thay vì mở account kế tiếp song song.
+  if (isUnresolvedTwoFactor(result)) {
+    return { kind: 'session_expired', action: 'stop' }
+  }
+
   const state = result.sessionValidation?.state
   const checkpoint = result.code === 'verification_required' || state === 'verification_required'
   if (checkpoint) {
