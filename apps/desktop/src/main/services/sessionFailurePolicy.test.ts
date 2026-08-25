@@ -21,6 +21,18 @@ describe('resolveSessionFailureDecision', () => {
     })
   })
 
+  it('always pauses the Page Tab while the current account still has unresolved 2FA', () => {
+    const result: PostingJobResult = {
+      status: 'needs_login',
+      code: 'needs_login',
+      message: 'Đã nhập mã 2FA nhưng Facebook chưa xác nhận session; cần kiểm tra thủ công trên browser.'
+    }
+    expect(resolveSessionFailureDecision(result, settings({ onSessionExpired: 'needs_login_continue' }))).toEqual({
+      kind: 'session_expired',
+      action: 'stop'
+    })
+  })
+
   it('uses the checkpoint policy for identity verification', () => {
     const result: PostingJobResult = {
       status: 'needs_login',
