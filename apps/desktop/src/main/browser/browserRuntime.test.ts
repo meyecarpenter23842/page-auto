@@ -63,15 +63,22 @@ describe('buildBrowserLaunchOptions', () => {
     expect(options.ignoreDefaultArgs).toContain('--no-sandbox')
   })
 
-  it('keeps desktop width while fitting logical height to the real Chrome inner area', () => {
+  it('keeps the legacy scale helpers deterministic for stored-layout compatibility', () => {
     expect(effectiveCompactContentScale(placement, 320, 120)).toBe(0.25)
     const fit = fitCompactViewportToInnerArea(placement, 320, 120)
     expect(fit).toEqual({ width: 1280, height: 480, scale: 0.25 })
-    expect(fit.width * fit.scale).toBeCloseTo(320, 5)
-    expect(fit.height * fit.scale).toBeCloseTo(120, 5)
+    expect(compactDeviceMetrics(placement, fit.scale, fit.width, fit.height)).toEqual({
+      width: 1280,
+      height: 480,
+      deviceScaleFactor: 1,
+      mobile: false,
+      screenWidth: 1280,
+      screenHeight: 480,
+      scale: 0.25
+    })
   })
 
-  it('uses the tile width as the compact scale anchor instead of shrinking for a short content height', () => {
+  it('uses the tile width as the legacy scale anchor instead of shrinking for a short content height', () => {
     const fit = fitCompactViewportToInnerArea(placement, 640, 200)
     expect(fit).toEqual({ width: 1280, height: 400, scale: 0.5 })
     expect(fit.width * fit.scale).toBeCloseTo(640, 5)
@@ -83,7 +90,7 @@ describe('buildBrowserLaunchOptions', () => {
     expect(compactWindowSizeChanged({ width: 500, height: 300 }, { width: 620, height: 420 })).toBe(true)
   })
 
-  it('keeps the CDP session attached while compact emulation is active and detaches when cleared', async () => {
+  it('tiles native Chrome without enabling device-metrics emulation', async () => {
     const send = vi.fn(async (method: string) => method === 'Browser.getWindowForTarget' ? { windowId: 7 } : {})
     const detach = vi.fn(async () => undefined)
     const session = { send, detach }
@@ -91,26 +98,38 @@ describe('buildBrowserLaunchOptions', () => {
       newCDPSession: vi.fn(async () => session)
     } as unknown as Parameters<typeof applyBrowserWindowPlacement>[0]
     const page = {
-      once: vi.fn(),
-      waitForTimeout: vi.fn(async () => undefined),
-      evaluate: vi.fn(async () => ({ width: 320, height: 120 }))
+      once: vi.fn()
     } as unknown as Parameters<typeof applyBrowserWindowPlacement>[1]
 
     await applyBrowserWindowPlacement(context, page, placement)
-    expect(detach).not.toHaveBeenCalled()
-    const fit = fitCompactViewportToInnerArea(placement, 320, 120)
-    expect(send).toHaveBeenCalledWith(
+
+    expect(send).toHaveBeenCalledWith('Emulation.clearDeviceMetricsOverride')
+    expect(send).toHaveBeenCalledWith('Browser.setWindowBounds', {
+      windowId: 7,
+      bounds: {
+        left: placement.x,
+        top: placement.y,
+        width: placement.width,
+        height: placement.height,
+        windowState: 'normal'
+      }
+    })
+    expect(send).not.toHaveBeenCalledWith(
       'Emulation.setDeviceMetricsOverride',
-      compactDeviceMetrics(placement, fit.scale, fit.width, fit.height)
+      expect.anything()
     )
+    expect(detach).not.toHaveBeenCalled()
 
     await applyBrowserWindowPlacement(context, page, null)
     expect(context.newCDPSession).toHaveBeenCalledTimes(1)
-    expect(send).toHaveBeenCalledWith('Emulation.clearDeviceMetricsOverride')
+    expect(send).toHaveBeenCalledWith('Browser.setWindowBounds', {
+      windowId: 7,
+      bounds: { windowState: 'normal' }
+    })
     expect(detach).toHaveBeenCalledTimes(1)
   })
 
-  it('clears compact emulation after the operator resizes the native Chrome window', async () => {
+  it('clears compact state after the operator resizes the native Chrome window', async () => {
     vi.useFakeTimers()
     let boundsRead = 0
     const send = vi.fn(async (method: string) => {
