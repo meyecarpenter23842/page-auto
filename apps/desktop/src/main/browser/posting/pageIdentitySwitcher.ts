@@ -200,18 +200,17 @@ export class PageIdentitySwitcher {
     return this.page.locator('[role="menu"]:visible, [role="dialog"]:visible, [aria-modal="true"]:visible')
   }
 
-  private targetUidCandidates(pageUid: string, stage: PageIdentityStage): Locator[] {
+  private targetUidCandidates(pageUid: string): Locator[] {
     const uid = escapeCssAttribute(pageUid.trim())
     if (!uid) return []
     const dataSelector = `[data-profileid="${uid}"], [data-profile-id="${uid}"], [data-pageid="${uid}"], [data-page-id="${uid}"]`
     const overlays = this.chooserOverlays()
-    const scoped = [
-      overlays.locator(`a[href*="${uid}"]`),
-      overlays.locator(dataSelector)
-    ]
-    if (stage === 'account_menu') return scoped
+    // Always search both in overlay menus/dialogs AND page-wide. Facebook's
+    // account switcher menu may not use role="menu" or role="dialog", so the
+    // overlay-scoped selectors can miss Page links even when the dropdown is open.
     return [
-      ...scoped,
+      overlays.locator(`a[href*="${uid}"]`),
+      overlays.locator(dataSelector),
       this.page.locator(`a[href*="${uid}"]`),
       this.page.locator(dataSelector)
     ]
@@ -289,7 +288,7 @@ export class PageIdentitySwitcher {
       directSwitchCount: await visibleCountAcross(this.directSwitchCandidates()),
       accountMenuCount: await visibleCountAcross(this.accountMenuCandidates()),
       seeAllProfilesCount: await visibleCountAcross(this.seeAllProfilesCandidates()),
-      targetUidCount: stage === 'page_surface' ? 0 : await visibleCountAcross(this.targetUidCandidates(pageUid, stage)),
+      targetUidCount: stage === 'page_surface' ? 0 : await visibleCountAcross(this.targetUidCandidates(pageUid)),
       targetNameCount: stage === 'all_profiles' ? await visibleCountAcross(this.targetNameCandidates(targetName)) : 0,
       directAttempted
     }
@@ -394,7 +393,7 @@ export class PageIdentitySwitcher {
       } else if (action === 'click_see_all_profiles') {
         control = await firstVisibleMatch(this.seeAllProfilesCandidates())
       } else if (action === 'select_target_uid') {
-        control = await firstVisibleMatch(this.targetUidCandidates(normalizedUid, stage))
+        control = await firstVisibleMatch(this.targetUidCandidates(normalizedUid))
       } else if (action === 'select_target_name') {
         control = await firstVisibleMatch(this.targetNameCandidates(targetName))
       }

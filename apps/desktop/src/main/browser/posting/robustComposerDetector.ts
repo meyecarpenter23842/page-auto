@@ -220,16 +220,21 @@ export class RobustComposerDetector {
     const existing = await this.waitForHandle(INITIAL_OBSERVE_MS)
     if (existing) return existing
 
-    if (!await this.hasOpenComposerFootprint()) {
-      // Compact mode scales the viewport down, which can push the composer
-      // trigger button below the visible area. Scroll to the top first so
-      // isVisible() reliably detects it before we give up.
-      await this.page.evaluate(() => window.scrollTo(0, 0)).catch(() => undefined)
-      const trigger = await firstVisibleMatch(this.triggerCandidates())
-      if (!trigger) return null
+    // Scroll to top first – compact mode may push the trigger off-screen.
+    await this.page.evaluate(() => window.scrollTo(0, 0)).catch(() => undefined)
+
+    // Always prefer clicking the trigger when it is visible. Group pages have
+    // inline "What's on your mind?" textboxes that satisfy hasOpenComposerFootprint
+    // but have no publish button; if we let the footprint check suppress the click,
+    // waitForHandle times out waiting for a composer that never fully opens.
+    const trigger = await firstVisibleMatch(this.triggerCandidates())
+    if (trigger) {
       const clicked = await trigger.click({ timeout: 15_000 }).then(() => true).catch(() => false)
       if (!clicked) return null
       await this.page.waitForTimeout(ACTION_SETTLE_MS).catch(() => undefined)
+    } else if (!await this.hasOpenComposerFootprint()) {
+      // No trigger visible and no partial footprint → nothing to open.
+      return null
     }
 
     return this.waitForHandle(OPEN_TIMEOUT_MS)
