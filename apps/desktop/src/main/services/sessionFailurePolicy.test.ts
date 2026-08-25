@@ -8,12 +8,12 @@ function settings(patch: Partial<SessionSettings> = {}): SessionSettings {
 }
 
 describe('resolveSessionFailureDecision', () => {
-  it('continues to the next account for expired sessions by default', () => {
+  it('continues to the next account for a generic expired session by default', () => {
     const result: PostingJobResult = { status: 'needs_login', code: 'needs_login', message: 'expired' }
     expect(resolveSessionFailureDecision(result, settings())).toEqual({ kind: 'session_expired', action: 'continue' })
   })
 
-  it('can pause the Page Tab for expired sessions', () => {
+  it('can pause the Page Tab for generic expired sessions', () => {
     const result: PostingJobResult = { status: 'needs_login', code: 'needs_login', message: 'expired' }
     expect(resolveSessionFailureDecision(result, settings({ onSessionExpired: 'needs_login_stop' }))).toEqual({
       kind: 'session_expired',
@@ -21,11 +21,16 @@ describe('resolveSessionFailureDecision', () => {
     })
   })
 
-  it('always pauses the Page Tab while the current account still has unresolved 2FA', () => {
+  it('always pauses unresolved before-run login repair so the next account cannot open beside the retained browser', () => {
     const result: PostingJobResult = {
       status: 'needs_login',
       code: 'needs_login',
-      message: 'Đã nhập mã 2FA nhưng Facebook chưa xác nhận session; cần kiểm tra thủ công trên browser.'
+      message: 'auto login did not finish',
+      sessionValidation: {
+        phase: 'before_run',
+        state: 'needs_login',
+        message: 'Facebook vẫn đang ở màn đăng nhập/2FA.'
+      }
     }
     expect(resolveSessionFailureDecision(result, settings({ onSessionExpired: 'needs_login_continue' }))).toEqual({
       kind: 'session_expired',

@@ -74,6 +74,11 @@ const USE_ANOTHER_PROFILE_PATTERN = /use another (?:profile|account)|dùng (?:m�
 const LOGIN_ACTION_PATTERN = /^(log in|login|đăng nhập|masuk)$/i
 const PASSWORD_SUBMIT_PATTERN = /^(continue|tiếp tục|lanjutkan|log in|login|đăng nhập|masuk)$/i
 const TWO_FACTOR_SUBMIT_PATTERN = /^(continue|tiếp tục|submit|gửi|confirm|xác nhận)$/i
+const TWO_FACTOR_SURFACE_SETTLE_MS = 1_000
+const TWO_FACTOR_OUTCOME_TIMEOUT_MS = 15_000
+const TOTP_STEP_MS = 30_000
+const TOTP_MIN_REMAINING_MS = 8_000
+const TOTP_WINDOW_BUFFER_MS = 750
 
 function normalizeSameSite(value: unknown): FacebookCookieInput['sameSite'] | undefined {
   if (value === 'Strict' || value === 'Lax' || value === 'None') return value
@@ -183,7 +188,7 @@ function extractTotpSecret(rawSecret: string): string {
 
 export function generateTotp(secret: string, timestampMs = Date.now(), digits = 6): string {
   const key = decodeBase32(extractTotpSecret(secret))
-  const counter = Math.floor(timestampMs / 30_000)
+  const counter = Math.floor(timestampMs / TOTP_STEP_MS)
   const buffer = Buffer.alloc(8)
   buffer.writeBigUInt64BE(BigInt(counter))
   const digest = createHmac('sha1', key).update(buffer).digest()
@@ -200,6 +205,14 @@ export function resolveTwoFactorCode(rawSecret: string, timestampMs = Date.now()
   const directCode = rawSecret.trim().replace(/\s+/g, '')
   if (/^\d{6,8}$/.test(directCode)) return directCode
   return generateTotp(rawSecret, timestampMs, 6)
+}
+
+export function twoFactorCodeFreshnessWaitMs(rawSecret: string, timestampMs = Date.now()): number {
+  const directCode = rawSecret.trim().replace(/\s+/g, '')
+  if (/^\d{6,8}$/.test(directCode)) return 0
+  const elapsed = ((timestampMs % TOTP_STEP_MS) + TOTP_STEP_MS) % TOTP_STEP_MS
+  const remaining = TOTP_STEP_MS - elapsed
+  return remaining < TOTP_MIN_REMAINING_MS ? remaining + TOTP_WINDOW_BUFFER_MS : 0
 }
 
 export function facebookLocaleCookieValue(locale: FacebookLocale): string | null {
@@ -342,6 +355,20 @@ async function findTwoFactorInput(page: Page): Promise<Locator | null> {
   ])
 }
 
+async function waitForTwoFactorInputReady(page: Page, timeoutMs = 8_000): Promise<Locator | null> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() <= deadline) {
+    const input = await findTwoFactorInput(page)
+    if (input) {
+      await page.waitForTimeout(TWO_FACTOR_SURFACE_SETTLE_MS)
+      const stableInput = await findTwoFactorInput(page)
+      if (stableInput) return stableInput
+    }
+    await page.waitForTimeout(200)
+  }
+  return null
+}
+
 async function findTwoFactorSubmit(page: Page, timeoutMs = 4_000): Promise<Locator | null> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() <= deadline) {
@@ -399,6 +426,23 @@ async function waitForPostLoginGate(context: BrowserContext, page: Page, timeout
       || latest === 'manual_verification'
       || latest === 'password_only'
     ) return latest
+    await page.waitForTimeout(250)
+  }
+  return latest
+}
+
+async function waitForTwoFactorOutcome(
+  context: BrowserContext,
+  page: Page,
+  timeoutMs = TWO_FACTOR_OUTCOME_TIMEOUT_MS
+): Promise<FacebookSessionGate> {
+  const deadline = Date.now() + timeoutMs
+  let latest: FacebookSessionGate = 'two_factor'
+  while (Date.now() < deadline) {
+    latest = await inspectFacebookSessionGate(context, page)
+    if (latest === 'valid' || latest === 'manual_verification' || latest === 'password_only' || latest === 'login' || latest === 'saved_profile') {
+      return latest
+    }
     await page.waitForTimeout(250)
   }
   return latest
@@ -520,9 +564,17 @@ async function submitPasswordOnly(page: Page, password: string): Promise<void> {
 }
 
 async function submitTotp(page: Page, secret: string): Promise<boolean> {
-  const input = await findTwoFactorInput(page)
+  let input = await waitForTwoFactorInputReady(page)
   if (!input) return false
-  await input.fill(resolveTwoFactorCode(secret))
+
+  const freshnessWait = twoFactorCodeFreshnessWaitMs(secret)
+  if (freshnessWait > 0) {
+    await page.waitForTimeout(freshnessWait)
+    input = await findTwoFactorInput(page)
+    if (!input) return false
+  }
+
+  await input.fill(resolveTwoFactorCode(secret, Date.now()))
   await page.waitForTimeout(250)
 
   const submit = await findTwoFactorSubmit(page)
@@ -598,12 +650,12 @@ async function completeTwoFactor(
     return needsLoginResult(account.id, 'two_factor_failed', 'Không thể tạo/nhập/gửi mã 2FA từ dữ liệu 2FA của account.')
   }
 
-  const gate = await waitForPostLoginGate(context, page)
+  const gate = await waitForTwoFactorOutcome(context, page)
   if (gate === 'valid') return verifiedSuccessResult(account, context, successMessage)
   if (gate === 'manual_verification') {
     return needsLoginResult(account.id, 'checkpoint', 'Facebook yêu cầu checkpoint/xác minh danh tính sau 2FA; cần xử lý thủ công.')
   }
-  return needsLoginResult(account.id, 'two_factor_failed', 'Đã nhập/gửi mã 2FA nhưng Facebook chưa xác nhận session; giữ account hiện tại để kiểm tra thủ công trên browser.')
+  return needsLoginResult(account.id, 'two_factor_failed', 'Đã nhập/gửi mã 2FA nhưng sau thời gian chờ Facebook vẫn chưa rời màn 2FA hoặc chưa tạo session; giữ account hiện tại để kiểm tra thủ công trên browser.')
 }
 
 async function resolveAuthenticatedGate(

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   bootstrapFacebookSession,
   classifyFacebookSessionGate,
+  twoFactorCodeFreshnessWaitMs,
   type FacebookSessionAccount
 } from './facebookSession'
 
@@ -97,6 +98,53 @@ describe('Facebook 2FA bootstrap flow', () => {
     expect(submitted).toBe(1)
     expect(result).toMatchObject({ accountId: 7, status: 'valid', reason: 'valid', cookieStatus: 'valid' })
     expect(result.cookie).toContain('c_user=10001')
+  })
+
+  it('waits for Facebook to leave the 2FA screen instead of failing on the first still-visible poll after Continue', async () => {
+    const twoFactorUrl = 'https://www.facebook.com/two_step_verification/two_factor/'
+    let loggedIn = false
+    let currentUrl = twoFactorUrl
+    let submitted = false
+    let waitsAfterSubmit = 0
+
+    const otpInput = visibleLocator({
+      isVisible: async () => !loggedIn,
+      fill: async () => undefined,
+      press: async () => undefined
+    })
+    const submitButton = visibleLocator({
+      isVisible: async () => !loggedIn,
+      click: async () => { submitted = true }
+    })
+
+    const page = {
+      url: () => currentUrl,
+      goto: async () => { currentUrl = loggedIn ? 'https://www.facebook.com/' : twoFactorUrl },
+      waitForTimeout: async () => {
+        if (!submitted || loggedIn) return
+        waitsAfterSubmit += 1
+        if (waitsAfterSubmit >= 2) {
+          loggedIn = true
+          currentUrl = 'https://www.facebook.com/'
+        }
+      },
+      waitForLoadState: async () => undefined,
+      locator: (selector: string) => selector.includes('placeholder*="code"') ? otpInput : hiddenLocator(),
+      getByText: () => hiddenLocator(),
+      getByRole: (role: string) => role === 'button' ? submitButton : hiddenLocator()
+    } as unknown as Page
+
+    const result = await bootstrapFacebookSession(sessionContext('40004', () => loggedIn), page, account(10, '40004', '444555'), 'auto')
+
+    expect(submitted).toBe(true)
+    expect(waitsAfterSubmit).toBeGreaterThanOrEqual(2)
+    expect(result).toMatchObject({ accountId: 10, status: 'valid', reason: 'valid', cookieStatus: 'valid' })
+  })
+
+  it('waits for a fresh generated TOTP window near expiry but never delays a direct code', () => {
+    expect(twoFactorCodeFreshnessWaitMs('123456', 29_000)).toBe(0)
+    expect(twoFactorCodeFreshnessWaitMs('JBSWY3DPEHPK3PXP', 10_000)).toBe(0)
+    expect(twoFactorCodeFreshnessWaitMs('JBSWY3DPEHPK3PXP', 29_000)).toBe(1_750)
   })
 
   it('does not classify two_step_verification as manual checkpoint while the 2FA input is still rendering', () => {
