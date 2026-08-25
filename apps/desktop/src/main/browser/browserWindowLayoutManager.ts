@@ -7,6 +7,10 @@ import {
   type BrowserWindowLayoutSettings,
   type BrowserWindowPlacement
 } from '../../shared/browserWindowLayout'
+import {
+  type BrowserDisplaySlotRuntimeExtension,
+  type BrowserSlotRuntimeSnapshot
+} from '../../shared/browserSlotDiagnostics'
 import { applyWholeChromeAutoFit } from '../../shared/browserWholeChromeScale'
 import { BrowserSlotPool, type BrowserWindowOwner } from './browserSlotPool'
 
@@ -38,8 +42,14 @@ export class BrowserWindowLayoutManager {
 
   listDisplays(): BrowserDisplayInfo[] {
     const primaryId = screen.getPrimaryDisplay().id
+    const cursorDisplayId = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).id
+    const slotRuntime: BrowserSlotRuntimeSnapshot = {
+      capturedAt: Date.now(),
+      activeCount: this.slots.activeCount(),
+      assignments: this.slots.snapshot()
+    }
     return screen.getAllDisplays()
-      .map((display, index): BrowserDisplayInfo => ({
+      .map((display, index): BrowserDisplayInfo & BrowserDisplaySlotRuntimeExtension => ({
         id: display.id,
         label: display.label?.trim() || `Màn hình ${index + 1}`,
         isPrimary: display.id === primaryId,
@@ -49,7 +59,9 @@ export class BrowserWindowLayoutManager {
           y: display.workArea.y,
           width: display.workArea.width,
           height: display.workArea.height
-        }
+        },
+        isCursorDisplay: display.id === cursorDisplayId,
+        slotRuntime
       }))
       .sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary) || a.workArea.x - b.workArea.x || a.workArea.y - b.workArea.y)
   }

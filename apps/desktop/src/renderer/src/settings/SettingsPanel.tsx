@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { AppInfo } from '../../../ipc/channels'
 import { AdvancedSettingsSection } from './AdvancedSettingsSection'
 import { BrowserSettingsSection } from './BrowserSettingsSection'
+import { BrowserSlotsSettingsSection } from './BrowserSlotsSettingsSection'
 import { CaptchaSettingsSection } from './CaptchaSettingsSection'
 import { HealthSettingsSection } from './HealthSettingsSection'
 import { LoggingSettingsPanel } from './LoggingSettingsPanel'
@@ -11,10 +12,11 @@ import { SessionSettingsPanel } from './SessionSettingsPanel'
 import './settings.css'
 
 interface SettingsPanelProps { appInfo: AppInfo | null }
-type SettingsSection = 'browser' | 'session' | 'network' | 'runtime' | 'logs' | 'captcha' | 'advanced' | 'health'
+type SettingsSection = 'browser' | 'slots' | 'session' | 'network' | 'runtime' | 'logs' | 'captcha' | 'advanced' | 'health'
 
 const sections: Array<{ id: SettingsSection; label: string; mark: string }> = [
   { id: 'browser', label: 'Trình duyệt', mark: 'BR' },
+  { id: 'slots', label: 'Chrome Slots', mark: 'SL' },
   { id: 'session', label: 'Đăng nhập', mark: 'SS' },
   { id: 'network', label: 'Proxy & Mạng', mark: 'NW' },
   { id: 'runtime', label: 'Vận hành', mark: 'RT' },
@@ -28,7 +30,8 @@ export function SettingsPanel({ appInfo }: SettingsPanelProps) {
   const [activeSection, setActiveSection] = useState<SettingsSection>('browser')
 
   let panel = <BrowserSettingsSection appInfo={appInfo} />
-  if (activeSection === 'session') panel = <SessionSettingsPanel />
+  if (activeSection === 'slots') panel = <BrowserSlotsSettingsSection />
+  else if (activeSection === 'session') panel = <SessionSettingsPanel />
   else if (activeSection === 'network') panel = <NetworkSettingsPanel />
   else if (activeSection === 'runtime') panel = <RuntimeSettingsPanel />
   else if (activeSection === 'logs') panel = <LoggingSettingsPanel />
@@ -37,7 +40,11 @@ export function SettingsPanel({ appInfo }: SettingsPanelProps) {
   else if (activeSection === 'health') panel = <HealthSettingsSection appInfo={appInfo} />
 
   const active = sections.find((section) => section.id === activeSection)
-  const heading = activeSection === 'browser' ? 'Thiết lập trình duyệt' : active?.label
+  const heading = activeSection === 'browser'
+    ? 'Thiết lập trình duyệt'
+    : activeSection === 'slots'
+      ? 'Theo dõi sức chứa & slot Chrome'
+      : active?.label
   const footer = activeSection === 'session'
     ? 'Session, locale và policy được lưu local và dùng trực tiếp bởi worker.'
     : activeSection === 'network'
@@ -46,7 +53,9 @@ export function SettingsPanel({ appInfo }: SettingsPanelProps) {
         ? 'Giới hạn tab, launch spacing, timeout và retry policy được Main áp dụng trực tiếp.'
         : activeSection === 'logs'
           ? 'Mức log, evidence và retention được áp dụng trực tiếp cho posting/runtime log.'
-          : 'Thay đổi được lưu bằng nút trong màn cài đặt đang mở.'
+          : activeSection === 'slots'
+            ? 'Slot map chỉ đọc trạng thái mỗi giây; chỉ nút Sắp xếp lại Chrome mới compact vị trí.'
+            : 'Thay đổi được lưu bằng nút trong màn cài đặt đang mở.'
 
   return <div className="settings-shell">
     <aside className="settings-menu" aria-label="Nhóm cài đặt">
