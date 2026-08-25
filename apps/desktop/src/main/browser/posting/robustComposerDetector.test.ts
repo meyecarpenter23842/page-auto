@@ -1,10 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { isComposerContainerEvidence } from './robustComposerDetector'
+import {
+  choosePublishCandidateStrategy,
+  isComposerAncestorBoundary,
+  isComposerContainerEvidence
+} from './robustComposerDetector'
 
 function signals(overrides: Partial<Parameters<typeof isComposerContainerEvidence>[0]> = {}): Parameters<typeof isComposerContainerEvidence>[0] {
   return {
     textboxVisible: true,
     textboxLabelMatches: false,
+    visibleTextboxCount: 1,
     titleVisible: false,
     triggerVisible: false,
     publishVisible: false,
@@ -15,15 +20,15 @@ function signals(overrides: Partial<Parameters<typeof isComposerContainerEvidenc
   }
 }
 
-describe('robust composer container evidence', () => {
-  it('accepts the live OFF shape: labeled editor + file input without role=dialog or visible Post button', () => {
+describe('robust composer container ownership', () => {
+  it('accepts the live OFF shape only when the inline editor itself is composer-labeled', () => {
     expect(isComposerContainerEvidence(signals({
       textboxLabelMatches: true,
       fileInputCount: 1
     }))).toBe(true)
   })
 
-  it('accepts the live ON shape when the editor is in the dialog that owns Post/media evidence', () => {
+  it('accepts the dialog shape when the dialog owns editor + publish/media evidence', () => {
     expect(isComposerContainerEvidence(signals({
       inDialog: true,
       publishVisible: true,
@@ -31,15 +36,17 @@ describe('robust composer container evidence', () => {
     }))).toBe(true)
   })
 
-  it('accepts ancestor-scoped Create Post text + file/media evidence', () => {
+  it('rejects a comment textbox borrowing Create-post/media evidence from a shared ancestor', () => {
     expect(isComposerContainerEvidence(signals({
       triggerVisible: true,
       mediaVisible: true
-    }))).toBe(true)
+    }))).toBe(false)
   })
 
-  it('rejects a generic comment textbox with only a file input and no composer label/title/trigger', () => {
+  it('rejects a shared inline ancestor containing multiple visible textboxes', () => {
     expect(isComposerContainerEvidence(signals({
+      textboxLabelMatches: true,
+      visibleTextboxCount: 3,
       fileInputCount: 1
     }))).toBe(false)
   })
@@ -50,5 +57,31 @@ describe('robust composer container evidence', () => {
       textboxLabelMatches: true,
       publishVisible: true
     }))).toBe(false)
+  })
+
+  it('stops ancestor ownership at page-level semantic boundaries', () => {
+    expect(isComposerAncestorBoundary('main', null)).toBe(true)
+    expect(isComposerAncestorBoundary('div', 'feed')).toBe(true)
+    expect(isComposerAncestorBoundary('div', 'dialog')).toBe(false)
+  })
+})
+
+describe('publish candidate ownership', () => {
+  it('keeps composer-scoped publish ahead of any page-wide fallback', () => {
+    expect(choosePublishCandidateStrategy(1, 0, 1, 1)).toBe('scoped-role')
+  })
+
+  it('prefers an exact aria-labeled Post inside the resolved composer before leaving scope', () => {
+    expect(choosePublishCandidateStrategy(0, 1, 1, 1)).toBe('scoped-aria')
+  })
+
+  it('allows one unique page-wide semantic Post control for a portaled footer', () => {
+    expect(choosePublishCandidateStrategy(0, 0, 1, 0)).toBe('page-unique-role')
+    expect(choosePublishCandidateStrategy(0, 0, 0, 1)).toBe('page-unique-aria')
+  })
+
+  it('refuses ambiguous page-wide publish controls instead of guessing', () => {
+    expect(choosePublishCandidateStrategy(0, 0, 2, 0)).toBe('none')
+    expect(choosePublishCandidateStrategy(0, 0, 0, 2)).toBe('none')
   })
 })

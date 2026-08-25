@@ -10,12 +10,7 @@ import {
 } from '../facebookSession'
 import { applyBrowserContextSettings, buildBrowserLaunchOptions, waitForBrowserStartupDelay } from '../browserRuntime'
 import { effectiveNavigationTimeoutMs, probeFacebookThroughProxy } from '../proxyPreflight'
-import {
-  COMPOSER_MEDIA_PATTERN,
-  COMPOSER_TITLE_PATTERN,
-  COMPOSER_TRIGGER_PATTERN,
-  formatComposerDiagnostics
-} from './composerSurface'
+import { COMPOSER_MEDIA_PATTERN } from './composerSurface'
 import { PageIdentitySwitcher } from './pageIdentitySwitcher'
 import { detectFacebookAccessBlock } from './pageState'
 import { finishPostingEvidence, startPostingTrace } from './postingEvidence'
@@ -32,13 +27,16 @@ import {
   publishContentFingerprint,
   type PublishBaseline
 } from './publishVerification'
-import { RobustComposerDetector } from './robustComposerDetector'
+import {
+  RobustComposerDetector,
+  formatPublishCandidateDiagnostics,
+  type RobustComposerHandle
+} from './robustComposerDetector'
 
 type PostingCode = NonNullable<PostingJobResult['code']>
 
 const ACTION_SETTLE_MS = 850
 const READINESS_POLL_MS = 250
-const COMPOSER_READY_TIMEOUT_MS = 18_000
 const CONTENT_READY_TIMEOUT_MS = 3_000
 const MEDIA_READY_TIMEOUT_MS = 20_000
 const PUBLISH_READY_TIMEOUT_MS = 20_000
@@ -104,12 +102,6 @@ async function visibleCount(candidate: Locator): Promise<number> {
   return visible
 }
 
-async function visibleCountAcross(candidates: Locator[]): Promise<number> {
-  let total = 0
-  for (const candidate of candidates) total += await visibleCount(candidate)
-  return total
-}
-
 async function pollPage<T>(page: Page, timeoutMs: number, probe: () => Promise<T | null>): Promise<T | null> {
   return pollForReady(probe, {
     attempts: readinessAttempts(timeoutMs, READINESS_POLL_MS),
@@ -138,6 +130,17 @@ async function composerContainsText(textbox: Locator, content: string): Promise<
   return normalizeComposerText(actualText).includes(expected)
 }
 
+function compactRuntimeDiagnostics(job: PostingJobRequest): string {
+  const placement = job.browserPlacement
+  if (!placement) return 'compact=off placement=none'
+  return [
+    'compact=on',
+    `placement=${placement.width}x${placement.height}@${placement.x},${placement.y}`,
+    `viewport=${placement.viewportWidth}x${placement.viewportHeight}`,
+    `scale=${placement.contentScale}`
+  ].join(' ')
+}
+
 export class GroupNavigator {
   constructor(private readonly page: Page, private readonly browser: BrowserSettings) {}
 
@@ -161,138 +164,9 @@ export class GroupNavigator {
   }
 }
 
-export interface ComposerHandle { container: Locator; textbox: Locator }
-
-export class ComposerDetector {
-  constructor(private readonly page: Page) {}
-
-  private findTextbox(root: Locator): Promise<Locator | null> {
-    return firstVisibleMatch([
-      root.locator('[role="textbox"][contenteditable="true"]'),
-      root.locator('[contenteditable="true"][data-lexical-editor="true"]'),
-      root.locator('div[contenteditable="true"]'),
-      root.locator('[contenteditable="true"]'),
-      root.getByRole('textbox')
-    ])
-  }
-
-  private triggerCandidates(): Locator[] {
-    return [
-      this.page.getByRole('button', { name: COMPOSER_TRIGGER_PATTERN }),
-      this.page.locator('[role="button"]').filter({ hasText: COMPOSER_TRIGGER_PATTERN }),
-      this.page.locator([
-        '[role="button"][aria-label*="create post" i]',
-        '[role="button"][aria-label*="create a public post" i]',
-        '[role="button"][aria-label*="write something" i]',
-        '[role="button"][aria-label*="tạo bài viết" i]',
-        '[role="button"][aria-label*="bạn viết" i]',
-        '[role="button"][aria-label*="viết gì" i]'
-      ].join(', ')),
-      this.page.getByText(COMPOSER_TRIGGER_PATTERN)
-    ]
-  }
-
-  private async isComposerSurface(dialog: Locator): Promise<boolean> {
-    const titleOrPlaceholder = await firstVisibleMatch([
-      dialog.getByRole('heading', { name: COMPOSER_TITLE_PATTERN }),
-      dialog.getByText(COMPOSER_TRIGGER_PATTERN)
-    ])
-    if (titleOrPlaceholder) return true
-
-    const publishButton = await firstVisibleMatch([
-      dialog.getByRole('button', { name: /^(post|đăng)$/i })
-    ])
-    if (!publishButton) return false
-
-    return Boolean(await firstVisibleMatch([
-      dialog.getByRole('button', { name: COMPOSER_MEDIA_PATTERN }),
-      dialog.getByText(COMPOSER_MEDIA_PATTERN)
-    ]))
-  }
-
-  private async findComposerDialog(allowTextboxFallback = false): Promise<Locator | null> {
-    const dialogs = this.page.locator('[role="dialog"], [aria-modal="true"]')
-    const count = await dialogs.count().catch(() => 0)
-    for (let index = count - 1; index >= 0; index -= 1) {
-      const dialog = dialogs.nth(index)
-      if (!await dialog.isVisible().catch(() => false)) continue
-      if (await this.isComposerSurface(dialog)) return dialog
-      if (!allowTextboxFallback) continue
-
-      const textbox = await this.findTextbox(dialog)
-      if (!textbox) continue
-      const publishButton = await firstVisibleMatch([
-        dialog.getByRole('button', { name: /^(post|đăng)$/i })
-      ])
-      const mediaControl = await firstVisibleMatch([
-        dialog.getByRole('button', { name: COMPOSER_MEDIA_PATTERN }),
-        dialog.getByLabel(COMPOSER_MEDIA_PATTERN),
-        dialog.getByText(COMPOSER_MEDIA_PATTERN)
-      ])
-      const fileInputCount = await dialog.locator('input[type="file"]').count().catch(() => 0)
-      if (publishButton || mediaControl || fileInputCount > 0) return dialog
-    }
-    return null
-  }
-
-  private async findOpenComposer(allowTextboxFallback = false): Promise<ComposerHandle | null> {
-    const dialog = await this.findComposerDialog(allowTextboxFallback)
-    if (!dialog) return null
-    const textbox = await this.findTextbox(dialog)
-    return textbox ? { container: dialog, textbox } : null
-  }
-
-  private async focusComposerPlaceholder(): Promise<boolean> {
-    const dialog = await this.findComposerDialog(true)
-    if (!dialog) return false
-    const placeholder = await firstVisibleMatch([
-      dialog.getByText(COMPOSER_TRIGGER_PATTERN),
-      dialog.locator('[data-lexical-editor="true"]'),
-      dialog.locator('[role="textbox"][contenteditable="true"]'),
-      dialog.locator('[contenteditable="true"]')
-    ])
-    if (!placeholder) return false
-    return placeholder.click({ timeout: 5_000 }).then(() => true).catch(() => false)
-  }
-
-  async diagnostics(): Promise<string> {
-    const dialogs = this.page.locator('[role="dialog"], [aria-modal="true"]')
-    const textboxes = this.page.locator('[role="textbox"], [contenteditable="true"]')
-    const publishButtons = this.page.getByRole('button', { name: /^(post|đăng)$/i })
-    return formatComposerDiagnostics({
-      dialogCount: await visibleCount(dialogs),
-      textboxCount: await visibleCount(textboxes),
-      triggerCount: await visibleCountAcross(this.triggerCandidates()),
-      publishButtonCount: await visibleCount(publishButtons),
-      fileInputCount: await this.page.locator('input[type="file"]').count().catch(() => 0),
-      url: this.page.url()
-    })
-  }
-
-  async open(): Promise<ComposerHandle | null> {
-    const existing = await this.findOpenComposer(true)
-    if (existing) return existing
-
-    if (!await this.findComposerDialog(true)) {
-      const trigger = await firstVisibleMatch(this.triggerCandidates())
-      if (!trigger) return null
-      if (!await trigger.click({ timeout: 15_000 }).then(() => true).catch(() => false)) return null
-      await settleAction(this.page)
-    }
-
-    let probeCount = 0
-    return pollPage(this.page, COMPOSER_READY_TIMEOUT_MS, async () => {
-      const handle = await this.findOpenComposer(true)
-      if (handle) return handle
-
-      probeCount += 1
-      if (probeCount === 6 || (probeCount > 6 && (probeCount - 6) % 8 === 0)) {
-        if (await this.focusComposerPlaceholder()) await settleAction(this.page)
-      }
-      return null
-    })
-  }
-}
+// Compatibility export: runtime ownership now comes from RobustComposerDetector only.
+export type ComposerHandle = RobustComposerHandle
+export class ComposerDetector extends RobustComposerDetector {}
 
 export class PostComposer {
   constructor(private readonly page: Page) {}
@@ -314,10 +188,9 @@ export class PostComposer {
         return { status: 'success', message: 'Đã điền và xác nhận nội dung trong composer.' }
       }
 
-      // Keyboard fallback: scroll textbox into view first so compact-scaled
-      // viewports don't clip it, then wait briefly for focus to settle before
-      // typing – otherwise insertText lands on a backgrounded element.
-      await textbox.scrollIntoViewIfNeeded({ timeout: 5_000 }).catch(() => undefined)
+      // Playwright click already performs actionability checks and scrolls only when
+      // necessary. Avoid explicit scrollIntoView in Compact mode because it can move
+      // Facebook's virtualized surface before focus settles.
       await textbox.click({ timeout: 10_000 })
       await this.page.waitForTimeout(300)
       await this.page.keyboard.press('Control+A').catch(() => undefined)
@@ -336,10 +209,20 @@ export class PostComposer {
 }
 
 export class MediaUploader {
-  constructor(private readonly page: Page) {}
+  constructor(
+    private readonly page: Page,
+    private readonly composerDetector?: RobustComposerDetector
+  ) {}
+
+  private async currentContainer(fallback: Locator): Promise<Locator> {
+    if (!this.composerDetector) return fallback
+    const current = await this.composerDetector.resolve().catch(() => null)
+    return current?.container ?? fallback
+  }
 
   private async setInputFiles(container: Locator, imagePaths: string[]): Promise<boolean> {
-    const localInput = container.locator('input[type="file"]').last()
+    const current = await this.currentContainer(container)
+    const localInput = current.locator('input[type="file"]').last()
     if (await localInput.count().catch(() => 0)) {
       await localInput.setInputFiles(imagePaths, { timeout: 30_000 })
       return true
@@ -354,10 +237,11 @@ export class MediaUploader {
   }
 
   private async mediaSnapshot(container: Locator): Promise<MediaReadinessSnapshot> {
-    const previews = container.locator('img[src^="blob:"], img[src*="scontent"], img[src*="fbcdn"]')
-    const removeControls = container.getByRole('button', { name: /remove (photo|image)|xóa (ảnh|hình)|gỡ (ảnh|hình)/i })
-    const busyMarkers = container.locator('[role="progressbar"], [aria-busy="true"]')
-    const busyText = container.getByText(/uploading|processing|đang tải|đang xử lý/i)
+    const current = await this.currentContainer(container)
+    const previews = current.locator('img[src^="blob:"], img[src*="scontent"], img[src*="fbcdn"]')
+    const removeControls = current.getByRole('button', { name: /remove (photo|image)|xóa (ảnh|hình)|gỡ (ảnh|hình)/i })
+    const busyMarkers = current.locator('[role="progressbar"], [aria-busy="true"]')
+    const busyText = current.getByText(/uploading|processing|đang tải|đang xử lý/i)
     return {
       previewCount: await visibleCount(previews),
       removeControlCount: await visibleCount(removeControls),
@@ -391,10 +275,11 @@ export class MediaUploader {
         return { status: 'success', message: `Đã chọn và xác nhận ${imagePaths.length} ảnh sẵn sàng.` }
       }
 
+      const current = await this.currentContainer(container)
       const mediaButton = await firstVisibleMatch([
-        container.getByRole('button', { name: /photo\s*\/?\s*video|photo|video|ảnh/i }),
-        container.getByLabel(/photo\s*\/?\s*video|photo|video|ảnh/i),
-        container.getByText(/photo\s*\/?\s*video|ảnh\s*\/?\s*video/i)
+        current.getByRole('button', { name: /photo\s*\/?\s*video|photo|video|ảnh/i }),
+        current.getByLabel(/photo\s*\/?\s*video|photo|video|ảnh/i),
+        current.getByText(/photo\s*\/?\s*video|ảnh\s*\/?\s*video/i)
       ])
       if (!mediaButton) return failure('media_failed', 'Không tìm thấy control Photo/Video trong composer.')
 
@@ -424,15 +309,35 @@ export class MediaUploader {
 }
 
 export class PublishAction {
-  constructor(private readonly page: Page) {}
+  constructor(
+    private readonly page: Page,
+    private readonly composerDetector?: RobustComposerDetector
+  ) {}
+
+  private async fallbackCandidate(container: Locator): Promise<Locator | null> {
+    return firstVisibleMatch([
+      container.getByRole('button', { name: /^(post|đăng)$/i }),
+      container.locator('[aria-label="Post" i], [aria-label="Đăng" i]')
+    ])
+  }
 
   async click(container: Locator): Promise<PostingJobResult> {
     try {
       let sawVisibleButton = false
+      let lastDiagnostics = 'strategy=legacy-fallback'
       const button = await pollPage(this.page, PUBLISH_READY_TIMEOUT_MS, async () => {
-        const candidate = await firstVisibleMatch([
-          container.getByRole('button', { name: /^(post|đăng)$/i })
-        ])
+        if (this.composerDetector) {
+          const resolution = await this.composerDetector.publishCandidates()
+          lastDiagnostics = formatPublishCandidateDiagnostics(resolution)
+          const counts = resolution.counts
+          sawVisibleButton ||= counts.scopedRoleVisible > 0
+            || counts.scopedAriaVisible > 0
+            || counts.pageRoleVisible > 0
+            || counts.pageAriaVisible > 0
+          return resolution.button
+        }
+
+        const candidate = await this.fallbackCandidate(container)
         if (!candidate) return null
         sawVisibleButton = true
         return await candidate.isEnabled().catch(() => false) ? candidate : null
@@ -441,15 +346,15 @@ export class PublishAction {
       if (!button) {
         return failure(
           'publish_action_failed',
-          sawVisibleButton
-            ? 'Nút Đăng/Post vẫn chưa sẵn sàng sau thời gian chờ Facebook xử lý composer/media.'
-            : 'Không tìm thấy nút Đăng/Post trong composer.'
+          `${sawVisibleButton
+            ? 'Nút Đăng/Post đã xuất hiện nhưng không có candidate duy nhất và sẵn sàng để click.'
+            : 'Không tìm thấy nút Đăng/Post thuộc composer hiện tại.'} ${lastDiagnostics}`
         )
       }
 
       await settleAction(this.page)
       if (!await button.isEnabled().catch(() => false)) {
-        return failure('publish_action_failed', 'Nút Đăng/Post vừa chuyển về trạng thái chưa sẵn sàng trước khi click.')
+        return failure('publish_action_failed', `Nút Đăng/Post vừa chuyển về trạng thái chưa sẵn sàng trước khi click. ${lastDiagnostics}`)
       }
       await button.click({ timeout: 15_000 })
       await settleAction(this.page)
@@ -508,7 +413,12 @@ export class PublishResultDetector {
     return null
   }
 
-  async detect(container: Locator, content: string, baseline: PublishBaseline): Promise<PostingJobResult> {
+  async detect(
+    container: Locator,
+    content: string,
+    baseline: PublishBaseline,
+    composerDetector?: RobustComposerDetector
+  ): Promise<PostingJobResult> {
     const deadline = Date.now() + 45_000
     let verificationOpened = false
     let nextRefreshAt = 0
@@ -535,7 +445,11 @@ export class PublishResultDetector {
       ).first()
       if (await successToast.isVisible().catch(() => false)) sawSuccessToast = true
 
-      const composerClosed = !await container.isVisible().catch(() => false)
+      // Re-resolve ownership after publish. A replaced/re-parented composer is still
+      // open; the original container locator disappearing is not enough evidence.
+      const composerClosed = composerDetector
+        ? !Boolean(await composerDetector.resolve().catch(() => null))
+        : !await container.isVisible().catch(() => false)
       if (composerClosed && composerClosedAt === null) composerClosedAt = Date.now()
       if (!composerClosed) composerClosedAt = null
 
@@ -634,6 +548,7 @@ export async function executePostingJob(job: PostingJobRequest): Promise<Posting
     page.setDefaultTimeout(job.network.networkTimeoutMs)
     page.setDefaultNavigationTimeout(runtimeBrowser.navigationTimeoutMs)
     traceStarted = await startPostingTrace(context, job)
+    engineDiagnostic(job, compactRuntimeDiagnostics(job))
 
     if (job.proxy && job.network.checkProxyBeforeRun) {
       const proxyCheck = await probeFacebookThroughProxy(page, job.network)
@@ -658,6 +573,7 @@ export async function executePostingJob(job: PostingJobRequest): Promise<Posting
     if (identity.status !== 'success') return finish(identity)
     const navigation = await new GroupNavigator(page, runtimeBrowser).open(job.groupUid)
     if (navigation.status !== 'success') return finish(navigation)
+    engineDiagnostic(job, 'state=group_surface ready')
 
     engineDiagnostic(job, `material ready contentLength=${job.content.trim().length} imageCount=${job.imagePaths.length}`)
     const resultDetector = new PublishResultDetector(page, runtimeBrowser, job.groupUid)
@@ -671,21 +587,23 @@ export async function executePostingJob(job: PostingJobRequest): Promise<Posting
       engineDiagnostic(job, `composer detection failed ${diagnostics}`)
       return finish(failure('composer_not_found', `Không phát hiện được editor sẵn sàng trong Create post surface sau thời gian chờ. ${diagnostics}`))
     }
-    engineDiagnostic(job, 'composer editor ready')
+    engineDiagnostic(job, `state=editor_ready ${await composerDetector.selectionDiagnostics(composer)}`)
 
     const contentResult = await new PostComposer(page).fill(composer.textbox, job.content)
     if (contentResult.status !== 'success') return finish(contentResult)
-    engineDiagnostic(job, `content confirmed length=${job.content.trim().length}`)
+    engineDiagnostic(job, `state=content_ready length=${job.content.trim().length}`)
+    engineDiagnostic(job, `publish candidates before media ${await composerDetector.publishDiagnostics()}`)
 
-    const mediaResult = await new MediaUploader(page).upload(composer.container, job.imagePaths)
+    const mediaResult = await new MediaUploader(page, composerDetector).upload(composer.container, job.imagePaths)
     if (mediaResult.status !== 'success') return finish(mediaResult)
-    engineDiagnostic(job, `media ready count=${job.imagePaths.length}`)
+    engineDiagnostic(job, `state=media_ready count=${job.imagePaths.length}`)
+    engineDiagnostic(job, `publish candidates after media ${await composerDetector.publishDiagnostics()}`)
 
-    const publishResult = await new PublishAction(page).click(composer.container)
+    const publishResult = await new PublishAction(page, composerDetector).click(composer.container)
     if (publishResult.status !== 'success') return finish(publishResult)
-    engineDiagnostic(job, 'publish clicked after readiness wait; verifying my_posted_content')
+    engineDiagnostic(job, 'state=publish_click sent; verifying my_posted_content')
 
-    const confirmed = await resultDetector.detect(composer.container, job.content, publishBaseline)
+    const confirmed = await resultDetector.detect(composer.container, job.content, publishBaseline, composerDetector)
     if (confirmed.status !== 'success' || !job.session.validateAfterRun) return finish(confirmed)
 
     const afterSession = await validateFacebookSession(context, page)
