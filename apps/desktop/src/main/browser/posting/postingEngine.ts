@@ -1,5 +1,5 @@
 import { chromium, type BrowserContext, type Locator, type Page } from 'playwright-core'
-import type { BrowserSettings } from '../../../shared/appSettings'
+import { randomBrowserActionDelayMs, type BrowserSettings } from '../../../shared/appSettings'
 import type { PostingJobRequest, PostingJobResult } from '../../../shared/posting'
 import { inspectFacebookAccountIdentity } from '../facebookAccountIdentity'
 import { readFacebookDisplayName } from '../facebookProfileInfo'
@@ -20,9 +20,9 @@ import {
   readinessAttempts,
   type MediaReadinessSnapshot
 } from './postingReadiness'
+import { postSubmitBucketLabel, sweepPostSubmitVerification } from './postSubmitVerification'
 import {
   capturePublishBaseline,
-  findNewPublishedPost,
   groupMyPostedContentUrl,
   publishContentFingerprint,
   type PublishBaseline
@@ -80,6 +80,18 @@ function engineDiagnostic(job: PostingJobRequest, message: string): void {
   console.info(
     `[PAGE-AUTO posting-engine] run=${job.runId} item=${job.itemId} account=${job.accountId} group=${job.groupUid} ${message}`
   )
+}
+
+async function waitActionPacing(
+  page: Page,
+  browser: BrowserSettings,
+  job: PostingJobRequest,
+  boundary: string
+): Promise<void> {
+  const delayMs = randomBrowserActionDelayMs(browser)
+  if (delayMs <= 0) return
+  engineDiagnostic(job, `pacing=${boundary} delayMs=${delayMs}`)
+  await page.waitForTimeout(delayMs)
 }
 
 async function firstVisibleMatch(candidates: Locator[]): Promise<Locator | null> {
@@ -373,7 +385,7 @@ export class PublishResultDetector {
   constructor(
     private readonly page: Page,
     private readonly browser: BrowserSettings,
-    groupUid: string
+    private readonly groupUid: string
   ) {
     this.verificationUrl = groupMyPostedContentUrl(groupUid)
   }
@@ -396,104 +408,43 @@ export class PublishResultDetector {
     }
   }
 
-  private async openVerificationPage(): Promise<PostingJobResult | null> {
+  async detect(content: string, baseline: PublishBaseline): Promise<PostingJobResult> {
     try {
-      await this.page.goto(this.verificationUrl, {
-        waitUntil: 'domcontentloaded',
-        timeout: this.browser.navigationTimeoutMs
-      })
-      await settlePage(this.page, this.browser)
+      const sweep = await sweepPostSubmitVerification(
+        this.page,
+        this.browser,
+        this.groupUid,
+        content,
+        baseline
+      )
+      const route = 'Đã đăng → Đang chờ duyệt → Bị từ chối → Bị gỡ → Đã đăng'
+      const endedAtPosted = sweep.finalUrl.includes('/my_posted_content')
+      const navigationNote = sweep.navigationErrors > 0
+        ? ` Có ${sweep.navigationErrors} trang kiểm tra không mở được.`
+        : ''
+      const finalNote = endedAtPosted
+        ? ' Browser đang dừng tại my_posted_content.'
+        : ' Không thể giữ browser ở my_posted_content do điều hướng Facebook.'
+
+      if (sweep.evidence) {
+        const publishedUrl = sweep.evidence.publishedUrl ?? undefined
+        return {
+          status: 'success',
+          message: `Facebook đã nhận thao tác Đăng; xác nhận thấy bài ở mục ${postSubmitBucketLabel(sweep.evidence.bucket)}. Đã quét ${route}, cách nhau 2 giây.${navigationNote}${finalNote}`,
+          ...(publishedUrl ? { publishedUrl } : {})
+        }
+      }
+
+      return {
+        status: 'success',
+        message: `Facebook đã nhận thao tác Đăng; quét ${route}, cách nhau 2 giây nhưng chưa thấy bài. Không retry Group để tránh đăng trùng và vẫn tiếp tục Bài/lượt.${navigationNote}${finalNote}`
+      }
     } catch (error) {
-      return failure('publish_unconfirmed', `Không mở được trang bài đã đăng để xác minh: ${error instanceof Error ? error.message : String(error)}`)
+      return {
+        status: 'success',
+        message: `Facebook đã nhận thao tác Đăng; bước xác minh bổ sung gặp lỗi (${error instanceof Error ? error.message : String(error)}). Không retry Group để tránh đăng trùng và vẫn tiếp tục Bài/lượt.`
+      }
     }
-
-    const blocked = await detectFacebookAccessBlock(this.page)
-    if (blocked === 'login_required') return failure('needs_login', 'Facebook yêu cầu đăng nhập lại khi xác minh bài đã đăng.')
-    if (blocked === 'verification_required') return failure('verification_required', 'Facebook yêu cầu checkpoint/xác minh khi kiểm tra bài đã đăng.')
-    return null
-  }
-
-  async detect(
-    container: Locator,
-    content: string,
-    baseline: PublishBaseline,
-    composerDetector?: RobustComposerDetector
-  ): Promise<PostingJobResult> {
-    const deadline = Date.now() + 45_000
-    let verificationOpened = false
-    let nextRefreshAt = 0
-    let composerClosedAt: number | null = null
-    let sawSuccessToast = false
-
-    while (Date.now() < deadline) {
-      const blocked = await detectFacebookAccessBlock(this.page)
-      if (blocked === 'login_required') return failure('needs_login', 'Facebook yêu cầu đăng nhập lại sau publish.')
-      if (blocked === 'verification_required') return failure('verification_required', 'Facebook yêu cầu checkpoint/xác minh sau publish.')
-
-      const pendingToast = this.page.getByText(
-        /your post.*(?:submitted for approval|pending approval)|post.*(?:submitted for approval|pending approval)|bài viết của bạn.*(?:đã được gửi.*phê duyệt|đang chờ phê duyệt)/i
-      ).first()
-      if (await pendingToast.isVisible().catch(() => false)) {
-        return {
-          status: 'success',
-          message: 'Facebook xác nhận bài đã được gửi và đang chờ phê duyệt.'
-        }
-      }
-
-      const successToast = this.page.getByText(
-        /your post is now published|your post was shared|post published|post shared|bài viết của bạn.*(?:đã được đăng|đã được chia sẻ|đã chia sẻ)/i
-      ).first()
-      if (await successToast.isVisible().catch(() => false)) sawSuccessToast = true
-
-      // Re-resolve ownership after publish. A replaced/re-parented composer is still
-      // open; the original container locator disappearing is not enough evidence.
-      const composerClosed = composerDetector
-        ? !Boolean(await composerDetector.resolve().catch(() => null))
-        : !await container.isVisible().catch(() => false)
-      if (composerClosed && composerClosedAt === null) composerClosedAt = Date.now()
-      if (!composerClosed) composerClosedAt = null
-
-      if (composerClosed && sawSuccessToast) {
-        return {
-          status: 'success',
-          message: 'Facebook xác nhận publish thành công và composer đã đóng.'
-        }
-      }
-
-      if (composerClosed && !verificationOpened && composerClosedAt !== null && Date.now() - composerClosedAt >= 2_000) {
-        const verificationFailure = await this.openVerificationPage()
-        if (verificationFailure) return verificationFailure
-        verificationOpened = true
-        nextRefreshAt = Date.now() + 3_000
-      }
-
-      if (verificationOpened) {
-        const publishedPost = await findNewPublishedPost(this.page, content, baseline, sawSuccessToast).catch(() => null)
-        if (publishedPost) {
-          return {
-            status: 'success',
-            message: sawSuccessToast
-              ? 'Đã xác minh post mới theo Facebook success signal và post key mới trong đúng Group.'
-              : 'Đã xác minh post mới theo content + post key mới trong my_posted_content của đúng Group.',
-            publishedUrl: publishedPost.publishedUrl
-          }
-        }
-
-        if (Date.now() >= nextRefreshAt) {
-          await this.page.reload({ waitUntil: 'domcontentloaded', timeout: this.browser.navigationTimeoutMs }).catch(() => undefined)
-          await settlePage(this.page, this.browser)
-          nextRefreshAt = Date.now() + 3_000
-        }
-      }
-
-      await this.page.waitForTimeout(1_000)
-    }
-    return failure(
-      'publish_unconfirmed',
-      sawSuccessToast
-        ? 'Facebook có success signal nhưng chưa có đủ bằng chứng ổn định sau publish; run item chưa được consume để tránh đăng trùng.'
-        : 'Đã bấm Đăng nhưng chưa xác minh được success signal hoặc post mới trong đúng Group; run item không được consume success.'
-    )
   }
 }
 
@@ -569,12 +520,16 @@ export async function executePostingJob(job: PostingJobRequest): Promise<Posting
       accountName = await readFacebookDisplayName(page).catch(() => null)
     }
 
+    await waitActionPacing(page, runtimeBrowser, job, 'login-to-page')
     const identity = await new PageIdentitySwitcher(page, context, runtimeBrowser).switchTo(job.pageUid)
     if (identity.status !== 'success') return finish(identity)
+
+    await waitActionPacing(page, runtimeBrowser, job, 'page-to-group')
     const navigation = await new GroupNavigator(page, runtimeBrowser).open(job.groupUid)
     if (navigation.status !== 'success') return finish(navigation)
     engineDiagnostic(job, 'state=group_surface ready')
 
+    await waitActionPacing(page, runtimeBrowser, job, 'group-to-composer')
     engineDiagnostic(job, `material ready contentLength=${job.content.trim().length} imageCount=${job.imagePaths.length}`)
     const resultDetector = new PublishResultDetector(page, runtimeBrowser, job.groupUid)
     const publishBaseline = await resultDetector.captureBaseline()
@@ -599,11 +554,12 @@ export async function executePostingJob(job: PostingJobRequest): Promise<Posting
     engineDiagnostic(job, `state=media_ready count=${job.imagePaths.length}`)
     engineDiagnostic(job, `publish candidates after media ${await composerDetector.publishDiagnostics()}`)
 
+    await waitActionPacing(page, runtimeBrowser, job, 'media-to-publish')
     const publishResult = await new PublishAction(page, composerDetector).click(composer.container)
     if (publishResult.status !== 'success') return finish(publishResult)
-    engineDiagnostic(job, 'state=publish_click sent; verifying my_posted_content')
+    engineDiagnostic(job, 'state=publish_click sent; sweeping posted>pending>declined>removed>posted')
 
-    const confirmed = await resultDetector.detect(composer.container, job.content, publishBaseline, composerDetector)
+    const confirmed = await resultDetector.detect(job.content, publishBaseline)
     if (confirmed.status !== 'success' || !job.session.validateAfterRun) return finish(confirmed)
 
     const afterSession = await validateFacebookSession(context, page)
