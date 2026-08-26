@@ -271,6 +271,7 @@ export function PageTabsManager() {
       window.pageAuto.getPageTabPostLibrary({ id: activeId })
     ]).then(([nextConfig, nextLibrary]) => {
       if (cancelled) return
+      if (!nextConfig) throw new Error('Page Tab không còn tồn tại.')
       setConfig({ ...nextConfig, schedules: collapseEveryDaySchedules(nextConfig.schedules) })
       setPostLibrary(nextLibrary)
       setDirtySections(new Set())
