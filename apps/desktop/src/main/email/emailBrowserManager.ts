@@ -1,12 +1,16 @@
 import { utilityProcess, type UtilityProcess } from 'electron'
 import { join } from 'node:path'
-import type { HotmailBrowserOpenResult } from '../../shared/hotmail'
 import type { AccountRecord } from '../../shared/accounts'
+import type {
+  HotmailBrowserOpenResult,
+  HotmailRecoveryActionResult,
+  HotmailRecoveryOperation
+} from '../../shared/hotmail'
 import { shouldKeepEmailBrowserWorker } from './emailBrowserLifecycle'
 import { inspectEmailProfile } from './emailProfileResolver'
 import type { EmailProxyCandidate } from './emailProxyPool'
 
-interface WorkerResult {
+interface WorkerOpenResult {
   type: 'open-result'
   accountId: number
   status: 'started' | 'already_open' | 'profile_in_use' | 'error'
@@ -15,16 +19,61 @@ interface WorkerResult {
   message: string
 }
 
+interface WorkerRecoveryResult {
+  type: 'recovery-result'
+  accountId: number
+  operation: HotmailRecoveryOperation
+  status: 'success' | 'needs_attention' | 'profile_in_use' | 'error'
+  needsAttentionReason?: HotmailRecoveryActionResult['needsAttentionReason']
+  proxyManagedExternally: boolean
+  message: string
+}
+
+type WorkerResponse = WorkerOpenResult | WorkerRecoveryResult
+
+type PendingKind = WorkerResponse['type']
+
+interface WorkerPending {
+  kind: PendingKind
+  resolve: (result: WorkerResponse) => void
+  timer: ReturnType<typeof setTimeout>
+}
+
 interface WorkerEntry {
   process: UtilityProcess
   profileDirectory: string
-  pending: ((result: HotmailBrowserOpenResult) => void) | null
+  pending: WorkerPending | null
+  spawned: Promise<void>
+  actionOnly: boolean
 }
 
-function isWorkerResult(value: unknown): value is WorkerResult {
+interface PreparedWorker {
+  entry: WorkerEntry
+  created: boolean
+}
+
+interface MissingWorker {
+  status: 'missing_profile'
+  profileDirectory: string | null
+  message: string
+}
+
+function isWorkerResponse(value: unknown): value is WorkerResponse {
   if (!value || typeof value !== 'object') return false
-  const candidate = value as Partial<WorkerResult>
-  return candidate.type === 'open-result' && typeof candidate.accountId === 'number' && typeof candidate.message === 'string'
+  const candidate = value as Partial<WorkerResponse>
+  return (candidate.type === 'open-result' || candidate.type === 'recovery-result')
+    && typeof candidate.accountId === 'number'
+    && typeof candidate.message === 'string'
+}
+
+function proxyPayload(proxy: EmailProxyCandidate | null) {
+  return proxy ? {
+    proxy: {
+      server: proxy.server,
+      ...(proxy.username ? { username: proxy.username } : {}),
+      ...(proxy.password ? { password: proxy.password } : {})
+    }
+  } : {}
 }
 
 export class EmailBrowserManager {
@@ -38,78 +87,93 @@ export class EmailBrowserManager {
     browserExecutable: string,
     proxy: EmailProxyCandidate | null
   ): Promise<HotmailBrowserOpenResult> {
-    const inspection = await inspectEmailProfile(profileRoot, account.uid)
-    if (inspection.status === 'not_configured') {
-      return this.result(account.id, 'missing_profile', null, 'Chưa cấu hình Email Profile Root.', false, false)
+    const prepared = await this.prepareWorker(account, profileRoot, false)
+    if ('status' in prepared) {
+      return this.openResult(account.id, prepared.status, prepared.profileDirectory, prepared.message, false, false)
     }
-    if (inspection.status === 'missing' || !inspection.profileDirectory) {
-      return this.result(
-        account.id,
-        'missing_profile',
-        inspection.profileDirectory,
-        `Không tìm thấy profile Email có sẵn cho UID ${account.uid}. Hãy chọn đúng thư mục gốc đang chứa ${account.uid}; PAGE-AUTO không tự tạo hoặc clone profile.`,
-        false,
-        false
-      )
+    const { entry } = prepared
+    if (entry.pending) {
+      return this.openResult(account.id, 'already_open', entry.profileDirectory, 'Email browser đang xử lý một thao tác khác.', false, false)
     }
 
-    const profileDirectory = inspection.profileDirectory
-    const existing = this.workers.get(account.id)
-    if (existing) {
-      if (existing.pending) return this.result(account.id, 'already_open', existing.profileDirectory, 'Email browser đang xử lý lệnh mở.', false, false)
-      return this.sendOpen(existing, account.id, browserExecutable, proxy)
+    const response = await this.send(entry, 'open-result', {
+      type: 'open-mail',
+      accountId: account.id,
+      profileDirectory: entry.profileDirectory,
+      ...(browserExecutable.trim() ? { executablePath: browserExecutable.trim() } : {}),
+      ...proxyPayload(proxy)
+    }) as WorkerOpenResult
+
+    const result: HotmailBrowserOpenResult = {
+      accountId: account.id,
+      status: response.status,
+      message: response.message,
+      profileDirectory: entry.profileDirectory,
+      attached: response.attached,
+      proxyManagedExternally: response.proxyManagedExternally
     }
+    if (!shouldKeepEmailBrowserWorker(response.status)) this.stopEntry(account.id, entry)
+    return result
+  }
 
-    const process = utilityProcess.fork(join(__dirname, 'email-browser-worker.js'), [], {
-      serviceName: `PAGE-AUTO email ${account.uid}`
-    })
-    const entry: WorkerEntry = { process, profileDirectory, pending: null }
-    this.workers.set(account.id, entry)
-
-    process.on('message', (message) => {
-      if (!isWorkerResult(message) || message.accountId !== account.id) return
-      const pending = entry.pending
-      if (!pending) return
-      entry.pending = null
-      pending({
+  async runRecoveryAction(
+    account: AccountRecord,
+    profileRoot: string,
+    browserExecutable: string,
+    proxy: EmailProxyCandidate | null,
+    operation: HotmailRecoveryOperation,
+    backupEmail: string | null,
+    confirmCompleted: boolean
+  ): Promise<HotmailRecoveryActionResult & { proxyManagedExternally: boolean }> {
+    const prepared = await this.prepareWorker(account, profileRoot, true)
+    if ('status' in prepared) {
+      return {
         accountId: account.id,
-        status: message.status,
-        message: message.message,
-        profileDirectory: entry.profileDirectory,
-        attached: message.attached,
-        proxyManagedExternally: message.proxyManagedExternally
-      })
-      if (!shouldKeepEmailBrowserWorker(message.status)) {
-        if (this.workers.get(account.id) === entry) this.workers.delete(account.id)
-        process.kill()
+        operation,
+        backupEmail,
+        status: prepared.status,
+        message: prepared.message,
+        proxyManagedExternally: false
       }
-    })
-    process.once('exit', () => {
-      const pending = entry.pending
-      entry.pending = null
-      if (pending) pending(this.result(account.id, 'error', entry.profileDirectory, 'Email browser worker đã thoát trước khi phản hồi.', false, false))
-      if (this.workers.get(account.id) === entry) this.workers.delete(account.id)
-      this.onClosed?.(account.id)
-    })
-
-    const result = await new Promise<HotmailBrowserOpenResult>((resolve) => {
-      let settled = false
-      const finish = (next: HotmailBrowserOpenResult): void => {
-        if (settled) return
-        settled = true
-        resolve(next)
+    }
+    const { entry } = prepared
+    if (entry.pending) {
+      return {
+        accountId: account.id,
+        operation,
+        backupEmail,
+        status: 'error',
+        message: 'Email browser đang xử lý một thao tác khác cho account này.',
+        proxyManagedExternally: false
       }
-      process.once('spawn', () => {
-        void this.sendOpen(entry, account.id, browserExecutable, proxy).then(finish)
-      })
-      process.once('exit', () => finish(this.result(account.id, 'error', entry.profileDirectory, 'Email browser worker đã thoát trước khi khởi động.', false, false)))
-    })
+    }
 
+    const response = await this.send(entry, 'recovery-result', {
+      type: 'recovery-action',
+      accountId: account.id,
+      profileDirectory: entry.profileDirectory,
+      operation,
+      confirmCompleted,
+      ...(browserExecutable.trim() ? { executablePath: browserExecutable.trim() } : {}),
+      ...proxyPayload(proxy)
+    }) as WorkerRecoveryResult
+
+    const result = {
+      accountId: account.id,
+      operation,
+      backupEmail,
+      status: response.status,
+      message: response.message,
+      ...(response.needsAttentionReason ? { needsAttentionReason: response.needsAttentionReason } : {}),
+      proxyManagedExternally: response.proxyManagedExternally
+    } satisfies HotmailRecoveryActionResult & { proxyManagedExternally: boolean }
+
+    if (entry.actionOnly && response.status !== 'needs_attention') this.stopEntry(account.id, entry)
     return result
   }
 
   closeAll(): void {
-    for (const entry of this.workers.values()) entry.process.kill()
+    for (const [accountId, entry] of this.workers) this.stopEntry(accountId, entry)
     this.workers.clear()
   }
 
@@ -117,39 +181,126 @@ export class EmailBrowserManager {
     return this.workers.has(accountId)
   }
 
-  private sendOpen(
-    entry: WorkerEntry,
-    accountId: number,
-    browserExecutable: string,
-    proxy: EmailProxyCandidate | null
-  ): Promise<HotmailBrowserOpenResult> {
-    return new Promise((resolve) => {
+  private async prepareWorker(account: AccountRecord, profileRoot: string, actionOnly: boolean): Promise<PreparedWorker | MissingWorker> {
+    const inspection = await inspectEmailProfile(profileRoot, account.uid)
+    if (inspection.status === 'not_configured') {
+      return { status: 'missing_profile', profileDirectory: null, message: 'Chưa cấu hình Email Profile Root.' }
+    }
+    if (inspection.status === 'missing' || !inspection.profileDirectory) {
+      return {
+        status: 'missing_profile',
+        profileDirectory: inspection.profileDirectory,
+        message: `Không tìm thấy profile Email có sẵn cho UID ${account.uid}. PAGE-AUTO không tự tạo hoặc clone profile.`
+      }
+    }
+
+    const existing = this.workers.get(account.id)
+    if (existing) return { entry: existing, created: false }
+
+    const process = utilityProcess.fork(join(__dirname, 'email-browser-worker.js'), [], {
+      serviceName: `PAGE-AUTO email ${account.uid}`
+    })
+    let resolveSpawn: (() => void) | null = null
+    let rejectSpawn: ((error: Error) => void) | null = null
+    const spawned = new Promise<void>((resolve, reject) => {
+      resolveSpawn = resolve
+      rejectSpawn = reject
+    })
+    const entry: WorkerEntry = {
+      process,
+      profileDirectory: inspection.profileDirectory,
+      pending: null,
+      spawned,
+      actionOnly
+    }
+    this.workers.set(account.id, entry)
+
+    process.once('spawn', () => resolveSpawn?.())
+    process.on('message', (message) => {
+      if (!isWorkerResponse(message) || message.accountId !== account.id) return
+      const pending = entry.pending
+      if (!pending || pending.kind !== message.type) return
+      entry.pending = null
+      clearTimeout(pending.timer)
+      pending.resolve(message)
+    })
+    process.once('exit', () => {
+      rejectSpawn?.(new Error('Email browser worker đã thoát trước khi khởi động.'))
+      const pending = entry.pending
+      entry.pending = null
+      if (pending) {
+        clearTimeout(pending.timer)
+        pending.resolve(pending.kind === 'open-result'
+          ? {
+              type: 'open-result', accountId: account.id, status: 'error', attached: false,
+              proxyManagedExternally: false, message: 'Email browser worker đã thoát trước khi phản hồi.'
+            }
+          : {
+              type: 'recovery-result', accountId: account.id, operation: 'add', status: 'error',
+              proxyManagedExternally: false, message: 'Email browser worker đã thoát trước khi phản hồi.'
+            })
+      }
+      if (this.workers.get(account.id) === entry) this.workers.delete(account.id)
+      this.onClosed?.(account.id)
+    })
+
+    return { entry, created: true }
+  }
+
+  private async send(entry: WorkerEntry, kind: PendingKind, command: Record<string, unknown>): Promise<WorkerResponse> {
+    try {
+      await entry.spawned
+    } catch {
+      return kind === 'open-result'
+        ? {
+            type: 'open-result', accountId: Number(command.accountId), status: 'error', attached: false,
+            proxyManagedExternally: false, message: 'Email browser worker không khởi động được.'
+          }
+        : {
+            type: 'recovery-result', accountId: Number(command.accountId), operation: command.operation as HotmailRecoveryOperation,
+            status: 'error', proxyManagedExternally: false, message: 'Email browser worker không khởi động được.'
+          }
+    }
+
+    return await new Promise<WorkerResponse>((resolve) => {
       const timer = setTimeout(() => {
         if (!entry.pending) return
         entry.pending = null
-        resolve(this.result(accountId, 'error', entry.profileDirectory, 'Email browser quá thời gian chờ phản hồi.', false, false))
+        resolve(kind === 'open-result'
+          ? {
+              type: 'open-result', accountId: Number(command.accountId), status: 'error', attached: false,
+              proxyManagedExternally: false, message: 'Email browser quá thời gian chờ phản hồi.'
+            }
+          : {
+              type: 'recovery-result', accountId: Number(command.accountId), operation: command.operation as HotmailRecoveryOperation,
+              status: 'error', proxyManagedExternally: false, message: 'Thao tác Mail khôi phục quá thời gian chờ phản hồi.'
+            })
       }, 45_000)
-      entry.pending = (result) => {
-        clearTimeout(timer)
-        resolve(result)
-      }
+      entry.pending = { kind, resolve, timer }
       try {
-        entry.process.postMessage({
-          type: 'open-mail',
-          accountId,
-          profileDirectory: entry.profileDirectory,
-          ...(browserExecutable.trim() ? { executablePath: browserExecutable.trim() } : {}),
-          ...(proxy ? { proxy: { server: proxy.server, ...(proxy.username ? { username: proxy.username } : {}), ...(proxy.password ? { password: proxy.password } : {}) } } : {})
-        })
-      } catch (error) {
+        entry.process.postMessage(command)
+      } catch {
         clearTimeout(timer)
         entry.pending = null
-        resolve(this.result(accountId, 'error', entry.profileDirectory, error instanceof Error ? error.message : String(error), false, false))
+        resolve(kind === 'open-result'
+          ? {
+              type: 'open-result', accountId: Number(command.accountId), status: 'error', attached: false,
+              proxyManagedExternally: false, message: 'Không gửi được lệnh tới Email browser worker.'
+            }
+          : {
+              type: 'recovery-result', accountId: Number(command.accountId), operation: command.operation as HotmailRecoveryOperation,
+              status: 'error', proxyManagedExternally: false, message: 'Không gửi được thao tác tới Email browser worker.'
+            })
       }
     })
   }
 
-  private result(
+  private stopEntry(accountId: number, entry: WorkerEntry): void {
+    if (this.workers.get(accountId) === entry) this.workers.delete(accountId)
+    entry.process.kill()
+  }
+
+  private openResult(
     accountId: number,
     status: HotmailBrowserOpenResult['status'],
     profileDirectory: string | null,

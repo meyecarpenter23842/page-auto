@@ -7,11 +7,20 @@ export type HotmailMailStatus = (typeof HOTMAIL_MAIL_STATUSES)[number]
 export const HOTMAIL_PROFILE_STATUSES = ['not_configured', 'missing', 'available', 'running', 'in_use'] as const
 export type HotmailProfileStatus = (typeof HOTMAIL_PROFILE_STATUSES)[number]
 
-export const HOTMAIL_RUNTIME_STATUSES = ['idle', 'connecting', 'reading', 'opening', 'error'] as const
+export const HOTMAIL_RUNTIME_STATUSES = ['idle', 'connecting', 'reading', 'opening', 'acting', 'error'] as const
 export type HotmailRuntimeStatus = (typeof HOTMAIL_RUNTIME_STATUSES)[number]
 
 export const EMAIL_PROXY_MODES = ['direct', 'random_ipv4'] as const
 export type EmailProxyMode = (typeof EMAIL_PROXY_MODES)[number]
+
+export const HOTMAIL_RECOVERY_OPERATIONS = ['add', 'remove', 'replace'] as const
+export type HotmailRecoveryOperation = (typeof HOTMAIL_RECOVERY_OPERATIONS)[number]
+
+export type HotmailNeedsAttentionReason =
+  | 'needs_login'
+  | 'identity_review'
+  | 'security_review'
+  | 'manual_completion_required'
 
 export interface HotmailDashboardRow {
   accountId: number
@@ -37,10 +46,7 @@ export interface HotmailDashboardRow {
 export interface HotmailSettingsView {
   profileRoot: string
   browserExecutable: string
-  /**
-   * Default public-client ID used when starting OAuth for an account that does not
-   * yet have a canonical binding. Runtime mailbox reads use the per-account ID.
-   */
+  /** Default public-client ID used only when starting/renewing OAuth. */
   oauthClientId: string
   oauthTenant: string
   proxyMode: EmailProxyMode
@@ -52,7 +58,6 @@ export interface HotmailSettingsView {
 export interface SaveHotmailSettingsInput {
   profileRoot: string
   browserExecutable: string
-  /** Default public-client ID for starting/renewing per-account OAuth bindings. */
   oauthClientId: string
   oauthTenant: string
   proxyMode: EmailProxyMode
@@ -77,7 +82,14 @@ export interface HotmailOAuthStartResult {
   message: string
 }
 
-export type HotmailActionStatus = 'success' | 'error' | 'started' | 'already_open' | 'missing_profile' | 'profile_in_use'
+export type HotmailActionStatus =
+  | 'success'
+  | 'needs_attention'
+  | 'error'
+  | 'started'
+  | 'already_open'
+  | 'missing_profile'
+  | 'profile_in_use'
 
 export interface HotmailActionResult {
   accountId: number
@@ -95,6 +107,25 @@ export interface HotmailBrowserOpenResult extends HotmailActionResult {
   profileDirectory: string | null
   attached: boolean
   proxyManagedExternally: boolean
+}
+
+export interface HotmailRecoveryActionPayload {
+  accountIds: number[]
+  operation: HotmailRecoveryOperation
+  /** Required for add/replace. Omitted for remove. */
+  recoveryEmail?: string | null
+  /** Operator attestation after completing the Microsoft security page in the same live Email session. */
+  confirmCompleted?: boolean
+}
+
+export interface HotmailRecoveryActionResult extends HotmailActionResult {
+  operation: HotmailRecoveryOperation
+  backupEmail: string | null
+  needsAttentionReason?: HotmailNeedsAttentionReason
+}
+
+export interface HotmailRecoveryBatchResult {
+  results: HotmailRecoveryActionResult[]
 }
 
 export interface HotmailProxyStatus {

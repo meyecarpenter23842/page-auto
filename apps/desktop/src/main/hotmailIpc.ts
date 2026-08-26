@@ -2,7 +2,13 @@ import { dialog, ipcMain, shell } from 'electron'
 import type Database from 'better-sqlite3'
 import { IPC_CHANNELS } from '../ipc/channels'
 import { EMAIL_CODE_DB_RETENTION_MS, type EmailCodeProvider } from '../shared/emailCode'
-import type { SaveHotmailSettingsInput, HotmailAccountPayload, HotmailBatchPayload, HotmailBatchResult } from '../shared/hotmail'
+import type {
+  SaveHotmailSettingsInput,
+  HotmailAccountPayload,
+  HotmailBatchPayload,
+  HotmailBatchResult,
+  HotmailRecoveryActionPayload
+} from '../shared/hotmail'
 import { BrowserEngineService } from './browser/browserEngineService'
 import { AccountRepository } from './database/accountRepository'
 import { HotmailRepository } from './database/hotmailRepository'
@@ -57,8 +63,6 @@ export function registerHotmailIpcHandlers(database: Database.Database): Hotmail
       foundExecutable = true
       if (validatedExecutables.has(candidate)) return candidate
 
-      // Validate Email Browser with a disposable persistent profile, matching the
-      // real Email runtime. Do not borrow Facebook browser settings or profile.
       const result = await testEmailBrowserExecutable(candidate)
       if (result.ok) {
         validatedExecutables.add(candidate)
@@ -128,10 +132,10 @@ export function registerHotmailIpcHandlers(database: Database.Database): Hotmail
     if (result.verificationUri) void shell.openExternal(result.verificationUri).catch(() => undefined)
     return result
   })
-  // Manual "Lấy mã" and Facebook Common Runtime share the same canonical provider.
   ipcMain.handle(IPC_CHANNELS.hotmailCodesGet, (_event, payload: HotmailBatchPayload) => getManualCodes(codeRuntime.provider, payload))
   ipcMain.handle(IPC_CHANNELS.hotmailCheck, (_event, payload: HotmailBatchPayload) => service.checkMail(payload))
   ipcMain.handle(IPC_CHANNELS.hotmailOpen, (_event, payload: HotmailAccountPayload) => service.openMail(payload.accountId))
+  ipcMain.handle(IPC_CHANNELS.hotmailRecoveryAction, (_event, payload: HotmailRecoveryActionPayload) => service.updateRecoveryMail(payload))
   ipcMain.handle(IPC_CHANNELS.hotmailProxyStatus, () => service.getProxyStatus())
   ipcMain.handle(IPC_CHANNELS.hotmailProxyRotate, () => service.rotateProxy())
   ipcMain.handle(IPC_CHANNELS.hotmailProxyTest, () => service.testProxy())

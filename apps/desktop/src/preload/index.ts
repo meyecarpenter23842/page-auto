@@ -33,6 +33,8 @@ import type {
   HotmailOAuthStartResult,
   HotmailProxyStatus,
   HotmailProxyTestResult,
+  HotmailRecoveryActionPayload,
+  HotmailRecoveryBatchResult,
   HotmailSettingsView,
   SaveHotmailSettingsInput
 } from '../shared/hotmail'
@@ -64,6 +66,7 @@ const api = {
   getHotmailCodes: (payload: HotmailBatchPayload): Promise<HotmailBatchResult> => ipcRenderer.invoke(IPC_CHANNELS.hotmailCodesGet, payload) as Promise<HotmailBatchResult>,
   checkHotmail: (payload: HotmailBatchPayload): Promise<HotmailBatchResult> => ipcRenderer.invoke(IPC_CHANNELS.hotmailCheck, payload) as Promise<HotmailBatchResult>,
   openHotmail: (payload: HotmailAccountPayload): Promise<HotmailBrowserOpenResult> => ipcRenderer.invoke(IPC_CHANNELS.hotmailOpen, payload) as Promise<HotmailBrowserOpenResult>,
+  updateHotmailRecovery: (payload: HotmailRecoveryActionPayload): Promise<HotmailRecoveryBatchResult> => ipcRenderer.invoke(IPC_CHANNELS.hotmailRecoveryAction, payload) as Promise<HotmailRecoveryBatchResult>,
   getHotmailProxyStatus: (): Promise<HotmailProxyStatus> => ipcRenderer.invoke(IPC_CHANNELS.hotmailProxyStatus) as Promise<HotmailProxyStatus>,
   rotateHotmailProxy: (): Promise<HotmailProxyStatus> => ipcRenderer.invoke(IPC_CHANNELS.hotmailProxyRotate) as Promise<HotmailProxyStatus>,
   testHotmailProxy: (): Promise<HotmailProxyTestResult> => ipcRenderer.invoke(IPC_CHANNELS.hotmailProxyTest) as Promise<HotmailProxyTestResult>,

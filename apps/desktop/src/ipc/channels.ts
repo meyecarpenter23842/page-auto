@@ -33,6 +33,8 @@ import type {
   HotmailOAuthStartResult,
   HotmailProxyStatus,
   HotmailProxyTestResult,
+  HotmailRecoveryActionPayload,
+  HotmailRecoveryBatchResult,
   HotmailSettingsView,
   SaveHotmailSettingsInput
 } from '../shared/hotmail'
@@ -74,6 +76,7 @@ export const IPC_CHANNELS = {
   hotmailCodesGet: 'hotmail:codes:get',
   hotmailCheck: 'hotmail:check',
   hotmailOpen: 'hotmail:open',
+  hotmailRecoveryAction: 'hotmail:recovery:action',
   hotmailProxyStatus: 'hotmail:proxy:status',
   hotmailProxyRotate: 'hotmail:proxy:rotate',
   hotmailProxyTest: 'hotmail:proxy:test',
@@ -153,6 +156,7 @@ export interface PageAutoIpcContract {
   getHotmailCodes: (payload: HotmailBatchPayload) => Promise<HotmailBatchResult>
   checkHotmail: (payload: HotmailBatchPayload) => Promise<HotmailBatchResult>
   openHotmail: (payload: HotmailAccountPayload) => Promise<HotmailBrowserOpenResult>
+  updateHotmailRecovery: (payload: HotmailRecoveryActionPayload) => Promise<HotmailRecoveryBatchResult>
   getHotmailProxyStatus: () => Promise<HotmailProxyStatus>
   rotateHotmailProxy: () => Promise<HotmailProxyStatus>
   testHotmailProxy: () => Promise<HotmailProxyTestResult>
