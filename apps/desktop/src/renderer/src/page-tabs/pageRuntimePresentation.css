@@ -1,0 +1,89 @@
+.page-tab-chip.runtime-starting .page-tab-status-dot,
+.page-tab-chip.runtime-running .page-tab-status-dot {
+  background: #17a05d;
+  box-shadow: 0 0 0 2px rgba(23, 160, 93, 0.12);
+}
+
+.page-tab-chip.runtime-paused .page-tab-status-dot,
+.page-tab-chip.runtime-waiting_window .page-tab-status-dot,
+.page-tab-chip.runtime-stopping .page-tab-status-dot {
+  background: #d79b16;
+  box-shadow: 0 0 0 2px rgba(215, 155, 22, 0.12);
+}
+
+.page-tab-chip.runtime-error .page-tab-status-dot {
+  background: #d92d20;
+  box-shadow: 0 0 0 2px rgba(217, 45, 32, 0.12);
+}
+
+.page-tab-chip.runtime-completed .page-tab-status-dot {
+  background: #2e6fd8;
+  box-shadow: 0 0 0 2px rgba(46, 111, 216, 0.12);
+}
+
+.page-tab-chip.runtime-idle .page-tab-status-dot,
+.page-tab-chip.runtime-stopped .page-tab-status-dot {
+  background: #98a2b3;
+  box-shadow: none;
+}
+
+/* Group workspace: Preview owns 70% of the right pane, compact config owns the remaining 30%. */
+.page-business-group-pane .page-tab-two-column {
+  grid-template-rows: minmax(0, 7fr) minmax(0, 3fr) auto;
+}
+
+/* Flatten the two pane wrappers so their cards can share the same 2-column grid. */
+.page-business-group-pane .page-tab-left-pane,
+.page-business-group-pane .page-tab-right-pane {
+  display: contents;
+}
+
+.page-business-group-pane .pt-account-panel-tall {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  min-height: 0;
+}
+
+.page-business-group-pane .pt-rotation-panel {
+  grid-column: 1;
+  grid-row: 3;
+}
+
+.page-business-group-pane .pt-live-preview {
+  grid-column: 2;
+  grid-row: 1;
+  min-height: 0;
+  overflow: hidden;
+  grid-template-rows: auto auto minmax(0, 1fr) !important;
+  align-content: stretch !important;
+}
+
+.page-business-group-pane .pt-live-preview > .pt-live-preview-meta {
+  grid-row: 2;
+}
+
+.page-business-group-pane .pt-live-preview > p {
+  grid-row: 3;
+  min-height: 0;
+  height: 100%;
+  max-height: none !important;
+  overflow: auto;
+  align-self: stretch;
+}
+
+.page-business-group-pane .pt-live-preview > .pt-live-preview-empty {
+  grid-row: 2 / span 2;
+  align-self: start;
+}
+
+.page-business-group-pane .pt-compact-config-launchers {
+  grid-column: 2;
+  grid-row: 2;
+  align-self: start;
+  justify-self: stretch;
+}
+
+.page-business-group-pane .pt-right-summary {
+  grid-column: 2;
+  grid-row: 3;
+}

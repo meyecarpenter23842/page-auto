@@ -3,16 +3,28 @@
   display: none !important;
 }
 
-.page-business-group-pane .page-tab-left-pane {
-  grid-template-rows: minmax(210px, 1fr) auto auto !important;
+.page-business-group-pane .page-tab-two-column {
+  position: relative;
 }
 
-.page-business-group-pane .page-tab-right-pane {
+.page-business-group-pane .page-tab-left-pane {
   grid-template-rows: minmax(210px, 1fr) auto !important;
 }
 
+.page-business-group-pane .page-tab-right-pane {
+  grid-template-rows: minmax(0, 7fr) minmax(0, 3fr) !important;
+}
+
+.page-business-group-pane .pt-right-summary {
+  display: none !important;
+}
+
 .page-business-group-pane .pt-compact-config-launchers {
-  grid-row: 2;
+  position: absolute;
+  z-index: 4;
+  left: calc(50% + 5px);
+  right: 0;
+  top: calc(70% + 4px);
   min-height: 0;
   display: flex;
   align-items: center;
@@ -82,7 +94,7 @@
 }
 
 .page-business-group-pane .pt-rotation-panel {
-  grid-row: 3;
+  grid-row: 2;
   padding: 7px 8px !important;
 }
 
@@ -107,8 +119,25 @@
 }
 
 .page-business-group-pane .pt-live-preview {
+  grid-row: 1;
   min-height: 0;
-  align-content: start;
+  height: 100%;
+  align-content: stretch;
+  grid-template-rows: auto auto minmax(0, 1fr) !important;
+}
+
+.page-business-group-pane .pt-live-preview > p {
+  grid-row: 3;
+  min-height: 0;
+  height: 100%;
+  max-height: none !important;
+  overflow: auto;
+  align-self: stretch;
+}
+
+.page-business-group-pane .pt-live-preview > .pt-live-preview-empty {
+  grid-row: 2 / span 2;
+  align-self: start;
 }
 
 /* The workspace entry animation creates a stacking context. Drop it while this modal is open so the modal can sit above its body-level backdrop without sacrificing outside-click blocking. */

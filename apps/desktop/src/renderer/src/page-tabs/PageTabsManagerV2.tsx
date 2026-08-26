@@ -9,8 +9,16 @@ import type {
   PageTabSchedule,
   PageTabSummary
 } from '../../../shared/pageTabs'
-import type { RotationAccountRuntimeStatus, RotationRuntimeSnapshot } from '../../../shared/rotation'
+import type { RotationRuntimeSnapshot } from '../../../shared/rotation'
 import { PostLibraryModal } from './PostLibraryModal'
+import {
+  accountRuntimeLabel,
+  activeRuntimeForPage,
+  indexRotationRuntimes,
+  rotationRuntimeLabel,
+  runtimeEmptyPreviewMessage,
+  runtimeProgressLabel
+} from './pageRuntimePresentation'
 import { collapseEveryDaySchedules, EVERY_DAY_SCHEDULE, expandEveryDaySchedules } from './scheduleEditor'
 import './pageTabs.css'
 import './pageTabsWorkspace.css'
@@ -21,14 +29,6 @@ const dayLabels = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7']
 type ConfigSection = 'accounts' | 'identity' | 'rotation' | 'schedule' | 'groups'
 type EditorModal = 'schedule' | 'groups' | null
 type AccountPickerStatus = AccountStatus | 'all'
-
-const accountRuntimeLabels: Record<RotationAccountRuntimeStatus, string> = {
-  not_run: 'Chưa chạy',
-  completed_turn: 'Đã chạy',
-  running: 'Đang chạy',
-  error: 'Lỗi/Checkpoint',
-  waiting: 'Chờ'
-}
 
 function minutesToTime(minutes: number): string {
   const safe = Math.max(0, Math.min(minutes, 1439))
@@ -227,7 +227,7 @@ export function PageTabsManager() {
   const [config, setConfig] = useState<PageTabConfig | null>(null)
   const [postLibrary, setPostLibrary] = useState<PageTabPostLibrary | null>(null)
   const [accounts, setAccounts] = useState<AccountRecord[]>([])
-  const [runtime, setRuntime] = useState<RotationRuntimeSnapshot | null>(null)
+  const [runtimeByTab, setRuntimeByTab] = useState<Record<number, RotationRuntimeSnapshot>>({})
   const [loading, setLoading] = useState(true)
   const [savingSection, setSavingSection] = useState<ConfigSection | 'all' | null>(null)
   const [dirtySections, setDirtySections] = useState<Set<ConfigSection>>(() => new Set())
@@ -260,7 +260,6 @@ export function PageTabsManager() {
     if (activeId === null) {
       setConfig(null)
       setPostLibrary(null)
-      setRuntime(null)
       setDirtySections(new Set())
       return
     }
@@ -288,12 +287,11 @@ export function PageTabsManager() {
   }, [activeId])
 
   useEffect(() => {
-    if (activeId === null) return
     let cancelled = false
     const refreshRuntime = async () => {
       try {
         const runtimes = await window.pageAuto.listPageTabRotations()
-        if (!cancelled) setRuntime(runtimes.find((item) => item.pageTabId === activeId) ?? null)
+        if (!cancelled) setRuntimeByTab(indexRotationRuntimes(runtimes))
       } catch (cause) {
         if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause))
       }
@@ -304,7 +302,7 @@ export function PageTabsManager() {
       cancelled = true
       window.clearInterval(timer)
     }
-  }, [activeId])
+  }, [])
 
   const markDirty = (section: ConfigSection) => setDirtySections((current) => new Set(current).add(section))
   const patchConfig = (section: ConfigSection, patch: Partial<PageTabConfig>) => {
@@ -382,11 +380,16 @@ export function PageTabsManager() {
 
   const deleteCurrent = async () => {
     if (!config || !window.confirm(`Xóa Page Tab “${config.name}”?`)) return
-    await window.pageAuto.deletePageTab({ id: config.id })
+    const deletedId = config.id
+    await window.pageAuto.deletePageTab({ id: deletedId })
     setNotice(`Đã xóa ${config.name}.`)
     setConfig(null)
     setPostLibrary(null)
-    setRuntime(null)
+    setRuntimeByTab((current) => {
+      const next = { ...current }
+      delete next[deletedId]
+      return next
+    })
     setActiveId(null)
     await refreshTabs()
   }
@@ -427,6 +430,7 @@ export function PageTabsManager() {
 
   if (loading && tabs.length === 0) return <section className="page-tabs-empty"><strong>Đang tải Page Tabs…</strong></section>
 
+  const runtime = activeRuntimeForPage(runtimeByTab, activeId)
   const groupCount = config ? parseGroupText(config.groupUids.join('\n')).length : 0
   const enabledAccountCount = config?.accounts.filter((item) => item.enabled).length ?? 0
   const enabledScheduleCount = config?.schedules.filter((item) => item.enabled && !scheduleIsInvalid(item)).length ?? 0
@@ -436,16 +440,21 @@ export function PageTabsManager() {
   const dirty = dirtySections.size > 0
   const runtimeStateByAccount = new Map((runtime?.accountStates ?? []).map((item) => [item.accountId, item]))
   const preview = runtime?.currentPostPreview ?? null
+  const progress = runtimeProgressLabel(runtime)
   const currentAccount = config?.accounts.find((item) => item.accountId === runtime?.currentAccountId)
 
   return (
     <section className="page-tabs-manager">
       <div className="page-tabs-strip" aria-label="Danh sách Page Tabs">
         <div className="page-tabs-scroll">
-          {tabs.map((tab) => <button type="button" key={tab.id} className={tab.id === activeId ? 'page-tab-chip active' : 'page-tab-chip'} onClick={() => {
-            if (dirty && !window.confirm('Page Tab có mục chưa lưu. Chuyển tab và bỏ thay đổi?')) return
-            setActiveId(tab.id)
-          }}><span className="page-tab-status-dot" /><span><strong>{tab.name}</strong><small>{tab.pageUid}</small></span></button>)}
+          {tabs.map((tab) => {
+            const tabRuntime = runtimeByTab[tab.id]
+            const tabRuntimeStatus = tabRuntime?.status ?? 'idle'
+            return <button type="button" key={tab.id} title={`Runtime: ${rotationRuntimeLabel(tabRuntimeStatus)}`} className={`${tab.id === activeId ? 'page-tab-chip active' : 'page-tab-chip'} runtime-${tabRuntimeStatus}`} onClick={() => {
+              if (dirty && !window.confirm('Page Tab có mục chưa lưu. Chuyển tab và bỏ thay đổi?')) return
+              setActiveId(tab.id)
+            }}><span className="page-tab-status-dot" /><span><strong>{tab.name}</strong><small>{tab.pageUid}</small></span></button>
+          })}
         </div>
         <button className="page-tab-add" type="button" onClick={() => setCreateOpen(true)}>+ Page</button>
       </div>
@@ -468,7 +477,7 @@ export function PageTabsManager() {
                   {config.accounts.map((account, index) => {
                     const activity = runtimeStateByAccount.get(account.accountId)
                     const activityStatus = activity?.status ?? 'not_run'
-                    return <tr key={account.accountId} className={`pt-account-run-row run-${activityStatus}`} title={activity?.message ?? undefined}><td>{index + 1}</td><td><input type="checkbox" checked={account.enabled} onChange={(event) => updateAccount(index, { enabled: event.target.checked })} /></td><td className="pt-account-uid">{account.uid}</td><td>{account.name ?? '—'}</td><td><span className={`pt-account-status status-${account.status}`}>{account.status}</span></td><td className="pt-account-activity"><span className={`pt-run-status run-${activityStatus}`}>{accountRuntimeLabels[activityStatus]}</span></td><td>{account.category ?? '—'}</td><td className="pt-account-posts"><input type="number" min="1" title="Để trống sẽ dùng Mặc định bài/lượt ở card Vòng chạy." placeholder={String(config.rotation.postsPerAccount)} value={account.postsPerTurn ?? ''} onChange={(event) => updateAccount(index, { postsPerTurn: event.target.value === '' ? null : Number(event.target.value) })} /></td><td className="pt-account-order"><button type="button" onClick={() => patchConfig('accounts', { accounts: moveItem(config.accounts, index, -1) })} disabled={index === 0}>↑</button><button type="button" onClick={() => patchConfig('accounts', { accounts: moveItem(config.accounts, index, 1) })} disabled={index === config.accounts.length - 1}>↓</button></td><td><button className="pt-remove-button" type="button" onClick={() => patchConfig('accounts', { accounts: config.accounts.filter((_, itemIndex) => itemIndex !== index) })}>×</button></td></tr>
+                    return <tr key={account.accountId} className={`pt-account-run-row run-${activityStatus}`} title={activity?.message ?? undefined}><td>{index + 1}</td><td><input type="checkbox" checked={account.enabled} onChange={(event) => updateAccount(index, { enabled: event.target.checked })} /></td><td className="pt-account-uid">{account.uid}</td><td>{account.name ?? '—'}</td><td><span className={`pt-account-status status-${account.status}`}>{account.status}</span></td><td className="pt-account-activity"><span className={`pt-run-status run-${activityStatus}`}>{accountRuntimeLabel(activityStatus)}</span></td><td>{account.category ?? '—'}</td><td className="pt-account-posts"><input type="number" min="1" title="Để trống sẽ dùng Mặc định bài/lượt ở card Vòng chạy." placeholder={String(config.rotation.postsPerAccount)} value={account.postsPerTurn ?? ''} onChange={(event) => updateAccount(index, { postsPerTurn: event.target.value === '' ? null : Number(event.target.value) })} /></td><td className="pt-account-order"><button type="button" onClick={() => patchConfig('accounts', { accounts: moveItem(config.accounts, index, -1) })} disabled={index === 0}>↑</button><button type="button" onClick={() => patchConfig('accounts', { accounts: moveItem(config.accounts, index, 1) })} disabled={index === config.accounts.length - 1}>↓</button></td><td><button className="pt-remove-button" type="button" onClick={() => patchConfig('accounts', { accounts: config.accounts.filter((_, itemIndex) => itemIndex !== index) })}>×</button></td></tr>
                   })}
                   {config.accounts.length === 0 ? <tr><td colSpan={10} className="pt-account-empty">Tab chưa có tài khoản.</td></tr> : null}
                 </tbody></table></div>
@@ -487,11 +496,11 @@ export function PageTabsManager() {
 
             <div className="page-tab-right-pane">
               <section className={`pt-panel pt-live-preview runtime-${runtime?.status ?? 'idle'}`}>
-                <div className="pt-panel-heading"><div><p className="eyebrow">Đang xử lý</p><h3>Preview bài hiện tại</h3></div><span className="pt-live-runtime-state">{runtime?.status ?? 'idle'}{currentAccount ? ` · ${currentAccount.uid}` : ''}</span></div>
+                <div className="pt-panel-heading"><div><p className="eyebrow">Đang xử lý</p><h3>Preview bài hiện tại</h3></div><span className="pt-live-runtime-state">{rotationRuntimeLabel(runtime?.status ?? 'idle')}{currentAccount ? ` · ${currentAccount.uid}${currentAccount.name ? ` · ${currentAccount.name}` : ''}` : ''}</span></div>
                 {preview ? <>
-                  <div className="pt-live-preview-meta"><span>Group <b>{preview.groupUid}</b></span><span>Bài <b>#{preview.postIndex + 1}</b></span><span>Biến thể <b>#{preview.variantIndex + 1}</b></span><span>Ảnh <b>{preview.imageCount}</b></span></div>
+                  <div className="pt-live-preview-meta"><span>Group <b>{preview.groupUid}</b></span>{progress ? <span>Tiến độ <b>{progress}</b></span> : null}<span>Bài <b>#{preview.postIndex + 1}</b></span><span>Biến thể <b>#{preview.variantIndex + 1}</b></span><span>Ảnh <b>{preview.imageCount}</b></span></div>
                   <p>{preview.contentPreview || '(Bài không có nội dung text)'}</p>
-                </> : <div className="pt-live-preview-empty">Chưa có bài đang xử lý. Khi worker đã chọn Group + nội dung + ảnh, preview sẽ hiện tại đây.</div>}
+                </> : <div className="pt-live-preview-empty">{runtimeEmptyPreviewMessage(runtime)}</div>}
               </section>
 
               <section className="pt-panel pt-business-panel">
