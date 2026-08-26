@@ -11,9 +11,11 @@ import type {
 } from '../../../shared/pageTabs'
 import type { RotationAccountRuntimeStatus, RotationRuntimeSnapshot } from '../../../shared/rotation'
 import { PostLibraryModal } from './PostLibraryModal'
+import { collapseEveryDaySchedules, EVERY_DAY_SCHEDULE, expandEveryDaySchedules } from './scheduleEditor'
 import './pageTabs.css'
 import './pageTabsWorkspace.css'
 import './postLibrary.css'
+import './scheduleEditor.css'
 
 const dayLabels = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7']
 type ConfigSection = 'accounts' | 'identity' | 'rotation' | 'schedule' | 'groups'
@@ -65,10 +67,8 @@ function toSaveInput(config: PageTabConfig): PageTabSaveInput {
       sortOrder: index,
       postsPerTurn: item.postsPerTurn
     })),
-    schedules: config.schedules.map((item, index) => ({
-      dayOfWeek: item.dayOfWeek,
-      startMinute: item.startMinute,
-      endMinute: item.endMinute,
+    schedules: expandEveryDaySchedules(config.schedules).map((item, index) => ({
+      ...item,
       enabled: item.enabled && item.startMinute < item.endMinute,
       sortOrder: index
     })),
@@ -108,7 +108,7 @@ function mergeSavedSection(draft: PageTabConfig, saved: PageTabConfig, section: 
   if (section === 'accounts') return { ...draft, accounts: saved.accounts }
   if (section === 'identity') return { ...draft, name: saved.name, pageUid: saved.pageUid }
   if (section === 'rotation') return { ...draft, rotation: saved.rotation }
-  if (section === 'schedule') return { ...draft, schedules: saved.schedules }
+  if (section === 'schedule') return { ...draft, schedules: collapseEveryDaySchedules(saved.schedules) }
   return { ...draft, groupUids: saved.groupUids }
 }
 
@@ -271,7 +271,8 @@ export function PageTabsManager() {
       window.pageAuto.getPageTabPostLibrary({ id: activeId })
     ]).then(([nextConfig, nextLibrary]) => {
       if (cancelled) return
-      setConfig(nextConfig)
+      if (!nextConfig) throw new Error('Page Tab không còn tồn tại.')
+      setConfig({ ...nextConfig, schedules: collapseEveryDaySchedules(nextConfig.schedules) })
       setPostLibrary(nextLibrary)
       setDirtySections(new Set())
       setEditorModal(null)
@@ -351,7 +352,7 @@ export function PageTabsManager() {
     setError(null)
     try {
       const saved = await window.pageAuto.updatePageTab({ id: config.id, config: toSaveInput(config) })
-      setConfig(saved)
+      setConfig({ ...saved, schedules: collapseEveryDaySchedules(saved.schedules) })
       setDirtySections(new Set())
       setNotice('Đã lưu toàn bộ cấu hình Page Tab.')
       await refreshTabs(saved.id)
@@ -512,7 +513,7 @@ export function PageTabsManager() {
       {config && accountPickerOpen ? <AccountPicker accounts={accounts} selectedIds={config.accounts.map((item) => item.accountId)} onClose={() => setAccountPickerOpen(false)} onApply={applyAccountSelection} /> : null}
 
       {config && editorModal === 'schedule' ? <ConfigModal eyebrow="Lịch chạy" title="Ngày và khung giờ" onClose={() => setEditorModal(null)} actions={<><button className="pt-button secondary" type="button" onClick={addSchedule}>+ Khung giờ</button><button className="pt-button primary" type="button" disabled={!dirtySections.has('schedule') || savingSection !== null} onClick={() => void saveSectionOnly('schedule')}>{savingSection === 'schedule' ? 'Đang lưu…' : 'Lưu lịch'}</button></>}>
-        <div className="pt-schedule-list">{config.schedules.map((schedule, index) => <div className="pt-schedule-row" key={`${schedule.id}:${index}`}><label><span>Bật</span><input type="checkbox" checked={schedule.enabled} onChange={(event) => updateSchedule(index, { enabled: event.target.checked })} /></label><label><span>Ngày</span><select value={schedule.dayOfWeek} onChange={(event) => updateSchedule(index, { dayOfWeek: Number(event.target.value) })}>{dayLabels.map((label, day) => <option key={label} value={day}>{label}</option>)}</select></label><label><span>Từ</span><input type="time" value={minutesToTime(schedule.startMinute)} onChange={(event) => updateSchedule(index, { startMinute: timeToMinutes(event.target.value) })} /></label><label><span>Đến</span><input type="time" value={minutesToTime(schedule.endMinute)} onChange={(event) => updateSchedule(index, { endMinute: timeToMinutes(event.target.value) })} /></label><button className="pt-remove-button" type="button" onClick={() => patchConfig('schedule', { schedules: config.schedules.filter((_, itemIndex) => itemIndex !== index) })}>Xóa</button></div>)}{config.schedules.length === 0 ? <div className="pt-empty-row">Chưa có lịch. Tab vẫn có thể chạy thủ công.</div> : null}</div>
+        <div className="pt-schedule-list">{config.schedules.map((schedule, index) => <div className="pt-schedule-row" key={`${schedule.id}:${index}`}><label><span>Bật</span><input type="checkbox" checked={schedule.enabled} onChange={(event) => updateSchedule(index, { enabled: event.target.checked })} /></label><label><span>Ngày</span><select value={schedule.dayOfWeek === EVERY_DAY_SCHEDULE ? 1 : schedule.dayOfWeek} disabled={schedule.dayOfWeek === EVERY_DAY_SCHEDULE} onChange={(event) => updateSchedule(index, { dayOfWeek: Number(event.target.value) })}>{dayLabels.map((label, day) => <option key={label} value={day}>{label}</option>)}</select><span className="pt-schedule-every-day"><input type="checkbox" checked={schedule.dayOfWeek === EVERY_DAY_SCHEDULE} onChange={(event) => updateSchedule(index, { dayOfWeek: event.target.checked ? EVERY_DAY_SCHEDULE : 1 })} /> Mỗi ngày</span></label><label><span>Từ</span><input type="time" value={minutesToTime(schedule.startMinute)} onChange={(event) => updateSchedule(index, { startMinute: timeToMinutes(event.target.value) })} /></label><label><span>Đến</span><input type="time" value={minutesToTime(schedule.endMinute)} onChange={(event) => updateSchedule(index, { endMinute: timeToMinutes(event.target.value) })} /></label><button className="pt-remove-button" type="button" onClick={() => patchConfig('schedule', { schedules: config.schedules.filter((_, itemIndex) => itemIndex !== index) })}>Xóa</button></div>)}{config.schedules.length === 0 ? <div className="pt-empty-row">Chưa có lịch. Tab vẫn có thể chạy thủ công.</div> : null}</div>
       </ConfigModal> : null}
 
       {config && editorModal === 'groups' ? <ConfigModal eyebrow="Group Set" title="Danh sách Group UID" onClose={() => setEditorModal(null)} actions={<><button className="pt-button secondary" type="button" onClick={() => void importGroups()}>Import TXT/CSV</button><button className="pt-button primary" type="button" disabled={!dirtySections.has('groups') || savingSection !== null} onClick={() => void saveSectionOnly('groups')}>{savingSection === 'groups' ? 'Đang lưu…' : 'Lưu Group'}</button></>}>

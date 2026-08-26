@@ -65,18 +65,18 @@ class Store implements RotationRunStore {
     this.details.metrics.pending -= 1
     this.details.metrics.remaining -= 1
     this.details.metrics.failed += 1
-    this.details.metrics.progressPercent = 50
+    this.details.metrics.progressPercent = Math.round((this.details.metrics.failed / this.details.metrics.total) * 100)
     return this.details
   }
 }
 
-function failedItem(): RunItem {
+function failedItem(id: number): RunItem {
   return {
-    id: 500,
+    id,
     runId: 91,
     sourceGroupItemId: null,
-    groupUid: 'group-500',
-    sortOrder: 0,
+    groupUid: `group-${id}`,
+    sortOrder: id,
     status: 'failed',
     attemptCount: 1,
     lastError: 'composer failed',
@@ -87,22 +87,20 @@ function failedItem(): RunItem {
 }
 
 describe('RotationService live-retest regressions', () => {
-  it('does not classify a one-account composer failure as account-unavailable or release the same idle browser repeatedly', async () => {
+  it('keeps using the only account for remaining groups after terminal composer failures without marking it unavailable', async () => {
     const store = new Store()
     const releaseCalls: number[] = []
-    let released!: () => void
-    const firstRelease = new Promise<void>((resolve) => { released = resolve })
+    let nextItemId = 500
 
     const service = new RotationService(store, {
       executeSingle: async (): Promise<ExecuteSinglePostingJobResult> => ({
         accountId: 101,
-        item: failedItem(),
+        item: failedItem(nextItemId++),
         result: { status: 'failed', code: 'composer_not_found', message: 'composer failed' },
         run: store.failOne()
       }),
       releaseAccount: async (accountId: number) => {
         releaseCalls.push(accountId)
-        released()
       }
     }, {
       now: () => new Date(2026, 7, 25, 8, 0),
@@ -111,13 +109,14 @@ describe('RotationService live-retest regressions', () => {
     })
 
     service.start({ pageTabId: 10 })
-    await firstRelease
-    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    await service.waitForSettled()
 
     const status = service.status({ pageTabId: 10 })
     expect(status.status).toBe('waiting_window')
     expect(status.message).not.toContain('Không còn tài khoản khả dụng')
-    expect(releaseCalls).toEqual([101])
+    expect(store.details.metrics.failed).toBe(2)
+    expect(store.details.metrics.remaining).toBe(0)
+    expect(releaseCalls).toEqual([101, 101])
     service.dispose()
   })
 })
