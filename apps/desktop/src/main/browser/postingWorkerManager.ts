@@ -130,6 +130,8 @@ export class PostingWorkerManager {
     accountDiagnostic(accountId, 'RELEASE account turn → shutdown worker/browser')
     entry.shuttingDown = true
 
+    let forced = false
+    let exitCode: number | null = null
     await new Promise<void>((resolve) => {
       let settled = false
       let forceTimer: NodeJS.Timeout | null = null
@@ -145,9 +147,13 @@ export class PostingWorkerManager {
         resolve()
       }
 
-      entry.process.once('exit', finish)
+      entry.process.once('exit', (code) => {
+        exitCode = code
+        finish()
+      })
       forceTimer = setTimeout(() => {
-        accountDiagnostic(accountId, 'shutdown grace timeout → force kill worker')
+        forced = true
+        accountDiagnostic(accountId, 'shutdown grace timeout → force kill worker; Chrome close chưa được xác nhận')
         try {
           entry.process.kill()
         } finally {
@@ -158,6 +164,7 @@ export class PostingWorkerManager {
       try {
         entry.process.postMessage({ type: 'shutdown' })
       } catch {
+        forced = true
         try {
           entry.process.kill()
         } finally {
@@ -166,7 +173,14 @@ export class PostingWorkerManager {
       }
     })
 
-    accountDiagnostic(accountId, 'RELEASE complete → Chrome/worker closed')
+    if (!forced && exitCode === 0) {
+      accountDiagnostic(accountId, 'RELEASE complete → posting worker xác nhận Chrome đã đóng')
+    } else {
+      accountDiagnostic(
+        accountId,
+        `RELEASE warning → posting worker đã thoát${exitCode === null ? '' : ` code=${exitCode}`}; Chrome close không được xác nhận`
+      )
+    }
   }
 
   retile(placements: Map<number, BrowserWindowPlacement>): number {

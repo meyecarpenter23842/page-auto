@@ -1,6 +1,7 @@
 import { chromium, type Browser, type BrowserContext } from 'playwright-core'
 import type { BrowserWindowPlacement } from '../../shared/browserWindowLayout'
 import { sameWholeChromeScale, wholeChromeScaleForLaunch } from '../../shared/browserWholeChromeScale'
+import { closeBrowserTarget } from './browserClose'
 import {
   applyBrowserPlacementToContext,
   applyBrowserWindowPlacement,
@@ -199,10 +200,10 @@ export async function closeManagedPostingBrowser(): Promise<void> {
   launchedWholeChromeScale = null
 
   if (browser) {
-    await browser.close().catch(() => undefined)
+    await closeBrowserTarget(browser, 'Chrome managed của posting worker')
     return
   }
-  if (context) await context.close().catch(() => undefined)
+  await closeBrowserTarget(context, 'Persistent Chrome của posting worker')
 }
 
 export { managedCdpEndpointFromArgs }
