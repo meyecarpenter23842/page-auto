@@ -1,0 +1,22 @@
+.pt-schedule-every-day {
+  display: flex !important;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+  color: #475467 !important;
+  font-size: 9px !important;
+  font-weight: 700 !important;
+}
+
+.pt-schedule-every-day input[type='checkbox'] {
+  width: 12px !important;
+  height: 12px !important;
+  min-height: 12px !important;
+  padding: 0 !important;
+  margin: 0;
+}
+
+.pt-schedule-row select:disabled {
+  color: #98a2b3;
+  background: #f2f4f7;
+}

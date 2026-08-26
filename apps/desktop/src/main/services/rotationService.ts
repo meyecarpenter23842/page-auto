@@ -8,7 +8,6 @@ import {
   isWithinSchedule,
   nextScheduleStart,
   nextScheduleStartAfterDay,
-  nextScheduleWindowStart,
   randomDelaySeconds,
   scheduleWindowKey
 } from './rotationSchedule'
@@ -190,7 +189,7 @@ export class RotationService {
       inFlight: false,
       activeDateKey: restoredRotationState.activeDateKey,
       activeWindowKey: null,
-      completedWindowKey: restoredRotationState.completedWindowKey,
+      completedWindowKey: null,
       disposed: false
     }
 
@@ -258,6 +257,7 @@ export class RotationService {
     session.manualPaused = false
     session.stopRequested = false
     session.disposed = false
+    session.completedWindowKey = null
     session.message = restoredAfterRestart
       ? 'Đã khôi phục phiên chạy sau khi khởi động lại ứng dụng.'
       : 'Đang tiếp tục run hiện tại.'
@@ -271,17 +271,12 @@ export class RotationService {
         this.rolloverForDay(session, todayKey)
       } else if (session.activeDateKey === null) {
         session.activeDateKey = todayKey
-        this.persistRotationState(session)
       }
+      this.persistRotationState(session)
 
       if (isRunExhausted(session.run)) {
         session.status = 'waiting_window'
         session.nextActionAt = nextScheduleStartAfterDay(schedules, now).getTime()
-      } else if (session.completedWindowKey === windowKey) {
-        const next = nextScheduleWindowStart(schedules, now)
-        session.status = 'waiting_window'
-        session.nextActionAt = next.getTime()
-        session.message = `Khung giờ hiện tại đã chạy đủ một vòng tài khoản; chờ khung tiếp theo ${next.toLocaleString()}.`
       } else {
         session.activeWindowKey = windowKey
         if (session.run.run.status !== 'running') session.run = this.runs.resume(session.runId)
@@ -418,7 +413,7 @@ export class RotationService {
       inFlight: false,
       activeDateKey: restoredRotationState.activeDateKey,
       activeWindowKey: null,
-      completedWindowKey: restoredRotationState.completedWindowKey,
+      completedWindowKey: null,
       disposed: false
     }
   }
@@ -698,30 +693,18 @@ export class RotationService {
       const completedCycle = accountIndex === 0 && previousIndex === cycleAccounts.length - 1
       if (completedCycle) {
         session.cycle += 1
-        session.completedWindowKey = session.activeWindowKey
+        session.completedWindowKey = null
         this.persistRotationState(session)
         session.currentAccountId = null
         session.currentAccountIndex = null
         session.slotsCompletedThisTurn = 0
         session.targetSlotsThisTurn = 0
         cycleAccounts = []
-
-        const now = this.clock.now()
-        const schedules = this.schedulesFor(session)
-        const next = nextScheduleWindowStart(schedules, now)
-        if (session.run.run.status === 'running' || session.run.run.status === 'created') {
-          session.run = this.runs.pause(session.runId)
-        }
-        session.status = 'waiting_window'
-        session.nextActionAt = next.getTime()
-        session.message = `Khung giờ đã chạy đủ một vòng tài khoản; chờ khung tiếp theo ${next.toLocaleString()}.`
-        this.settleCycle()
-        continue
       }
 
       if (session.run.metrics.remaining > 0) {
         const rotation = session.run.run.snapshot.rotation
-        const sameRun = cycleAccounts.length > 1
+        const sameRun = enabledAccounts.length > 1
           ? await this.waitConfiguredDelay(
               session,
               rotation.accountDelayMinSeconds,
@@ -796,31 +779,19 @@ export class RotationService {
         continue
       }
 
+      let rotationStateChanged = false
       if (session.activeDateKey !== null && session.activeDateKey !== todayKey) {
         this.rolloverForDay(session, todayKey)
       } else if (session.activeDateKey === null) {
         session.activeDateKey = todayKey
-        this.persistRotationState(session)
+        rotationStateChanged = true
       }
 
-      if (session.completedWindowKey === windowKey) {
-        await this.releaseIdleCurrentAccount(session)
-        if (!session.inFlight && (session.run.run.status === 'running' || session.run.run.status === 'created')) {
-          session.run = this.runs.pause(session.runId)
-        }
-        const next = nextScheduleWindowStart(schedules, now)
-        session.status = 'waiting_window'
-        session.nextActionAt = next.getTime()
-        session.message = `Khung giờ hiện tại đã chạy đủ một vòng tài khoản; chờ khung tiếp theo ${next.toLocaleString()}.`
-        const waitMs = Math.max(250, Math.min(30_000, next.getTime() - now.getTime()))
-        await this.clock.sleep(waitMs)
-        continue
-      }
-
-      if (session.completedWindowKey && session.completedWindowKey !== windowKey) {
+      if (session.completedWindowKey !== null) {
         session.completedWindowKey = null
-        this.persistRotationState(session)
+        rotationStateChanged = true
       }
+      if (rotationStateChanged) this.persistRotationState(session)
       session.activeWindowKey = windowKey
 
       if (isRunExhausted(session.run)) continue

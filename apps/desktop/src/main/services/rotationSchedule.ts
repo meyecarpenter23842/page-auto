@@ -26,8 +26,7 @@ export function isWithinSchedule(schedules: PageTabScheduleInput[], now: Date): 
 
 /**
  * Stable identity for the currently active schedule window. With no configured
- * schedules, the whole local day is treated as one window so a tab runs one
- * account cycle per day instead of looping forever.
+ * schedules, the whole local day is treated as one runnable window.
  */
 export function scheduleWindowKey(schedules: PageTabScheduleInput[], now: Date): string | null {
   const enabled = enabledSchedules(schedules)
