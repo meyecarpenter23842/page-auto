@@ -49,6 +49,7 @@ export function registerHotmailIpcHandlers(database: Database.Database): Hotmail
   const repository = new HotmailRepository(database)
   const browserEngine = new BrowserEngineService()
   const validatedExecutables = new Set<string>()
+  let pendingRecoveryPayload: HotmailRecoveryActionPayload | null = null
 
   const resolveBrowserExecutable = async (requestedExecutable: string, profileRoot: string): Promise<string> => {
     const candidates = emailBrowserExecutableCandidates(profileRoot, requestedExecutable)
@@ -135,13 +136,45 @@ export function registerHotmailIpcHandlers(database: Database.Database): Hotmail
   ipcMain.handle(IPC_CHANNELS.hotmailCodesGet, (_event, payload: HotmailBatchPayload) => getManualCodes(codeRuntime.provider, payload))
   ipcMain.handle(IPC_CHANNELS.hotmailCheck, (_event, payload: HotmailBatchPayload) => service.checkMail(payload))
   ipcMain.handle(IPC_CHANNELS.hotmailOpen, (_event, payload: HotmailAccountPayload) => service.openMail(payload.accountId))
-  ipcMain.handle(IPC_CHANNELS.hotmailRecoveryAction, (_event, payload: HotmailRecoveryActionPayload) => service.updateRecoveryMail(payload))
+  ipcMain.handle(IPC_CHANNELS.hotmailRecoveryAction, async (_event, payload: HotmailRecoveryActionPayload) => {
+    if (payload.confirmCompleted) {
+      if (!pendingRecoveryPayload) {
+        throw new Error('Không có flow Mail khôi phục nào đang chờ xác nhận. Hãy mở lại flow trước.')
+      }
+      const frozenPayload: HotmailRecoveryActionPayload = {
+        accountIds: [...pendingRecoveryPayload.accountIds],
+        operation: pendingRecoveryPayload.operation,
+        ...(pendingRecoveryPayload.recoveryEmail !== undefined ? { recoveryEmail: pendingRecoveryPayload.recoveryEmail } : {}),
+        confirmCompleted: true
+      }
+      const result = await service.updateRecoveryMail(frozenPayload)
+      if (!result.results.some((item) => item.status === 'needs_attention')) pendingRecoveryPayload = null
+      return result
+    }
+
+    if (pendingRecoveryPayload) {
+      throw new Error('Đang có flow Mail khôi phục chờ xác nhận. Hoàn tất hoặc đóng phiên đó trước khi mở flow mới.')
+    }
+
+    const frozenPayload: HotmailRecoveryActionPayload = {
+      accountIds: [...payload.accountIds],
+      operation: payload.operation,
+      ...(payload.recoveryEmail !== undefined ? { recoveryEmail: payload.recoveryEmail } : {}),
+      confirmCompleted: false
+    }
+    const result = await service.updateRecoveryMail(frozenPayload)
+    if (result.results.some((item) => item.status === 'needs_attention')) {
+      pendingRecoveryPayload = frozenPayload
+    }
+    return result
+  })
   ipcMain.handle(IPC_CHANNELS.hotmailProxyStatus, () => service.getProxyStatus())
   ipcMain.handle(IPC_CHANNELS.hotmailProxyRotate, () => service.rotateProxy())
   ipcMain.handle(IPC_CHANNELS.hotmailProxyTest, () => service.testProxy())
 
   return {
     dispose: () => {
+      pendingRecoveryPayload = null
       clearEmailCodeProvider(codeRuntime.provider)
       codeRuntime.dispose()
       service.dispose()

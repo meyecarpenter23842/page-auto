@@ -138,7 +138,7 @@ async function detectAttention(page: Page): Promise<HotmailNeedsAttentionReason 
   try {
     text = (await page.locator('body').innerText({ timeout: 3_000 })).toLowerCase()
   } catch {
-    return null
+    return 'security_review'
   }
 
   if (/login\.live\.com|signin|oauth20_authorize/.test(url) || /sign in|đăng nhập/.test(text)) return 'needs_login'
