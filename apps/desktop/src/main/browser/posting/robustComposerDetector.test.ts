@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   choosePublishCandidateStrategy,
   isComposerAncestorBoundary,
-  isComposerContainerEvidence
+  isComposerContainerEvidence,
+  waitForComposerStage
 } from './robustComposerDetector'
 
 function signals(overrides: Partial<Parameters<typeof isComposerContainerEvidence>[0]> = {}): Parameters<typeof isComposerContainerEvidence>[0] {
@@ -63,6 +64,28 @@ describe('robust composer container ownership', () => {
     expect(isComposerAncestorBoundary('main', null)).toBe(true)
     expect(isComposerAncestorBoundary('div', 'feed')).toBe(true)
     expect(isComposerAncestorBoundary('div', 'dialog')).toBe(false)
+  })
+})
+
+describe('composer delayed readiness polling', () => {
+  it('keeps polling when group surface is ready before trigger and editor render', async () => {
+    let triggerProbeCount = 0
+    const trigger = await waitForComposerStage(async () => {
+      triggerProbeCount += 1
+      return triggerProbeCount >= 4 ? 'trigger-ready' : null
+    }, 1_000, async () => undefined)
+
+    expect(trigger).toBe('trigger-ready')
+    expect(triggerProbeCount).toBe(4)
+
+    let editorProbeCount = 0
+    const editor = await waitForComposerStage(async () => {
+      editorProbeCount += 1
+      return editorProbeCount >= 3 ? 'editor-ready' : null
+    }, 1_000, async () => undefined)
+
+    expect(editor).toBe('editor-ready')
+    expect(editorProbeCount).toBe(3)
   })
 })
 
