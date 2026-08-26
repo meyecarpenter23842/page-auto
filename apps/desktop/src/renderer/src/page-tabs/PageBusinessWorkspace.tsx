@@ -1,8 +1,12 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import type { PageTabSummary } from '../../../shared/pageTabs'
+import type { RotationRuntimeSnapshot, RotationRuntimeStatus } from '../../../shared/rotation'
 import { PageTabsManager } from './PageTabsManagerV2'
 import './pageBusinessWorkspace.css'
+import './pageTabs3c.css'
 
 type PageBusinessId = 'groups' | 'wall' | 'edit'
+type RuntimeAction = (payload: { pageTabId: number }) => Promise<RotationRuntimeSnapshot>
 
 interface PageBusinessDefinition {
   id: PageBusinessId
@@ -48,8 +52,128 @@ const businesses: PageBusinessDefinition[] = [
   }
 ]
 
+const runtimeStatusLabels: Record<RotationRuntimeStatus, string> = {
+  idle: 'Chưa chạy',
+  starting: 'Đang khởi động',
+  running: 'Đang chạy',
+  paused: 'Tạm dừng',
+  waiting_window: 'Chờ lịch',
+  stopping: 'Đang dừng',
+  stopped: 'Đã dừng',
+  completed: 'Hoàn tất',
+  error: 'Lỗi'
+}
+
+function canStart(status: RotationRuntimeStatus): boolean {
+  return status === 'idle' || status === 'completed' || status === 'stopped' || status === 'error'
+}
+
+function canPause(status: RotationRuntimeStatus): boolean {
+  return status === 'starting' || status === 'running' || status === 'waiting_window'
+}
+
+function canResume(status: RotationRuntimeStatus): boolean {
+  return status === 'paused'
+}
+
+function canStop(status: RotationRuntimeStatus): boolean {
+  return status === 'starting' || status === 'running' || status === 'paused' || status === 'waiting_window'
+}
+
+function PageRuntimeQuickControls({ onClose }: { onClose: () => void }) {
+  const [tabs, setTabs] = useState<PageTabSummary[]>([])
+  const [runtimeByTab, setRuntimeByTab] = useState<Record<number, RotationRuntimeSnapshot>>({})
+  const [selected, setSelected] = useState<Set<number>>(() => new Set())
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const refresh = async () => {
+    try {
+      const [nextTabs, runtimes] = await Promise.all([
+        window.pageAuto.listPageTabs(),
+        window.pageAuto.listPageTabRotations()
+      ])
+      setTabs(nextTabs)
+      setRuntimeByTab(Object.fromEntries(runtimes.map((runtime) => [runtime.pageTabId, runtime])))
+      setSelected((current) => new Set([...current].filter((id) => nextTabs.some((tab) => tab.id === id))))
+      setError(null)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    }
+  }
+
+  useEffect(() => {
+    void refresh()
+    const timer = window.setInterval(() => void refresh(), 1000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  const run = async (
+    action: RuntimeAction,
+    eligibility: (status: RotationRuntimeStatus) => boolean
+  ) => {
+    const targets = [...selected].filter((id) => eligibility(runtimeByTab[id]?.status ?? 'idle'))
+    if (targets.length === 0) return
+    setBusy(true)
+    setError(null)
+    try {
+      await Promise.all(targets.map((pageTabId) => action({ pageTabId })))
+      await refresh()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="page-runtime-quick-backdrop" role="presentation" onMouseDown={onClose}>
+      <section className="page-runtime-quick-modal" role="dialog" aria-modal="true" aria-label="Điều khiển nhanh Page" onMouseDown={(event) => event.stopPropagation()}>
+        <header>
+          <div><span>Điều khiển nhanh</span><strong>Page đang chạy</strong></div>
+          <button type="button" onClick={onClose}>×</button>
+        </header>
+        <div className="page-runtime-quick-list">
+          {tabs.map((tab) => {
+            const runtime = runtimeByTab[tab.id]
+            const status = runtime?.status ?? 'idle'
+            return (
+              <label key={tab.id} className={`quick-page-row quick-${status}`}>
+                <input
+                  type="checkbox"
+                  checked={selected.has(tab.id)}
+                  onChange={(event) => setSelected((current) => {
+                    const next = new Set(current)
+                    if (event.target.checked) next.add(tab.id)
+                    else next.delete(tab.id)
+                    return next
+                  })}
+                />
+                <b>{tab.name}</b>
+                <small>{tab.pageUid}</small>
+                <span>{runtimeStatusLabels[status]}</span>
+              </label>
+            )
+          })}
+        </div>
+        <div className="page-runtime-quick-actions">
+          <span>{selected.size}/{tabs.length} Page</span>
+          <button type="button" disabled={busy} onClick={() => setSelected(new Set(tabs.map((tab) => tab.id)))}>Chọn tất cả</button>
+          <button type="button" className="primary" disabled={busy} onClick={() => void run(window.pageAuto.startPageTabRotation, canStart)}>Start</button>
+          <button type="button" disabled={busy} onClick={() => void run(window.pageAuto.pausePageTabRotation, canPause)}>Pause</button>
+          <button type="button" disabled={busy} onClick={() => void run(window.pageAuto.resumePageTabRotation, canResume)}>Tiếp tục</button>
+          <button type="button" className="danger" disabled={busy} onClick={() => void run(window.pageAuto.stopPageTabRotation, canStop)}>Stop</button>
+          <button type="button" disabled={busy || selected.size === 0} onClick={() => setSelected(new Set())}>Bỏ chọn</button>
+        </div>
+        {error ? <div className="page-runtime-quick-error">{error}</div> : null}
+      </section>
+    </div>
+  )
+}
+
 export function PageBusinessWorkspace() {
   const [activeBusiness, setActiveBusiness] = useState<PageBusinessId>('groups')
+  const [runtimeControlsOpen, setRuntimeControlsOpen] = useState(false)
   const active = useMemo(
     () => businesses.find((business) => business.id === activeBusiness) ?? businesses[0],
     [activeBusiness]
@@ -58,10 +182,6 @@ export function PageBusinessWorkspace() {
   return (
     <div className="page-tabs-route page-business-workspace">
       <nav className="page-business-tabs" role="tablist" aria-label="Nghiệp vụ của Page">
-        <div className="page-business-tabs-copy">
-          <span>Nghiệp vụ Page</span>
-          <small>Mỗi Page Tab dùng chung Page UID + account, cấu hình nghiệp vụ tách riêng.</small>
-        </div>
         <div className="page-business-tab-buttons">
           {businesses.map((business) => (
             <button
@@ -77,6 +197,10 @@ export function PageBusinessWorkspace() {
             </button>
           ))}
         </div>
+        <button className="page-runtime-quick-trigger" type="button" onClick={() => setRuntimeControlsOpen(true)}>
+          Điều khiển Page
+          <small>Start · Pause · Stop</small>
+        </button>
       </nav>
 
       <div
@@ -113,6 +237,8 @@ export function PageBusinessWorkspace() {
           </div>
         </section>
       ) : null}
+
+      {runtimeControlsOpen ? <PageRuntimeQuickControls onClose={() => setRuntimeControlsOpen(false)} /> : null}
     </div>
   )
 }
