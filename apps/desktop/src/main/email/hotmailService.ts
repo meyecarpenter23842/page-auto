@@ -83,16 +83,21 @@ export class HotmailService {
     const account = this.requireAccount(accountId)
     if (!account.email) throw new Error('Account chưa có Email trong Account Manager.')
     const settings = this.repository.getProfileSettings()
+    const clientId = settings.oauthClientId.trim()
     this.runtimeStatus.set(accountId, 'connecting')
     try {
       return await this.oauth.startDeviceCode(accountId, {
-        clientId: settings.oauthClientId,
+        clientId,
         tenant: settings.oauthTenant
       }, {
         saveRefreshToken: (ciphertext, status) => {
+          const now = Date.now()
           this.repository.updateEmailState(accountId, {
+            oauthClientId: clientId,
             refreshTokenCiphertext: ciphertext,
             oauthStatus: status,
+            oauthUpdatedAt: now,
+            lastTokenCheckAt: now,
             mailStatus: 'ready',
             lastError: null
           })
@@ -251,13 +256,30 @@ export class HotmailService {
   private async readMessages(accountId: number, limit = 25) {
     const state = this.repository.getEmailState(accountId)
     const settings = this.repository.getProfileSettings()
+    const clientId = state?.oauthClientId?.trim() ?? ''
+    if (!clientId) {
+      throw new Error('Account chưa có Microsoft OAuth Client ID trong canonical Email state.')
+    }
+
     const accessToken = await this.oauth.getAccessToken(
       { refreshTokenCiphertext: state?.refreshTokenCiphertext ?? null },
-      { clientId: settings.oauthClientId, tenant: settings.oauthTenant },
+      { clientId, tenant: settings.oauthTenant },
       (refreshTokenCiphertext) => {
-        this.repository.updateEmailState(accountId, { refreshTokenCiphertext, oauthStatus: 'valid', lastError: null })
+        this.repository.updateEmailState(accountId, {
+          oauthClientId: clientId,
+          refreshTokenCiphertext,
+          oauthStatus: 'valid',
+          oauthUpdatedAt: Date.now(),
+          lastError: null
+        })
       }
     )
+
+    this.repository.updateEmailState(accountId, {
+      oauthStatus: 'valid',
+      lastTokenCheckAt: Date.now(),
+      lastError: null
+    })
     return this.mail.listRecentMessages(accessToken, limit)
   }
 }
