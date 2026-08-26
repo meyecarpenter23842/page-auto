@@ -1,8 +1,10 @@
 import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import Database from 'better-sqlite3'
 import { afterEach, describe, expect, it } from 'vitest'
 import { AccountRepository } from './accountRepository'
+import { applyHotmailMigration } from './hotmailMigration'
 import { HotmailRepository } from './hotmailRepository'
 import { initializeDatabase } from './index'
 
@@ -43,6 +45,9 @@ describe('initializeDatabase', () => {
     const emailStateTable = runtime.client
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'account_email_state'")
       .get() as { name: string } | undefined
+    const emailStateColumns = runtime.client
+      .prepare('PRAGMA table_info(account_email_state)')
+      .all() as Array<{ name: string }>
     const emailProfileSettingsTable = runtime.client
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'email_profile_settings'")
       .get() as { name: string } | undefined
@@ -59,13 +64,19 @@ describe('initializeDatabase', () => {
       { version: 5, name: 'recovery_execution_logs' },
       { version: 6, name: 'page_tab_post_library' },
       { version: 7, name: 'page_tab_account_order_mode' },
-      { version: 8, name: 'hotmail_auto_subsystem' }
+      { version: 8, name: 'hotmail_auto_subsystem' },
+      { version: 9, name: 'hotmail_account_oauth_binding' }
     ])
-    expect(schemaVersion?.value).toBe('8')
+    expect(schemaVersion?.value).toBe('9')
     expect(executionLogsTable?.name).toBe('execution_logs')
     expect(postLibraryTable?.name).toBe('page_tab_posts')
     expect(pageTabColumns.some((column) => column.name === 'account_order_mode')).toBe(true)
     expect(emailStateTable?.name).toBe('account_email_state')
+    expect(emailStateColumns.map((column) => column.name)).toEqual(expect.arrayContaining([
+      'oauth_client_id',
+      'oauth_updated_at',
+      'last_token_check_at'
+    ]))
     expect(emailProfileSettingsTable?.name).toBe('email_profile_settings')
     expect(emailProxySettingsTable?.name).toBe('email_proxy_settings')
 
@@ -81,8 +92,92 @@ describe('initializeDatabase', () => {
       .prepare('SELECT COUNT(*) AS count FROM __page_auto_migrations')
       .get() as { count: number }
 
-    expect(count.count).toBe(8)
+    expect(count.count).toBe(9)
     reopened.close()
+  })
+
+  it('upgrades v8 OAuth rows by binding the legacy default Client ID to the existing refresh token', () => {
+    const client = new Database(':memory:')
+    client.pragma('foreign_keys = ON')
+    client.exec(`
+      CREATE TABLE __page_auto_migrations (
+        version INTEGER PRIMARY KEY NOT NULL,
+        name TEXT NOT NULL,
+        applied_at INTEGER NOT NULL
+      );
+      CREATE TABLE accounts (
+        id INTEGER PRIMARY KEY NOT NULL,
+        uid TEXT NOT NULL UNIQUE
+      );
+      CREATE TABLE account_email_state (
+        account_id INTEGER PRIMARY KEY NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+        provider TEXT NOT NULL DEFAULT 'microsoft',
+        oauth_status TEXT NOT NULL DEFAULT 'missing',
+        refresh_token_ciphertext TEXT,
+        mail_status TEXT NOT NULL DEFAULT 'unknown',
+        last_check_at INTEGER,
+        last_code TEXT,
+        last_code_at INTEGER,
+        last_error TEXT,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE email_profile_settings (
+        id INTEGER PRIMARY KEY NOT NULL CHECK (id = 1),
+        external_root TEXT NOT NULL DEFAULT '',
+        browser_executable TEXT NOT NULL DEFAULT '',
+        oauth_client_id TEXT NOT NULL DEFAULT '',
+        oauth_tenant TEXT NOT NULL DEFAULT 'consumers',
+        updated_at INTEGER NOT NULL
+      );
+    `)
+    client.prepare('INSERT INTO __page_auto_migrations (version, name, applied_at) VALUES (8, ?, ?)')
+      .run('hotmail_auto_subsystem', 100)
+    client.prepare('INSERT INTO accounts (id, uid) VALUES (1, ?)')
+      .run('legacy-uid')
+    client.prepare(`
+      INSERT INTO email_profile_settings (
+        id, external_root, browser_executable, oauth_client_id, oauth_tenant, updated_at
+      ) VALUES (1, '', '', ?, 'consumers', 100)
+    `).run('legacy-public-client-id')
+    client.prepare(`
+      INSERT INTO account_email_state (
+        account_id, provider, oauth_status, refresh_token_ciphertext, mail_status, updated_at
+      ) VALUES (1, 'microsoft', 'valid', ?, 'ready', 123456)
+    `).run('encrypted-legacy-refresh-token')
+
+    applyHotmailMigration(client)
+    applyHotmailMigration(client)
+
+    const state = client.prepare(`
+      SELECT
+        oauth_client_id AS oauthClientId,
+        oauth_updated_at AS oauthUpdatedAt,
+        last_token_check_at AS lastTokenCheckAt,
+        refresh_token_ciphertext AS refreshTokenCiphertext
+      FROM account_email_state
+      WHERE account_id = 1
+    `).get() as {
+      oauthClientId: string | null
+      oauthUpdatedAt: number | null
+      lastTokenCheckAt: number | null
+      refreshTokenCiphertext: string | null
+    }
+    const migrations = client.prepare(
+      'SELECT version, name FROM __page_auto_migrations ORDER BY version'
+    ).all() as Array<{ version: number; name: string }>
+
+    expect(state).toEqual({
+      oauthClientId: 'legacy-public-client-id',
+      oauthUpdatedAt: 123456,
+      lastTokenCheckAt: null,
+      refreshTokenCiphertext: 'encrypted-legacy-refresh-token'
+    })
+    expect(migrations).toEqual([
+      { version: 8, name: 'hotmail_auto_subsystem' },
+      { version: 9, name: 'hotmail_account_oauth_binding' }
+    ])
+
+    client.close()
   })
 })
 
@@ -143,13 +238,51 @@ describe('AccountRepository', () => {
   })
 })
 
-describe('HotmailRepository security boundary', () => {
-  it('masks email password and never exposes OAuth/proxy credentials through renderer views', () => {
+describe('HotmailRepository account binding and security boundary', () => {
+  it('reads Email credentials live from Account Manager instead of duplicating account credential state', () => {
     const { runtime } = createRuntime()
     const accounts = new AccountRepository(runtime.client)
     const hotmail = new HotmailRepository(runtime.client)
     const account = accounts.create({
       uid: '20001',
+      email: 'first@outlook.com',
+      emailPassword: 'first-secret',
+      backupEmail: 'first-backup@example.com'
+    })
+
+    expect(hotmail.listDashboardRows()[0]).toMatchObject({
+      accountId: account.id,
+      uid: '20001',
+      email: 'first@outlook.com',
+      backupEmail: 'first-backup@example.com'
+    })
+
+    accounts.update(account.id, {
+      email: 'second@outlook.com',
+      emailPassword: 'second-secret',
+      backupEmail: null
+    })
+
+    const rebound = hotmail.listDashboardRows()[0]
+    expect(rebound).toMatchObject({
+      accountId: account.id,
+      uid: '20001',
+      email: 'second@outlook.com',
+      backupEmail: null
+    })
+    expect(rebound?.emailPasswordMasked).toMatch(/^•+$/)
+    expect(JSON.stringify(rebound)).not.toContain('first-secret')
+    expect(JSON.stringify(rebound)).not.toContain('second-secret')
+
+    runtime.close()
+  })
+
+  it('keeps Client ID + encrypted Refresh Token canonical per account without exposing token/proxy credentials', () => {
+    const { runtime } = createRuntime()
+    const accounts = new AccountRepository(runtime.client)
+    const hotmail = new HotmailRepository(runtime.client)
+    const account = accounts.create({
+      uid: '20002',
       email: 'demo@outlook.com',
       emailPassword: 'mail-super-secret',
       backupEmail: 'backup@example.com'
@@ -157,26 +290,43 @@ describe('HotmailRepository security boundary', () => {
 
     hotmail.updateEmailState(account.id, {
       oauthStatus: 'valid',
+      oauthClientId: 'canonical-public-client-id',
       refreshTokenCiphertext: 'encrypted-refresh-token-value',
+      oauthUpdatedAt: 111,
+      lastTokenCheckAt: 222,
       mailStatus: 'ready'
     })
     hotmail.saveSettings({
       profileRoot: 'D:\\MaxHotmail',
       browserExecutable: '',
-      oauthClientId: 'public-client-id',
+      oauthClientId: 'default-public-client-id',
       oauthTenant: 'consumers',
       proxyMode: 'random_ipv4',
       proxyListText: '1.2.3.4:8080:proxy-user:proxy-secret'
     }, ['1.2.3.4:8080:proxy-user:proxy-secret'])
 
+    const dashboard = hotmail.listDashboardRows()[0]
     const dashboardJson = JSON.stringify(hotmail.listDashboardRows())
     const settingsJson = JSON.stringify(hotmail.getSettingsView())
+    const state = hotmail.getEmailState(account.id)
 
+    expect(dashboard).toMatchObject({
+      accountId: account.id,
+      oauthClientId: 'canonical-public-client-id',
+      hasRefreshToken: true,
+      oauthUpdatedAt: 111,
+      lastTokenCheckAt: 222
+    })
+    expect(state).toMatchObject({
+      accountId: account.id,
+      oauthClientId: 'canonical-public-client-id',
+      refreshTokenCiphertext: 'encrypted-refresh-token-value'
+    })
     expect(dashboardJson).not.toContain('mail-super-secret')
     expect(dashboardJson).not.toContain('encrypted-refresh-token-value')
     expect(settingsJson).not.toContain('proxy-user')
     expect(settingsJson).not.toContain('proxy-secret')
-    expect(hotmail.listDashboardRows()[0]?.emailPasswordMasked).toMatch(/^•+$/)
+    expect(dashboard?.emailPasswordMasked).toMatch(/^•+$/)
     expect(hotmail.getSettingsView().proxyPreview).toEqual(['http://1.2.3.4:8080'])
 
     runtime.close()

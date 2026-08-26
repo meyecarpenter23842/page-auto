@@ -20,6 +20,10 @@ export interface HotmailDashboardRow {
   emailPasswordMasked: string | null
   backupEmail: string | null
   oauthStatus: HotmailOAuthStatus
+  oauthClientId: string | null
+  hasRefreshToken: boolean
+  oauthUpdatedAt: number | null
+  lastTokenCheckAt: number | null
   mailStatus: HotmailMailStatus
   profileStatus: HotmailProfileStatus
   profileDirectory: string | null
@@ -33,6 +37,10 @@ export interface HotmailDashboardRow {
 export interface HotmailSettingsView {
   profileRoot: string
   browserExecutable: string
+  /**
+   * Default public-client ID used when starting OAuth for an account that does not
+   * yet have a canonical binding. Runtime mailbox reads use the per-account ID.
+   */
   oauthClientId: string
   oauthTenant: string
   proxyMode: EmailProxyMode
@@ -44,6 +52,7 @@ export interface HotmailSettingsView {
 export interface SaveHotmailSettingsInput {
   profileRoot: string
   browserExecutable: string
+  /** Default public-client ID for starting/renewing per-account OAuth bindings. */
   oauthClientId: string
   oauthTenant: string
   proxyMode: EmailProxyMode

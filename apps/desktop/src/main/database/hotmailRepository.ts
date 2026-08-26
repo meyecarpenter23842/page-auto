@@ -10,11 +10,14 @@ import type {
 import type { EmailProxySettingsRaw } from '../email/emailProxyPool'
 import { parseEmailProxyLine } from '../email/emailProxyPool'
 
-interface EmailStateRecord {
+export interface EmailStateRecord {
   accountId: number
   provider: string
   oauthStatus: HotmailOAuthStatus
+  oauthClientId: string | null
   refreshTokenCiphertext: string | null
+  oauthUpdatedAt: number | null
+  lastTokenCheckAt: number | null
   mailStatus: HotmailMailStatus
   lastCheckAt: number | null
   lastCode: string | null
@@ -59,6 +62,10 @@ export class HotmailRepository {
         a.email_password AS emailPassword,
         a.backup_email AS backupEmail,
         COALESCE(s.oauth_status, 'missing') AS oauthStatus,
+        s.oauth_client_id AS oauthClientId,
+        CASE WHEN s.refresh_token_ciphertext IS NULL THEN 0 ELSE 1 END AS hasRefreshToken,
+        s.oauth_updated_at AS oauthUpdatedAt,
+        s.last_token_check_at AS lastTokenCheckAt,
         COALESCE(s.mail_status, 'unknown') AS mailStatus,
         s.last_check_at AS lastCheckAt,
         s.last_code AS lastCode,
@@ -76,6 +83,10 @@ export class HotmailRepository {
       emailPasswordMasked: maskPassword(row.emailPassword),
       backupEmail: text(row.backupEmail),
       oauthStatus: String(row.oauthStatus) as HotmailOAuthStatus,
+      oauthClientId: text(row.oauthClientId),
+      hasRefreshToken: Boolean(row.hasRefreshToken),
+      oauthUpdatedAt: row.oauthUpdatedAt === null ? null : Number(row.oauthUpdatedAt),
+      lastTokenCheckAt: row.lastTokenCheckAt === null ? null : Number(row.lastTokenCheckAt),
       mailStatus: String(row.mailStatus) as HotmailMailStatus,
       profileStatus: 'not_configured',
       profileDirectory: null,
@@ -93,7 +104,10 @@ export class HotmailRepository {
         account_id AS accountId,
         provider,
         oauth_status AS oauthStatus,
+        oauth_client_id AS oauthClientId,
         refresh_token_ciphertext AS refreshTokenCiphertext,
+        oauth_updated_at AS oauthUpdatedAt,
+        last_token_check_at AS lastTokenCheckAt,
         mail_status AS mailStatus,
         last_check_at AS lastCheckAt,
         last_code AS lastCode,
@@ -108,7 +122,10 @@ export class HotmailRepository {
       accountId: Number(row.accountId),
       provider: String(row.provider),
       oauthStatus: String(row.oauthStatus) as HotmailOAuthStatus,
+      oauthClientId: text(row.oauthClientId),
       refreshTokenCiphertext: text(row.refreshTokenCiphertext),
+      oauthUpdatedAt: row.oauthUpdatedAt === null ? null : Number(row.oauthUpdatedAt),
+      lastTokenCheckAt: row.lastTokenCheckAt === null ? null : Number(row.lastTokenCheckAt),
       mailStatus: String(row.mailStatus) as HotmailMailStatus,
       lastCheckAt: row.lastCheckAt === null ? null : Number(row.lastCheckAt),
       lastCode: text(row.lastCode),
@@ -123,7 +140,10 @@ export class HotmailRepository {
     const next: Omit<EmailStateRecord, 'accountId'> = {
       provider: patch.provider ?? current?.provider ?? 'microsoft',
       oauthStatus: patch.oauthStatus ?? current?.oauthStatus ?? 'missing',
+      oauthClientId: patch.oauthClientId !== undefined ? text(patch.oauthClientId) : (current?.oauthClientId ?? null),
       refreshTokenCiphertext: patch.refreshTokenCiphertext !== undefined ? patch.refreshTokenCiphertext : (current?.refreshTokenCiphertext ?? null),
+      oauthUpdatedAt: patch.oauthUpdatedAt !== undefined ? patch.oauthUpdatedAt : (current?.oauthUpdatedAt ?? null),
+      lastTokenCheckAt: patch.lastTokenCheckAt !== undefined ? patch.lastTokenCheckAt : (current?.lastTokenCheckAt ?? null),
       mailStatus: patch.mailStatus ?? current?.mailStatus ?? 'unknown',
       lastCheckAt: patch.lastCheckAt !== undefined ? patch.lastCheckAt : (current?.lastCheckAt ?? null),
       lastCode: patch.lastCode !== undefined ? patch.lastCode : (current?.lastCode ?? null),
@@ -134,16 +154,21 @@ export class HotmailRepository {
 
     this.client.prepare(`
       INSERT INTO account_email_state (
-        account_id, provider, oauth_status, refresh_token_ciphertext, mail_status,
+        account_id, provider, oauth_status, oauth_client_id, refresh_token_ciphertext,
+        oauth_updated_at, last_token_check_at, mail_status,
         last_check_at, last_code, last_code_at, last_error, updated_at
       ) VALUES (
-        @accountId, @provider, @oauthStatus, @refreshTokenCiphertext, @mailStatus,
+        @accountId, @provider, @oauthStatus, @oauthClientId, @refreshTokenCiphertext,
+        @oauthUpdatedAt, @lastTokenCheckAt, @mailStatus,
         @lastCheckAt, @lastCode, @lastCodeAt, @lastError, @updatedAt
       )
       ON CONFLICT(account_id) DO UPDATE SET
         provider = excluded.provider,
         oauth_status = excluded.oauth_status,
+        oauth_client_id = excluded.oauth_client_id,
         refresh_token_ciphertext = excluded.refresh_token_ciphertext,
+        oauth_updated_at = excluded.oauth_updated_at,
+        last_token_check_at = excluded.last_token_check_at,
         mail_status = excluded.mail_status,
         last_check_at = excluded.last_check_at,
         last_code = excluded.last_code,
