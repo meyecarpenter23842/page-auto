@@ -26,6 +26,7 @@ import { AccountRepository } from '../database/accountRepository'
 import { RunRepository } from '../database/runRepository'
 import { redactExecutionText } from './executionLogSanitizer'
 import { selectRunImages, selectRunPost } from './postingSelection'
+import { rotationRuntimeOverlay } from './rotationRuntimeOverlay'
 
 function accountSecrets(account: AccountRecord): Array<string | null | undefined> {
   return [account.password, account.cookie, account.twoFactorSecret, account.emailPassword, account.proxy, account.proxyPassword]
@@ -114,6 +115,15 @@ export class PostingService {
       const run = this.runs.completeItem({ runId: payload.runId, itemId: item.id, status: 'skipped' })
       return { accountId: account.id, item, result: { status: 'skipped', code: 'missing_media', message: 'Thiếu ảnh theo cấu hình của bài; Group được bỏ qua trong phiên hiện tại.' }, run }
     }
+
+    rotationRuntimeOverlay.notePrepared(payload.runId, account.id, {
+      groupUid: item.groupUid,
+      contentPreview: material.content.slice(0, 600),
+      contentLength: material.content.length,
+      imageCount: images.paths.length,
+      postIndex: material.postIndex,
+      variantIndex: material.variantIndex
+    })
 
     const sessionSettings = { ...this.getSessionSettings() }
     const networkSettings = { ...this.getNetworkSettings() }

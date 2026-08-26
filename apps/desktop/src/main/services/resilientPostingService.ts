@@ -9,6 +9,7 @@ import { shouldPersistPostingAttempt } from './loggingPolicy'
 import { canQueueRetryWithRuntime, retryDispositionFor } from './retryPolicy'
 import { RuntimeRecoveryService } from './runtimeRecovery'
 import { ConsecutiveFailureTracker } from './runtimeFailureTracker'
+import { rotationRuntimeOverlay } from './rotationRuntimeOverlay'
 
 const SAFE_PREPUBLISH_BROWSER_CODES = new Set(['profile_in_use', 'browser_launch_failed'])
 
@@ -56,7 +57,19 @@ export class ResilientPostingService implements PostingExecutor {
     let nextPayload = payload
 
     while (true) {
-      const outcome = await this.core.executeSingle(nextPayload)
+      rotationRuntimeOverlay.notePostingStart(nextPayload.runId, nextPayload.accountId)
+      let outcome: ExecuteSinglePostingJobResult
+      try {
+        outcome = await this.core.executeSingle(nextPayload)
+      } catch (cause) {
+        rotationRuntimeOverlay.notePostingException(
+          nextPayload.runId,
+          nextPayload.accountId,
+          cause instanceof Error ? cause.message : String(cause)
+        )
+        throw cause
+      }
+
       const runtime = { ...this.getRuntimeSettings() }
       const logging = { ...this.getLoggingSettings() }
       const item = outcome.item
@@ -75,10 +88,11 @@ export class ResilientPostingService implements PostingExecutor {
           this.recovery.retryFailedItem(item.id)
         } catch {
           if (logging.level === 'normal') await this.writeAttemptLog(outcome)
-          if (isSafePrepublishBrowserFailure(outcome)) {
-            return this.preserveSafePrepublishFailure(payload, outcome, runtime)
-          }
-          return this.applyConsecutiveFailureLimit(payload, outcome, runtime)
+          const finalOutcome = isSafePrepublishBrowserFailure(outcome)
+            ? this.preserveSafePrepublishFailure(payload, outcome, runtime)
+            : this.applyConsecutiveFailureLimit(payload, outcome, runtime)
+          rotationRuntimeOverlay.notePostingResult(finalOutcome)
+          return finalOutcome
         }
 
         await retryDelay(runtime.retryDelayMs)
@@ -88,11 +102,11 @@ export class ResilientPostingService implements PostingExecutor {
         continue
       }
 
-      if (isSafePrepublishBrowserFailure(outcome)) {
-        return this.preserveSafePrepublishFailure(payload, outcome, runtime)
-      }
-
-      return this.applyConsecutiveFailureLimit(payload, outcome, runtime)
+      const finalOutcome = isSafePrepublishBrowserFailure(outcome)
+        ? this.preserveSafePrepublishFailure(payload, outcome, runtime)
+        : this.applyConsecutiveFailureLimit(payload, outcome, runtime)
+      rotationRuntimeOverlay.notePostingResult(finalOutcome)
+      return finalOutcome
     }
   }
 
