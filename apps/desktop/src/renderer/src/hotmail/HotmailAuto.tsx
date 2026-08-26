@@ -218,7 +218,7 @@ export function HotmailAuto() {
   const connectMailbox = (accountId?: number) => runAction('oauth', async () => {
     const ids = accountId === undefined ? requireSelection() : [accountId]
     if (ids.length !== 1) throw new Error('OAuth chỉ thao tác một tài khoản mỗi lần.')
-    const id = ids[0]
+    const id = ids[0]!
     const result = await window.pageAuto.startHotmailOAuth({ accountId: id })
     setOauthPrompt(result)
     return result.message
