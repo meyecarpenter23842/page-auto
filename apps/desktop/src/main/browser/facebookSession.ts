@@ -453,6 +453,26 @@ async function waitForPostLoginGate(context: BrowserContext, page: Page, timeout
   return latest
 }
 
+async function waitForPasswordOnlyTransition(
+  context: BrowserContext,
+  page: Page,
+  timeoutMs = 12_000
+): Promise<FacebookSessionGate> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const gate = await inspectFacebookSessionGate(context, page)
+    if (gate === 'unknown' && isTwoFactorVerificationUrl(page.url())) return 'two_factor'
+    if (
+      gate === 'valid'
+      || gate === 'two_factor'
+      || gate === 'manual_verification'
+      || gate === 'login'
+    ) return gate
+    await page.waitForTimeout(250)
+  }
+  return 'unknown'
+}
+
 async function waitForTwoFactorOutcome(
   context: BrowserContext,
   page: Page,
@@ -912,7 +932,7 @@ export async function bootstrapFacebookSession(
       return needsLoginResult(account.id, 'login_failed', error instanceof Error ? error.message : String(error))
     }
 
-    gate = await waitForPostLoginGate(context, page)
+    gate = await waitForPasswordOnlyTransition(context, page)
     const passwordOnlyResolved = await resolveAuthenticatedGate(
       context,
       page,
@@ -921,8 +941,8 @@ export async function bootstrapFacebookSession(
       'Đăng nhập saved profile Facebook bằng password thành công.'
     )
     if (passwordOnlyResolved) return passwordOnlyResolved
-    if (gate === 'password_only') {
-      return needsLoginResult(account.id, 'login_failed', 'Facebook vẫn yêu cầu password cho saved profile; kiểm tra password hoặc thông báo trên browser.')
+    if (gate === 'unknown') {
+      return needsLoginResult(account.id, 'unknown', 'Facebook chưa hoàn tất chuyển trạng thái sau khi gửi password saved profile; browser được giữ mở để kiểm tra thủ công.')
     }
   }
 

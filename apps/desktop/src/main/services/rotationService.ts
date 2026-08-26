@@ -667,6 +667,10 @@ export class RotationService {
         }
       } finally {
         await this.releaseAccountTurn(account.accountId)
+        if (session.currentAccountId === account.accountId) {
+          session.currentAccountId = null
+          session.currentAccountIndex = null
+        }
       }
 
       if (session.stopRequested) {
