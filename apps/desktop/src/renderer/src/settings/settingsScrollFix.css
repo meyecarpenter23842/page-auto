@@ -1,0 +1,12 @@
+/* Batch #77: keep the settings frame fixed while long menus/panels remain reachable. */
+.settings-menu {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.settings-detail-body {
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
