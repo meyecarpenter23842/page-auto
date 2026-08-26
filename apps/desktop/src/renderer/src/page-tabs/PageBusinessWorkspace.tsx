@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { PageTabSummary } from '../../../shared/pageTabs'
 import type { RotationRuntimeSnapshot, RotationRuntimeStatus } from '../../../shared/rotation'
 import { PageTabsManager } from './PageTabsManagerV2'
 import './pageBusinessWorkspace.css'
 import './pageTabs3c.css'
+import './pageTabs3d.css'
 
 type PageBusinessId = 'groups' | 'wall' | 'edit'
 type RuntimeAction = (payload: { pageTabId: number }) => Promise<RotationRuntimeSnapshot>
@@ -78,6 +80,69 @@ function canResume(status: RotationRuntimeStatus): boolean {
 
 function canStop(status: RotationRuntimeStatus): boolean {
   return status === 'starting' || status === 'running' || status === 'paused' || status === 'waiting_window'
+}
+
+function CurrentPageRuntimeActions() {
+  const [runtimeByTab, setRuntimeByTab] = useState<Record<number, RotationRuntimeSnapshot>>({})
+  const [activePageId, setActivePageId] = useState<number | null>(null)
+  const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const refresh = async () => {
+    try {
+      const [tabs, runtimes] = await Promise.all([
+        window.pageAuto.listPageTabs(),
+        window.pageAuto.listPageTabRotations()
+      ])
+      const pageButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('.page-business-group-pane .page-tab-chip'))
+      const activeIndex = pageButtons.findIndex((button) => button.classList.contains('active'))
+      setActivePageId(activeIndex >= 0 ? tabs[activeIndex]?.id ?? null : null)
+      setRuntimeByTab(Object.fromEntries(runtimes.map((runtime) => [runtime.pageTabId, runtime])))
+      setPortalTarget(document.querySelector<HTMLElement>('.page-business-group-pane .page-tab-header-actions'))
+      setError(null)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    }
+  }
+
+  useEffect(() => {
+    void refresh()
+    const timer = window.setInterval(() => void refresh(), 1000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  const status = activePageId === null ? 'idle' : runtimeByTab[activePageId]?.status ?? 'idle'
+
+  const run = async (
+    action: RuntimeAction,
+    eligibility: (runtimeStatus: RotationRuntimeStatus) => boolean
+  ) => {
+    if (activePageId === null || !eligibility(status)) return
+    setBusy(true)
+    setError(null)
+    try {
+      const next = await action({ pageTabId: activePageId })
+      setRuntimeByTab((current) => ({ ...current, [activePageId]: next }))
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (!portalTarget || activePageId === null) return null
+
+  return createPortal(
+    <div className="page-tab-runtime-actions" title={error ?? `Runtime: ${runtimeStatusLabels[status]}`}>
+      <span className={`page-tab-runtime-state runtime-${status}`}>{runtimeStatusLabels[status]}</span>
+      <button className="pt-button runtime-start" type="button" disabled={busy || !canStart(status)} onClick={() => void run(window.pageAuto.startPageTabRotation, canStart)}>▶ Start</button>
+      <button className="pt-button runtime-pause" type="button" disabled={busy || !canPause(status)} onClick={() => void run(window.pageAuto.pausePageTabRotation, canPause)}>Ⅱ Tạm dừng</button>
+      <button className="pt-button runtime-resume" type="button" disabled={busy || !canResume(status)} onClick={() => void run(window.pageAuto.resumePageTabRotation, canResume)}>▶ Tiếp tục</button>
+      <button className="pt-button runtime-stop" type="button" disabled={busy || !canStop(status)} onClick={() => void run(window.pageAuto.stopPageTabRotation, canStop)}>■ Stop</button>
+    </div>,
+    portalTarget
+  )
 }
 
 function PageRuntimeQuickControls({ onClose }: { onClose: () => void }) {
@@ -238,6 +303,7 @@ export function PageBusinessWorkspace() {
         </section>
       ) : null}
 
+      <CurrentPageRuntimeActions />
       {runtimeControlsOpen ? <PageRuntimeQuickControls onClose={() => setRuntimeControlsOpen(false)} /> : null}
     </div>
   )

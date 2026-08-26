@@ -1,0 +1,95 @@
+/* 3D: restore current Page controls on the Page header and tighten the UID column. */
+.page-tab-header-actions {
+  flex-wrap: nowrap;
+}
+
+.page-tab-runtime-actions {
+  order: -1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 2px;
+  padding-right: 7px;
+  border-right: 1px solid #d7dfe9;
+}
+
+.page-tab-runtime-actions .pt-button {
+  min-height: 24px;
+  padding: 2px 7px;
+  font-size: 8px;
+  white-space: nowrap;
+}
+
+.page-tab-runtime-state {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  color: #667085;
+  background: #f2f4f7;
+  font-size: 7px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.page-tab-runtime-state.runtime-running,
+.page-tab-runtime-state.runtime-starting { color: #067647; background: #dcfae6; }
+.page-tab-runtime-state.runtime-paused { color: #9a6700; background: #fff0c2; }
+.page-tab-runtime-state.runtime-waiting_window { color: #7a5d00; background: #fff7d6; }
+.page-tab-runtime-state.runtime-error { color: #b42318; background: #fee4e2; }
+.page-tab-runtime-state.runtime-stopping { color: #b54708; background: #ffead5; }
+
+.page-tab-runtime-actions .runtime-start {
+  color: #ffffff;
+  background: #175cd3;
+  border-color: #175cd3;
+}
+
+.page-tab-runtime-actions .runtime-pause {
+  color: #8a5d00;
+  background: #fff8e8;
+  border-color: #e7c66b;
+}
+
+.page-tab-runtime-actions .runtime-resume {
+  color: #067647;
+  background: #ecfdf3;
+  border-color: #9bd6b2;
+}
+
+.page-tab-runtime-actions .runtime-stop {
+  color: #b42318;
+  background: #fff4f2;
+  border-color: #efb1ab;
+}
+
+.page-tab-runtime-actions .pt-button:disabled {
+  opacity: 0.38;
+}
+
+/* UID is numeric and short; do not waste the width needed by Name/Activity. */
+.pt-account-grid th:nth-child(3) {
+  width: 108px !important;
+}
+
+@media (max-width: 1180px) {
+  .page-tab-editor-header {
+    align-items: flex-start;
+  }
+
+  .page-tab-header-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .page-tab-runtime-actions {
+    width: 100%;
+    justify-content: flex-end;
+    margin-right: 0;
+    padding-right: 0;
+    padding-bottom: 4px;
+    border-right: 0;
+    border-bottom: 1px solid #e1e6ee;
+  }
+}
