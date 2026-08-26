@@ -86,6 +86,14 @@ const TOTP_STEP_MS = 30_000
 const TOTP_MIN_REMAINING_MS = 8_000
 const TOTP_WINDOW_BUFFER_MS = 750
 
+function twoFactorCredentialKind(secret: string): 'direct_code' | 'totp_secret' {
+  return isDirectTwoFactorCode(secret) ? 'direct_code' : 'totp_secret'
+}
+
+function twoFactorDiagnostic(accountId: number, stage: string, detail = ''): void {
+  console.info(`[PAGE-AUTO session] account=${accountId} state=two_factor stage=${stage}${detail ? ` ${detail}` : ''}`)
+}
+
 function normalizeSameSite(value: unknown): FacebookCookieInput['sameSite'] | undefined {
   if (value === 'Strict' || value === 'Lax' || value === 'None') return value
   if (typeof value !== 'string') return undefined
@@ -586,39 +594,76 @@ async function waitForDifferentTwoFactorCode(page: Page, secret: string, previou
   }
 }
 
-async function submitTotp(page: Page, secret: string): Promise<TwoFactorSubmitResult> {
+async function submitTotp(
+  page: Page,
+  secret: string,
+  accountId: number,
+  attempt: number,
+  maxAttempts: number
+): Promise<TwoFactorSubmitResult> {
+  const attemptDetail = `attempt=${attempt}/${maxAttempts}`
+  twoFactorDiagnostic(accountId, 'input_wait_start', attemptDetail)
   let input = await waitForTwoFactorInputReady(page)
-  if (!input) return { submitted: false, code: null }
+  if (!input) {
+    twoFactorDiagnostic(accountId, 'input_unavailable', attemptDetail)
+    return { submitted: false, code: null }
+  }
+  twoFactorDiagnostic(accountId, 'input_ready', attemptDetail)
 
   const freshnessWait = twoFactorCodeFreshnessWaitMs(secret)
   if (freshnessWait > 0) {
+    twoFactorDiagnostic(accountId, 'freshness_wait_start', `${attemptDetail} waitMs=${freshnessWait}`)
     await page.waitForTimeout(freshnessWait)
     input = await waitForTwoFactorInputReady(page, 4_000)
-    if (!input) return { submitted: false, code: null }
+    if (!input) {
+      twoFactorDiagnostic(accountId, 'input_lost_after_freshness_wait', attemptDetail)
+      return { submitted: false, code: null }
+    }
+    twoFactorDiagnostic(accountId, 'freshness_wait_done', attemptDetail)
   }
 
   const code = resolveTwoFactorCode(secret, Date.now())
+  twoFactorDiagnostic(accountId, 'code_generated', `${attemptDetail} credential=${twoFactorCredentialKind(secret)}`)
   try {
     await input.fill(code)
+    twoFactorDiagnostic(accountId, 'input_filled', attemptDetail)
   } catch {
+    twoFactorDiagnostic(accountId, 'fill_retry', attemptDetail)
     input = await waitForTwoFactorInputReady(page, 4_000)
-    if (!input) return { submitted: false, code: null }
+    if (!input) {
+      twoFactorDiagnostic(accountId, 'input_unavailable_on_fill_retry', attemptDetail)
+      return { submitted: false, code: null }
+    }
     await input.fill(code)
+    twoFactorDiagnostic(accountId, 'input_filled', `${attemptDetail} retry=1`)
   }
 
+  twoFactorDiagnostic(accountId, 'submit_wait_start', attemptDetail)
   const submit = await findTwoFactorSubmit(page)
   let submitted = false
   if (submit) {
+    twoFactorDiagnostic(accountId, 'submit_ready', attemptDetail)
     await submit.scrollIntoViewIfNeeded().catch(() => undefined)
     submitted = await submit.click({ timeout: 5_000 }).then(() => true).catch(() => false)
-    if (!submitted) submitted = await domClick(submit)
+    twoFactorDiagnostic(accountId, 'submit_click', `${attemptDetail} success=${submitted}`)
+    if (!submitted) {
+      submitted = await domClick(submit)
+      twoFactorDiagnostic(accountId, 'submit_dom_click', `${attemptDetail} success=${submitted}`)
+    }
+  } else {
+    twoFactorDiagnostic(accountId, 'submit_not_found', `${attemptDetail} fallback=enter`)
   }
 
   if (!submitted) {
     submitted = await input.press('Enter').then(() => true).catch(() => false)
+    twoFactorDiagnostic(accountId, 'submit_enter', `${attemptDetail} success=${submitted}`)
   }
-  if (!submitted) return { submitted: false, code }
+  if (!submitted) {
+    twoFactorDiagnostic(accountId, 'submit_failed', attemptDetail)
+    return { submitted: false, code }
+  }
 
+  twoFactorDiagnostic(accountId, 'submit_sent', attemptDetail)
   await page.waitForLoadState('domcontentloaded', { timeout: 20_000 }).catch(() => undefined)
   return { submitted: true, code }
 }
@@ -668,16 +713,26 @@ async function completeTwoFactor(
 ): Promise<FacebookSessionResult> {
   const secret = account.twoFactorSecret?.trim()
   if (!secret) {
+    twoFactorDiagnostic(account.id, 'missing_credential')
     return needsLoginResult(account.id, 'two_factor_missing', 'Facebook yêu cầu mã 2FA nhưng account chưa có dữ liệu 2FA.')
   }
 
   const maxAttempts = isDirectTwoFactorCode(secret) ? 1 : TWO_FACTOR_MAX_ATTEMPTS
+  const credentialKind = twoFactorCredentialKind(secret)
+  twoFactorDiagnostic(account.id, 'handler_start', `credential=${credentialKind} maxAttempts=${maxAttempts}`)
   let previousCode: string | null = null
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    if (previousCode) await waitForDifferentTwoFactorCode(page, secret, previousCode)
+    const attemptDetail = `attempt=${attempt}/${maxAttempts}`
+    twoFactorDiagnostic(account.id, 'attempt_start', attemptDetail)
+    if (previousCode) {
+      twoFactorDiagnostic(account.id, 'fresh_code_wait_start', attemptDetail)
+      await waitForDifferentTwoFactorCode(page, secret, previousCode)
+      twoFactorDiagnostic(account.id, 'fresh_code_wait_done', attemptDetail)
+    }
     if (!await isTwoFactorSurfaceActive(page)) {
       const gate = await inspectFacebookSessionGate(context, page)
+      twoFactorDiagnostic(account.id, 'surface_inactive', `${attemptDetail} gate=${gate}`)
       if (gate === 'valid') return verifiedSuccessResult(account, context, successMessage)
       if (gate === 'manual_verification') {
         return needsLoginResult(account.id, 'checkpoint', 'Facebook yêu cầu checkpoint/xác minh danh tính sau 2FA; cần xử lý thủ công.')
@@ -685,20 +740,22 @@ async function completeTwoFactor(
       return needsLoginResult(account.id, 'two_factor_failed', 'Facebook đã rời màn 2FA nhưng chưa tạo session hợp lệ; giữ account hiện tại để kiểm tra.')
     }
 
-    console.info(`[PAGE-AUTO session] account=${account.id} state=two_factor waiting_input attempt=${attempt}/${maxAttempts}`)
     let submitted: TwoFactorSubmitResult
     try {
-      submitted = await submitTotp(page, secret)
-    } catch {
+      submitted = await submitTotp(page, secret, account.id, attempt, maxAttempts)
+    } catch (error) {
+      twoFactorDiagnostic(account.id, 'attempt_exception', `${attemptDetail} error=${error instanceof Error ? error.name : 'unknown'}`)
       return needsLoginResult(account.id, 'two_factor_failed', 'Không thể tạo/nhập/gửi mã 2FA từ dữ liệu 2FA của account.')
     }
     if (!submitted.submitted || !submitted.code) {
+      twoFactorDiagnostic(account.id, 'attempt_not_submitted', attemptDetail)
       return needsLoginResult(account.id, 'two_factor_failed', 'Màn 2FA đã được nhận diện nhưng chưa tìm được ô Code/nút Continue ở trạng thái sẵn sàng; giữ account hiện tại để kiểm tra.')
     }
 
     previousCode = submitted.code
-    console.info(`[PAGE-AUTO session] account=${account.id} state=two_factor submitted attempt=${attempt}/${maxAttempts}`)
+    twoFactorDiagnostic(account.id, 'outcome_wait_start', attemptDetail)
     const gate = await waitForTwoFactorOutcome(context, page)
+    twoFactorDiagnostic(account.id, 'outcome', `${attemptDetail} gate=${gate}`)
     if (gate === 'valid') return verifiedSuccessResult(account, context, successMessage)
     if (gate === 'manual_verification') {
       return needsLoginResult(account.id, 'checkpoint', 'Facebook yêu cầu checkpoint/xác minh danh tính sau 2FA; cần xử lý thủ công.')
@@ -706,13 +763,15 @@ async function completeTwoFactor(
 
     const stillTwoFactor = gate === 'two_factor' || await isTwoFactorSurfaceActive(page)
     if (!stillTwoFactor) {
+      twoFactorDiagnostic(account.id, 'surface_left_without_valid_session', `${attemptDetail} gate=${gate}`)
       return needsLoginResult(account.id, 'two_factor_failed', 'Facebook đã phản hồi sau 2FA nhưng chưa tạo session hợp lệ; giữ account hiện tại để kiểm tra.')
     }
     if (attempt < maxAttempts) {
-      console.info(`[PAGE-AUTO session] account=${account.id} state=two_factor retry_waiting_fresh_code nextAttempt=${attempt + 1}/${maxAttempts}`)
+      twoFactorDiagnostic(account.id, 'retry_pending', `nextAttempt=${attempt + 1}/${maxAttempts}`)
     }
   }
 
+  twoFactorDiagnostic(account.id, 'handler_exhausted', `credential=${credentialKind} attempts=${maxAttempts}`)
   return needsLoginResult(account.id, 'two_factor_failed', 'Đã thử mã 2FA tối đa 2 lần nhưng Facebook vẫn giữ màn 2FA; tạm dừng tại account hiện tại để kiểm tra thủ công.')
 }
 
