@@ -1,24 +1,32 @@
 # PAGE-AUTO — Baseline triển khai hiện hành
 
-> Đây là baseline bắt buộc phải đọc trước khi sửa code. Nếu `PROJECT_PLAN_DETAILS.md` có điểm xung đột thì file này được ưu tiên.
+> Đây là baseline bắt buộc phải đọc trước khi sửa code. Khi sửa core/runtime Facebook phải đọc thêm `ARCHITECTURE.md`. Nếu `PROJECT_PLAN_DETAILS.md` hoặc tài liệu cũ có điểm xung đột thì `PROJECT_PLAN.md` được ưu tiên; thay đổi kiến trúc đã chốt phải cập nhật `ARCHITECTURE.md` trong cùng lô.
 
 ## 1. Mục tiêu sản phẩm
 
-PAGE-AUTO là desktop app Windows portable để quản lý nhiều tài khoản Facebook và tự động hóa đăng bài theo nhiều Page Tab độc lập.
+PAGE-AUTO là desktop app Windows portable để quản lý nhiều tài khoản Facebook và tự động hóa nhiều nghiệp vụ trên nhiều Page độc lập.
 
 Nguyên tắc cốt lõi:
 
 - Account là session/profile thực tế.
 - Page không phải account; Page được switch theo Page UID từ session account.
-- 1 Page Tab = 1 Page UID + 1 cấu hình automation độc lập.
-- Account trong cùng tab chạy tuần tự, không song song.
-- Nhiều Page Tab khác nhau có thể chạy song song.
-- Group gốc không bị xóa; mỗi run clone snapshot riêng để chống trùng trong phiên.
+- **1 Page Tab = 1 Page UID + một container nhiều nghiệp vụ của Page đó**, không còn được hiểu là chỉ một cấu hình đăng Group.
+- Danh sách account của Page được dùng làm nguồn chung; từng nghiệp vụ có cấu hình/runtime riêng khi cần.
+- Account trong cùng một phiên/nghiệp vụ của Page chạy tuần tự, không song song.
+- Nhiều Page Tab khác nhau có thể chạy song song theo giới hạn cấu hình.
+- Group gốc không bị xóa; mỗi run Group clone snapshot riêng để chống trùng trong phiên.
 - React chỉ làm UI; renderer không truy cập DB/browser trực tiếp.
 - Electron Main quản lý SQLite, scheduler và worker lifecycle.
-- Playwright chạy ở worker/utility process riêng.
+- Playwright chạy ở worker/utility process riêng để browser lỗi không làm treo UI.
 - Không xây anti-detection/evasion hoặc cơ chế né bảo vệ nền tảng.
 - CAPTCHA challenge có thể dùng provider API thông qua adapter cấu hình rõ ràng. Checkpoint/login/xác minh danh tính vẫn là trạng thái riêng và không được tự động bypass.
+
+Các nghiệp vụ Page đã chốt theo hướng mở rộng:
+
+- `group_post` — đăng Nhóm, là nghiệp vụ hiện có.
+- `page_wall_post` — Đăng Tường Page.
+- `page_edit` — Sửa thông tin Page.
+- Sau này có thể thêm `comment`, reply, reels, story... mà không copy lại login/2FA/checkpoint/Page switch.
 
 ---
 
@@ -49,16 +57,18 @@ Runtime account/session/profile/cookie thật không commit Git.
 
 ---
 
-## 3. Kiến trúc process
+## 3. Kiến trúc process và 3 tầng bắt buộc
+
+### 3.1. Process boundary
 
 ```text
 Electron Main
   +-- SQLite / repositories
-  +-- Scheduler
+  +-- Scheduler / Run Orchestration
   +-- Worker Manager
   |     +-- Account/Profile Worker -> Playwright
-  |     +-- Tab Worker A -> Playwright
-  |     +-- Tab Worker B -> Playwright
+  |     +-- Page/Task Worker A -> Playwright
+  |     +-- Page/Task Worker B -> Playwright
   +-- Provider adapters
   |     +-- CaptchaProviderAdapter
   +-- Typed IPC / preload
@@ -69,9 +79,63 @@ Ràng buộc:
 
 - Renderer chỉ gọi typed IPC qua preload.
 - Main giữ quyền DB, filesystem và worker.
-- 1 active Page Tab có tối đa 1 sequential worker cho tab đó.
-- Nhiều Page Tab được chạy song song theo giới hạn cấu hình.
+- Một Page Tab/nghiệp vụ đang chạy không được tạo chạy song song nhiều account trong chính phiên đó.
+- Nhiều Page Tab có thể chạy song song theo giới hạn cấu hình.
 - Mỗi browser action/provider action phải có typed result; không viết một script dài khó bảo trì.
+
+### 3.2. Tầng A — Facebook dùng chung
+
+Đây là nguồn xử lý duy nhất cho hành vi Facebook dùng chung giữa các nghiệp vụ:
+
+- resolve/open/giữ/đóng browser profile của account;
+- kiểm tra session;
+- login lại khi session hết;
+- saved-profile/password flow;
+- 2FA;
+- phát hiện checkpoint/xác minh danh tính;
+- xác minh account identity;
+- cập nhật trạng thái account/session theo result typed;
+- chuyển sang đúng Page theo Page UID;
+- xác minh lại Page identity sau switch;
+- pacing/delay thao tác browser dùng chung khi phù hợp;
+- recovery/lifecycle dùng chung khi account/browser lỗi.
+
+**Không được copy login/2FA/checkpoint/Page switch vào Group, Đăng Tường, Sửa Page hoặc nghiệp vụ mới.** Facebook đổi chỗ nào thì sửa module dùng chung tương ứng một lần.
+
+### 3.3. Tầng B — Điều khiển phiên chạy
+
+Tầng này quản lý phiên nhưng **không biết selector/nút Facebook cụ thể**:
+
+- account nào đang chạy;
+- account nào đã chạy lượt trong phiên;
+- số bài/account;
+- delay giữa bài;
+- delay đổi account;
+- pause/resume/stop;
+- hết lượt account, đổi account, hết phiên;
+- scheduler/time window;
+- worker lifecycle;
+- runtime status/log/recovery policy.
+
+### 3.4. Tầng C — Nghiệp vụ riêng
+
+Mỗi nghiệp vụ chỉ giữ logic mục tiêu của chính nó và sử dụng Tầng A + B:
+
+- `group_post`: Group navigation, Group-specific publish/result verification, chống trùng Group.
+- `page_wall_post`: composer/publish trên Tường Page, đăng ngay hoặc hẹn giờ theo thiết kế nghiệp vụ.
+- `page_edit`: cập nhật field Page theo workflow riêng.
+- `comment` và nghiệp vụ tương lai: chỉ thêm flow riêng, không nhân bản session/Page runtime.
+
+Hướng phụ thuộc bắt buộc:
+
+```text
+Business Task -> shared contracts
+Business Task -> Facebook Common Runtime
+Run Orchestration -> Business Task / Facebook Common Runtime
+Facebook Common Runtime -X-> Group/Post-wall/Page-edit cụ thể
+```
+
+Chi tiết ownership file/module và lộ trình tách source nằm trong `ARCHITECTURE.md`.
 
 ---
 
@@ -113,19 +177,21 @@ Grid cần:
 - hide/show/reorder/resize cột
 - persist layout sau restart
 - cột nhạy cảm mặc định ẩn/mask
+- thao tác chọn nhanh bằng chuột thuận tiện và context menu cho selection
 
-Toolbar:
+Toolbar/nghiệp vụ chính:
 
 - Add account
 - Import
 - Import Custom
+- Update existing
 - Edit/Delete
 - Open Chrome
 - Check session
-- Assign Category
+- Assign Category/Folder
 - Columns
 
-### 4.3. Import
+### 4.3. Import và Update
 
 Import nhanh mặc định delimiter `|` nhưng không khóa format.
 
@@ -154,7 +220,7 @@ Mapping hỗ trợ:
 - Proxy Type
 - Proxy Host/Port/Username/Password
 - UserAgent
-- Category
+- Category/Folder
 - Note
 - Friend
 - Created Date
@@ -167,6 +233,13 @@ Validation:
 - DB duplicate: Skip hoặc Update existing
 - lỗi import không echo credential plaintext
 
+Update existing có semantics riêng, không được nhập nhằng với Import:
+
+- UID là khóa chuẩn để tìm account cần update.
+- Field **không chọn update** = giữ nguyên giá trị cũ.
+- Field **được chọn update nhưng input trống** = chủ động ghi rỗng/xóa giá trị cũ, ví dụ xóa 2FA.
+- UI phải phân biệt rõ Import mới và Update existing.
+
 Preset built-in:
 
 - Basic — UID | Cookie
@@ -176,27 +249,73 @@ Preset built-in:
 
 ---
 
-## 5. Page Tabs
+## 5. Page Tabs — container đa nghiệp vụ
 
-Mỗi Page Tab lưu độc lập:
+Mỗi Page Tab có phần dùng chung:
 
 - Page UID
-- account list + thứ tự + enable/disable
+- danh sách account + thứ tự + enable/disable
+- điều khiển start/pause/resume/stop ở phạm vi phù hợp
+- trạng thái runtime của Page/phiên
+- log chung/đường dẫn tới log nghiệp vụ
+
+Bên trong Page có các tab nghiệp vụ:
+
+### 5.1. Nhóm (`group_post`)
+
+Giữ toàn bộ nghiệp vụ hiện tại:
+
+- Group UID list
+- Content/Post Library
+- ảnh/folder ảnh
 - số bài/account
 - delay bài, delay đổi account
 - ngày chạy + nhiều time windows
-- Group UID list
-- Content Set
-- Image Folder
-- sequential/random khi phù hợp
-- Start/Pause/Resume/Stop
-- runtime status + log
+- sequential/random
+- runtime/log
+- snapshot Group chống trùng trong phiên
 
-Account trong tab luôn tuần tự; nhiều tab khác nhau có thể song song.
+### 5.2. Đăng Tường (`page_wall_post`)
+
+Sau khi common Facebook runtime ổn định mới triển khai:
+
+- nội dung
+- ảnh
+- đăng ngay
+- hẹn ngày/giờ
+- danh sách bài đã hẹn
+- trạng thái/log
+
+### 5.3. Sửa Page (`page_edit`)
+
+Sau Đăng Tường mới triển khai. Đây là workflow riêng, ví dụ:
+
+- tên/mô tả/bio
+- avatar/cover
+- thông tin liên hệ
+- các field Page phù hợp về sau
+
+Không nhét logic sửa Page vào Group Post.
+
+### 5.4. Trạng thái account trong phiên Page
+
+Status gốc của account và status trong phiên phải tách riêng.
+
+Trạng thái UI phiên đã chốt:
+
+- chưa chạy
+- xanh dương = đã chạy lượt trong phiên
+- xanh lá = đang chạy
+- đỏ = checkpoint/lỗi account
+- vàng = chờ/delay
+
+Status phiên không được phá status gốc/lịch sử account.
 
 ---
 
 ## 6. Group chống trùng
+
+Phần này thuộc nghiệp vụ `group_post`.
 
 Group Set gốc luôn giữ nguyên.
 
@@ -206,17 +325,19 @@ Group Set gốc -> clone -> run_items
 
 Run item: pending / processing / success / failed / skipped.
 
-Constraint: `UNIQUE(run_id, group_uid)`.
+Constraint hiện tại: `UNIQUE(run_id, group_uid)`.
 
-Chỉ consume group khỏi run hiện tại khi publish được xác nhận success. Không xóa group khỏi source và không coi click nút Đăng là success.
+Chỉ consume group khỏi run hiện tại khi publish được xác nhận success theo policy hiện hành. Không xóa group khỏi source và không coi click nút Đăng là success.
+
+Refactor kiến trúc không được làm thay đổi hành vi Group đang chạy ổn nếu batch đó không chủ đích thay đổi nghiệp vụ.
 
 ---
 
-## 7. Browser session, posting và CAPTCHA providers
+## 7. Facebook runtime, session, profile và CAPTCHA
 
-### 7.1. Session
+### 7.1. Session dùng chung
 
-Account states:
+Account states hiện hành:
 
 - unknown
 - valid
@@ -225,14 +346,35 @@ Account states:
 
 Nếu Facebook yêu cầu login/checkpoint/xác minh danh tính:
 
-- dừng account hiện tại
-- chuyển `needs_login`
-- ghi log lý do
-- mở đúng persistent browser profile để người vận hành xử lý
+- trả result typed về Main/orchestration;
+- dừng hoặc kết thúc lượt account theo policy;
+- cập nhật trạng thái đúng ở DB/UI;
+- mở/giữ đúng persistent browser profile khi cần người vận hành xử lý;
+- không để từng nghiệp vụ tự vá login/checkpoint riêng.
 
 Checkpoint hoặc xác minh danh tính không được route sang CAPTCHA provider như một cách bypass.
 
-### 7.2. CAPTCHA challenge
+Khi auto re-login/2FA thành công trong flow được hỗ trợ:
+
+- phải xác minh session/account identity thật;
+- lấy cookie/session mới;
+- lưu lại qua Main theo policy;
+- trả control về common runtime/orchestration để tiếp tục nghiệp vụ nếu an toàn;
+- không để Group Post tự sở hữu logic phục hồi này.
+
+### 7.2. Browser profile resolver
+
+Mọi flow Facebook phải dùng chung một profile resolver.
+
+Baseline local hiện có persistent profile do app quản lý. Hạng mục External Profile Root từ #43 khi triển khai phải tuân thủ:
+
+- chọn root ngoài và resolve account theo `Root\UID`;
+- không clone profile;
+- khi external mode bật, **không được tự fallback/tạo profile trong AppData/ổ C**;
+- lỗi root/profile phải trả typed error, không âm thầm đổi nguồn profile;
+- Account Open Chrome, session check, posting và mọi nghiệp vụ Page dùng cùng resolver.
+
+### 7.3. CAPTCHA challenge
 
 Settings có khu `CAPTCHA Providers`.
 
@@ -264,24 +406,37 @@ ChallengeDetector
      -> needs_login/manual handling
 ```
 
-Lô UI/settings có thể hoàn thành trước khi wiring solver vào posting worker. Không được trộn việc thêm provider UI với thay đổi lớn posting core trong cùng một commit nếu chưa test riêng.
+Lô UI/settings có thể hoàn thành trước khi wiring solver vào worker. Không được trộn việc thêm provider UI với thay đổi lớn posting core trong cùng một commit nếu chưa test riêng.
 
-### 7.3. Browser modules
+### 7.4. Module responsibility hướng mục tiêu
+
+Tên cụ thể có thể được di chuyển dần, nhưng ownership phải theo 3 tầng:
 
 ```text
-BrowserProfileManager
-SessionChecker
-PageIdentitySwitcher
-GroupNavigator
-ComposerDetector
-PostComposer
-MediaUploader
-PublishAction
-PublishResultDetector
-ChallengeDetector
-CaptchaProviderAdapter
-RuntimeRecovery
+Facebook Common
+  BrowserProfileResolver / BrowserProfileManager
+  SessionChecker / LoginRecovery / TwoFactor
+  ChallengeDetector / CheckpointClassifier
+  AccountIdentityVerifier
+  PageIdentitySwitcher
+  Common browser pacing/recovery
+
+Run Orchestration
+  Scheduler
+  Account turn / rotation
+  Pause / Resume / Stop
+  Worker lifecycle
+  Runtime status / logs
+
+Business
+  GroupPost
+    GroupNavigator
+    Group publish verification
+  PageWallPost
+  PageEdit
 ```
+
+Composer/content/media/publish primitives chỉ được đặt ở common khi thật sự không phụ thuộc Group/Tường cụ thể; logic xác minh đích riêng vẫn thuộc business task.
 
 ---
 
@@ -295,9 +450,13 @@ App restart không mất config/lịch sử. Item đang processing mà publish c
 
 Retry chỉ áp dụng lỗi được policy đánh dấu an toàn; lỗi publish_unconfirmed/manual_review không auto-retry.
 
+Orchestration không được chứa Facebook selector cụ thể.
+
 ---
 
-## 9. Database hướng mục tiêu
+## 9. Database và contract hướng mục tiêu
+
+Database hiện tại/hướng nền:
 
 ```text
 accounts
@@ -325,11 +484,20 @@ column_layouts
 
 Page Tab reference account ID; không copy password/cookie/proxy sang tab.
 
+Để hỗ trợ đa nghiệp vụ, request/run contract sẽ được thiết kế dần theo hướng có `task type` + `target`, tối thiểu:
+
+- `group_post`
+- `page_wall_post`
+- `page_edit`
+- `comment`
+
+**Không bắt buộc migrate DB lớn trong một commit.** Mỗi thay đổi schema/contract phải chia lô an toàn, migration versioned và giữ compatibility khi cần.
+
 ---
 
 ## 10. Logging và security
 
-Execution log khi phù hợp có timestamp, tab/account/page/group/content/images/action/result/error/attempt/evidence.
+Execution log khi phù hợp có timestamp, task/tab/account/page/target/content/images/action/result/error/attempt/evidence.
 
 Không ghi plaintext:
 
@@ -342,41 +510,73 @@ Không ghi plaintext:
 
 Config Backup mặc định loại toàn bộ secret ở trên, browser profile, runtime log và screenshot.
 
+Log của common Facebook runtime phải đủ để trace worker -> Main -> DB -> UI nhưng không lộ credential.
+
 ---
 
-## 11. Phase baseline
+## 11. Lộ trình triển khai hiện hành — Issue #77
 
-Phase 0 — Bootstrap: Electron/React/TS, DB migration, shell, logging.
+Thứ tự này là thứ tự hiện hành và ưu tiên hơn các phase cũ khi làm #77:
 
-Phase 1 — Account Manager: full grid, CRUD, import/custom mapping/preset, masking, persistent profile.
+### Batch 1 — Kiến trúc + tài liệu
 
-Phase 2 — Session Engine: session loader/checker, valid/needs_login, manual login flow.
+- cập nhật `PROJECT_PLAN.md`;
+- tạo/cập nhật `ARCHITECTURE.md`;
+- chốt 3 tầng và ownership;
+- không đổi hành vi runtime trong batch tài liệu.
 
-Phase 3 — Page Tab Config: CRUD/duplicate tab, account order, delays, schedules, groups/content/images.
+### Batch 2 — UI/lỗi nhỏ ít rủi ro
 
-Phase 4 — Run Queue: snapshot, clone groups, anti-duplicate, resume, metrics.
+- Settings nhiều tab phải scroll được, không bị kẹt nội dung;
+- Folder/nhóm cho account;
+- audit hover/drag phủ chọn account + chuột phải action popup;
+- Import/Update theo UID với semantics blank = xóa khi field được chọn update.
 
-Phase 5 — Posting Core: switch Page, navigate Group, compose/media/publish/result verification.
+### Batch 3 — Page UI shell mới
 
-Phase 6 — Account Rotation: N bài/account, delays, sequential account transitions.
+- 3 tab `Nhóm / Đăng Tường / Sửa Page`;
+- thu gọn `Điều phối Page Tab` + `Cấu hình nghiệp vụ`;
+- preview bài/ảnh/account/đích đang chạy;
+- trạng thái account trong phiên theo màu đã chốt;
+- Nhóm dùng shell mới nhưng logic runtime hiện tại chưa bị đổi ngoài phạm vi cần thiết.
 
-Phase 7 — Multi Page Tabs: worker manager, independent queues, realtime runtime UI.
+### Batch 4 — Tách source dùng chung
 
-Phase 8 — Recovery + Logs: crash recovery, detailed logs, retry policy, resume-after-restart.
+- session/login/2FA/checkpoint vào Facebook Common;
+- Page identity/Page switch vào Facebook Common;
+- Group navigation/Group verification thành `group_post` riêng;
+- composer/media/publish primitive chỉ tách dùng chung ở mức hợp lý;
+- Group phải có regression chứng minh hành vi trước/sau refactor tương đương.
 
-Phase 9 — Portable Packaging: Windows folder/ZIP, data migration, backup/restore, versioning, release notes.
+### Batch 5 — Sửa lỗi live còn mở
 
-Post-MVP polish đang triển khai:
+- Group random hiện vẫn chạy theo thứ tự;
+- account out -> login lại -> qua 2FA -> phải lưu cookie/session mới -> tiếp tục nghiệp vụ; hiện có ca đứng;
+- checkpoint chưa ghi/hiển thị status đúng;
+- chỉ đóng sau live retest thực tế, không chỉ vì unit test/CI xanh.
 
-- Account Manager high-density UI
-- Custom Import tối thiểu 9 mapping
-- CAPTCHA Provider settings + provider adapter foundation
+### Batch 6 — Facebook External Profile Root
+
+- lấy yêu cầu phù hợp từ #43;
+- `Root\UID`, không clone;
+- strict external mode, không fallback AppData/ổ C;
+- mọi flow Facebook dùng chung resolver.
+
+### Batch 7 — Đăng Tường
+
+Chỉ làm khi nền common runtime ổn định. Không copy session/Page switch từ Group.
+
+### Batch 8 — Sửa Page
+
+Làm sau Đăng Tường, workflow riêng, dùng common runtime.
+
+Các phase nền cũ vẫn có giá trị lịch sử: Bootstrap -> Account -> Session -> Page Config -> Run Queue -> Posting -> Rotation -> Multi-tab -> Recovery -> Portable Packaging, nhưng #77 là trục refactor/polish hiện hành.
 
 ---
 
 ## 12. Test baseline
 
-Account:
+### Account
 
 - import 1 và 1,000+ account
 - duplicate UID
@@ -386,8 +586,11 @@ Account:
 - hidden/reordered/width columns persist
 - secret masked mặc định
 - CRUD/filter/sort
+- Update existing theo UID
+- field không chọn không update
+- field chọn nhưng blank xóa giá trị cũ
 
-CAPTCHA settings:
+### CAPTCHA settings
 
 - default empty state
 - save enable/default provider
@@ -396,23 +599,39 @@ CAPTCHA settings:
 - clear API key explicit
 - config backup không chứa CAPTCHA API key
 
+### Architecture/runtime regression
+
+- Group source/run chống trùng không đổi ngoài thay đổi được chốt.
+- Group Post trước/sau refactor common runtime phải giữ cùng observable behavior.
+- Session/login/2FA/checkpoint/Page switch có test ở common layer, không duplicate test implementation trong từng business.
+- Orchestration test không phụ thuộc Facebook selector.
+- Worker crash/browser failure không làm treo renderer.
+- External Profile Root khi bật phải test không fallback sang app-managed profile.
+- Runtime status account trong phiên không ghi đè status gốc account.
+
 Run/Group/Multi-tab giữ toàn bộ test chống trùng, schedule, rotation, recovery và portable packaging hiện có.
+
+Live bug liên quan checkpoint/2FA continuation chỉ được coi fixed sau live retest Windows phù hợp.
 
 ---
 
 ## 13. Acceptance Criteria hiện hành
 
-1. Import/manage account bằng dense data-grid.
+1. Import/manage account bằng dense data-grid; Update existing dùng UID và có semantics field rõ ràng.
 2. Custom Import map tối thiểu 9 cột và mở rộng theo input.
 3. Account giữ persistent session qua restart.
-4. Page Tabs độc lập và account tuần tự trong từng tab.
-5. Group source không bị phá; run chống trùng.
-6. Content/Image/Schedule hoạt động.
-7. Nhiều Page Tab chạy song song.
-8. Pause/resume/stop/recovery/log hoạt động.
-9. Secret không lộ mặc định.
-10. CAPTCHA provider settings lưu local, API key mask và không nằm trong backup/log.
-11. Windows artifact là portable folder/ZIP với PageAuto.exe.
+4. Page Tab là container của một Page và hỗ trợ nhiều nghiệp vụ rõ ràng.
+5. Account tuần tự trong một phiên/nghiệp vụ; nhiều Page Tab có thể chạy song song.
+6. Login/2FA/checkpoint/account identity/Page switch có một nguồn Facebook Common dùng chung, không copy theo nghiệp vụ.
+7. Group source không bị phá; run chống trùng và Group vẫn chạy sau refactor.
+8. UI Page có `Nhóm / Đăng Tường / Sửa Page`, compact control và preview runtime theo kế hoạch.
+9. Status gốc account và status trong phiên Page tách biệt.
+10. Pause/resume/stop/recovery/log hoạt động và orchestration không biết selector Facebook.
+11. Secret không lộ mặc định; CAPTCHA provider key không nằm trong backup/log.
+12. External Profile Root khi bật resolve `Root\UID` strict, không clone/fallback.
+13. Windows artifact là portable folder/ZIP với PageAuto.exe.
+14. Đăng Tường và Sửa Page sử dụng common runtime, không nhân bản code Group/session.
+15. Các lỗi checkpoint + post-2FA continuation chỉ đóng sau live retest thực tế.
 
 ---
 
@@ -431,8 +650,10 @@ Run/Group/Multi-tab giữ toàn bộ test chống trùng, schedule, rotation, re
 
 ## 15. Quy tắc làm việc bắt buộc
 
-- Trước khi sửa phải đọc `PROJECT_PLAN.md`, kiểm tra đúng repo/branch/SHA.
+- Trước khi sửa phải đọc `PROJECT_PLAN.md`; khi đụng core/runtime Facebook phải đọc thêm `ARCHITECTURE.md`.
+- Kiểm tra đúng repo/branch/SHA và các PR song song trước khi sửa.
 - Không tự đổi stack/kiến trúc/phạm vi nếu chưa cập nhật plan hoặc chưa có lệnh của anh.
+- Mọi thay đổi kiến trúc đáng kể phải cập nhật `ARCHITECTURE.md` trong cùng lô.
 - Làm theo từng lô có mục tiêu rõ ràng.
 - Test local trước khi push khi môi trường cho phép.
 - Không commit/push/run CI dồn dập cho từng lỗi nhỏ.
