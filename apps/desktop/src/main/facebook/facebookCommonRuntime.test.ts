@@ -3,6 +3,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import {
+  beforeRunFacebookEmailSupportFailure,
   beforeRunFacebookSessionFailure,
   classifyFacebookBrowserLaunchFailure
 } from './facebookCommonRuntime'
@@ -44,6 +45,19 @@ describe('Facebook common runtime', () => {
     })
   })
 
+  it('keeps Email Support failures typed instead of converting them to a generic checkpoint', () => {
+    expect(beforeRunFacebookEmailSupportFailure('email_auth_expired', 'OAuth cần kết nối lại.')).toEqual({
+      status: 'needs_login',
+      code: 'email_auth_expired',
+      message: 'OAuth cần kết nối lại.',
+      sessionValidation: {
+        phase: 'before_run',
+        state: 'needs_login',
+        message: 'OAuth cần kết nối lại.'
+      }
+    })
+  })
+
   it('keeps Group posting free of shared login, identity and Page-switch implementations', () => {
     const here = dirname(fileURLToPath(import.meta.url))
     const postingEngine = readFileSync(resolve(here, '../browser/posting/postingEngine.ts'), 'utf8')
@@ -65,6 +79,7 @@ describe('Facebook common runtime', () => {
     expect(postingEngine).toContain('FacebookCommonRuntime.open')
     expect(postingEngine).toContain('GroupNavigator')
     expect(postingEngine).toContain('PublishResultDetector')
+    expect(commonRuntime).toContain('bootstrapFacebookSessionWithEmailSupport')
     expect(commonRuntime).not.toContain('groupUid')
     expect(commonRuntime).not.toContain('my_posted_content')
   })

@@ -745,3 +745,62 @@ Refactor #77 chỉ đạt mục tiêu kiến trúc khi:
 - status master account và per-run status tách biệt;
 - live checkpoint/post-2FA issues chỉ đóng sau live retest;
 - tài liệu phản ánh đúng source thực tế sau từng batch.
+
+---
+
+## 20. Email Support bridge — ownership sau E4-R
+
+E4-R thêm một cầu nối hẹp từ Facebook Common Runtime sang module Email nhưng **không nhập hai browser identity vào nhau**.
+
+Flow hiện hành sau batch này:
+
+```text
+Email UI — Lấy mã
+        |
+        +------------------------------+
+                                       v
+                              EmailCodeProvider
+                                       |
+Facebook Common Runtime               |  đọc canonical state mới nhất
+  -> posting utility worker            |  theo accountId mỗi lần gọi
+  -> typed EmailCode RPC --------------+
+                                       |
+                                       v
+                         account_email_state
+                         Client ID + Refresh Token
+                                       |
+                                       v
+                         Microsoft OAuth + Graph Mail
+```
+
+Ownership bắt buộc:
+
+- `apps/desktop/src/shared/emailCode.ts` là contract secret-free giữa consumer và Email Support Service.
+- Canonical Email OAuth state vẫn thuộc Main/DB theo `accountId`; Refresh Token không được gửi sang renderer hoặc posting worker.
+- Manual `Lấy mã` và Facebook Common Runtime dùng cùng `EmailCodeProvider`, không duy trì hai đường parser/token riêng.
+- Posting worker chỉ được gửi `accountId`, `consumer`, `notBefore`, `timeoutMs` và nhận typed result/code; không nhận Email profile path, Email proxy credential, Client ID hay Refresh Token.
+- Facebook Common chỉ tự xử lý challenge có tín hiệu **mã gửi qua Email** rõ ràng. Identity review, phone/guardian/security review khác vẫn trả manual verification; không bypass.
+- Sau khi Email challenge thành công, control quay lại Facebook session state machine hiện hữu để xác minh session/account identity trước khi chạy business task.
+
+Typed failure từ Email Support phải giữ nguyên tới caller:
+
+```text
+email_auth_missing
+email_auth_expired
+email_code_not_found
+email_support_error
+email_code_failed
+```
+
+Network/profile invariant:
+
+- Facebook không mở Hotmail bằng Facebook profile để lấy mã.
+- Email Support RPC không mang Facebook proxy/cookie/profile sang module Email.
+- Facebook browser có thể đang dùng proxy/network IPv6 trong khi Email Support chạy độc lập; request lấy mã không phụ thuộc network config của posting job.
+- OAuth/Graph transport hiện là service-side trong Main và không kế thừa Facebook browser proxy. Nếu sau này cần route transport qua proxy, phải dùng adapter/network ownership riêng của Email, tuyệt đối không mượn Facebook proxy.
+
+Security invariant:
+
+- Access Token/Refresh Token không log plaintext và không đi qua worker RPC.
+- OTP/code không được ghi vào log; nếu lưu `lastCode` để UI thao tác thì TTL ngắn và được purge theo policy Email.
+- Worker timeout/crash trả typed support error; không treo phiên Facebook vô hạn.

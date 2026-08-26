@@ -7,11 +7,17 @@ import {
   type BrowserWindowPlacement
 } from '../../shared/browserWindowLayout'
 import type {
+  EmailCodeResult,
+  EmailCodeWorkerRequestMessage,
+  EmailCodeWorkerResponseMessage
+} from '../../shared/emailCode'
+import type {
   PostingJobRequest,
   PostingJobResult,
   PostingWorkerMessage,
   PostingWorkerRequestMessage
 } from '../../shared/posting'
+import { getEmailCodeProvider } from '../services/emailCodeProviderRegistry'
 import { BrowserWindowLayoutManager } from './browserWindowLayoutManager'
 import { getManagedBrowserEndpoint } from './managedBrowserRegistry'
 import { shouldRetainPostingBrowserForManualSession } from './postingWorkerLifecycle'
@@ -42,6 +48,17 @@ function diagnostic(job: PostingJobRequest, message: string): void {
 
 function accountDiagnostic(accountId: number, message: string): void {
   console.info(`[PAGE-AUTO posting] account=${accountId} ${message}`)
+}
+
+function emailSupportError(accountId: number, message: string): EmailCodeResult {
+  return {
+    accountId,
+    status: 'email_support_error',
+    code: null,
+    receivedAt: null,
+    sender: null,
+    message
+  }
 }
 
 export class PostingWorkerManager {
@@ -233,6 +250,11 @@ export class PostingWorkerManager {
     diagnostic(job, managedEndpoint ? 'spawn worker + attach Chrome managed' : 'spawn worker + sẽ mở persistent Chrome')
 
     worker.on('message', (raw: unknown) => {
+      if (raw && typeof raw === 'object' && (raw as { type?: unknown }).type === 'email_code_request') {
+        void this.handleEmailCodeRequest(entry, raw as EmailCodeWorkerRequestMessage)
+        return
+      }
+
       const message = raw as PostingWorkerMessage
       if (message.type === 'ready') {
         entry.ready = true
@@ -271,6 +293,37 @@ export class PostingWorkerManager {
     })
 
     return entry
+  }
+
+  private async handleEmailCodeRequest(entry: AccountWorkerEntry, message: EmailCodeWorkerRequestMessage): Promise<void> {
+    let result: EmailCodeResult
+    if (message.request.accountId !== entry.accountId) {
+      result = emailSupportError(entry.accountId, 'Email Support bridge từ chối yêu cầu sai account.')
+    } else if (entry.shuttingDown) {
+      result = emailSupportError(entry.accountId, 'Posting worker đang đóng; không thể lấy mã Email.')
+    } else {
+      const provider = getEmailCodeProvider()
+      if (!provider) {
+        result = emailSupportError(entry.accountId, 'Email Support Service chưa được khởi tạo ở Main process.')
+      } else {
+        try {
+          result = await provider.getEmailCode({ ...message.request, accountId: entry.accountId })
+        } catch {
+          result = emailSupportError(entry.accountId, 'Email Support Service gặp lỗi khi xử lý yêu cầu.')
+        }
+      }
+    }
+
+    const response: EmailCodeWorkerResponseMessage = {
+      type: 'email_code_response',
+      requestId: message.requestId,
+      result
+    }
+    try {
+      entry.process.postMessage(response)
+    } catch {
+      // Worker exit/timeout path owns cleanup. Never log OTP contents here.
+    }
   }
 
   private dispatch(entry: AccountWorkerEntry): void {
