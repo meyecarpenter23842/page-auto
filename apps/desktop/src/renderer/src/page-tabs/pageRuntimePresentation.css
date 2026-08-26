@@ -1,0 +1,28 @@
+.page-tab-chip.runtime-starting .page-tab-status-dot,
+.page-tab-chip.runtime-running .page-tab-status-dot {
+  background: #17a05d;
+  box-shadow: 0 0 0 2px rgba(23, 160, 93, 0.12);
+}
+
+.page-tab-chip.runtime-paused .page-tab-status-dot,
+.page-tab-chip.runtime-waiting_window .page-tab-status-dot,
+.page-tab-chip.runtime-stopping .page-tab-status-dot {
+  background: #d79b16;
+  box-shadow: 0 0 0 2px rgba(215, 155, 22, 0.12);
+}
+
+.page-tab-chip.runtime-error .page-tab-status-dot {
+  background: #d92d20;
+  box-shadow: 0 0 0 2px rgba(217, 45, 32, 0.12);
+}
+
+.page-tab-chip.runtime-completed .page-tab-status-dot {
+  background: #2e6fd8;
+  box-shadow: 0 0 0 2px rgba(46, 111, 216, 0.12);
+}
+
+.page-tab-chip.runtime-idle .page-tab-status-dot,
+.page-tab-chip.runtime-stopped .page-tab-status-dot {
+  background: #98a2b3;
+  box-shadow: none;
+}

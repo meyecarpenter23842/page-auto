@@ -112,4 +112,36 @@ describe('RotationRuntimeOverlayRegistry', () => {
       { accountId: 22, status: 'not_run', message: null }
     ])
   })
+
+  it('keeps Page Tab runtime overlays independent when multiple Pages run in parallel', () => {
+    const overlay = new RotationRuntimeOverlayRegistry()
+    const pageA = runtimeSnapshot()
+    const pageB = runtimeSnapshot({
+      pageTabId: 8,
+      runId: 202,
+      run: {
+        run: {
+          id: 202,
+          pageTabId: 8,
+          pageUid: '888',
+          snapshot: {
+            accounts: [{ accountId: 33, enabled: true, sortOrder: 0 }]
+          }
+        }
+      } as unknown as RotationRuntimeSnapshot['run']
+    })
+
+    overlay.decorate(pageA)
+    overlay.decorate(pageB)
+    overlay.notePostingStart(101, 11)
+    overlay.notePrepared(101, 11, preview)
+
+    const activeA = overlay.decorate(runtimeSnapshot({ currentAccountId: 11 }))
+    const untouchedB = overlay.decorate(pageB)
+
+    expect(activeA.currentPostPreview).toEqual(preview)
+    expect(activeA.accountStates).toContainEqual({ accountId: 11, status: 'running', message: 'Đang chạy.' })
+    expect(untouchedB.currentPostPreview).toBeNull()
+    expect(untouchedB.accountStates).toEqual([{ accountId: 33, status: 'not_run', message: null }])
+  })
 })
