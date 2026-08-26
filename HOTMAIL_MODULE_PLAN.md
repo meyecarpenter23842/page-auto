@@ -1,852 +1,474 @@
 # PAGE-AUTO — EMAIL / HOTMAIL MODULE PLAN
 
-> Tài liệu kế hoạch riêng cho module Email/Hotmail của PAGE-AUTO.
-> Mục tiêu: đạt mức nghiệp vụ quản lý mail kiểu MaxHotmail, nhưng UI phải dễ hiểu hơn và tuyệt đối không làm lẫn Facebook.
+> Plan chính thức cho module Email/Hotmail của PAGE-AUTO.
 >
-> Phần Facebook External Profile Root đã chuyển sang issue #77. Tài liệu này chỉ còn phạm vi Email.
+> Bản này thay thế cách hiểu cũ sau live review 2026-08-26. UI Email đã merge ở PR #84 **không được coi là baseline nghiệp vụ đúng** vì đã hiểu sai mô hình MaxHotmail: nhân cùng một danh sách account sang nhiều tab con. Phải rework theo plan này trước khi tiếp tục mở rộng.
+>
+> Phần Facebook External Profile Root vẫn thuộc #77. #43 sở hữu module Email; phần Facebook chỉ dùng một contract lấy mã Email, không sở hữu profile/proxy/runtime Email.
 
 ---
 
-## 1. Mục tiêu module
+## 1. Bản chất module Email
 
-Email phải là một khu nghiệp vụ độc lập, không còn là popup phụ hoặc một màn kỹ thuật khó hiểu.
+Email không phải một hệ account tách rời khỏi Facebook.
 
-Mục tiêu chính:
-
-- Quản lý số lượng lớn Hotmail/Outlook bằng data-grid mật độ cao.
-- Dùng dữ liệu Email/PassEmail/BackupEmail từ Account Manager, không tạo database account mail riêng.
-- Dùng đúng **Email Profile Root** đã chọn.
-- Quy tắc profile: **1 UID = 1 folder `EmailProfileRoot\UID`**.
-- Mở đúng profile Email cũ tại chỗ; không clone/copy/fallback sang profile khác.
-- Browser Email mặc định **Auto**; chọn file `.exe` chỉ là phần nâng cao.
-- Hỗ trợ mở mail, kiểm tra mail, lấy mã hàng loạt.
-- Có proxy/IP riêng cho Email, ưu tiên **IPv4**; không dùng proxy Facebook.
-- Có runtime/worker riêng cho Email.
-- Có log đủ để biết UID nào đang dùng profile/browser/proxy nào.
-- Không để lỗi Email ảnh hưởng Facebook.
-- Không bypass checkpoint / identity verification / security lock của Microsoft. Gặp xác minh danh tính thì chuyển xử lý thủ công.
-
----
-
-# 2. Ranh giới bắt buộc giữa Facebook và Email
-
-## 2.1. Profile tách hoàn toàn
-
-Facebook profile và Email profile là **hai profile khác nhau**.
-
-Ví dụ cùng UID:
+**Account Manager/Facebook account là nguồn dữ liệu gốc.** Mỗi account đã có:
 
 ```text
-Facebook:
-<FacebookProfileRoot>\615123456789
-
-Email:
-<EmailProfileRoot>\615123456789
+UID | Email | PassEmail | BackupEmail
 ```
 
-UID chỉ là khóa để tìm đúng folder của từng bên.
+Email module phải đọc đúng account đó theo `accountId/UID`. Không tạo một bản danh sách credential Email độc lập rồi tự lệch dữ liệu với bảng Facebook.
 
-Không được:
+Khi nghiệp vụ Email làm thay đổi dữ liệu thực của mailbox:
 
-- dùng Email profile làm Facebook profile;
-- dùng Facebook profile làm Email profile;
-- dùng chung cookie/session;
-- fallback từ Email sang Facebook hoặc ngược lại;
-- ép cả hai nghiệp vụ chạy trong cùng một browser profile.
+- đổi Password Email -> cập nhật lại `PassEmail` của đúng account;
+- thêm/đổi/xóa Mail khôi phục -> cập nhật lại `BackupEmail` của đúng account;
+- thay đổi Email chính nếu có nghiệp vụ được chấp nhận -> cập nhật đúng `Email` của account;
+- OAuth state được lưu như extension 1:1 của account, không tạo một account Email thứ hai.
 
-Lý do: Facebook và Email có yêu cầu mạng khác nhau. Email hiện ưu tiên IPv4 và có thể cần proxy khác Facebook. Khi thao tác Facebook + Email cùng lúc, hai bên phải có thể mở độc lập bằng **2 profile + 2 proxy khác nhau**.
-
-## 2.2. Proxy tách hoàn toàn
-
-- Proxy Facebook thuộc Facebook.
-- Proxy Email thuộc Email.
-- Email không đọc/ghi `accounts.proxy` để điều khiển mail.
-- Đổi IP Email không được làm thay đổi proxy Facebook.
-- Email proxy pool không được trở thành proxy cố định của account Facebook.
-
-## 2.3. Chỉ dùng chung phần nền rất thấp khi thật sự giống nhau
-
-Có thể dùng chung primitive như:
-
-- kiểm tra browser executable tồn tại;
-- timeout;
-- process lifecycle thấp tầng;
-- window placement thấp tầng;
-- logging primitive.
-
-Không dùng chung nghiệp vụ:
-
-- profile resolver;
-- profile root;
-- session/cookie;
-- proxy pool;
-- runtime state;
-- login/checkpoint;
-- Page switch;
-- mail reading.
-
-Không refactor phần Facebook chỉ để phục vụ Email.
+**Không lấy từ Facebook:** profile Facebook, cookie Facebook, session Facebook, proxy Facebook, browser process Facebook.
 
 ---
 
-# 3. Quy tắc UI mới — bỏ UI Email cũ làm chuẩn
+## 2. Profile và mạng: Facebook/Email tách tuyệt đối
 
-UI Email hiện tại **không dùng làm chuẩn nghiệp vụ**.
+Cùng một UID nhưng là hai browser identity khác nhau:
 
-Mục tiêu mới: học cách tổ chức thao tác của MaxHotmail nhưng giữ giao diện PAGE-AUTO sạch, dễ hiểu và thao tác nhanh.
+```text
+Facebook profile: <FacebookProfileRoot>\<UID>
+Email profile:    <EmailProfileRoot>\<UID>
+```
 
-## 3.1. Sidebar
+Bắt buộc:
 
-Sidebar trái chỉ có **1 mục `Email`**.
+- không dùng chung folder profile;
+- không dùng chung cookie/session;
+- không fallback qua lại;
+- không ép Email mở trong Chrome/profile Facebook;
+- không ép Facebook mở trong profile Email.
 
-Không tách riêng các mục như:
+### Proxy/IP
 
-- Proxy
-- Microsoft
-- Profile
-- Recovery
-- OAuth
+- Facebook dùng network/proxy của Facebook và có thể chạy IPv6.
+- Email dùng network/proxy riêng, baseline ưu tiên IPv4.
+- Hai bên có thể chạy đồng thời với hai proxy khác nhau.
+- Đổi IP Email không được sửa `accounts.proxy` hoặc làm thay đổi proxy Facebook.
 
-ra ngoài sidebar.
+Lý do nghiệp vụ quan trọng: Facebook có thể đang chạy bằng IPv6 trong lúc Hotmail cần IPv4. Vì vậy không thể login Hotmail trong cùng profile/browser Facebook chỉ để lấy mã.
 
-## 3.2. Toàn bộ nghiệp vụ nằm trong màn Email
+---
 
-Khi bấm `Email`, toàn bộ chức năng nằm trong màn này dưới dạng tab/khu con.
+## 3. OAuth Email là cầu nối lấy mã cho Facebook
 
-Khung mục tiêu:
+Đây là điểm cốt lõi mới phải khóa.
+
+Mỗi account có Email OAuth state gắn 1:1 theo `accountId`, tối thiểu:
+
+- OAuth Client ID hiện hành;
+- Refresh Token hiện hành;
+- trạng thái token;
+- thời gian cập nhật/token check gần nhất;
+- lỗi gần nhất.
+
+Refresh Token là secret: lưu mã hóa/secret store, mask mặc định, không log plaintext.
+
+### 3.1. Email module là nơi tạo/kiểm tra/cập nhật OAuth
+
+Từ grid Email, operator có các nghiệp vụ thật kiểu MaxHotmail:
+
+- Xem trạng thái RefreshToken OAuth2;
+- Check Live RefreshToken OAuth2;
+- Lấy/Cập nhật RefreshToken OAuth2 Hotmail;
+- xem Client ID đang dùng;
+- lấy mã thủ công;
+- check live mailbox.
+
+Khi Email lấy được Refresh Token/Client ID mới, phải lưu ngay vào **canonical Email OAuth state của đúng account**. Không copy sang một “bảng Facebook token” thứ hai.
+
+### 3.2. Facebook runtime dùng chính OAuth state mới nhất
+
+Khi Facebook đang chạy và gặp challenge cần mã gửi về Email:
+
+```text
+Facebook Common Runtime
+  -> accountId/UID hiện tại
+  -> EmailCodeProvider / Email Support Service
+  -> đọc canonical Email OAuth state của account
+  -> dùng Client ID + Refresh Token mới nhất để đọc mailbox
+  -> tìm mã phù hợp
+  -> trả mã typed result cho Facebook runtime
+  -> Facebook nhập mã và tiếp tục flow được hỗ trợ
+```
+
+Điểm bắt buộc:
+
+- Facebook không mở Hotmail trong browser Facebook;
+- Facebook không dùng Email profile;
+- Facebook không dùng proxy Email như proxy Facebook;
+- Facebook runtime không giữ một bản Refresh Token cache độc lập lâu dài dễ bị cũ;
+- nếu token đã được Email cập nhật thì lần gọi tiếp theo của Facebook phải đọc bản mới nhất;
+- nếu OAuth thiếu/hết hạn/lỗi thì trả typed state như `email_auth_missing`, `email_auth_expired`, `email_code_not_found` thay vì treo phiên.
+
+`Lấy mã` vì vậy có **hai consumer** dùng chung một service phía sau:
+
+1. operator bấm lấy mã thủ công trong Email;
+2. Facebook Common Runtime gọi lấy mã trong phiên Facebook đang chạy.
+
+### 3.3. Ranh giới checkpoint
+
+Chỉ tự động với challenge lấy mã Email trong flow tài khoản được hỗ trợ và mailbox thuộc đúng account.
+
+Nếu Facebook/Microsoft chuyển sang identity review, security lock, guardian/phone challenge hoặc xác minh danh tính không thể giải bằng mã Email hợp lệ thì trả trạng thái thủ công. Không xây cơ chế bypass identity/security review.
+
+---
+
+## 4. UI chính thức — một grid Email, không nhân grid theo tab
+
+Sidebar trái chỉ có **một mục `Email`**.
+
+Khi vào Email, **một data-grid chính là trung tâm**. Đây là nơi chọn account và gọi nghiệp vụ.
+
+### 4.1. Cấm cấu trúc sai hiện tại
+
+Không làm:
+
+```text
+Tab Danh sách mail -> grid A
+Tab Lấy mã        -> lại grid A đổi vài cột
+Tab Mở mail       -> lại grid A đổi vài cột
+Tab Mail khôi phục-> lại grid A đổi vài cột
+```
+
+Việc này không có giá trị nghiệp vụ và làm thao tác rối.
+
+### 4.2. Cấu trúc đúng
 
 ```text
 Email
-  ├─ Danh sách mail
-  ├─ Mở mail
-  ├─ Lấy mã / Kiểm tra mail
-  ├─ Mail khôi phục
-  ├─ Đổi IP / Proxy
+  ├─ Grid mail chính
+  │    ├─ Toolbar
+  │    ├─ Filter/Search/Folder
+  │    ├─ Multi-select
+  │    └─ Right-click / Thao tác khác
+  ├─ Queue/Kết quả thao tác khi cần
+  ├─ Proxy/IP
   ├─ Nhật ký
   └─ Cài đặt
 ```
 
-Tên/tab cuối cùng có thể gom lại để UI gọn hơn, nhưng nguyên tắc không đổi: **mọi nghiệp vụ Email nằm trong một màn Email duy nhất**.
+`Mở mail`, `Lấy mã`, `Check Live`, `Refresh Token`, `Đổi pass`, `Mail khôi phục`... là **action trên selection**, không phải mỗi action là một tab chứa bản sao của grid.
 
-## 3.3. Ngôn ngữ UI phải theo nghiệp vụ người dùng
+Một action phức tạp có thể mở popup/side panel/queue riêng để nhập option và xem kết quả, nhưng không nhân bản danh sách account.
 
-Màn chính ưu tiên các từ dễ hiểu:
-
-- `Mở mail`
-- `Lấy mã`
-- `Kiểm tra mail`
-- `Mail khôi phục`
-- `Đổi IP`
-- `Proxy`
-- `Trình duyệt`
-- `Nhật ký`
-- `Cài đặt`
-
-Không dùng tên công nghệ làm điều hướng chính.
-
-Các từ như:
-
-- Microsoft OAuth
-- Microsoft Graph
-- token
-- adapter
-- runtime state
-
-chỉ xuất hiện trong **Cài đặt nâng cao / Chẩn đoán** khi thật sự cần.
-
-Người vận hành không cần hiểu công nghệ phía sau mới dùng được chức năng `Lấy mã` hoặc `Kiểm tra mail`.
-
----
-
-# 4. Data-grid Email là trung tâm
-
-Grid chính là nơi quản lý và thao tác account Email.
+### 4.3. Grid lấy dữ liệu từ Account Manager
 
 Cột mục tiêu:
 
-- Checkbox
-- STT
+- Checkbox / STT
 - UID
 - Email
 - Pass Email (mask)
 - Mail khôi phục
-- Loại mail khôi phục
-- Tên
-- Tình trạng mail
-- Tình trạng profile
-- Profile Path
-- Trình duyệt
-- Proxy/IP
-- Ngày tạo
-- Category/Folder
-- Tình trạng chạy
-- Mã mới nhất
-- Thời gian lấy mã
-- Nguồn gửi
-- Lỗi gần nhất
-- Ghi chú
+- Tên / Category / Folder / Note từ account nếu cần
+- Tình trạng Hotmail
+- Tình trạng OAuth
+- Client ID trạng thái/preview phù hợp
+- Refresh Token status + updated time, **không show plaintext mặc định**
+- Tình trạng Email profile
+- Email Profile Path
+- Email Proxy/IP
+- mã mới nhất + thời gian nhận
+- runtime/action hiện tại
+- lỗi gần nhất
 
-Hỗ trợ:
+Grid hỗ trợ:
 
-- chọn nhiều dòng;
 - Ctrl/Shift selection;
-- select all;
-- filter/sort/search UID/Email;
-- filter status/folder/category;
+- rê/chọn nhiều dòng thuận tiện;
+- filter/sort/search;
 - hide/show/reorder/resize cột;
-- lưu layout;
-- compact row;
-- sticky header;
-- virtual scroll khi account lớn;
-- màu trạng thái nhưng luôn có text rõ ràng;
-- context menu áp dụng trên selection;
-- bulk action.
-
-Toolbar chính dùng ngôn ngữ dễ hiểu:
-
-```text
-[Mở mail]
-[Lấy mã]
-[Kiểm tra mail]
-[Refresh]
-[Đổi IP]
-[Thao tác khác ▼]
-[Cài đặt]
-```
+- persist layout;
+- context menu áp dụng cho selection;
+- bulk action;
+- virtual scroll khi danh sách lớn.
 
 ---
 
-# 5. Context menu
+## 5. Danh mục nghiệp vụ tham khảo MaxHotmail
 
-Chuột phải trên account/selection:
+Ảnh MaxHotmail được dùng làm **tham khảo nghiệp vụ**, không copy UI thô.
 
-```text
-Mở mail
-Mở thư mục profile
-Copy đường dẫn profile
-Kiểm tra mail
-Lấy mã
-Refresh profile
-Đóng profile
------------------
-Copy Email
-Copy UID
-Copy mail khôi phục
-Copy trạng thái
------------------
-Gán Category/Folder
-Ghi chú
-```
+### 5.1. Email/Profile/OAuth/Code
 
-Các thao tác kỹ thuật như reconnect OAuth chỉ để trong `Thao tác khác` hoặc phần nâng cao nếu cần.
+- Thiết lập Email Support
+- Mở/Xem Hotmail Chrome
+- Xem trạng thái RefreshToken OAuth2
+- Check Live RefreshToken OAuth2
+- Lấy/Cập nhật RefreshToken OAuth2 Hotmail
+- Get Code Hotmail / Lấy mã
+- Get Code Email Support
+- Check Live Hotmail
+
+### 5.2. Password / Recovery mail / Account support
+
+Backlog nghiệp vụ cần thiết kế lần lượt:
+
+- đổi pass Hotmail;
+- đổi pass hết hạn;
+- thêm Email khôi phục;
+- xóa Email khôi phục;
+- xóa + thêm Email khôi phục;
+- thêm Email khôi phục khi chưa có thông tin cũ;
+- đổi pass + thêm Email khôi phục;
+- thêm/xóa Email khôi phục + đổi pass;
+- reset pass qua Email khôi phục theo flow chính thức;
+- xử lý challenge phone/recovery theo flow được hỗ trợ;
+- các combo thao tác batch khi thật sự có nhu cầu vận hành.
+
+Các action có thể dẫn tới identity/security review phải dừng typed manual state; không bypass.
+
+### 5.3. Mailbox / alias / housekeeping
+
+Có thể đưa vào backlog nâng cao:
+
+- xóa toàn bộ mail trong mailbox;
+- xóa toàn bộ alias;
+- thao tác alias/recovery khác;
+- xác nhận người giám hộ nếu đây là flow chính thức và operator chủ động thực hiện.
+
+Action phá dữ liệu như xóa toàn bộ mail/alias phải có confirmation rõ ràng và không chạy do click nhầm.
+
+Không nhất thiết ship toàn bộ danh sách MaxHotmail trong MVP; nhưng plan/data model/action framework phải không khóa đường mở rộng các nghiệp vụ này.
 
 ---
 
-# 6. Email Profile lifecycle
+## 6. Email Profile lifecycle
 
-## 6.1. Email Profile Root
+User chọn `Email Profile Root` riêng.
 
-User chọn root, ví dụ:
-
-```text
-F:\MaxHotmail\profiles
-```
-
-UID:
+Resolve tuyệt đối:
 
 ```text
-615123456789
+<EmailProfileRoot>\<UID>
 ```
 
-Resolve đúng:
+Yêu cầu:
 
-```text
-F:\MaxHotmail\profiles\615123456789
-```
-
-Không:
-
-- scan thư mục khác;
-- tự thêm tầng `profiles`;
-- fallback sang `data\browser-profiles`;
-- fallback sang Facebook profile;
-- clone/copy profile;
-- tạo `UID-copy`, `UID-2`;
-- tự import account chỉ vì thấy folder UID.
-
-## 6.2. Trạng thái profile
-
-Trạng thái nghiệp vụ hiển thị:
-
-- Chưa cấu hình
-- Chưa có profile
-- Có profile
-- Đang mở
-- Đang sử dụng
-- Đang mở...
-- Lỗi
-
-Grid phải có `Profile Path` đầy đủ để người dùng biết chính xác app đang dùng folder nào.
-
-## 6.3. Tạo profile
-
-Scan/list không tự tạo profile.
-
-Chỉ tạo nếu có action rõ ràng được thiết kế cho phép tạo mới.
-
-Nếu mục tiêu là dùng kho MaxHotmail đã có mà folder UID không tồn tại thì mặc định báo `Chưa có profile`, không lén tạo ở nơi khác.
-
-## 6.4. Profile đang chạy
-
-Nếu profile đang chạy và có thể attach an toàn:
-
-- attach vào process hiện tại;
-- không mở process thứ hai vào cùng folder;
-- proxy giữ theo process đang sở hữu browser.
-
-Nếu endpoint cũ/stale và không có lock thật:
-
-- cho phép relaunch cùng profile.
-
-Nếu profile đang bị process khác giữ mà không attach an toàn được:
-
-- báo `Đang sử dụng`;
+- dùng trực tiếp profile MaxHotmail hiện có;
+- không clone/copy;
+- không fallback sang Facebook profile;
+- không fallback sang profile AppData khác khi external root được chọn;
+- không tự tạo `UID-copy`, `UID-2`;
+- hiển thị Profile Path;
+- attach live CDP nếu an toàn;
+- stale endpoint + không có real lock -> relaunch cùng profile;
+- real lock/không attach được -> báo `Đang sử dụng`;
 - không xóa lock cưỡng bức.
 
-## 6.5. Tiện ích profile
+Browser Email mặc định **Tự động**. Manual executable là nâng cao.
 
-- Mở thư mục profile
-- Copy path
-- Refresh trạng thái
-- Kiểm tra lock
-- Kiểm tra browser đang chạy
-- Hiển thị Profile Root
+Validation browser phải dùng cùng persistent-profile semantics với runtime thật.
 
 ---
 
-# 7. Browser Email
+## 7. Proxy/IP Email
 
-## 7.1. Chế độ
+Email có network settings riêng:
 
-Mặc định:
+- Direct;
+- Random IPv4 pool;
+- provider khác mở rộng sau.
 
-```text
-Trình duyệt Email: Tự động
-```
+Yêu cầu:
 
-Nâng cao:
-
-```text
-Chọn file trình duyệt thủ công
-```
-
-Không bắt user chọn `.exe` mới dùng được Email.
-
-## 7.2. Auto detect
-
-Thứ tự có thể thử:
-
-1. browser phù hợp cạnh MaxHotmail/profile root;
-2. Chrome system;
-3. Edge system;
-4. Chromium phù hợp;
-5. fallback đã được kiểm tra.
-
-## 7.3. Validation phải giống runtime thật
-
-Nếu runtime Email mở persistent profile thì phần test browser cũng phải test persistent profile.
-
-Không được có tình trạng:
-
-```text
-Test browser: pass
-Runtime mở profile: chớp rồi tắt
-```
-
-Manual browser fail phải báo rõ bằng ngôn ngữ dễ hiểu.
-
-Auto mode nếu candidate lỗi thì thử candidate kế tiếp.
-
-## 7.4. Bố trí cửa sổ
-
-Email có cấu hình riêng:
-
-- số browser hiển thị đồng thời;
-- grid X × Y;
-- spacing;
-- delay mở;
-- compact mode riêng Email nếu cần;
-- nhớ vị trí.
-
-Không phụ thuộc ChromeDriver.
-
----
-
-# 8. Runtime Email riêng
-
-Email có queue/worker riêng, không dùng runtime của Page Tab Facebook.
-
-Luồng nghiệp vụ chính:
-
-```text
-Chờ
--> Xếp hàng
--> Kiểm tra profile
--> Chọn browser
--> Lấy proxy/IP Email
--> Mở/attach browser khi cần
--> Mở mail / kiểm tra mail / lấy mã
--> Hoàn tất
-```
-
-Trạng thái lỗi cần phân biệt:
-
-- Cần đăng nhập
-- Profile đang sử dụng
-- Browser lỗi
-- Proxy lỗi
-- Kết nối mail hết hạn
-- Lỗi đọc mail
-- Cần xác minh thủ công
-- Lỗi khác
-
-Hỗ trợ:
-
-- chạy 1 account;
-- chạy selection;
-- chạy theo filter;
-- giới hạn số worker/browser;
-- queue;
-- pause/resume/stop/stop all;
-- delay mở browser;
-- delay giữa account;
-- timeout;
-- worker crash không làm treo UI;
-- retry thủ công khi phù hợp.
-
----
-
-# 9. Lấy mã / Kiểm tra mail
-
-Mục tiêu UI chỉ cần cho người dùng thao tác:
-
-- `Lấy mã`
-- `Kiểm tra mail`
-- Mã mới nhất
-- Thời gian nhận
-- Nguồn gửi
-- Lỗi nếu có
-
-Phần Microsoft OAuth/Graph là cách triển khai phía sau, không phải cấu trúc chính của UI.
-
-Yêu cầu phía sau:
-
-- kết nối mailbox hợp lệ;
-- refresh token khi cần;
-- đọc recent mail;
-- parser nhiều mẫu mail;
-- lọc sender/domain;
-- tránh lấy mã quá cũ;
-- lưu timestamp;
-- single + batch;
-- không hiển thị plaintext refresh token/secret trên UI/log/backup.
-
-Nếu Microsoft yêu cầu identity verification/security review thì chuyển `Cần xác minh thủ công`.
-
----
-
-# 10. Mail khôi phục
-
-Dữ liệu:
-
-- Backup Email
-- Provider
-- Domain
-- Status
-- Note
-
-Hỗ trợ:
-
-- copy mail khôi phục;
-- nhận diện provider;
-- mở provider;
-- kiểm tra field thiếu;
-- lọc account thiếu/có mail khôi phục;
-- custom domain/provider khi cần.
-
-Provider catalog chỉ là metadata, không khóa hệ thống vào một nhà cung cấp.
-
----
-
-# 11. Proxy / Đổi IP Email
-
-## 11.1. Nguyên tắc
-
-Email có cấu hình mạng riêng.
-
-Baseline:
-
-```text
-Direct
-Random IPv4 pool
-Provider-based IPv4 rotation (mở rộng sau)
-```
-
-Không dùng IPv6 pool cho workflow Email hiện tại.
-
-Không lấy proxy Facebook của account làm proxy Email.
-
-## 11.2. Pool
-
-Hỗ trợ:
-
-- import proxy list;
-- host:port:user:pass;
-- mask password;
-- test proxy;
-- kiểm tra public IP;
-- current IP;
+- pool IPv4 riêng;
+- test IP/proxy;
 - rotate;
-- fail count;
-- cooldown;
-- tạm bỏ proxy lỗi;
-- giới hạn số tác vụ đổi IP.
-
-Proxy Email được chọn cho phiên/lượt Email, không biến thành proxy cố định của account Facebook.
-
-## 11.3. Browser đã chạy từ app khác
-
-Nếu attach vào profile MaxHotmail đang được process khác mở:
-
-- PAGE-AUTO không được giả vờ đổi proxy của process đó;
-- UI phải báo browser đang dùng mạng/proxy do process hiện tại quản lý.
+- fail count/cooldown;
+- session nào đang sở hữu proxy nào phải rõ;
+- không đổi proxy giữa một browser process đang chạy rồi giả vờ đã áp dụng;
+- credential proxy không log plaintext.
 
 ---
 
-# 12. Cài đặt Email
+## 8. Runtime Email và Email Support Service
 
-Tất cả vẫn nằm trong màn `Email > Cài đặt`.
+Email có worker/queue riêng cho thao tác browser/mailbox batch.
 
-## 12.1. Profile & Trình duyệt
+Facebook không dùng queue Page Tab để chạy nghiệp vụ Email.
 
-- Email Profile Root
-- Trình duyệt: Tự động / Thủ công
-- File trình duyệt thủ công
-- Test trình duyệt
-- Số browser chạy cùng lúc
-- Delay mở
-- Timeout
-- Bố trí cửa sổ
-- Browser đang được phát hiện
+Tuy nhiên `EmailCodeProvider` là service contract có thể được Facebook Common Runtime gọi trong phiên.
 
-## 12.2. Kết nối mailbox
-
-Màn thường chỉ hiển thị:
-
-- Trạng thái kết nối
-- Kết nối lại
-- Kiểm tra kết nối
-
-Thông tin OAuth/Graph/tenant/client ID để trong phần nâng cao.
-
-## 12.3. Proxy/IP
-
-- Direct / Random IPv4
-- Proxy list/provider
-- Test
-- Đổi IP
-- Current IP
-- Concurrency
-
-## 12.4. Mail khôi phục
-
-- provider catalog
-- domain mapping
-- custom provider/domain
-
-## 12.5. Nâng cao
-
-- CAPTCHA provider adapter nếu có challenge được hỗ trợ
-- OTP provider framework
-- browser diagnostics
-- token diagnostics
-
-Không route checkpoint/identity verification thành CAPTCHA/OTP bypass.
-
----
-
-# 13. Logging
-
-Mỗi action cần log đủ để chẩn đoán:
+Phân biệt:
 
 ```text
-timestamp
-accountId
-uid
-email
-action
-profileRoot
-profileDirectory
-browserMode
-resolvedExecutable
-proxyDisplay
-runtimeState
-result
-durationMs
-errorCode
-errorMessage
+Email UI batch runtime
+  -> mở profile/check mail/lấy OAuth/đổi pass/recovery...
+
+Email Support Service
+  -> lookup account email state
+  -> lấy code qua OAuth khi có thể
+  -> trả typed result cho caller như Facebook Common Runtime
 ```
+
+Worker crash Email không được kéo treo Facebook UI/runtime. Caller nhận timeout/error typed rõ ràng.
+
+---
+
+## 9. Data ownership đề xuất
+
+Không tạo bảng account mail độc lập.
+
+### `accounts` — source of truth identity/credential fields
+
+Giữ các field nghiệp vụ chính:
+
+- UID
+- Email
+- PassEmail
+- BackupEmail
+- Name/Category/Folder/Note...
+
+### `account_email_state` — extension 1:1 theo `account_id`
+
+Mục tiêu lưu trạng thái Email, ví dụ:
+
+- `account_id` UNIQUE/FK
+- `oauth_client_id`
+- `refresh_token_ciphertext`
+- `oauth_status`
+- `oauth_updated_at`
+- `mail_status`
+- `last_mail_check_at`
+- `last_code_at`
+- `last_error_code/message` sanitized
+
+Latest verification code nếu persist thì phải có TTL ngắn/mask policy; không biến DB/log thành kho OTP lịch sử.
+
+### Các bảng/config riêng Email
+
+Có thể giữ:
+
+- `email_profile_settings`
+- `email_proxy_settings`
+- `email_runtime_sessions`
+- `email_runtime_events`
+
+Nhưng tất cả runtime state phải join về `account_id`, không tạo một identity Email song song.
+
+---
+
+## 10. Security / logging
 
 Không log plaintext:
 
-- password
-- pass email
-- cookie
-- 2FA
-- refresh token
-- proxy password
-- CAPTCHA key
-- OTP key
+- PassEmail;
+- Refresh Token;
+- access token;
+- OTP/code cũ;
+- proxy password;
+- cookie/session Facebook hoặc Email.
 
-UI log hỗ trợ:
+UI secret mask mặc định. Reveal/copy secret nếu có phải là action chủ động.
 
-- filter UID
-- filter action
-- filter success/error
-- copy log
-- export log đã loại secret
+OAuth desktop dùng public-client pattern phù hợp; không nhét client secret cố định vào renderer/source.
 
 ---
 
-# 14. Database hướng mục tiêu
+## 11. Rework plan từ trạng thái hiện tại
 
-Account nguồn vẫn là `accounts`.
+### E0-R — Reset acceptance sau PR #84
 
-Email chỉ bổ sung state/settings riêng, ví dụ:
+- audit UI Email đang có trên main;
+- đánh dấu phần duplicate-grid là sai cấu trúc;
+- xác định component/backend nào tái sử dụng được;
+- không tiếp tục thêm nghiệp vụ lên shell sai.
 
-```text
-account_email_state
-email_profile_settings
-email_proxy_settings
-email_runtime_sessions
-email_runtime_events
-```
+### E1-R — Account binding + canonical Email state
 
-Không duplicate credential Email thành một account database khác.
+- grid Email đọc account từ Account Manager;
+- `accountId/UID` là khóa xuyên module;
+- sync PassEmail/BackupEmail khi nghiệp vụ Email thay đổi dữ liệu;
+- thêm/migrate `account_email_state` nếu cần;
+- secret storage đúng.
 
-Migration làm dần theo từng batch, không phá schema hiện hành.
+### E2-R — UI Email đúng kiểu MaxHotmail
 
----
+- một grid chính;
+- toolbar + context menu mạnh;
+- không duplicate grid theo action;
+- action panel/queue riêng khi cần;
+- sửa wording dựa trên nghiệp vụ thực.
 
-# 15. Thứ tự triển khai
+### E3-R — Email profile/browser/network
 
-## Batch E0 — Audit + khóa ranh giới
-
-- audit toàn bộ Email hiện tại;
-- xác định UI cũ phần nào bỏ, phần nào giữ;
-- map dependency Email;
-- không sửa Facebook;
-- không refactor browser Facebook;
-- xác nhận #43 chỉ còn Email.
-
-Acceptance:
-
-- có danh sách file Email;
-- có danh sách UI cần thay;
-- không đổi hành vi runtime.
-
-## Batch E1 — UI Email shell mới
-
-- sidebar chỉ còn 1 mục `Email`;
-- toàn bộ nghiệp vụ thành tab/khu con trong màn Email;
-- bỏ wording kỹ thuật khỏi màn chính;
-- dense grid;
-- toolbar;
-- selection/context menu foundation;
-- layout rõ, dễ thao tác kiểu MaxHotmail.
-
-## Batch E2 — Profile Email + Browser Auto
-
-- Email Profile Root;
-- resolve `root\UID`;
-- Profile Path;
-- mở folder/copy path;
-- trạng thái profile;
+- Email Profile Root `root\UID`;
 - Browser Auto;
-- persistent profile validation;
-- attach/lock protection;
-- không fallback profile sai nơi.
+- persistent validation;
+- proxy IPv4 riêng;
+- live/stale/lock lifecycle.
 
-## Batch E3 — Runtime Email
+### E4-R — OAuth lifecycle + lấy mã + Facebook bridge
 
-- queue;
-- concurrency;
+- View/Check/Lấy RefreshToken OAuth2;
+- quản lý Client ID;
+- canonical token state;
+- manual Get Code;
+- `EmailCodeProvider` typed contract;
+- Facebook Common Runtime đọc token mới nhất theo accountId;
+- test trường hợp Facebook đang chạy IPv6 nhưng lấy code qua Email Support Service mà không mở Hotmail trong profile Facebook.
+
+### E5-R — Mail support/recovery/password
+
+- Check Live Hotmail;
+- password actions;
+- recovery mail actions;
+- các combo action cần thiết;
+- typed manual state khi gặp identity/security verification.
+
+### E6-R — Queue/log/window/bulk polish
+
+- batch queue/concurrency;
 - pause/resume/stop;
-- worker isolation;
-- runtime state;
-- structured log.
-
-## Batch E4 — Lấy mã / Kiểm tra mail
-
-- kết nối mailbox phía sau;
-- single/batch;
-- latest code/time/source;
-- parser;
-- reconnect khi cần;
-- UI không lộ thuật ngữ kỹ thuật không cần thiết.
-
-## Batch E5 — Proxy/IP Email
-
-- IPv4 pool riêng;
-- test IP;
-- rotate;
-- fail policy;
-- current IP;
-- không ảnh hưởng Facebook proxy.
-
-## Batch E6 — Mail khôi phục
-
-- provider/domain;
-- filter;
-- actions;
-- completeness checks.
-
-## Batch E7 — Window layout + diagnostics + polish
-
-- bố trí nhiều browser;
-- diagnostics;
-- sanitized export;
-- UX polish;
-- regression test toàn module.
+- window layout Email;
+- detailed sanitized logs;
+- filter/layout persist;
+- destructive confirmations;
+- live Windows acceptance.
 
 Không trộn tất cả vào một PR lớn.
 
 ---
 
-# 16. Test plan
+## 12. Acceptance bắt buộc
 
-## Profile
-
-- root trống/invalid/exists;
-- UID profile exists/missing;
-- exact `root\UID`;
-- không fallback sang Facebook/AppData;
-- concurrent open;
-- live browser attach;
-- stale endpoint;
-- profile lock;
-- không xóa lock cưỡng bức.
-
-## Browser
-
-- Auto mode;
-- manual valid/bad;
-- browser chớp rồi tắt;
-- persistent context pass;
-- candidate fail -> next candidate;
-- worker crash.
-
-## Mail
-
-- chưa kết nối;
-- kết nối hợp lệ;
-- token hết hạn;
-- không có mã;
-- mã mới;
-- mã cũ;
-- sender filtering;
-- batch partial failure.
-
-## Proxy
-
-- Direct;
-- IPv4 hợp lệ;
-- proxy lỗi;
-- rotate;
-- pool trống;
-- release sau worker crash;
-- không thay proxy Facebook.
-
-## UI
-
-- chỉ một mục Email ở sidebar;
-- tab con nằm trong Email;
-- grid layout persist;
-- hidden/reordered/width persist;
-- context menu selection;
-- bulk selection;
-- Profile Path visible;
-- status text + color;
-- secret masked;
-- màn chính không bắt user hiểu OAuth/Graph/token.
+- [ ] Email grid lấy đúng `UID | Email | PassEmail | BackupEmail` từ Account Manager.
+- [ ] Không có account credential Email duplicate độc lập với account Facebook.
+- [ ] Khi Email đổi PassEmail/BackupEmail, Account Manager phản ánh dữ liệu mới của đúng account.
+- [ ] OAuth state gắn 1:1 với accountId và là nguồn chuẩn duy nhất cho Facebook lấy mã.
+- [ ] Email cập nhật Refresh Token/Client ID mới -> Facebook call sau dùng ngay bản mới nhất.
+- [ ] Facebook không mở Hotmail trong profile/browser Facebook để lấy code.
+- [ ] Facebook profile/proxy và Email profile/proxy tách hoàn toàn.
+- [ ] Facebook có thể chạy IPv6 đồng thời Email dùng IPv4 riêng.
+- [ ] `Lấy mã` dùng được cả thủ công lẫn qua Facebook Common Runtime bằng cùng service phía sau.
+- [ ] OAuth/token lỗi trả typed state, không làm treo phiên Facebook.
+- [ ] Một grid Email chính; không nhân cùng danh sách sang tab Mở mail/Lấy mã/Mail khôi phục.
+- [ ] Context menu/toolbar có nghiệp vụ kiểu MaxHotmail và áp dụng cho selection.
+- [ ] Refresh Token không lộ plaintext mặc định/log.
+- [ ] Email Profile Path đúng `<EmailProfileRoot>\<UID>` và không fallback sai.
+- [ ] Identity/security review không bị bypass; chuyển manual state.
+- [ ] Destructive action có confirmation.
+- [ ] CI Windows xanh trước merge.
+- [ ] Không merge nếu chưa có lệnh rõ ràng.
 
 ---
 
-# 17. Acceptance Criteria cuối
+## Liên quan
 
-Module Email chỉ coi là đạt khi:
+- Issue Email: #43
+- Facebook Common Runtime/Page architecture: #77
+- Baseline chung: `PROJECT_PLAN.md`
+- Facebook architecture: `ARCHITECTURE.md`
 
-1. Sidebar chỉ có một mục `Email`.
-2. Toàn bộ nghiệp vụ mail nằm bên trong màn Email.
-3. UI cũ không còn là chuẩn; UI mới tổ chức theo nghiệp vụ dễ hiểu kiểu MaxHotmail.
-4. Màn chính dùng từ như `Mở mail`, `Lấy mã`, `Kiểm tra mail`, `Đổi IP` thay vì tên công nghệ.
-5. Facebook profile và Email profile hoàn toàn riêng.
-6. Facebook proxy và Email proxy hoàn toàn riêng.
-7. Có thể mở Facebook + Email đồng thời với 2 profile/2 proxy khác nhau.
-8. Email resolve profile đúng `<EmailProfileRoot>\<UID>`.
-9. Không clone/copy/fallback profile sai nơi.
-10. Grid hiển thị đầy đủ Profile Path.
-11. Browser Email Auto hoạt động mặc định.
-12. Validation browser dùng đúng kiểu persistent profile của runtime thật.
-13. Bulk Open/Check/Get Code hoạt động theo concurrency.
-14. Email proxy dùng IPv4 pool riêng và không ảnh hưởng Facebook.
-15. Mail khôi phục/provider quản lý được.
-16. Worker Email lỗi không làm treo UI hoặc ảnh hưởng Facebook.
-17. Checkpoint/identity verification chuyển manual handling.
-18. Log cho biết UID + profile + browser + proxy + result nhưng không lộ secret.
-19. CI Windows xanh trước merge.
-20. Không merge nếu chưa có lệnh rõ ràng.
-
----
-
-# 18. Quy tắc phát triển
-
-- #43 chỉ theo dõi Email; Facebook theo #77.
-- Mỗi batch chỉ sửa một nhóm mục tiêu.
-- Không refactor Facebook cùng commit với Email.
-- Không đưa logic Email vào generic browser core chỉ vì cùng mở Chrome.
-- Test đúng runtime thật.
-- Không push nhiều commit `fix again`.
-- Gom lỗi liên quan rồi sửa một lần.
-- PR ghi rõ phạm vi.
-- Không merge nếu chưa có lệnh.
-- Sau merge nếu main có CI thì theo dõi tới xanh.
-- Không deploy/release nếu chưa có lệnh riêng.
-
----
-
-# 19. Kết luận
-
-PAGE-AUTO không cần copy code MaxHotmail.
-
-Cần học cách tổ chức nghiệp vụ:
-
-- grid là trung tâm;
-- thao tác hàng loạt;
-- context menu;
-- profile root rõ ràng;
-- proxy/IP rõ ràng;
-- recovery rõ ràng;
-- trạng thái dễ nhìn;
-- queue có kiểm soát.
-
-PAGE-AUTO phải làm tốt hơn ở:
-
-- UI dễ hiểu hơn;
-- Email/Facebook tách hẳn profile và proxy;
-- worker isolation;
-- full profile path visibility;
-- Browser Auto;
-- structured logs;
-- test/CI;
-- không phụ thuộc ChromeDriver.
+Khi implement phần Facebook-side của `EmailCodeProvider`, phải đọc lại `PROJECT_PLAN.md` + `ARCHITECTURE.md` và cập nhật architecture trong cùng lô nếu contract thực tế thay đổi.
