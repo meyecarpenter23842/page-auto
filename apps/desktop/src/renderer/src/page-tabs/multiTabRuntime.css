@@ -424,3 +424,37 @@
   .multi-runtime-actions { justify-content: flex-start; }
   .multi-runtime-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+/* Page business workspace keeps the runtime card short. Put the live 3B data first
+   so per-run account state and the prepared post preview are visible without hunting
+   inside the nested runtime scroller. */
+.page-business-group-pane .multi-runtime-shell.compact .multi-runtime-card > header { order: 0; }
+.page-business-group-pane .multi-runtime-shell.compact .multi-runtime-accounts { order: 1; }
+.page-business-group-pane .multi-runtime-shell.compact .multi-runtime-preview { order: 2; }
+.page-business-group-pane .multi-runtime-shell.compact .multi-runtime-metrics { order: 3; }
+.page-business-group-pane .multi-runtime-shell.compact .multi-runtime-details { order: 4; }
+.page-business-group-pane .multi-runtime-shell.compact .multi-runtime-card > footer { order: 5; }
+
+.page-business-group-pane .multi-runtime-shell.compact .multi-runtime-card {
+  gap: 5px;
+}
+
+.page-business-group-pane .multi-runtime-shell.compact .multi-runtime-accounts,
+.page-business-group-pane .multi-runtime-shell.compact .multi-runtime-preview {
+  gap: 4px;
+  padding: 5px 6px;
+}
+
+.page-business-group-pane .multi-runtime-shell.compact .multi-runtime-section-title > span,
+.page-business-group-pane .multi-runtime-shell.compact .multi-runtime-account-legend {
+  display: none;
+}
+
+.page-business-group-pane .multi-runtime-shell.compact .multi-runtime-account {
+  padding: 3px 5px;
+}
+
+.page-business-group-pane .multi-runtime-shell.compact .multi-runtime-preview p {
+  max-height: 30px;
+  overflow: hidden;
+}
