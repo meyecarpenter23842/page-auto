@@ -10,6 +10,7 @@ import { NetworkSettingsPanel } from './NetworkSettingsPanel'
 import { RuntimeSettingsPanel } from './RuntimeSettingsPanel'
 import { SessionSettingsPanel } from './SessionSettingsPanel'
 import './settings.css'
+import './settingsScrollFix.css'
 
 interface SettingsPanelProps { appInfo: AppInfo | null }
 type SettingsSection = 'browser' | 'slots' | 'session' | 'network' | 'runtime' | 'logs' | 'captcha' | 'advanced' | 'health'
