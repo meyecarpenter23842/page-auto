@@ -5,10 +5,12 @@ import {
   COMPOSER_TRIGGER_PATTERN,
   formatComposerDiagnostics
 } from './composerSurface'
+import { pollForReady, readinessAttempts } from './postingReadiness'
 
 const PUBLISH_PATTERN = /^(post|đăng)$/i
 const POLL_MS = 250
 const INITIAL_OBSERVE_MS = 1_500
+const TRIGGER_TIMEOUT_MS = 18_000
 const OPEN_TIMEOUT_MS = 18_000
 const ACTION_SETTLE_MS = 850
 const MAX_ANCESTOR_DEPTH = 48
@@ -60,6 +62,11 @@ interface NamedLocator {
   locator: Locator
 }
 
+type ComposerTriggerOutcome =
+  | { kind: 'handle'; handle: RobustComposerHandle }
+  | { kind: 'clicked' }
+  | { kind: 'footprint' }
+
 export function isComposerContainerEvidence(signals: ComposerContainerSignals): boolean {
   if (!signals.textboxVisible) return false
 
@@ -104,6 +111,18 @@ export function isComposerAncestorBoundary(tagName: string, role: string | null)
   const normalizedTag = tagName.trim().toLowerCase()
   const normalizedRole = role?.trim().toLowerCase() ?? ''
   return COMPOSER_BOUNDARY_TAGS.has(normalizedTag) || COMPOSER_BOUNDARY_ROLES.has(normalizedRole)
+}
+
+export function waitForComposerStage<T>(
+  probe: () => Promise<T | null>,
+  timeoutMs: number,
+  sleep: (milliseconds: number) => Promise<void>
+): Promise<T | null> {
+  return pollForReady(probe, {
+    attempts: readinessAttempts(timeoutMs, POLL_MS),
+    intervalMs: POLL_MS,
+    sleep
+  })
 }
 
 async function firstVisibleMatch(candidates: Locator[]): Promise<Locator | null> {
@@ -187,6 +206,14 @@ export class RobustComposerDetector {
   private lastTriggerDescriptor = 'tag=none role=none aria-label=missing'
 
   constructor(private readonly page: Page) {}
+
+  private stage(message: string): void {
+    console.info(`[PAGE-AUTO composer] ${message}`)
+  }
+
+  private sleep(milliseconds: number): Promise<void> {
+    return this.page.waitForTimeout(milliseconds).catch(() => undefined)
+  }
 
   private strongTriggerCandidates(): NamedLocator[] {
     return [
@@ -332,30 +359,63 @@ export class RobustComposerDetector {
   }
 
   private async waitForHandle(timeoutMs: number): Promise<RobustComposerHandle | null> {
-    const deadline = Date.now() + timeoutMs
-    while (Date.now() < deadline) {
+    let dialogReported = false
+    const handle = await waitForComposerStage(async () => {
       if (this.page.isClosed()) return null
-      const handle = await this.resolve()
-      if (handle) return handle
-      const slept = await this.page.waitForTimeout(POLL_MS).then(() => true).catch(() => false)
-      if (!slept) return null
+      if (!dialogReported) {
+        const dialogs = this.page.locator('[role="dialog"], [aria-modal="true"]')
+        if (await visibleCount(dialogs) > 0) {
+          dialogReported = true
+          this.stage('stage=dialog_ready')
+        }
+      }
+      return this.resolve()
+    }, timeoutMs, (milliseconds) => this.sleep(milliseconds))
+
+    if (handle) {
+      this.stage(`stage=textbox_ready editor=${handle.editorStrategy} container=${handle.containerStrategy}`)
     }
-    return null
+    return handle
   }
 
-  private async clickFirstActionableTrigger(): Promise<boolean> {
-    for (const candidate of this.strongTriggerCandidates()) {
-      const count = await candidate.locator.count().catch(() => 0)
-      for (let index = 0; index < count; index += 1) {
-        const item = candidate.locator.nth(index)
-        if (!await item.isVisible().catch(() => false)) continue
-        this.lastTriggerStrategy = `${candidate.strategy}[${index}]`
-        this.lastTriggerDescriptor = await locatorDescriptor(item)
-        const clicked = await item.click({ timeout: 8_000 }).then(() => true).catch(() => false)
-        if (clicked) return true
+  private async waitForTriggerOrComposer(timeoutMs: number): Promise<ComposerTriggerOutcome | null> {
+    return waitForComposerStage(async () => {
+      if (this.page.isClosed()) return null
+
+      const handle = await this.resolve()
+      if (handle) {
+        this.lastTriggerStrategy = 'composer-opened-during-trigger-wait'
+        this.lastTriggerDescriptor = 'tag=existing role=existing aria-label=not-applicable'
+        return { kind: 'handle', handle }
       }
-    }
-    return false
+
+      if (await this.hasOpenComposerFootprint()) {
+        this.lastTriggerStrategy = 'composer-footprint-during-trigger-wait'
+        this.lastTriggerDescriptor = 'tag=surface role=unknown aria-label=not-applicable'
+        return { kind: 'footprint' }
+      }
+
+      for (const candidate of this.strongTriggerCandidates()) {
+        const count = await candidate.locator.count().catch(() => 0)
+        for (let index = 0; index < count; index += 1) {
+          const item = candidate.locator.nth(index)
+          if (!await item.isVisible().catch(() => false)) continue
+          if (!await item.isEnabled().catch(() => false)) continue
+
+          this.lastTriggerStrategy = `${candidate.strategy}[${index}]`
+          this.lastTriggerDescriptor = await locatorDescriptor(item)
+          this.stage(`stage=trigger_ready strategy=${this.lastTriggerStrategy} triggerElement{${this.lastTriggerDescriptor}}`)
+          const clicked = await item.click({ timeout: 8_000 }).then(() => true).catch(() => false)
+          if (clicked) {
+            this.stage(`stage=trigger_click sent strategy=${this.lastTriggerStrategy}`)
+            return { kind: 'clicked' }
+          }
+          this.stage(`stage=trigger_click retry strategy=${this.lastTriggerStrategy}`)
+        }
+      }
+
+      return null
+    }, timeoutMs, (milliseconds) => this.sleep(milliseconds))
   }
 
   async publishCandidates(): Promise<PublishCandidateResolution> {
@@ -427,6 +487,7 @@ export class RobustComposerDetector {
   }
 
   async open(): Promise<RobustComposerHandle | null> {
+    this.stage(`stage=existing_editor_wait timeoutMs=${INITIAL_OBSERVE_MS}`)
     const existing = await this.waitForHandle(INITIAL_OBSERVE_MS)
     if (existing) {
       this.lastTriggerStrategy = 'existing-composer'
@@ -434,13 +495,20 @@ export class RobustComposerDetector {
       return existing
     }
 
-    const clicked = await this.clickFirstActionableTrigger()
-    if (clicked) {
-      await this.page.waitForTimeout(ACTION_SETTLE_MS).catch(() => undefined)
-    } else if (!await this.hasOpenComposerFootprint()) {
+    this.stage(`stage=trigger_wait timeoutMs=${TRIGGER_TIMEOUT_MS}`)
+    const triggerOutcome = await this.waitForTriggerOrComposer(TRIGGER_TIMEOUT_MS)
+    if (!triggerOutcome) {
+      this.stage('stage=trigger_timeout')
       return null
     }
+    if (triggerOutcome.kind === 'handle') return triggerOutcome.handle
+    if (triggerOutcome.kind === 'clicked') {
+      await this.page.waitForTimeout(ACTION_SETTLE_MS).catch(() => undefined)
+    }
 
-    return this.waitForHandle(OPEN_TIMEOUT_MS)
+    this.stage(`stage=editor_wait timeoutMs=${OPEN_TIMEOUT_MS}`)
+    const handle = await this.waitForHandle(OPEN_TIMEOUT_MS)
+    if (!handle) this.stage('stage=editor_timeout')
+    return handle
   }
 }
