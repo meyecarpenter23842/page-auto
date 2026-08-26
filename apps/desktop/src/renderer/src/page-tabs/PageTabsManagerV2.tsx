@@ -9,7 +9,7 @@ import type {
   PageTabSchedule,
   PageTabSummary
 } from '../../../shared/pageTabs'
-import { MultiTabRuntimeDashboard } from './MultiTabRuntimeDashboard'
+import type { RotationAccountRuntimeStatus, RotationRuntimeSnapshot } from '../../../shared/rotation'
 import { PostLibraryModal } from './PostLibraryModal'
 import './pageTabs.css'
 import './pageTabsWorkspace.css'
@@ -19,6 +19,14 @@ const dayLabels = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7']
 type ConfigSection = 'accounts' | 'identity' | 'rotation' | 'schedule' | 'groups'
 type EditorModal = 'schedule' | 'groups' | null
 type AccountPickerStatus = AccountStatus | 'all'
+
+const accountRuntimeLabels: Record<RotationAccountRuntimeStatus, string> = {
+  not_run: 'Chưa chạy',
+  completed_turn: 'Đã chạy',
+  running: 'Đang chạy',
+  error: 'Lỗi/Checkpoint',
+  waiting: 'Chờ'
+}
 
 function minutesToTime(minutes: number): string {
   const safe = Math.max(0, Math.min(minutes, 1439))
@@ -219,6 +227,7 @@ export function PageTabsManager() {
   const [config, setConfig] = useState<PageTabConfig | null>(null)
   const [postLibrary, setPostLibrary] = useState<PageTabPostLibrary | null>(null)
   const [accounts, setAccounts] = useState<AccountRecord[]>([])
+  const [runtime, setRuntime] = useState<RotationRuntimeSnapshot | null>(null)
   const [loading, setLoading] = useState(true)
   const [savingSection, setSavingSection] = useState<ConfigSection | 'all' | null>(null)
   const [dirtySections, setDirtySections] = useState<Set<ConfigSection>>(() => new Set())
@@ -251,6 +260,7 @@ export function PageTabsManager() {
     if (activeId === null) {
       setConfig(null)
       setPostLibrary(null)
+      setRuntime(null)
       setDirtySections(new Set())
       return
     }
@@ -274,6 +284,25 @@ export function PageTabsManager() {
       if (!cancelled) setLoading(false)
     })
     return () => { cancelled = true }
+  }, [activeId])
+
+  useEffect(() => {
+    if (activeId === null) return
+    let cancelled = false
+    const refreshRuntime = async () => {
+      try {
+        const runtimes = await window.pageAuto.listPageTabRotations()
+        if (!cancelled) setRuntime(runtimes.find((item) => item.pageTabId === activeId) ?? null)
+      } catch (cause) {
+        if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause))
+      }
+    }
+    void refreshRuntime()
+    const timer = window.setInterval(() => void refreshRuntime(), 1000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
   }, [activeId])
 
   const markDirty = (section: ConfigSection) => setDirtySections((current) => new Set(current).add(section))
@@ -356,6 +385,7 @@ export function PageTabsManager() {
     setNotice(`Đã xóa ${config.name}.`)
     setConfig(null)
     setPostLibrary(null)
+    setRuntime(null)
     setActiveId(null)
     await refreshTabs()
   }
@@ -403,6 +433,9 @@ export function PageTabsManager() {
   const variantCount = postLibrary?.posts.reduce((sum, item) => sum + item.variants.length, 0) ?? 0
   const imagePostCount = postLibrary?.posts.filter((item) => item.image.folderPath.trim()).length ?? 0
   const dirty = dirtySections.size > 0
+  const runtimeStateByAccount = new Map((runtime?.accountStates ?? []).map((item) => [item.accountId, item]))
+  const preview = runtime?.currentPostPreview ?? null
+  const currentAccount = config?.accounts.find((item) => item.accountId === runtime?.currentAccountId)
 
   return (
     <section className="page-tabs-manager">
@@ -430,9 +463,13 @@ export function PageTabsManager() {
             <div className="page-tab-left-pane">
               <section className="pt-panel pt-account-panel pt-account-panel-tall">
                 <div className="pt-panel-heading"><div><p className="eyebrow">Tài khoản</p><h3>Danh sách chạy</h3></div><div className="pt-account-heading-actions"><span className="pt-count-chip">{enabledAccountCount}/{config.accounts.length} bật</span><button className="pt-button secondary" type="button" disabled={!dirtySections.has('accounts') || savingSection !== null} onClick={() => void saveSectionOnly('accounts')}>Lưu</button><button className="pt-button primary" type="button" onClick={() => setAccountPickerOpen(true)}>Chọn tài khoản</button></div></div>
-                <div className="pt-account-grid-wrap"><table className="pt-account-grid"><thead><tr><th>#</th><th>Bật</th><th>UID / UserName</th><th>Tên</th><th>Status</th><th>Category</th><th>Bài/lượt</th><th>Thứ tự</th><th>Xóa</th></tr></thead><tbody>
-                  {config.accounts.map((account, index) => <tr key={account.accountId}><td>{index + 1}</td><td><input type="checkbox" checked={account.enabled} onChange={(event) => updateAccount(index, { enabled: event.target.checked })} /></td><td className="pt-account-uid">{account.uid}</td><td>{account.name ?? '—'}</td><td><span className={`pt-account-status status-${account.status}`}>{account.status}</span></td><td>{account.category ?? '—'}</td><td><input type="number" min="1" title="Để trống sẽ dùng Mặc định bài/lượt ở card Vòng chạy." placeholder={String(config.rotation.postsPerAccount)} value={account.postsPerTurn ?? ''} onChange={(event) => updateAccount(index, { postsPerTurn: event.target.value === '' ? null : Number(event.target.value) })} /></td><td className="pt-account-order"><button type="button" onClick={() => patchConfig('accounts', { accounts: moveItem(config.accounts, index, -1) })} disabled={index === 0}>↑</button><button type="button" onClick={() => patchConfig('accounts', { accounts: moveItem(config.accounts, index, 1) })} disabled={index === config.accounts.length - 1}>↓</button></td><td><button className="pt-remove-button" type="button" onClick={() => patchConfig('accounts', { accounts: config.accounts.filter((_, itemIndex) => itemIndex !== index) })}>×</button></td></tr>)}
-                  {config.accounts.length === 0 ? <tr><td colSpan={9} className="pt-account-empty">Tab chưa có tài khoản.</td></tr> : null}
+                <div className="pt-account-grid-wrap"><table className="pt-account-grid"><thead><tr><th>#</th><th>Bật</th><th>UID</th><th>Tên</th><th>TK</th><th>Hoạt động</th><th>Nhóm</th><th>Bài/lượt</th><th>Thứ tự</th><th>Xóa</th></tr></thead><tbody>
+                  {config.accounts.map((account, index) => {
+                    const activity = runtimeStateByAccount.get(account.accountId)
+                    const activityStatus = activity?.status ?? 'not_run'
+                    return <tr key={account.accountId} className={`pt-account-run-row run-${activityStatus}`} title={activity?.message ?? undefined}><td>{index + 1}</td><td><input type="checkbox" checked={account.enabled} onChange={(event) => updateAccount(index, { enabled: event.target.checked })} /></td><td className="pt-account-uid">{account.uid}</td><td>{account.name ?? '—'}</td><td><span className={`pt-account-status status-${account.status}`}>{account.status}</span></td><td className="pt-account-activity"><span className={`pt-run-status run-${activityStatus}`}>{accountRuntimeLabels[activityStatus]}</span></td><td>{account.category ?? '—'}</td><td className="pt-account-posts"><input type="number" min="1" title="Để trống sẽ dùng Mặc định bài/lượt ở card Vòng chạy." placeholder={String(config.rotation.postsPerAccount)} value={account.postsPerTurn ?? ''} onChange={(event) => updateAccount(index, { postsPerTurn: event.target.value === '' ? null : Number(event.target.value) })} /></td><td className="pt-account-order"><button type="button" onClick={() => patchConfig('accounts', { accounts: moveItem(config.accounts, index, -1) })} disabled={index === 0}>↑</button><button type="button" onClick={() => patchConfig('accounts', { accounts: moveItem(config.accounts, index, 1) })} disabled={index === config.accounts.length - 1}>↓</button></td><td><button className="pt-remove-button" type="button" onClick={() => patchConfig('accounts', { accounts: config.accounts.filter((_, itemIndex) => itemIndex !== index) })}>×</button></td></tr>
+                  })}
+                  {config.accounts.length === 0 ? <tr><td colSpan={10} className="pt-account-empty">Tab chưa có tài khoản.</td></tr> : null}
                 </tbody></table></div>
               </section>
 
@@ -448,10 +485,16 @@ export function PageTabsManager() {
             </div>
 
             <div className="page-tab-right-pane">
-              <MultiTabRuntimeDashboard pageTabId={config.id} compact />
+              <section className={`pt-panel pt-live-preview runtime-${runtime?.status ?? 'idle'}`}>
+                <div className="pt-panel-heading"><div><p className="eyebrow">Đang xử lý</p><h3>Preview bài hiện tại</h3></div><span className="pt-live-runtime-state">{runtime?.status ?? 'idle'}{currentAccount ? ` · ${currentAccount.uid}` : ''}</span></div>
+                {preview ? <>
+                  <div className="pt-live-preview-meta"><span>Group <b>{preview.groupUid}</b></span><span>Bài <b>#{preview.postIndex + 1}</b></span><span>Biến thể <b>#{preview.variantIndex + 1}</b></span><span>Ảnh <b>{preview.imageCount}</b></span></div>
+                  <p>{preview.contentPreview || '(Bài không có nội dung text)'}</p>
+                </> : <div className="pt-live-preview-empty">Chưa có bài đang xử lý. Khi worker đã chọn Group + nội dung + ảnh, preview sẽ hiện tại đây.</div>}
+              </section>
 
               <section className="pt-panel pt-business-panel">
-                <div className="pt-panel-heading"><div><p className="eyebrow">Cấu hình nghiệp vụ</p><h3>Điều khiển Page Tab</h3></div><span className="pt-business-state">Mỗi mục lưu riêng</span></div>
+                <div className="pt-panel-heading"><div><p className="eyebrow">Cấu hình nghiệp vụ</p><h3>Đăng Nhóm</h3></div><span className="pt-business-state">Mỗi mục lưu riêng</span></div>
                 <div className="pt-business-list">
                   <div className="pt-business-row"><div className="pt-business-icon">L</div><div className="pt-business-copy"><span>Lịch chạy</span><strong>{enabledScheduleCount} khung đang bật</strong><small>Ngày chạy và nhiều khung giờ trong ngày</small></div>{dirtySections.has('schedule') ? <span className="pt-business-unsaved">Chưa lưu</span> : null}<button type="button" onClick={() => setEditorModal('schedule')}>Chỉnh</button></div>
                   <div className="pt-business-row"><div className="pt-business-icon">G</div><div className="pt-business-copy"><span>Group Set</span><strong>{groupCount} group</strong><small>Nguồn Group gốc · run tự snapshot riêng</small></div>{dirtySections.has('groups') ? <span className="pt-business-unsaved">Chưa lưu</span> : null}<button type="button" onClick={() => setEditorModal('groups')}>Quản lý</button></div>
