@@ -187,12 +187,13 @@ export function registerHotmailIpcHandlers(database: Database.Database): Hotmail
 
   ipcMain.handle(IPC_CHANNELS.hotmailPasswordAction, async (_event, payload: HotmailPasswordActionPayload) => {
     if (payload.confirmCompleted) {
-      if (!pendingPasswordPayload?.newPassword) {
+      const confirmedPassword = pendingPasswordPayload?.newPassword
+      if (!confirmedPassword || !pendingPasswordPayload) {
         throw new Error('Không có flow đổi Password Email nào đang chờ xác nhận. Hãy mở lại flow trước.')
       }
       const frozenPayload: HotmailPasswordActionPayload = {
         accountIds: [...pendingPasswordPayload.accountIds],
-        newPassword: pendingPasswordPayload.newPassword,
+        newPassword: confirmedPassword,
         confirmCompleted: true
       }
       const result = await service.updatePassword(frozenPayload)
@@ -200,7 +201,7 @@ export function registerHotmailIpcHandlers(database: Database.Database): Hotmail
       pendingPasswordPayload = attentionIds.length > 0
         ? {
             accountIds: attentionIds,
-            newPassword: frozenPayload.newPassword,
+            newPassword: confirmedPassword,
             confirmCompleted: false
           }
         : null
