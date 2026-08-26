@@ -1,18 +1,12 @@
-import { chromium, type BrowserContext, type Locator, type Page } from 'playwright-core'
-import { randomBrowserActionDelayMs, type BrowserSettings } from '../../../shared/appSettings'
+import type { Locator, Page } from 'playwright-core'
+import type { BrowserSettings } from '../../../shared/appSettings'
 import type { PostingJobRequest, PostingJobResult } from '../../../shared/posting'
-import { inspectFacebookAccountIdentity } from '../facebookAccountIdentity'
-import { readFacebookDisplayName } from '../facebookProfileInfo'
 import {
-  bootstrapFacebookSession,
-  validateFacebookSession,
-  type FacebookSessionResult
-} from '../facebookSession'
-import { applyBrowserContextSettings, buildBrowserLaunchOptions, waitForBrowserStartupDelay } from '../browserRuntime'
-import { effectiveNavigationTimeoutMs, probeFacebookThroughProxy } from '../proxyPreflight'
+  FacebookCommonRuntime,
+  checkFacebookCommonAccess,
+  type FacebookCommonStepResult
+} from '../../facebook/facebookCommonRuntime'
 import { COMPOSER_MEDIA_PATTERN } from './composerSurface'
-import { classifyPageIdentityUid, PageIdentitySwitcher } from './pageIdentitySwitcher'
-import { activeFacebookProfileId, detectFacebookAccessBlock } from './pageState'
 import { finishPostingEvidence, startPostingTrace } from './postingEvidence'
 import {
   isMediaAttachmentReady,
@@ -49,30 +43,12 @@ function failure(code: PostingCode, message: string): PostingJobResult {
   }
 }
 
-function beforeRunSessionFailure(session: FacebookSessionResult): PostingJobResult {
-  const verificationRequired = session.reason === 'checkpoint'
+function commonResult(result: FacebookCommonStepResult): PostingJobResult {
   return {
-    status: 'needs_login',
-    code: verificationRequired ? 'verification_required' : 'needs_login',
-    message: session.message,
-    sessionValidation: {
-      phase: 'before_run',
-      state: verificationRequired ? 'verification_required' : 'needs_login',
-      message: session.message
-    }
-  }
-}
-
-function beforeRunIdentityFailure(message: string): PostingJobResult {
-  return {
-    status: 'needs_login',
-    code: 'needs_login',
-    message,
-    sessionValidation: {
-      phase: 'before_run',
-      state: 'needs_login',
-      message
-    }
+    status: result.status,
+    ...(result.code ? { code: result.code } : {}),
+    message: result.message,
+    ...(result.sessionValidation ? { sessionValidation: result.sessionValidation } : {})
   }
 }
 
@@ -80,18 +56,6 @@ function engineDiagnostic(job: PostingJobRequest, message: string): void {
   console.info(
     `[PAGE-AUTO posting-engine] run=${job.runId} item=${job.itemId} account=${job.accountId} group=${job.groupUid} ${message}`
   )
-}
-
-async function waitActionPacing(
-  page: Page,
-  browser: BrowserSettings,
-  job: PostingJobRequest,
-  boundary: string
-): Promise<void> {
-  const delayMs = randomBrowserActionDelayMs(browser)
-  if (delayMs <= 0) return
-  engineDiagnostic(job, `pacing=${boundary} delayMs=${delayMs}`)
-  await page.waitForTimeout(delayMs)
 }
 
 async function firstVisibleMatch(candidates: Locator[]): Promise<Locator | null> {
@@ -167,9 +131,9 @@ export class GroupNavigator {
       return failure('group_navigation_failed', error instanceof Error ? error.message : String(error))
     }
 
-    const blocked = await detectFacebookAccessBlock(this.page)
-    if (blocked === 'login_required') return failure('needs_login', 'Facebook yêu cầu đăng nhập lại.')
-    if (blocked === 'verification_required') return failure('verification_required', 'Facebook yêu cầu checkpoint/xác minh thủ công.')
+    const access = await checkFacebookCommonAccess(this.page, 'sau khi mở Group')
+    if (access.status !== 'success') return commonResult(access)
+
     const unavailable = this.page.getByText(/content isn't available|nội dung này hiện không hiển thị|this content isn't available/i).first()
     if (await unavailable.isVisible().catch(() => false)) return failure('group_unavailable', 'Group không khả dụng với session hiện tại.')
     return { status: 'success', message: 'Đã mở Group.' }
@@ -200,9 +164,6 @@ export class PostComposer {
         return { status: 'success', message: 'Đã điền và xác nhận nội dung trong composer.' }
       }
 
-      // Playwright click already performs actionability checks and scrolls only when
-      // necessary. Avoid explicit scrollIntoView in Compact mode because it can move
-      // Facebook's virtualized surface before focus settles.
       await textbox.click({ timeout: 10_000 })
       await this.page.waitForTimeout(300)
       await this.page.keyboard.press('Control+A').catch(() => undefined)
@@ -449,33 +410,14 @@ export class PublishResultDetector {
 }
 
 export async function executePostingJob(job: PostingJobRequest): Promise<PostingJobResult> {
-  let context: BrowserContext | null = null
+  let runtime: FacebookCommonRuntime | null = null
   let page: Page | null = null
-  let lifetimeTimer: NodeJS.Timeout | null = null
   let traceStarted = false
-  let accountName: string | null = job.sessionAccount.name?.trim() || null
-  let sessionCookie: string | null = null
-  let sessionValidated = false
-
-  try {
-    await waitForBrowserStartupDelay(job.browser)
-    context = await chromium.launchPersistentContext(job.profileDirectory, {
-      ...buildBrowserLaunchOptions(job.browser),
-      viewport: null,
-      ...(job.userAgent ? { userAgent: job.userAgent } : {}),
-      ...(job.proxy ? { proxy: { server: job.proxy.server, ...(job.proxy.username ? { username: job.proxy.username } : {}), ...(job.proxy.password ? { password: job.proxy.password } : {}) } } : {})
-    })
-    await applyBrowserContextSettings(context, job.browser)
-    lifetimeTimer = setTimeout(() => { void context?.close().catch(() => undefined) }, job.browser.maxLifetimeMinutes * 60_000)
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    const profileInUse = /processsingleton|profile.*in use|user data directory is already in use/i.test(message)
-    return failure(profileInUse ? 'profile_in_use' : 'browser_launch_failed', profileInUse ? 'Browser profile đang được mở ở process khác.' : message)
-  }
 
   const finish = async (result: PostingJobResult): Promise<PostingJobResult> => {
     let enriched = result
-    if (sessionValidated && !enriched.sessionValidation) {
+    const metadata = runtime?.metadata()
+    if (metadata?.sessionValidated && !enriched.sessionValidation) {
       enriched = {
         ...enriched,
         sessionValidation: {
@@ -485,59 +427,41 @@ export async function executePostingJob(job: PostingJobRequest): Promise<Posting
         }
       }
     }
-    if (accountName && !enriched.accountName) enriched = { ...enriched, accountName }
-    if (sessionCookie && !enriched.sessionCookie) enriched = { ...enriched, sessionCookie }
+    if (metadata?.accountName && !enriched.accountName) enriched = { ...enriched, accountName: metadata.accountName }
+    if (metadata?.sessionCookie && !enriched.sessionCookie) enriched = { ...enriched, sessionCookie: metadata.sessionCookie }
     return page ? finishPostingEvidence(page, job, enriched, traceStarted) : enriched
   }
 
   try {
-    page = context.pages()[0] ?? await context.newPage()
-    const runtimeBrowser: BrowserSettings = {
-      ...job.browser,
-      navigationTimeoutMs: effectiveNavigationTimeoutMs(job.browser.navigationTimeoutMs, job.network.networkTimeoutMs)
-    }
-    page.setDefaultTimeout(job.network.networkTimeoutMs)
-    page.setDefaultNavigationTimeout(runtimeBrowser.navigationTimeoutMs)
-    traceStarted = await startPostingTrace(context, job)
+    const opened = await FacebookCommonRuntime.open({
+      profileDirectory: job.profileDirectory,
+      pageUid: job.pageUid,
+      browser: job.browser,
+      session: job.session,
+      network: job.network,
+      sessionAccount: job.sessionAccount,
+      ...(job.userAgent ? { userAgent: job.userAgent } : {}),
+      ...(job.proxy ? { proxy: job.proxy } : {}),
+      diagnostic: (message) => engineDiagnostic(job, message)
+    })
+    if (opened.status !== 'ready') return commonResult(opened.result)
+
+    runtime = opened.runtime
+    page = runtime.page
+    traceStarted = await startPostingTrace(runtime.context, job)
     engineDiagnostic(job, compactRuntimeDiagnostics(job))
 
-    if (job.proxy && job.network.checkProxyBeforeRun) {
-      const proxyCheck = await probeFacebookThroughProxy(page, job.network)
-      if (proxyCheck.status === 'failed') return finish(failure('proxy_unavailable', proxyCheck.message))
-    }
+    const prepared = await runtime.prepareForPage()
+    if (prepared.status !== 'success') return finish(commonResult(prepared))
 
-    const session = await bootstrapFacebookSession(context, page, job.sessionAccount, job.session.facebookLocale)
-    if (session.status !== 'valid') return finish(beforeRunSessionFailure(session))
-    sessionValidated = true
-    sessionCookie = session.cookie
-
-    const accountIdentity = await inspectFacebookAccountIdentity(context, job.sessionAccount.uid)
-    if (accountIdentity.state === 'mismatch' || accountIdentity.state === 'missing') {
-      sessionValidated = false
-      return finish(beforeRunIdentityFailure(accountIdentity.message))
-    }
-    if (!accountName && accountIdentity.state === 'match') {
-      accountName = await readFacebookDisplayName(page).catch(() => null)
-    }
-
-    const activePageUid = await activeFacebookProfileId(context).catch(() => null)
-    if (classifyPageIdentityUid(job.pageUid, activePageUid) === 'match') {
-      engineDiagnostic(job, `state=page_identity reuse i_user=${job.pageUid}`)
-    } else {
-      await waitActionPacing(page, runtimeBrowser, job, 'login-to-page')
-      const identity = await new PageIdentitySwitcher(page, context, runtimeBrowser).switchTo(job.pageUid)
-      if (identity.status !== 'success') return finish(identity)
-      engineDiagnostic(job, 'state=page_identity switched')
-    }
-
-    await waitActionPacing(page, runtimeBrowser, job, 'page-to-group')
-    const navigation = await new GroupNavigator(page, runtimeBrowser).open(job.groupUid)
+    await runtime.pace('page-to-group')
+    const navigation = await new GroupNavigator(page, runtime.browser).open(job.groupUid)
     if (navigation.status !== 'success') return finish(navigation)
     engineDiagnostic(job, 'state=group_surface ready')
 
-    await waitActionPacing(page, runtimeBrowser, job, 'group-to-composer')
+    await runtime.pace('group-to-composer')
     engineDiagnostic(job, `material ready contentLength=${job.content.trim().length} imageCount=${job.imagePaths.length}`)
-    const resultDetector = new PublishResultDetector(page, runtimeBrowser, job.groupUid)
+    const resultDetector = new PublishResultDetector(page, runtime.browser, job.groupUid)
     const publishBaseline = await resultDetector.captureBaseline()
     engineDiagnostic(job, `verification baseline captured=${publishBaseline.captured} posts=${publishBaseline.postKeys.size}`)
 
@@ -560,7 +484,7 @@ export async function executePostingJob(job: PostingJobRequest): Promise<Posting
     engineDiagnostic(job, `state=media_ready count=${job.imagePaths.length}`)
     engineDiagnostic(job, `publish candidates after media ${await composerDetector.publishDiagnostics()}`)
 
-    await waitActionPacing(page, runtimeBrowser, job, 'media-to-publish')
+    await runtime.pace('media-to-publish')
     const publishResult = await new PublishAction(page, composerDetector).click(composer.container)
     if (publishResult.status !== 'success') return finish(publishResult)
     engineDiagnostic(job, 'state=publish_click sent; sweeping posted>pending>declined>removed>posted')
@@ -568,58 +492,15 @@ export async function executePostingJob(job: PostingJobRequest): Promise<Posting
     const confirmed = await resultDetector.detect(job.content, publishBaseline)
     if (confirmed.status !== 'success' || !job.session.validateAfterRun) return finish(confirmed)
 
-    const afterSession = await validateFacebookSession(context, page)
-    if (afterSession.state === 'valid') {
-      return finish({
-        ...confirmed,
-        sessionValidation: { phase: 'after_run', state: 'valid', message: afterSession.message }
-      })
-    }
-
-    if (afterSession.state === 'needs_login') {
-      const recovered = await bootstrapFacebookSession(context, page, job.sessionAccount, job.session.facebookLocale)
-      if (recovered.status === 'valid') {
-        const recoveredIdentity = await inspectFacebookAccountIdentity(context, job.sessionAccount.uid)
-        if (recoveredIdentity.state === 'match' || recoveredIdentity.state === 'unverifiable') {
-          sessionCookie = recovered.cookie ?? sessionCookie
-          sessionValidated = true
-          if (!accountName && recoveredIdentity.state === 'match') {
-            accountName = await readFacebookDisplayName(page).catch(() => null)
-          }
-          return finish({
-            ...confirmed,
-            message: `${confirmed.message} Session vừa hết đã được tự đăng nhập lại.`,
-            sessionValidation: { phase: 'after_run', state: 'valid', message: 'Đã tự phục hồi session sau publish.' }
-          })
-        }
-      }
-
-      sessionValidated = false
-      const verificationRequired = recovered.reason === 'checkpoint'
-      return finish({
-        ...confirmed,
-        message: `${confirmed.message} ${recovered.message}`,
-        sessionValidation: {
-          phase: 'after_run',
-          state: verificationRequired ? 'verification_required' : 'needs_login',
-          message: recovered.message
-        }
-      })
-    }
-
-    sessionValidated = false
+    const after = await runtime.validateAfterTask()
     return finish({
       ...confirmed,
-      message: `${confirmed.message} ${afterSession.message}`,
-      sessionValidation: { phase: 'after_run', state: afterSession.state, message: afterSession.message }
+      ...(after.messageSuffix ? { message: `${confirmed.message} ${after.messageSuffix}` } : {}),
+      sessionValidation: after.sessionValidation
     })
   } catch (error) {
     return finish(failure('unexpected_error', error instanceof Error ? error.message : String(error)))
   } finally {
-    if (lifetimeTimer) clearTimeout(lifetimeTimer)
-    if (context) {
-      if (job.browser.closeDelayMs > 0) await new Promise<void>((resolve) => setTimeout(resolve, job.browser.closeDelayMs))
-      await context.close().catch(() => undefined)
-    }
+    await runtime?.close()
   }
 }
