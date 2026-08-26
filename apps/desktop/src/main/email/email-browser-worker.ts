@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { request } from 'node:http'
 import { join } from 'node:path'
-import { chromium, type Browser, type BrowserContext, type Page } from 'playwright-core'
+import { chromium, type Browser, type BrowserContext, type Locator, type Page } from 'playwright-core'
 import type { HotmailNeedsAttentionReason, HotmailRecoveryOperation } from '../../shared/hotmail'
 import { friendlyEmailBrowserError, isEmailProfileInUseError } from './emailBrowserLifecycle'
 
@@ -28,7 +28,14 @@ interface RecoveryCommand extends BrowserCommandBase {
   confirmCompleted: boolean
 }
 
-type WorkerCommand = OpenCommand | RecoveryCommand
+interface PasswordCommand extends BrowserCommandBase {
+  type: 'password-action'
+  confirmCompleted: boolean
+  currentPassword?: string
+  newPassword?: string
+}
+
+type WorkerCommand = OpenCommand | RecoveryCommand | PasswordCommand
 
 interface OpenResult {
   type: 'open-result'
@@ -49,6 +56,21 @@ interface RecoveryResult {
   message: string
 }
 
+interface PasswordResult {
+  type: 'password-result'
+  accountId: number
+  status: 'success' | 'needs_attention' | 'profile_in_use' | 'error'
+  needsAttentionReason?: HotmailNeedsAttentionReason
+  proxyManagedExternally: boolean
+  message: string
+}
+
+interface PasswordSnapshot {
+  url: string
+  text: string
+  passwordInputCount: number
+}
+
 function unwrapMessage(event: unknown): unknown {
   return event && typeof event === 'object' && 'data' in event
     ? (event as { data?: unknown }).data
@@ -63,6 +85,11 @@ function parseCommand(event: unknown): WorkerCommand | null {
   if (candidate.type === 'open-mail') return candidate as OpenCommand
   if (candidate.type === 'recovery-action' && (candidate.operation === 'add' || candidate.operation === 'remove' || candidate.operation === 'replace')) {
     return candidate as RecoveryCommand
+  }
+  if (candidate.type === 'password-action' && typeof candidate.confirmCompleted === 'boolean') {
+    if (candidate.currentPassword !== undefined && typeof candidate.currentPassword !== 'string') return null
+    if (candidate.newPassword !== undefined && typeof candidate.newPassword !== 'string') return null
+    return candidate as PasswordCommand
   }
   return null
 }
@@ -217,6 +244,201 @@ async function runRecoveryAction(context: BrowserContext, command: RecoveryComma
   }
 }
 
+async function readPasswordSnapshot(page: Page): Promise<PasswordSnapshot | null> {
+  try {
+    const [text, passwordInputCount] = await Promise.all([
+      page.locator('body').innerText({ timeout: 3_000 }),
+      page.locator('input[type="password"]:visible').count()
+    ])
+    return {
+      url: page.url().toLowerCase(),
+      text: text.toLowerCase(),
+      passwordInputCount
+    }
+  } catch {
+    return null
+  }
+}
+
+function isPasswordChangeSurface(snapshot: PasswordSnapshot): boolean {
+  return /account\.live\.com\/(client\/)?password\/change/.test(snapshot.url)
+    || /change your password|change password|new password|reenter password|password expired|update your password|đổi mật khẩu|mật khẩu mới|nhập lại mật khẩu|mật khẩu.*hết hạn/.test(snapshot.text)
+}
+
+function passwordAttention(snapshot: PasswordSnapshot): HotmailNeedsAttentionReason | null {
+  if (/verify your identity|confirm your identity|identity verification|xác minh danh tính/.test(snapshot.text)) return 'identity_review'
+  if (/enter.*code|security code|verify.*account|help us protect|xác minh bảo mật|mã bảo mật/.test(snapshot.text)) return 'security_review'
+  if ((/login\.live\.com|signin|oauth20_authorize/.test(snapshot.url) || /sign in|đăng nhập/.test(snapshot.text)) && !isPasswordChangeSurface(snapshot)) {
+    return 'needs_login'
+  }
+  return null
+}
+
+function passwordSucceeded(snapshot: PasswordSnapshot): boolean {
+  if (/successfully changed your password|password (?:has been|was) changed|đã (?:đổi|thay đổi) mật khẩu/.test(snapshot.text)) return true
+  return snapshot.url.includes('account.live.com')
+    && !isPasswordChangeSurface(snapshot)
+    && snapshot.passwordInputCount === 0
+}
+
+function passwordFailed(snapshot: PasswordSnapshot): boolean {
+  return /couldn.?t change your password|could not change your password|current password.*incorrect|incorrect current password|password.*doesn.?t meet|password.*cannot|password.*can.?t|không thể đổi mật khẩu|mật khẩu hiện tại.*không đúng|mật khẩu.*không đáp ứng/.test(snapshot.text)
+}
+
+async function firstVisible(candidates: Locator[]): Promise<Locator | null> {
+  for (const candidate of candidates) {
+    if (await candidate.isVisible().catch(() => false)) return candidate
+  }
+  return null
+}
+
+async function fillPasswordForm(page: Page, command: PasswordCommand): Promise<'submitted' | 'manual'> {
+  const newPassword = command.newPassword
+  if (!newPassword) return 'manual'
+
+  const passwordInputs = page.locator('input[type="password"]:visible')
+  const count = await passwordInputs.count()
+  if (count < 2) return 'manual'
+
+  const current = await firstVisible([
+    page.getByLabel(/current password|mật khẩu hiện tại/i).first(),
+    page.locator('input[name*="old" i][type="password"]:visible').first(),
+    page.locator('input[name*="current" i][type="password"]:visible').first()
+  ])
+  const next = await firstVisible([
+    page.getByLabel(/^new password$|mật khẩu mới/i).first(),
+    page.locator('input[name*="new" i][type="password"]:visible').first()
+  ])
+  const confirm = await firstVisible([
+    page.getByLabel(/reenter password|re-enter password|confirm password|nhập lại mật khẩu|xác nhận mật khẩu/i).first(),
+    page.locator('input[name*="confirm" i][type="password"]:visible').first(),
+    page.locator('input[name*="reenter" i][type="password"]:visible').first()
+  ])
+
+  const currentInput = current ?? (count >= 3 ? passwordInputs.nth(0) : null)
+  const newInput = next ?? (count >= 3 ? passwordInputs.nth(1) : passwordInputs.nth(0))
+  const confirmInput = confirm ?? (count >= 3 ? passwordInputs.nth(2) : passwordInputs.nth(1))
+
+  if (currentInput) {
+    if (!command.currentPassword) return 'manual'
+    await currentInput.fill(command.currentPassword)
+  }
+  await newInput.fill(newPassword)
+  if (confirmInput && await confirmInput.isVisible().catch(() => false)) await confirmInput.fill(newPassword)
+
+  let submit = await firstVisible([
+    page.getByRole('button', { name: /save|next|change password|đổi mật khẩu|lưu|tiếp theo/i }).last(),
+    page.locator('input[type="submit"]:visible').last()
+  ])
+  if (!submit) submit = await firstVisible([page.locator('button[type="submit"]:visible').last()])
+  if (!submit) return 'manual'
+
+  await submit.click()
+  await page.waitForTimeout(1_500)
+  return 'submitted'
+}
+
+async function openPasswordPage(context: BrowserContext): Promise<Page> {
+  const page = context.pages()[0] ?? await context.newPage()
+  await page.goto('https://account.live.com/password/Change', {
+    waitUntil: 'domcontentloaded',
+    timeout: 30_000
+  })
+  await page.bringToFront().catch(() => undefined)
+  return page
+}
+
+function passwordNeedsAttention(command: PasswordCommand, reason: HotmailNeedsAttentionReason, proxyManagedExternally: boolean, message?: string): PasswordResult {
+  return {
+    type: 'password-result',
+    accountId: command.accountId,
+    status: 'needs_attention',
+    needsAttentionReason: reason,
+    proxyManagedExternally,
+    message: message ?? manualReasonMessage(reason)
+  }
+}
+
+async function runPasswordAction(context: BrowserContext, command: PasswordCommand, proxyManagedExternally: boolean): Promise<PasswordResult> {
+  const page = command.confirmCompleted
+    ? (context.pages()[0] ?? await context.newPage())
+    : await openPasswordPage(context)
+  await page.bringToFront().catch(() => undefined)
+
+  let snapshot = await readPasswordSnapshot(page)
+  if (!snapshot) return passwordNeedsAttention(command, 'security_review', proxyManagedExternally, 'Không đọc được trạng thái trang Microsoft Password; PAGE-AUTO dừng an toàn và chưa cập nhật PassEmail.')
+
+  const attention = passwordAttention(snapshot)
+  if (attention) return passwordNeedsAttention(command, attention, proxyManagedExternally)
+
+  if (command.confirmCompleted) {
+    if (passwordSucceeded(snapshot)) {
+      return {
+        type: 'password-result',
+        accountId: command.accountId,
+        status: 'success',
+        proxyManagedExternally,
+        message: 'Đã xác nhận flow đổi Password Microsoft hoàn tất trong cùng phiên Email.'
+      }
+    }
+    return passwordNeedsAttention(
+      command,
+      'manual_completion_required',
+      proxyManagedExternally,
+      'Trang Microsoft vẫn chưa ở trạng thái xác nhận đổi Password hoàn tất; PassEmail chưa được cập nhật.'
+    )
+  }
+
+  if (!isPasswordChangeSurface(snapshot)) {
+    return passwordNeedsAttention(
+      command,
+      'manual_completion_required',
+      proxyManagedExternally,
+      'Đã mở Microsoft Password nhưng surface hiện tại không khớp form đổi mật khẩu được hỗ trợ. PAGE-AUTO giữ phiên để anh xử lý thủ công.'
+    )
+  }
+
+  const submitted = await fillPasswordForm(page, command)
+  if (submitted === 'manual') {
+    return passwordNeedsAttention(
+      command,
+      'manual_completion_required',
+      proxyManagedExternally,
+      'Microsoft đang dùng form đổi Password khác hoặc thiếu Password Email hiện tại. PAGE-AUTO giữ phiên, không tự đoán field.'
+    )
+  }
+
+  snapshot = await readPasswordSnapshot(page)
+  if (!snapshot) return passwordNeedsAttention(command, 'security_review', proxyManagedExternally, 'Không đọc được kết quả sau khi gửi form Password; PAGE-AUTO dừng an toàn và chưa cập nhật PassEmail.')
+
+  const afterAttention = passwordAttention(snapshot)
+  if (afterAttention) return passwordNeedsAttention(command, afterAttention, proxyManagedExternally)
+  if (passwordSucceeded(snapshot)) {
+    return {
+      type: 'password-result',
+      accountId: command.accountId,
+      status: 'success',
+      proxyManagedExternally,
+      message: 'Microsoft xác nhận đổi Password thành công.'
+    }
+  }
+  if (passwordFailed(snapshot)) {
+    return {
+      type: 'password-result',
+      accountId: command.accountId,
+      status: 'error',
+      proxyManagedExternally,
+      message: 'Microsoft từ chối đổi Password. PassEmail chưa được cập nhật.'
+    }
+  }
+  return passwordNeedsAttention(
+    command,
+    'manual_completion_required',
+    proxyManagedExternally,
+    'Đã gửi form Password nhưng kết quả Microsoft chưa đủ rõ để coi là thành công. PAGE-AUTO giữ phiên để anh kiểm tra.'
+  )
+}
+
 async function run(): Promise<void> {
   let launchedContext: BrowserContext | null = null
   let attachedBrowser: Browser | null = null
@@ -280,6 +502,15 @@ async function run(): Promise<void> {
         if ('type' in resolved) {
           if (command.type === 'open-mail') {
             process.parentPort?.postMessage(resolved)
+          } else if (command.type === 'password-action') {
+            const result: PasswordResult = {
+              type: 'password-result',
+              accountId: command.accountId,
+              status: 'profile_in_use',
+              proxyManagedExternally: true,
+              message: resolved.message
+            }
+            process.parentPort?.postMessage(result)
           } else {
             const result: RecoveryResult = {
               type: 'recovery-result',
@@ -310,6 +541,12 @@ async function run(): Promise<void> {
           return
         }
 
+        if (command.type === 'password-action') {
+          const result = await runPasswordAction(resolved.context, command, resolved.proxyManagedExternally || attachedExternally)
+          process.parentPort?.postMessage(result)
+          return
+        }
+
         const result = await runRecoveryAction(resolved.context, command, resolved.proxyManagedExternally || attachedExternally)
         process.parentPort?.postMessage(result)
       } catch (error) {
@@ -321,6 +558,15 @@ async function run(): Promise<void> {
             attached: false,
             proxyManagedExternally: false,
             message: friendlyEmailBrowserError(error)
+          }
+          process.parentPort?.postMessage(result)
+        } else if (command.type === 'password-action') {
+          const result: PasswordResult = {
+            type: 'password-result',
+            accountId: command.accountId,
+            status: 'error',
+            proxyManagedExternally: false,
+            message: 'Thao tác đổi Password Email chưa hoàn tất trong browser Email.'
           }
           process.parentPort?.postMessage(result)
         } else {

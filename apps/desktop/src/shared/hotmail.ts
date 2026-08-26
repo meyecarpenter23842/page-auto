@@ -128,6 +128,23 @@ export interface HotmailRecoveryBatchResult {
   results: HotmailRecoveryActionResult[]
 }
 
+export interface HotmailPasswordActionPayload {
+  accountIds: number[]
+  /** Required when starting a new password-change flow. Omitted on same-session confirmation. */
+  newPassword?: string
+  /** Confirm a manual/continued Microsoft password flow already open in the same Email session. */
+  confirmCompleted?: boolean
+}
+
+export interface HotmailPasswordActionResult extends HotmailActionResult {
+  passwordUpdated: boolean
+  needsAttentionReason?: HotmailNeedsAttentionReason
+}
+
+export interface HotmailPasswordBatchResult {
+  results: HotmailPasswordActionResult[]
+}
+
 export interface HotmailProxyStatus {
   mode: EmailProxyMode
   poolSize: number
