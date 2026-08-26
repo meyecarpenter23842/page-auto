@@ -32,8 +32,18 @@ parentPort.on('message', (event) => {
     if (shuttingDown) return
     shuttingDown = true
     queue = queue.finally(async () => {
-      await closeManagedPostingBrowser()
-      setTimeout(() => process.exit(0), 25)
+      let exitCode = 0
+      try {
+        await closeManagedPostingBrowser()
+        console.info('[PAGE-AUTO browser-close] posting worker confirmed browser shutdown')
+      } catch (error) {
+        exitCode = 1
+        console.error(
+          '[PAGE-AUTO browser-close] posting worker failed to close browser:',
+          error instanceof Error ? error.message : String(error)
+        )
+      }
+      setTimeout(() => process.exit(exitCode), 25)
     })
     return
   }
