@@ -46,6 +46,26 @@ describe('Facebook session gate', () => {
       manualVerificationTextVisible: false
     })).toBe('two_factor')
   })
+
+  it('keeps a normal Facebook URL valid when stale verification copy remains after login', () => {
+    expect(classifyFacebookSessionGate({
+      url: 'https://www.facebook.com/',
+      hasUserCookie: true,
+      loginFormVisible: false,
+      twoFactorVisible: false,
+      manualVerificationTextVisible: true
+    })).toBe('valid')
+  })
+
+  it('does not let a user cookie hide an explicit checkpoint route', () => {
+    expect(classifyFacebookSessionGate({
+      url: 'https://www.facebook.com/checkpoint/123/',
+      hasUserCookie: true,
+      loginFormVisible: false,
+      twoFactorVisible: false,
+      manualVerificationTextVisible: false
+    })).toBe('manual_verification')
+  })
 })
 
 describe('Facebook account 2FA', () => {

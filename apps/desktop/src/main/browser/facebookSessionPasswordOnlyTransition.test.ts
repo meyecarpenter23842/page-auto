@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { bootstrapFacebookSession, type FacebookSessionAccount } from './facebookSession'
 
 type PasswordOnlyTarget = 'two_factor' | 'valid' | 'checkpoint'
+type FixtureSurface = 'password_only' | PasswordOnlyTarget | 'post_two_factor'
 
 function hiddenLocator(): Locator {
   const stub: Partial<Locator> = {
@@ -52,12 +53,14 @@ function createPasswordOnlyFixture(target: PasswordOnlyTarget): {
   context: BrowserContext
   page: Page
   transitionPolls: () => number
+  postTwoFactorPolls: () => number
   filledTwoFactorCode: () => string | null
 } {
-  let surface: 'password_only' | PasswordOnlyTarget = 'password_only'
+  let surface: FixtureSurface = 'password_only'
   let currentUrl = 'https://www.facebook.com/'
   let passwordSubmitted = false
   let polls = 0
+  let outcomePolls = 0
   let filledCode: string | null = null
 
   const isLoggedIn = (): boolean => surface === 'valid'
@@ -91,11 +94,13 @@ function createPasswordOnlyFixture(target: PasswordOnlyTarget): {
     isVisible: async () => surface === 'two_factor',
     isEnabled: async () => surface === 'two_factor',
     click: async () => {
-      surface = 'valid'
+      surface = 'post_two_factor'
       currentUrl = 'https://www.facebook.com/'
     }
   })
-  const manualMarker = visibleLocator({ isVisible: async () => surface === 'checkpoint' })
+  const manualMarker = visibleLocator({
+    isVisible: async () => surface === 'checkpoint' || surface === 'post_two_factor'
+  })
 
   const moveToTarget = (): void => {
     surface = target
@@ -109,6 +114,11 @@ function createPasswordOnlyFixture(target: PasswordOnlyTarget): {
     goto: async (url: string) => { currentUrl = url },
     waitForLoadState: async () => undefined,
     waitForTimeout: async (milliseconds: number) => {
+      if (surface === 'post_two_factor' && milliseconds === 250) {
+        outcomePolls += 1
+        if (outcomePolls >= 2) surface = 'valid'
+        return
+      }
       if (!passwordSubmitted || surface !== 'password_only' || milliseconds !== 250) return
       polls += 1
       if (polls >= 2) moveToTarget()
@@ -124,7 +134,7 @@ function createPasswordOnlyFixture(target: PasswordOnlyTarget): {
       return hiddenLocator()
     },
     getByText: (text: string | RegExp) => {
-      if (surface === 'checkpoint' && text instanceof RegExp && text.test('confirm your identity')) return manualMarker
+      if ((surface === 'checkpoint' || surface === 'post_two_factor') && text instanceof RegExp && text.test('confirm your identity')) return manualMarker
       return hiddenLocator()
     },
     getByRole: (role: string, options?: { name?: string | RegExp }) => {
@@ -139,6 +149,7 @@ function createPasswordOnlyFixture(target: PasswordOnlyTarget): {
     context,
     page,
     transitionPolls: () => polls,
+    postTwoFactorPolls: () => outcomePolls,
     filledTwoFactorCode: () => filledCode
   }
 }
@@ -148,7 +159,7 @@ afterEach(() => {
 })
 
 describe('saved-profile password-only transition', () => {
-  it('ignores stale password-only DOM until delayed 2FA is ready, then enters the 2FA handler', async () => {
+  it('ignores stale password-only DOM, survives transient verification copy after 2FA, then accepts the valid session', async () => {
     const fixture = createPasswordOnlyFixture('two_factor')
     const diagnostics: string[] = []
     vi.spyOn(console, 'info').mockImplementation((message?: unknown) => {
@@ -158,8 +169,10 @@ describe('saved-profile password-only transition', () => {
     const result = await bootstrapFacebookSession(fixture.context, fixture.page, passwordAccount(21, '70007'), 'auto')
 
     expect(fixture.transitionPolls()).toBeGreaterThanOrEqual(2)
+    expect(fixture.postTwoFactorPolls()).toBeGreaterThanOrEqual(2)
     expect(fixture.filledTwoFactorCode()).toBe('654321')
     expect(diagnostics.some((line) => line.includes('state=two_factor stage=handler_start'))).toBe(true)
+    expect(diagnostics.some((line) => line.includes('state=two_factor stage=outcome') && line.includes('gate=valid'))).toBe(true)
     expect(result).toMatchObject({ accountId: 21, status: 'valid', reason: 'valid', cookieStatus: 'valid' })
   })
 

@@ -82,6 +82,7 @@ const TWO_FACTOR_SUBMIT_PATTERN = /^(continue|tiếp tục|submit|gửi|confirm|
 const TWO_FACTOR_INPUT_TIMEOUT_MS = 20_000
 const TWO_FACTOR_OUTCOME_TIMEOUT_MS = 15_000
 const TWO_FACTOR_MAX_ATTEMPTS = 2
+const TEXT_ONLY_MANUAL_VERIFICATION_GRACE_MS = 2_000
 const TOTP_STEP_MS = 30_000
 const TOTP_MIN_REMAINING_MS = 8_000
 const TOTP_WINDOW_BUFFER_MS = 750
@@ -408,11 +409,12 @@ async function findTwoFactorSubmit(page: Page, timeoutMs = 8_000): Promise<Locat
 
 export function classifyFacebookSessionGate(input: FacebookSessionGateInput): FacebookSessionGate {
   if (input.twoFactorVisible) return 'two_factor'
-  if (isManualVerificationUrl(input.url) || input.manualVerificationTextVisible) return 'manual_verification'
+  if (isManualVerificationUrl(input.url)) return 'manual_verification'
   if (input.passwordOnlyVisible) return 'password_only'
   if (input.savedProfileVisible) return 'saved_profile'
   if (input.loginFormVisible) return 'login'
   if (input.hasUserCookie) return 'valid'
+  if (input.manualVerificationTextVisible) return 'manual_verification'
   return 'unknown'
 }
 
@@ -480,11 +482,20 @@ async function waitForTwoFactorOutcome(
 ): Promise<FacebookSessionGate> {
   const deadline = Date.now() + timeoutMs
   let latest: FacebookSessionGate = 'two_factor'
+  let textOnlyManualSince: number | null = null
   while (Date.now() < deadline) {
     latest = await inspectFacebookSessionGate(context, page)
-    if (latest === 'valid' || latest === 'manual_verification' || latest === 'password_only' || latest === 'login' || latest === 'saved_profile') {
+    if (latest === 'valid' || latest === 'password_only' || latest === 'login' || latest === 'saved_profile') {
       return latest
     }
+    if (latest === 'manual_verification') {
+      if (isManualVerificationUrl(page.url())) return latest
+      textOnlyManualSince ??= Date.now()
+      if (Date.now() - textOnlyManualSince >= TEXT_ONLY_MANUAL_VERIFICATION_GRACE_MS) return latest
+      await page.waitForTimeout(250)
+      continue
+    }
+    textOnlyManualSince = null
     if (latest === 'unknown' && !await isTwoFactorSurfaceActive(page)) return latest
     await page.waitForTimeout(250)
   }

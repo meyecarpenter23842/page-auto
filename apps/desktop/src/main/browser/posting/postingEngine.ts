@@ -11,8 +11,8 @@ import {
 import { applyBrowserContextSettings, buildBrowserLaunchOptions, waitForBrowserStartupDelay } from '../browserRuntime'
 import { effectiveNavigationTimeoutMs, probeFacebookThroughProxy } from '../proxyPreflight'
 import { COMPOSER_MEDIA_PATTERN } from './composerSurface'
-import { PageIdentitySwitcher } from './pageIdentitySwitcher'
-import { detectFacebookAccessBlock } from './pageState'
+import { classifyPageIdentityUid, PageIdentitySwitcher } from './pageIdentitySwitcher'
+import { activeFacebookProfileId, detectFacebookAccessBlock } from './pageState'
 import { finishPostingEvidence, startPostingTrace } from './postingEvidence'
 import {
   isMediaAttachmentReady,
@@ -520,9 +520,15 @@ export async function executePostingJob(job: PostingJobRequest): Promise<Posting
       accountName = await readFacebookDisplayName(page).catch(() => null)
     }
 
-    await waitActionPacing(page, runtimeBrowser, job, 'login-to-page')
-    const identity = await new PageIdentitySwitcher(page, context, runtimeBrowser).switchTo(job.pageUid)
-    if (identity.status !== 'success') return finish(identity)
+    const activePageUid = await activeFacebookProfileId(context).catch(() => null)
+    if (classifyPageIdentityUid(job.pageUid, activePageUid) === 'match') {
+      engineDiagnostic(job, `state=page_identity reuse i_user=${job.pageUid}`)
+    } else {
+      await waitActionPacing(page, runtimeBrowser, job, 'login-to-page')
+      const identity = await new PageIdentitySwitcher(page, context, runtimeBrowser).switchTo(job.pageUid)
+      if (identity.status !== 'success') return finish(identity)
+      engineDiagnostic(job, 'state=page_identity switched')
+    }
 
     await waitActionPacing(page, runtimeBrowser, job, 'page-to-group')
     const navigation = await new GroupNavigator(page, runtimeBrowser).open(job.groupUid)
