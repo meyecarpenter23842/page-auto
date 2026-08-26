@@ -9,6 +9,7 @@ import type {
   HotmailSettingsView,
   SaveHotmailSettingsInput
 } from '../../../shared/hotmail'
+import { filterHotmailRows, previewClientId, type EmailQuickFilter } from './hotmailUiModel'
 import './hotmailAuto.css'
 
 interface SettingsDraft {
@@ -20,7 +21,7 @@ interface SettingsDraft {
   proxyListText: string
 }
 
-type EmailTab = 'accounts' | 'mail' | 'profiles' | 'recovery' | 'network' | 'logs' | 'settings'
+type EmailPanel = 'network' | 'logs' | 'settings' | 'recovery' | null
 type ActionKey = 'oauth' | 'codes' | 'open' | 'check' | 'rotate' | 'test' | 'save' | 'pick-root' | 'pick-browser' | 'copy' | 'refresh'
 
 type ContextMenuState = {
@@ -29,14 +30,12 @@ type ContextMenuState = {
   accountId: number
 } | null
 
-const EMAIL_TABS: Array<{ id: EmailTab; label: string }> = [
-  { id: 'accounts', label: 'Danh sách mail' },
-  { id: 'mail', label: 'Lấy mã / Kiểm tra mail' },
-  { id: 'profiles', label: 'Mở mail' },
-  { id: 'recovery', label: 'Mail khôi phục' },
-  { id: 'network', label: 'Đổi IP / Proxy' },
-  { id: 'logs', label: 'Nhật ký' },
-  { id: 'settings', label: 'Cài đặt' }
+const QUICK_FILTERS: Array<{ id: EmailQuickFilter; label: string }> = [
+  { id: 'all', label: 'Tất cả' },
+  { id: 'ready', label: 'Sẵn sàng' },
+  { id: 'needs_attention', label: 'Cần xử lý' },
+  { id: 'oauth_missing', label: 'Thiếu OAuth' },
+  { id: 'recovery', label: 'Có mail khôi phục' }
 ]
 
 function settingsDraft(settings: HotmailSettingsView): SettingsDraft {
@@ -98,7 +97,6 @@ function Spinner() {
 }
 
 export function HotmailAuto() {
-  const [activeTab, setActiveTab] = useState<EmailTab>('accounts')
   const [rows, setRows] = useState<HotmailDashboardRow[]>([])
   const [settings, setSettings] = useState<HotmailSettingsView | null>(null)
   const [draft, setDraft] = useState<SettingsDraft | null>(null)
@@ -110,13 +108,19 @@ export function HotmailAuto() {
   const [oauthPrompt, setOauthPrompt] = useState<HotmailOAuthStartResult | null>(null)
   const [proxyStatus, setProxyStatus] = useState<HotmailProxyStatus | null>(null)
   const [contextMenu, setContextMenu] = useState<ContextMenuState>(null)
+  const [panel, setPanel] = useState<EmailPanel>(null)
+  const [query, setQuery] = useState('')
+  const [quickFilter, setQuickFilter] = useState<EmailQuickFilter>('all')
 
+  const visibleRows = useMemo(() => filterHotmailRows(rows, query, quickFilter), [rows, query, quickFilter])
   const selectedIds = useMemo(() => [...selection], [selection])
   const selectedRows = useMemo(() => rows.filter((row) => selection.has(row.accountId)), [rows, selection])
   const rowsWithErrors = useMemo(() => rows.filter((row) => row.lastError), [rows])
   const rowsWithRecovery = useMemo(() => rows.filter((row) => row.backupEmail), [rows])
   const profilesReady = useMemo(() => rows.filter((row) => row.profileStatus === 'available' || row.profileStatus === 'running').length, [rows])
   const mailReady = useMemo(() => rows.filter((row) => row.mailStatus === 'ready').length, [rows])
+  const oauthReady = useMemo(() => rows.filter((row) => row.oauthStatus === 'valid' && row.hasRefreshToken).length, [rows])
+  const visibleSelected = useMemo(() => visibleRows.filter((row) => selection.has(row.accountId)).length, [visibleRows, selection])
 
   const refreshRows = async () => setRows(await window.pageAuto.listHotmailDashboard())
   const refreshSettings = async () => {
@@ -163,8 +167,13 @@ export function HotmailAuto() {
     }
   }
 
-  const toggleAll = () => {
-    setSelection((current) => current.size === rows.length && rows.length > 0 ? new Set() : new Set(rows.map((row) => row.accountId)))
+  const toggleVisible = () => {
+    setSelection((current) => {
+      const next = new Set(current)
+      const allVisibleSelected = visibleRows.length > 0 && visibleRows.every((row) => next.has(row.accountId))
+      visibleRows.forEach((row) => allVisibleSelected ? next.delete(row.accountId) : next.add(row.accountId))
+      return next
+    })
   }
 
   const toggleOne = (accountId: number) => {
@@ -179,14 +188,14 @@ export function HotmailAuto() {
 
   const selectRow = (event: MouseEvent<HTMLTableRowElement>, accountId: number) => {
     if (event.shiftKey && lastSelectedId !== null) {
-      const start = rows.findIndex((row) => row.accountId === lastSelectedId)
-      const end = rows.findIndex((row) => row.accountId === accountId)
+      const start = visibleRows.findIndex((row) => row.accountId === lastSelectedId)
+      const end = visibleRows.findIndex((row) => row.accountId === accountId)
       if (start >= 0 && end >= 0) {
         const from = Math.min(start, end)
         const to = Math.max(start, end)
         setSelection((current) => {
           const next = new Set(event.ctrlKey || event.metaKey ? current : [])
-          rows.slice(from, to + 1).forEach((row) => next.add(row.accountId))
+          visibleRows.slice(from, to + 1).forEach((row) => next.add(row.accountId))
           return next
         })
       }
@@ -268,8 +277,9 @@ export function HotmailAuto() {
     return 'Đã lưu cài đặt Email.'
   }, 'settings')
 
-  const copyEmails = (accountIds: number[]) => runAction('copy', async () => {
-    const emails = rows.filter((row) => accountIds.includes(row.accountId)).map((row) => row.email).filter((email): email is string => Boolean(email))
+  const copyEmails = (accountIds?: number[]) => runAction('copy', async () => {
+    const ids = accountIds ?? requireSelection()
+    const emails = rows.filter((row) => ids.includes(row.accountId)).map((row) => row.email).filter((email): email is string => Boolean(email))
     if (emails.length === 0) throw new Error('Tài khoản đã chọn chưa có Email.')
     await navigator.clipboard.writeText(emails.join('\n'))
     return `Đã copy ${emails.length} Email.`
@@ -285,193 +295,138 @@ export function HotmailAuto() {
   }
 
   const contextIds = contextMenu && selection.has(contextMenu.accountId) ? selectedIds : contextMenu ? [contextMenu.accountId] : []
-
-  const renderRows = (mode: 'full' | 'mail' | 'profiles' | 'recovery' | 'logs') => (
-    <div className="email-grid-wrap">
-      <table className="email-grid">
-        <thead>
-          <tr>
-            <th className="check"><input type="checkbox" checked={rows.length > 0 && selection.size === rows.length} onChange={toggleAll} /></th>
-            <th>STT</th><th>UID</th><th>Email</th>
-            {mode === 'full' ? <><th>Pass Email</th><th>Mail khôi phục</th><th>Kết nối đọc mail</th><th>Tình trạng mail</th><th>Tình trạng profile</th><th>Đường dẫn profile</th><th>Mã mới nhất</th><th>Lấy mã gần nhất</th><th>Đang làm gì</th><th>Lỗi gần nhất</th></> : null}
-            {mode === 'mail' ? <><th>Kết nối đọc mail</th><th>Tình trạng mail</th><th>Mã mới nhất</th><th>Thời gian nhận</th><th>Kiểm tra gần nhất</th><th>Lỗi</th></> : null}
-            {mode === 'profiles' ? <><th>Tình trạng profile</th><th>Đường dẫn profile</th><th>Tình trạng chạy</th><th>Lỗi</th></> : null}
-            {mode === 'recovery' ? <><th>Mail khôi phục</th><th>Loại mail</th><th>Tình trạng mail</th></> : null}
-            {mode === 'logs' ? <><th>Đang làm gì</th><th>Kiểm tra gần nhất</th><th>Lấy mã gần nhất</th><th>Lỗi gần nhất</th></> : null}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, index) => {
-            const recovery = detectRecoveryMailProvider(row.backupEmail)
-            return (
-              <tr
-                key={row.accountId}
-                className={selection.has(row.accountId) ? 'selected' : ''}
-                onClick={(event) => selectRow(event, row.accountId)}
-                onDoubleClick={() => void openMail([row.accountId])}
-                onContextMenu={(event) => openContextMenu(event, row.accountId)}
-              >
-                <td className="check" onClick={(event) => event.stopPropagation()}><input type="checkbox" checked={selection.has(row.accountId)} onChange={() => toggleOne(row.accountId)} /></td>
-                <td>{index + 1}</td>
-                <td className="mono">{row.uid}</td>
-                <td>{row.email ?? '—'}</td>
-                {mode === 'full' ? <>
-                  <td className="secret">{row.emailPasswordMasked ?? '—'}</td>
-                  <td>{row.backupEmail ?? '—'}</td>
-                  <td><span className={`email-chip ${row.oauthStatus}`}>{connectionStatusLabel(row.oauthStatus)}</span></td>
-                  <td><span className={`email-chip ${row.mailStatus}`}>{mailStatusLabel(row.mailStatus)}</span></td>
-                  <td><span className={`email-chip ${row.profileStatus}`}>{profileStatusLabel(row.profileStatus)}</span></td>
-                  <td className="path-cell" title={row.profileDirectory ?? ''}>{row.profileDirectory ?? '—'}</td>
-                  <td className="code-cell">{row.latestCode ?? '—'}</td>
-                  <td>{formatTime(row.lastCodeAt)}</td>
-                  <td><span className={`email-chip ${row.runtimeStatus}`}>{runtimeStatusLabel(row.runtimeStatus)}</span></td>
-                  <td className="error-cell" title={row.lastError ?? ''}>{row.lastError ?? '—'}</td>
-                </> : null}
-                {mode === 'mail' ? <>
-                  <td><span className={`email-chip ${row.oauthStatus}`}>{connectionStatusLabel(row.oauthStatus)}</span></td>
-                  <td><span className={`email-chip ${row.mailStatus}`}>{mailStatusLabel(row.mailStatus)}</span></td>
-                  <td className="code-cell">{row.latestCode ?? '—'}</td>
-                  <td>{formatTime(row.lastCodeAt)}</td>
-                  <td>{formatTime(row.lastCheckAt)}</td>
-                  <td className="error-cell">{row.lastError ?? '—'}</td>
-                </> : null}
-                {mode === 'profiles' ? <>
-                  <td><span className={`email-chip ${row.profileStatus}`}>{profileStatusLabel(row.profileStatus)}</span></td>
-                  <td className="path-cell" title={row.profileDirectory ?? ''}>{row.profileDirectory ?? '—'}</td>
-                  <td><span className={`email-chip ${row.runtimeStatus}`}>{runtimeStatusLabel(row.runtimeStatus)}</span></td>
-                  <td className="error-cell">{row.lastError ?? '—'}</td>
-                </> : null}
-                {mode === 'recovery' ? <>
-                  <td>{row.backupEmail ?? '—'}</td>
-                  <td><span className={`recovery-chip ${recovery.kind}`}>{recovery.label}</span></td>
-                  <td><span className={`email-chip ${row.mailStatus}`}>{mailStatusLabel(row.mailStatus)}</span></td>
-                </> : null}
-                {mode === 'logs' ? <>
-                  <td><span className={`email-chip ${row.runtimeStatus}`}>{runtimeStatusLabel(row.runtimeStatus)}</span></td>
-                  <td>{formatTime(row.lastCheckAt)}</td>
-                  <td>{formatTime(row.lastCodeAt)}</td>
-                  <td className="error-cell" title={row.lastError ?? ''}>{row.lastError ?? '—'}</td>
-                </> : null}
-              </tr>
-            )
-          })}
-          {rows.length === 0 ? <tr><td className="empty" colSpan={18}>Chưa có tài khoản để hiển thị. Thêm tài khoản ở mục Tài khoản trước.</td></tr> : null}
-        </tbody>
-      </table>
-    </div>
-  )
+  const panelRows = selectedRows.length > 0 ? selectedRows : rows
+  const logRows = selectedRows.length > 0 ? selectedRows : rowsWithErrors
+  const allVisibleSelected = visibleRows.length > 0 && visibleRows.every((row) => selection.has(row.accountId))
 
   return (
     <section className="email-shell">
-      <div className="email-tabs" role="tablist" aria-label="Nghiệp vụ Email">
-        {EMAIL_TABS.map((tab) => (
-          <button key={tab.id} type="button" role="tab" aria-selected={activeTab === tab.id} className={activeTab === tab.id ? 'active' : ''} onClick={() => setActiveTab(tab.id)}>{tab.label}</button>
-        ))}
-      </div>
-
-      <div className="email-toolbar">
-        <div className="email-toolbar-actions">
+      <header className="email-commandbar">
+        <div className="email-command-primary">
           <button className="email-button primary" disabled={isBusy('open')} onClick={() => void openMail()}>{isBusy('open') && <Spinner />}Mở mail</button>
           <button className="email-button success" disabled={isBusy('codes')} onClick={() => void getCodes()}>{isBusy('codes') && <Spinner />}Lấy mã</button>
-          <button className="email-button primary" disabled={isBusy('check')} onClick={() => void checkMail()}>{isBusy('check') && <Spinner />}Kiểm tra mail</button>
-          <button className="email-button secondary" disabled={isBusy('refresh')} onClick={() => void refreshEverything()}>{isBusy('refresh') && <Spinner />}Làm mới</button>
-          <button className="email-button secondary" disabled={isBusy('rotate')} onClick={() => void rotateProxy()}>{isBusy('rotate') && <Spinner />}Đổi IP</button>
-          <button className="email-button secondary" onClick={() => setActiveTab('settings')}>Cài đặt</button>
+          <button className="email-button primary" disabled={isBusy('check')} onClick={() => void checkMail()}>{isBusy('check') && <Spinner />}Check Live</button>
+          <button className="email-button secondary" disabled={isBusy('oauth')} onClick={() => void connectMailbox()}>{isBusy('oauth') && <Spinner />}Lấy / cập nhật OAuth</button>
+          <button className="email-button secondary" disabled={isBusy('copy')} onClick={() => void copyEmails()}>{isBusy('copy') && <Spinner />}Copy Email</button>
         </div>
-        <div className="email-toolbar-meta">
-          <strong>{selectedRows.length}/{rows.length}</strong> đã chọn
-          <span>{mailReady} mail sẵn sàng</span>
-          <span>{profilesReady} profile dùng được</span>
-          <span>{proxyStatus?.mode === 'random_ipv4' ? `IPv4 pool · ${proxyStatus.poolSize}` : 'Mạng trực tiếp'}</span>
+        <div className="email-command-secondary">
+          <button className="email-button ghost" onClick={() => setPanel('recovery')}>Mail khôi phục</button>
+          <button className="email-button ghost" onClick={() => setPanel('network')}>Proxy / IP</button>
+          <button className="email-button ghost" onClick={() => setPanel('logs')}>Nhật ký</button>
+          <button className="email-button ghost" onClick={() => setPanel('settings')}>Cài đặt</button>
+          <button className="email-icon-button" title="Làm mới" aria-label="Làm mới dữ liệu Email" disabled={isBusy('refresh')} onClick={() => void refreshEverything()}>{isBusy('refresh') ? <Spinner /> : '↻'}</button>
         </div>
+      </header>
+
+      <div className="email-grid-tools">
+        <div className="email-search-box">
+          <span aria-hidden="true">⌕</span>
+          <input value={query} onChange={(event: ChangeEvent<HTMLInputElement>) => setQuery(event.target.value)} placeholder="Tìm UID, Email, mail khôi phục, Client ID, lỗi..." />
+          {query ? <button type="button" aria-label="Xóa tìm kiếm" onClick={() => setQuery('')}>×</button> : null}
+        </div>
+        <div className="email-filter-pills" aria-label="Lọc nhanh Email">
+          {QUICK_FILTERS.map((filter) => (
+            <button key={filter.id} className={quickFilter === filter.id ? 'active' : ''} onClick={() => setQuickFilter(filter.id)}>{filter.label}</button>
+          ))}
+        </div>
+        <div className="email-grid-meta">
+          <strong>{selectedRows.length}</strong> đã chọn
+          <span>{visibleRows.length}/{rows.length} đang hiện</span>
+          {selectedRows.length > 0 ? <button onClick={() => setSelection(new Set())}>Bỏ chọn</button> : null}
+        </div>
+      </div>
+
+      <div className="email-health-strip">
+        <div><span>MAIL SẴN SÀNG</span><strong>{mailReady}/{rows.length}</strong></div>
+        <div><span>OAUTH HỢP LỆ</span><strong>{oauthReady}/{rows.length}</strong></div>
+        <div><span>PROFILE DÙNG ĐƯỢC</span><strong>{profilesReady}/{rows.length}</strong></div>
+        <div><span>CÓ MAIL KHÔI PHỤC</span><strong>{rowsWithRecovery.length}/{rows.length}</strong></div>
+        <div className="network-health"><span>MẠNG EMAIL</span><strong>{proxyStatus?.mode === 'random_ipv4' ? `IPv4 pool · ${proxyStatus.poolSize}` : 'Trực tiếp'}</strong></div>
       </div>
 
       {oauthPrompt ? (
         <div className="email-connect-banner">
-          <strong>Kết nối đọc mail</strong>
+          <strong>Kết nối OAuth</strong>
           <span>Mã: <b>{oauthPrompt.userCode ?? '—'}</b></span>
           <span className="mono">{oauthPrompt.verificationUri ?? ''}</span>
           <span>{oauthPrompt.expiresAt ? `Hết hạn ${formatTime(oauthPrompt.expiresAt)}` : ''}</span>
+          <button aria-label="Đóng thông báo OAuth" onClick={() => setOauthPrompt(null)}>×</button>
         </div>
       ) : null}
 
       <div className="email-status-line"><span className="email-status-dot" />{message}</div>
 
-      <div className="email-tab-body">
-        {activeTab === 'accounts' ? renderRows('full') : null}
-
-        {activeTab === 'mail' ? <div className="email-section-stack">
-          <div className="email-section-head"><div><h2>Lấy mã / Kiểm tra mail</h2><p>Chọn tài khoản trong bảng rồi thao tác hàng loạt. Phần kết nối kỹ thuật được giấu khỏi màn chính.</p></div><div className="email-section-actions"><button className="email-button success" disabled={isBusy('codes')} onClick={() => void getCodes()}>Lấy mã</button><button className="email-button primary" disabled={isBusy('check')} onClick={() => void checkMail()}>Kiểm tra mail</button><button className="email-button secondary" disabled={isBusy('oauth')} onClick={() => void connectMailbox()}>Kết nối đọc mail</button></div></div>
-          {renderRows('mail')}
-        </div> : null}
-
-        {activeTab === 'profiles' ? <div className="email-section-stack">
-          <div className="email-summary-strip"><div><span>Thư mục profile Email</span><strong title={settings?.profileRoot}>{settings?.profileRoot || 'Chưa chọn'}</strong></div><div><span>Profile dùng được</span><strong>{profilesReady}/{rows.length}</strong></div><div><span>Trình duyệt</span><strong>{settings?.browserExecutable ? 'Đã chọn thủ công' : 'Tự động'}</strong></div></div>
-          <div className="email-section-head"><div><h2>Mở mail</h2><p>Mỗi UID dùng đúng profile Email riêng. Không dùng chung profile hoặc proxy Facebook.</p></div><div className="email-section-actions"><button className="email-button primary" disabled={isBusy('open')} onClick={() => void openMail()}>Mở mail</button><button className="email-button secondary" onClick={() => setActiveTab('settings')}>Cài đặt profile</button></div></div>
-          {renderRows('profiles')}
-        </div> : null}
-
-        {activeTab === 'recovery' ? <div className="email-section-stack">
-          <div className="email-section-head"><div><h2>Mail khôi phục</h2><p>{rowsWithRecovery.length}/{rows.length} tài khoản đang có mail khôi phục.</p></div></div>
-          {renderRows('recovery')}
-          <div className="email-provider-list">
-            {EMAIL_RECOVERY_PROVIDERS.map((provider) => <article key={provider.id} className="email-provider-card"><div><strong>{provider.label}</strong><span className={`recovery-chip ${provider.kind}`}>{provider.kind === 'temporary' ? 'Mail dùng nhanh' : 'Mail thường'}</span></div><p>{provider.domains.join(' · ')}</p></article>)}
-          </div>
-        </div> : null}
-
-        {activeTab === 'network' ? <div className="email-section-stack">
-          <div className="email-summary-strip"><div><span>Chế độ mạng Email</span><strong>{proxyStatus?.mode === 'random_ipv4' ? 'IPv4 ngẫu nhiên' : 'Trực tiếp'}</strong></div><div><span>IP / Proxy hiện tại</span><strong>{proxyStatus?.currentProxy ?? 'Chưa có'}</strong></div><div><span>Pool</span><strong>{proxyStatus?.poolSize ?? 0} proxy</strong></div><div><span>Phiên đang dùng</span><strong>{proxyStatus?.activeSessions ?? 0}</strong></div></div>
-          <div className="email-section-head"><div><h2>Đổi IP / Proxy</h2><p>Mạng Email tách hoàn toàn khỏi Facebook và ưu tiên IPv4.</p></div><div className="email-section-actions"><button className="email-button primary" disabled={isBusy('rotate')} onClick={() => void rotateProxy()}>Đổi IP</button><button className="email-button secondary" disabled={isBusy('test')} onClick={() => void testProxy()}>Kiểm tra IP</button><button className="email-button secondary" onClick={() => setActiveTab('settings')}>Cài đặt proxy</button></div></div>
-          <div className="email-info-card"><strong>Trạng thái</strong><p>{proxyStatus?.message ?? 'Chưa tải trạng thái mạng Email.'}</p></div>
-        </div> : null}
-
-        {activeTab === 'logs' ? <div className="email-section-stack">
-          <div className="email-section-head"><div><h2>Nhật ký</h2><p>Hiện hiển thị trạng thái và lỗi gần nhất theo từng tài khoản. Nhật ký chi tiết sẽ hoàn thiện ở batch sau.</p></div><span className="email-count-chip">{rowsWithErrors.length} tài khoản có lỗi</span></div>
-          {renderRows('logs')}
-        </div> : null}
-
-        {activeTab === 'settings' && draft ? <div className="email-settings-page">
-          <section className="email-settings-card">
-            <div className="email-settings-heading"><div><span>PROFILE EMAIL</span><h2>Profile và trình duyệt</h2></div><span className="email-settings-badge">Tách riêng Facebook</span></div>
-            <div className="email-settings-grid">
-              <label className="wide"><span>Thư mục profile Email</span><div className="input-action"><input value={draft.profileRoot} onChange={(event: ChangeEvent<HTMLInputElement>) => setDraft({ ...draft, profileRoot: event.target.value })} placeholder="F:\\...\\MaxHotmail\\profiles" /><button className="email-button secondary" disabled={isBusy('pick-root')} onClick={() => void pickProfileRoot()}>Chọn thư mục</button></div><small>Mỗi UID dùng đúng thư mục <code>root\UID</code>. Không fallback sang profile Facebook.</small></label>
-              <label className="wide"><span>Trình duyệt Email</span><div className="input-action"><input value={draft.browserExecutable} onChange={(event: ChangeEvent<HTMLInputElement>) => setDraft({ ...draft, browserExecutable: event.target.value })} placeholder="Để trống = Tự động" /><button className="email-button secondary" disabled={isBusy('pick-browser')} onClick={() => void pickBrowser()}>Chọn file</button></div><small>Nên để trống để app tự chọn trình duyệt phù hợp. Chọn file thủ công chỉ dùng khi cần.</small></label>
-            </div>
-          </section>
-
-          <section className="email-settings-card">
-            <div className="email-settings-heading"><div><span>MẠNG EMAIL</span><h2>IPv4 / Proxy riêng</h2></div><span className="email-settings-badge">Không dùng proxy Facebook</span></div>
-            <div className="email-settings-grid">
-              <label><span>Chế độ</span><select value={draft.proxyMode} onChange={(event: ChangeEvent<HTMLSelectElement>) => setDraft({ ...draft, proxyMode: event.target.value as EmailProxyMode })}><option value="direct">Trực tiếp</option><option value="random_ipv4">IPv4 ngẫu nhiên</option></select></label>
-              <label><span>Pool hiện tại</span><input value={`${settings?.proxyCount ?? 0} proxy`} readOnly /></label>
-              <label className="wide"><span>Danh sách proxy IPv4</span><textarea value={draft.proxyListText} onChange={(event: ChangeEvent<HTMLTextAreaElement>) => { setDraft({ ...draft, proxyListText: event.target.value }); setProxyDirty(true) }} placeholder={'Mỗi dòng một proxy\n1.2.3.4:8080\nhoặc 1.2.3.4:8080:user:pass\nKhông sửa = giữ pool hiện tại'} /></label>
-              <div className="proxy-preview wide">{settings?.proxyPreview.length ? settings.proxyPreview.map((proxy) => <code key={proxy}>{proxy}</code>) : <span>Chưa có proxy lưu.</span>}</div>
-            </div>
-          </section>
-
-          <details className="email-advanced-card">
-            <summary>Cài đặt nâng cao — kết nối đọc mail</summary>
-            <div className="email-settings-grid advanced-body">
-              <label><span>Mã ứng dụng</span><input value={draft.oauthClientId} onChange={(event: ChangeEvent<HTMLInputElement>) => setDraft({ ...draft, oauthClientId: event.target.value })} /></label>
-              <label><span>Tenant</span><input value={draft.oauthTenant} onChange={(event: ChangeEvent<HTMLInputElement>) => setDraft({ ...draft, oauthTenant: event.target.value })} placeholder="consumers" /></label>
-              <p className="email-help wide">Đây là phần kỹ thuật phía sau chức năng Lấy mã / Kiểm tra mail. Người dùng bình thường không cần mở mục này.</p>
-            </div>
-          </details>
-
-          <div className="email-settings-footer"><span>{message}</span><button className="email-button primary" disabled={isBusy('save')} onClick={() => void saveSettings()}>{isBusy('save') && <Spinner />}Lưu cài đặt</button></div>
-        </div> : null}
+      <div className="email-grid-wrap">
+        <table className="email-grid">
+          <thead>
+            <tr>
+              <th className="check"><input type="checkbox" checked={allVisibleSelected} onChange={toggleVisible} aria-label="Chọn tất cả dòng đang hiển thị" /></th>
+              <th>STT</th><th>UID</th><th>Email</th><th>Pass Email</th><th>Mail khôi phục</th><th>OAuth</th><th>Client ID</th><th>Refresh Token</th><th>Tình trạng mail</th><th>Profile Email</th><th>Đường dẫn profile</th><th>Mã mới nhất</th><th>Lấy mã gần nhất</th><th>Check gần nhất</th><th>Đang làm gì</th><th>Lỗi gần nhất</th>
+            </tr>
+          </thead>
+          <tbody>
+            {visibleRows.map((row, index) => {
+              const recovery = detectRecoveryMailProvider(row.backupEmail)
+              return (
+                <tr key={row.accountId} className={selection.has(row.accountId) ? 'selected' : ''} onClick={(event: MouseEvent<HTMLTableRowElement>) => selectRow(event, row.accountId)} onDoubleClick={() => void openMail([row.accountId])} onContextMenu={(event: MouseEvent<HTMLTableRowElement>) => openContextMenu(event, row.accountId)}>
+                  <td className="check" onClick={(event: MouseEvent<HTMLTableCellElement>) => event.stopPropagation()}><input type="checkbox" checked={selection.has(row.accountId)} onChange={() => toggleOne(row.accountId)} /></td>
+                  <td>{index + 1}</td><td className="mono uid-cell">{row.uid}</td><td>{row.email ?? '—'}</td><td className="secret">{row.emailPasswordMasked ?? '—'}</td>
+                  <td className="recovery-cell" title={row.backupEmail ?? ''}><span>{row.backupEmail ?? '—'}</span>{row.backupEmail ? <span className={`recovery-chip ${recovery.kind}`}>{recovery.label}</span> : null}</td>
+                  <td><span className={`email-chip ${row.oauthStatus}`}>{connectionStatusLabel(row.oauthStatus)}</span></td>
+                  <td className="mono" title={row.oauthClientId ?? ''}>{previewClientId(row.oauthClientId)}</td>
+                  <td><div className="token-cell"><span className={`email-chip ${row.hasRefreshToken ? 'valid' : 'missing'}`}>{row.hasRefreshToken ? 'Có token' : 'Chưa có'}</span><small>{formatTime(row.oauthUpdatedAt)}</small></div></td>
+                  <td><span className={`email-chip ${row.mailStatus}`}>{mailStatusLabel(row.mailStatus)}</span></td><td><span className={`email-chip ${row.profileStatus}`}>{profileStatusLabel(row.profileStatus)}</span></td>
+                  <td className="path-cell" title={row.profileDirectory ?? ''}>{row.profileDirectory ?? '—'}</td><td className="code-cell">{row.latestCode ?? '—'}</td><td>{formatTime(row.lastCodeAt)}</td><td>{formatTime(row.lastCheckAt)}</td>
+                  <td><span className={`email-chip ${row.runtimeStatus}`}>{runtimeStatusLabel(row.runtimeStatus)}</span></td><td className="error-cell" title={row.lastError ?? ''}>{row.lastError ?? '—'}</td>
+                </tr>
+              )
+            })}
+            {visibleRows.length === 0 ? <tr><td className="empty" colSpan={17}>{rows.length === 0 ? 'Chưa có tài khoản. Thêm tài khoản ở mục Tài khoản trước.' : 'Không có tài khoản phù hợp bộ lọc hiện tại.'}</td></tr> : null}
+          </tbody>
+        </table>
       </div>
 
-      {contextMenu ? (
-        <div className="email-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onMouseDown={(event) => event.stopPropagation()}>
-          <button onClick={() => { setContextMenu(null); void openMail(contextIds) }}>Mở mail</button>
-          <button onClick={() => { setContextMenu(null); void getCodes(contextIds) }}>Lấy mã</button>
-          <button onClick={() => { setContextMenu(null); void checkMail(contextIds) }}>Kiểm tra mail</button>
-          <div className="email-context-separator" />
-          <button onClick={() => { setContextMenu(null); void copyEmails(contextIds) }}>Copy Email</button>
-          <button onClick={() => { setContextMenu(null); void connectMailbox(contextMenu.accountId) }}>Kết nối đọc mail</button>
+      <footer className="email-selection-footer"><div><strong>{visibleSelected}</strong> dòng đang hiện được chọn · <strong>{selectedRows.length}</strong> tổng selection</div><span>Double-click: Mở mail · Ctrl/Shift: chọn nhiều · Chuột phải: thao tác trên selection</span></footer>
+
+      {panel ? (
+        <div className="email-panel-backdrop" onMouseDown={() => setPanel(null)}>
+          <aside className="email-side-panel" onMouseDown={(event: MouseEvent<HTMLElement>) => event.stopPropagation()} aria-label="Bảng thao tác Email">
+            <div className="email-panel-header"><div><span>EMAIL</span><h2>{panel === 'network' ? 'Proxy / IP' : panel === 'logs' ? 'Nhật ký gần nhất' : panel === 'recovery' ? 'Mail khôi phục' : 'Cài đặt'}</h2></div><button className="email-panel-close" aria-label="Đóng bảng" onClick={() => setPanel(null)}>×</button></div>
+
+            {panel === 'network' ? <div className="email-panel-content">
+              <div className="email-panel-summary"><div><span>Chế độ</span><strong>{proxyStatus?.mode === 'random_ipv4' ? 'IPv4 ngẫu nhiên' : 'Trực tiếp'}</strong></div><div><span>Proxy hiện tại</span><strong>{proxyStatus?.currentProxy ?? 'Chưa có'}</strong></div><div><span>Pool</span><strong>{proxyStatus?.poolSize ?? 0}</strong></div><div><span>Phiên đang dùng</span><strong>{proxyStatus?.activeSessions ?? 0}</strong></div></div>
+              <p className="email-panel-note">Mạng Email tách hoàn toàn khỏi Facebook. Đổi IP chỉ áp dụng cho phiên Email mới theo runtime hiện tại.</p>
+              <div className="email-panel-actions"><button className="email-button primary" disabled={isBusy('rotate')} onClick={() => void rotateProxy()}>{isBusy('rotate') && <Spinner />}Đổi IP</button><button className="email-button secondary" disabled={isBusy('test')} onClick={() => void testProxy()}>{isBusy('test') && <Spinner />}Kiểm tra IP</button><button className="email-button secondary" onClick={() => setPanel('settings')}>Cấu hình pool</button></div>
+              <div className="email-info-card"><strong>Trạng thái</strong><p>{proxyStatus?.message ?? 'Chưa tải trạng thái mạng Email.'}</p></div>
+              <div className="email-panel-list"><div className="email-panel-list-head"><strong>Proxy preview</strong><span>{settings?.proxyCount ?? 0} dòng</span></div>{settings?.proxyPreview.length ? settings.proxyPreview.map((proxy) => <code key={proxy}>{proxy}</code>) : <p>Chưa có proxy lưu.</p>}</div>
+            </div> : null}
+
+            {panel === 'logs' ? <div className="email-panel-content"><p className="email-panel-note">{selectedRows.length > 0 ? `Đang xem ${selectedRows.length} tài khoản đã chọn.` : 'Không có selection; đang ưu tiên các tài khoản có lỗi gần nhất.'}</p><div className="email-log-list">{logRows.length ? logRows.map((row) => <article key={row.accountId}><div><strong>{row.uid}</strong><span className={`email-chip ${row.runtimeStatus}`}>{runtimeStatusLabel(row.runtimeStatus)}</span></div><p>{row.email ?? 'Chưa có Email'}</p><small>Check: {formatTime(row.lastCheckAt)} · Code: {formatTime(row.lastCodeAt)}</small><div className={row.lastError ? 'log-error' : 'log-ok'}>{row.lastError ?? 'Không có lỗi gần nhất.'}</div></article>) : <div className="email-panel-empty">Chưa có lỗi hoặc tài khoản được chọn.</div>}</div></div> : null}
+
+            {panel === 'recovery' ? <div className="email-panel-content">
+              <p className="email-panel-note">{selectedRows.length > 0 ? `Selection có ${selectedRows.filter((row) => row.backupEmail).length}/${selectedRows.length} tài khoản có mail khôi phục.` : `Toàn bộ có ${rowsWithRecovery.length}/${rows.length} tài khoản có mail khôi phục.`}</p>
+              <div className="email-recovery-selection">{panelRows.slice(0, 20).map((row) => { const recovery = detectRecoveryMailProvider(row.backupEmail); return <div key={row.accountId}><span className="mono">{row.uid}</span><strong>{row.backupEmail ?? 'Chưa có mail khôi phục'}</strong>{row.backupEmail ? <span className={`recovery-chip ${recovery.kind}`}>{recovery.label}</span> : null}</div> })}{panelRows.length > 20 ? <small>+{panelRows.length - 20} tài khoản khác trong selection.</small> : null}</div>
+              <div className="email-provider-list">{EMAIL_RECOVERY_PROVIDERS.map((provider) => <article key={provider.id} className="email-provider-card"><div><strong>{provider.label}</strong><span className={`recovery-chip ${provider.kind}`}>{provider.kind === 'temporary' ? 'Mail dùng nhanh' : 'Mail thường'}</span></div><p>{provider.domains.join(' · ')}</p></article>)}</div>
+              <p className="email-panel-note subtle">Các nghiệp vụ đổi/thêm/xóa mail khôi phục thuộc E5-R; E2-R chỉ tổ chức đúng selection và panel thao tác.</p>
+            </div> : null}
+
+            {panel === 'settings' ? <div className="email-panel-content settings-panel">{draft ? <>
+              <section className="email-settings-card"><div className="email-settings-heading"><div><span>PROFILE EMAIL</span><h3>Profile và trình duyệt</h3></div><span className="email-settings-badge">Tách riêng Facebook</span></div><div className="email-settings-grid">
+                <label className="wide"><span>Thư mục profile Email</span><div className="input-action"><input value={draft.profileRoot} onChange={(event: ChangeEvent<HTMLInputElement>) => setDraft({ ...draft, profileRoot: event.target.value })} placeholder="F:\\...\\MaxHotmail\\profiles" /><button className="email-button secondary" disabled={isBusy('pick-root')} onClick={() => void pickProfileRoot()}>Chọn thư mục</button></div><small>Mỗi UID dùng đúng thư mục <code>root\UID</code>. Không fallback sang profile Facebook.</small></label>
+                <label className="wide"><span>Trình duyệt Email</span><div className="input-action"><input value={draft.browserExecutable} onChange={(event: ChangeEvent<HTMLInputElement>) => setDraft({ ...draft, browserExecutable: event.target.value })} placeholder="Để trống = Tự động" /><button className="email-button secondary" disabled={isBusy('pick-browser')} onClick={() => void pickBrowser()}>Chọn file</button></div></label>
+              </div></section>
+              <section className="email-settings-card"><div className="email-settings-heading"><div><span>MẠNG EMAIL</span><h3>IPv4 / Proxy riêng</h3></div><span className="email-settings-badge">Không dùng proxy Facebook</span></div><div className="email-settings-grid">
+                <label><span>Chế độ</span><select value={draft.proxyMode} onChange={(event: ChangeEvent<HTMLSelectElement>) => setDraft({ ...draft, proxyMode: event.target.value as EmailProxyMode })}><option value="direct">Trực tiếp</option><option value="random_ipv4">IPv4 ngẫu nhiên</option></select></label><label><span>Pool hiện tại</span><input value={`${settings?.proxyCount ?? 0} proxy`} readOnly /></label>
+                <label className="wide"><span>Danh sách proxy IPv4</span><textarea value={draft.proxyListText} onChange={(event: ChangeEvent<HTMLTextAreaElement>) => { setDraft({ ...draft, proxyListText: event.target.value }); setProxyDirty(true) }} placeholder={'Mỗi dòng một proxy\n1.2.3.4:8080\nhoặc 1.2.3.4:8080:user:pass\nKhông sửa = giữ pool hiện tại'} /></label>
+              </div></section>
+              <details className="email-advanced-card"><summary>Cài đặt nâng cao — OAuth mặc định</summary><div className="email-settings-grid advanced-body"><label><span>Client ID mặc định</span><input value={draft.oauthClientId} onChange={(event: ChangeEvent<HTMLInputElement>) => setDraft({ ...draft, oauthClientId: event.target.value })} /></label><label><span>Tenant</span><input value={draft.oauthTenant} onChange={(event: ChangeEvent<HTMLInputElement>) => setDraft({ ...draft, oauthTenant: event.target.value })} placeholder="consumers" /></label><p className="email-help wide">Client ID này chỉ là mặc định khi bắt đầu/cập nhật OAuth. Runtime mailbox đọc Client ID canonical theo từng account.</p></div></details>
+              <div className="email-settings-footer"><span>{message}</span><button className="email-button primary" disabled={isBusy('save')} onClick={() => void saveSettings()}>{isBusy('save') && <Spinner />}Lưu cài đặt</button></div>
+            </> : <div className="email-panel-empty">Đang tải cài đặt Email...</div>}</div> : null}
+          </aside>
         </div>
       ) : null}
+
+      {contextMenu ? <div className="email-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onMouseDown={(event: MouseEvent<HTMLDivElement>) => event.stopPropagation()}><div className="email-context-title">{contextIds.length} tài khoản trong selection</div><button onClick={() => { setContextMenu(null); void openMail(contextIds) }}>Mở mail</button><button onClick={() => { setContextMenu(null); void getCodes(contextIds) }}>Lấy mã</button><button onClick={() => { setContextMenu(null); void checkMail(contextIds) }}>Check Live Hotmail</button><button onClick={() => { setContextMenu(null); void connectMailbox(contextMenu.accountId) }}>Lấy / cập nhật OAuth</button><div className="email-context-separator" /><button onClick={() => { setContextMenu(null); void copyEmails(contextIds) }}>Copy Email</button><button onClick={() => { setContextMenu(null); setPanel('recovery') }}>Xem mail khôi phục</button><button onClick={() => { setContextMenu(null); setPanel('logs') }}>Xem trạng thái / lỗi</button></div> : null}
     </section>
   )
 }
