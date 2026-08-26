@@ -1,5 +1,6 @@
 import { DEFAULT_APP_SETTINGS } from '../../shared/appSettings'
 import type { RotationPageTabPayload, RotationRuntimeSnapshot, RotationRuntimeStatus } from '../../shared/rotation'
+import { rotationRuntimeOverlay } from './rotationRuntimeOverlay'
 
 export interface PageTabRotationController {
   start(payload: RotationPageTabPayload): RotationRuntimeSnapshot
@@ -37,14 +38,14 @@ export class PageTabWorkerManager {
   }
 
   status(payload: RotationPageTabPayload): RotationRuntimeSnapshot {
-    return this.getOrCreate(payload.pageTabId).status(payload)
+    return rotationRuntimeOverlay.decorate(this.getOrCreate(payload.pageTabId).status(payload))
   }
 
   start(payload: RotationPageTabPayload): RotationRuntimeSnapshot {
     diagnostic(payload.pageTabId, 'START requested')
     try {
       this.assertCapacity(payload.pageTabId)
-      const snapshot = this.getOrCreate(payload.pageTabId).start(payload)
+      const snapshot = rotationRuntimeOverlay.decorate(this.getOrCreate(payload.pageTabId).start(payload))
       diagnostic(payload.pageTabId, `START accepted status=${snapshot.status} run=${snapshot.runId ?? 'none'}`)
       return snapshot
     } catch (error) {
@@ -56,7 +57,7 @@ export class PageTabWorkerManager {
   pause(payload: RotationPageTabPayload): RotationRuntimeSnapshot {
     diagnostic(payload.pageTabId, 'PAUSE requested')
     try {
-      const snapshot = this.getOrCreate(payload.pageTabId).pause(payload)
+      const snapshot = rotationRuntimeOverlay.decorate(this.getOrCreate(payload.pageTabId).pause(payload))
       diagnostic(payload.pageTabId, `PAUSE accepted status=${snapshot.status} run=${snapshot.runId ?? 'none'}`)
       return snapshot
     } catch (error) {
@@ -69,17 +70,17 @@ export class PageTabWorkerManager {
     diagnostic(payload.pageTabId, 'RESUME requested')
     this.assertCapacity(payload.pageTabId)
     const controller = this.getOrCreate(payload.pageTabId)
-    const current = controller.status(payload)
+    const current = rotationRuntimeOverlay.decorate(controller.status(payload))
     diagnostic(payload.pageTabId, `RESUME current status=${current.status} run=${current.runId ?? 'none'}`)
 
     if (current.status === 'completed') {
-      const snapshot = controller.start(payload)
+      const snapshot = rotationRuntimeOverlay.decorate(controller.start(payload))
       diagnostic(payload.pageTabId, `RESUME created fresh run status=${snapshot.status} run=${snapshot.runId ?? 'none'}`)
       return snapshot
     }
 
     try {
-      const snapshot = controller.resume(payload)
+      const snapshot = rotationRuntimeOverlay.decorate(controller.resume(payload))
       diagnostic(payload.pageTabId, `RESUME accepted status=${snapshot.status} run=${snapshot.runId ?? 'none'}`)
       return snapshot
     } catch (error) {
@@ -88,7 +89,7 @@ export class PageTabWorkerManager {
         throw error
       }
       diagnostic(payload.pageTabId, 'RESUME missing runtime session; falling back to START')
-      const snapshot = controller.start(payload)
+      const snapshot = rotationRuntimeOverlay.decorate(controller.start(payload))
       diagnostic(payload.pageTabId, `RESUME fallback START status=${snapshot.status} run=${snapshot.runId ?? 'none'}`)
       return snapshot
     }
@@ -98,7 +99,7 @@ export class PageTabWorkerManager {
     diagnostic(payload.pageTabId, 'STOP requested')
     const controller = this.getOrCreate(payload.pageTabId)
     try {
-      const snapshot = controller.stop(payload)
+      const snapshot = rotationRuntimeOverlay.decorate(controller.stop(payload))
       diagnostic(payload.pageTabId, `STOP accepted status=${snapshot.status} run=${snapshot.runId ?? 'none'}`)
       return snapshot
     } catch (error) {
@@ -112,7 +113,7 @@ export class PageTabWorkerManager {
       // the first scheduler await; Stop immediately marks it before posting can run.
       diagnostic(payload.pageTabId, 'STOP missing runtime session; restoring paused run before STOP')
       controller.resume(payload)
-      const snapshot = controller.stop(payload)
+      const snapshot = rotationRuntimeOverlay.decorate(controller.stop(payload))
       diagnostic(payload.pageTabId, `STOP restored session status=${snapshot.status} run=${snapshot.runId ?? 'none'}`)
       return snapshot
     }
@@ -121,6 +122,7 @@ export class PageTabWorkerManager {
   dispose(): void {
     for (const controller of this.controllers.values()) controller.dispose()
     this.controllers.clear()
+    rotationRuntimeOverlay.clearAll()
   }
 
   private assertCapacity(pageTabId: number): void {

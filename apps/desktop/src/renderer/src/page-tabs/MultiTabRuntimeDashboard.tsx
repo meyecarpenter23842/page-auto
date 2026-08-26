@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { AccountRecord } from '../../../shared/accounts'
 import type { PageTabSummary } from '../../../shared/pageTabs'
 import type { PostingResultStatus } from '../../../shared/posting'
-import type { RotationRuntimeSnapshot } from '../../../shared/rotation'
+import type { RotationAccountRuntimeStatus, RotationRuntimeSnapshot } from '../../../shared/rotation'
 import './multiTabRuntime.css'
 
 const runtimeStatusLabels: Record<RotationRuntimeSnapshot['status'], string> = {
@@ -22,6 +22,14 @@ const postingStatusLabels: Record<PostingResultStatus, string> = {
   failed: 'Lỗi',
   needs_login: 'Cần đăng nhập',
   skipped: 'Bỏ qua'
+}
+
+const accountRuntimeLabels: Record<RotationAccountRuntimeStatus, string> = {
+  not_run: 'Chưa chạy',
+  completed_turn: 'Đã chạy',
+  running: 'Đang chạy',
+  error: 'Lỗi/Checkpoint',
+  waiting: 'Chờ'
 }
 
 function formatDuration(milliseconds: number): string {
@@ -250,6 +258,8 @@ export function MultiTabRuntimeDashboard({ pageTabId = null, compact = false }: 
           const currentAccount = runtime?.currentAccountId
             ? accountLabels.get(runtime.currentAccountId) ?? `#${runtime.currentAccountId}`
             : '—'
+          const accountStates = runtime?.accountStates ?? []
+          const preview = runtime?.currentPostPreview ?? null
           const busy = busyTabs.has(tab.id)
           const elapsed = startedAt ? formatDuration(now - startedAt) : '00:00:00'
           const lastStatus = runtime?.lastResult?.status
@@ -292,6 +302,50 @@ export function MultiTabRuntimeDashboard({ pageTabId = null, compact = false }: 
                 <div><span>Lỗi</span><strong>{metrics?.failed ?? 0}</strong></div>
                 <div><span>Tiến độ</span><strong>{metrics?.progressPercent ?? 0}%</strong></div>
               </div>
+
+              {accountStates.length > 0 ? (
+                <section className="multi-runtime-accounts" aria-label="Trạng thái tài khoản trong phiên">
+                  <div className="multi-runtime-section-title">
+                    <strong>Tài khoản trong phiên</strong>
+                    <span>Trạng thái này độc lập với Status gốc của account.</span>
+                  </div>
+                  <div className="multi-runtime-account-list">
+                    {accountStates.map((accountState) => (
+                      <span
+                        className={`multi-runtime-account account-${accountState.status}`}
+                        key={accountState.accountId}
+                        title={accountState.message ?? accountRuntimeLabels[accountState.status]}
+                      >
+                        <i aria-hidden="true" />
+                        <b>{accountLabels.get(accountState.accountId) ?? `#${accountState.accountId}`}</b>
+                        <em>{accountRuntimeLabels[accountState.status]}</em>
+                      </span>
+                    ))}
+                  </div>
+                  <div className="multi-runtime-account-legend" aria-label="Chú thích màu trạng thái tài khoản">
+                    {(Object.entries(accountRuntimeLabels) as Array<[RotationAccountRuntimeStatus, string]>).map(([state, label]) => (
+                      <span className={`legend-${state}`} key={state}><i aria-hidden="true" />{label}</span>
+                    ))}
+                  </div>
+                </section>
+              ) : null}
+
+              {preview ? (
+                <section className="multi-runtime-preview" aria-label="Bài đang đăng">
+                  <div className="multi-runtime-section-title">
+                    <strong>Bài đang đăng</strong>
+                    <span>Preview runtime thật, không chứa đường dẫn ảnh/credential.</span>
+                  </div>
+                  <div className="multi-runtime-preview-meta">
+                    <span>Group <b>{preview.groupUid}</b></span>
+                    <span>Bài <b>#{preview.postIndex + 1}</b></span>
+                    <span>Biến thể <b>#{preview.variantIndex + 1}</b></span>
+                    <span>Ảnh <b>{preview.imageCount}</b></span>
+                    <span>Ký tự <b>{preview.contentLength}</b></span>
+                  </div>
+                  <p>{preview.contentPreview || '(Bài không có nội dung text)'}</p>
+                </section>
+              ) : null}
 
               <dl className="multi-runtime-details">
                 <div><dt>Tài khoản hiện tại</dt><dd>{currentAccount}</dd></div>

@@ -245,6 +245,127 @@
 
 .multi-runtime-metrics strong { font-size: 12px; }
 
+.multi-runtime-section-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.multi-runtime-section-title strong {
+  color: #344054;
+  font-size: 9px;
+}
+
+.multi-runtime-section-title span {
+  color: #7a8799;
+  font-size: 8px;
+}
+
+.multi-runtime-accounts,
+.multi-runtime-preview {
+  display: grid;
+  gap: 6px;
+  padding: 7px;
+  border: 1px solid #e0e6ee;
+  border-radius: 4px;
+  background: #ffffff;
+}
+
+.multi-runtime-account-list,
+.multi-runtime-account-legend,
+.multi-runtime-preview-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.multi-runtime-account {
+  min-width: 0;
+  display: inline-grid;
+  grid-template-columns: 8px minmax(0, auto) auto;
+  align-items: center;
+  gap: 4px;
+  max-width: 260px;
+  padding: 4px 6px;
+  border: 1px solid #d8e0ea;
+  border-radius: 999px;
+  background: #f8fafc;
+  font-size: 8px;
+}
+
+.multi-runtime-account > i,
+.multi-runtime-account-legend i {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #98a2b3;
+}
+
+.multi-runtime-account b {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #344054;
+}
+
+.multi-runtime-account em {
+  color: #667085;
+  font-style: normal;
+  white-space: nowrap;
+}
+
+.multi-runtime-account.account-completed_turn { border-color: #a9c7f6; background: #f2f7ff; }
+.multi-runtime-account.account-completed_turn > i,
+.multi-runtime-account-legend .legend-completed_turn i { background: #2e6fd8; }
+.multi-runtime-account.account-running { border-color: #9bd6b2; background: #f1fbf5; }
+.multi-runtime-account.account-running > i,
+.multi-runtime-account-legend .legend-running i { background: #17a05d; }
+.multi-runtime-account.account-error { border-color: #efb1ab; background: #fff5f4; }
+.multi-runtime-account.account-error > i,
+.multi-runtime-account-legend .legend-error i { background: #d92d20; }
+.multi-runtime-account.account-waiting { border-color: #f0d28d; background: #fffaf0; }
+.multi-runtime-account.account-waiting > i,
+.multi-runtime-account-legend .legend-waiting i { background: #d79b16; }
+.multi-runtime-account.account-not_run > i,
+.multi-runtime-account-legend .legend-not_run i { background: #98a2b3; }
+
+.multi-runtime-account-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: #667085;
+  font-size: 8px;
+}
+
+.multi-runtime-preview {
+  border-color: #cdd9e8;
+  background: #f9fbff;
+}
+
+.multi-runtime-preview-meta span {
+  padding: 2px 5px;
+  border: 1px solid #dce5f0;
+  border-radius: 3px;
+  background: #ffffff;
+  color: #667085;
+  font-size: 8px;
+}
+
+.multi-runtime-preview-meta b { color: #344054; }
+
+.multi-runtime-preview p {
+  margin: 0;
+  max-height: 76px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: #344054;
+  font-size: 9px;
+  line-height: 1.4;
+}
+
 .multi-runtime-details {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -297,7 +418,8 @@
 
 @media (max-width: 900px) {
   .multi-runtime-heading,
-  .multi-runtime-card header { align-items: flex-start; flex-direction: column; }
+  .multi-runtime-card header,
+  .multi-runtime-section-title { align-items: flex-start; flex-direction: column; }
   .multi-runtime-summary,
   .multi-runtime-actions { justify-content: flex-start; }
   .multi-runtime-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
