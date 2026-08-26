@@ -6,6 +6,9 @@ import type {
   HotmailBrowserOpenResult,
   HotmailDashboardRow,
   HotmailOAuthStartResult,
+  HotmailPasswordActionPayload,
+  HotmailPasswordActionResult,
+  HotmailPasswordBatchResult,
   HotmailProxyStatus,
   HotmailProxyTestResult,
   HotmailRecoveryActionPayload,
@@ -23,6 +26,7 @@ import { MicrosoftGraphMailAdapter } from './microsoftGraphMailAdapter'
 import { MicrosoftOAuthService } from './microsoftOAuthService'
 import type { EmailSecretCipher } from './emailSecretStore'
 import { canonicalBackupEmailAfterRecoverySuccess, validateRecoveryAction } from './emailAccountActionPolicy'
+import { validateEmailPassword } from './emailPasswordActionPolicy'
 import { parseVerificationCode } from './verificationCodeParser'
 
 function uniqueAccountIds(payload: HotmailBatchPayload): number[] {
@@ -353,6 +357,102 @@ export class HotmailService {
         const message = 'Thao tác Mail khôi phục chưa hoàn tất trong browser Email.'
         this.repository.updateEmailState(accountId, { lastError: message })
         results.push({ accountId, operation: payload.operation, backupEmail: account.backupEmail, status: 'error', message })
+      }
+    }
+
+    return { results }
+  }
+
+  async updatePassword(payload: HotmailPasswordActionPayload): Promise<HotmailPasswordBatchResult> {
+    const accountIds = uniqueAccountIds(payload)
+    const newPassword = validateEmailPassword(payload.newPassword)
+    const results: HotmailPasswordActionResult[] = []
+
+    for (const accountId of accountIds) {
+      const account = this.accounts.getById(accountId)
+      if (!account) {
+        results.push({ accountId, passwordUpdated: false, status: 'error', message: 'Account không tồn tại.' })
+        continue
+      }
+      if (!account.email) {
+        results.push({ accountId, passwordUpdated: false, status: 'error', message: 'Account chưa có Email Microsoft.' })
+        continue
+      }
+      if (!payload.confirmCompleted && account.emailPassword === newPassword) {
+        results.push({ accountId, passwordUpdated: false, status: 'error', message: 'Password Email mới trùng Password canonical hiện tại.' })
+        continue
+      }
+      if (payload.confirmCompleted && !this.browser.isOpen(accountId)) {
+        results.push({
+          accountId,
+          passwordUpdated: false,
+          status: 'error',
+          message: 'Không còn phiên Email Password đang mở cho account này; mở lại flow trước khi xác nhận.'
+        })
+        continue
+      }
+
+      this.runtimeStatus.set(accountId, 'acting')
+      try {
+        const settings = this.repository.getProfileSettings()
+        const inspection = await inspectEmailProfile(settings.profileRoot, account.uid)
+        if (inspection.status === 'not_configured' || inspection.status === 'missing') {
+          const missing = await this.browser.runPasswordAction(
+            account,
+            settings.profileRoot,
+            settings.browserExecutable,
+            null,
+            newPassword,
+            Boolean(payload.confirmCompleted)
+          )
+          this.runtimeStatus.set(accountId, 'error')
+          results.push(missing)
+          continue
+        }
+
+        const attachedExternally = inspection.status === 'running' && !this.browser.isOpen(accountId)
+        const executable = await this.resolveBrowserExecutable(settings.browserExecutable, settings.profileRoot)
+        const proxy = attachedExternally ? null : (this.proxyPool.assignment(accountId) ?? this.proxyPool.acquire(accountId))
+        const result = await this.browser.runPasswordAction(
+          account,
+          settings.profileRoot,
+          executable,
+          proxy,
+          newPassword,
+          Boolean(payload.confirmCompleted)
+        )
+
+        if (result.proxyManagedExternally) this.proxyPool.release(accountId)
+        if (proxy && !result.proxyManagedExternally) {
+          if (result.status === 'success' || result.status === 'needs_attention') this.proxyPool.recordSuccess(proxy)
+          else if (/proxy/i.test(result.message)) this.proxyPool.recordFailure(proxy)
+        }
+        if (result.status === 'profile_in_use') this.profileInUseUntil.set(accountId, Date.now() + EMAIL_PROFILE_IN_USE_CACHE_MS)
+        else this.profileInUseUntil.delete(accountId)
+
+        if (result.status === 'success') {
+          this.accounts.update(accountId, { emailPassword: newPassword })
+          this.repository.updateEmailState(accountId, { lastError: null })
+          this.runtimeStatus.set(accountId, 'idle')
+          results.push({ ...result, passwordUpdated: true })
+          continue
+        }
+
+        if (result.status === 'needs_attention') {
+          this.repository.updateEmailState(accountId, { lastError: result.message })
+          this.runtimeStatus.set(accountId, 'idle')
+          results.push(result)
+          continue
+        }
+
+        this.repository.updateEmailState(accountId, { lastError: result.message })
+        this.runtimeStatus.set(accountId, 'error')
+        results.push(result)
+      } catch {
+        this.runtimeStatus.set(accountId, 'error')
+        const message = 'Thao tác đổi Password Email chưa hoàn tất trong browser Email.'
+        this.repository.updateEmailState(accountId, { lastError: message })
+        results.push({ accountId, passwordUpdated: false, status: 'error', message })
       }
     }
 
