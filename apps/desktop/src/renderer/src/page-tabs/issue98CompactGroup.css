@@ -111,8 +111,17 @@
   align-content: start;
 }
 
+/* The workspace entry animation creates a stacking context. Drop it while this modal is open so the modal can sit above its body-level backdrop without sacrificing outside-click blocking. */
+.workspace-page-tabs.workspace-transition:has(.page-business-group-pane .pt-identity-panel.issue98-identity-modal) {
+  animation: none !important;
+  transform: none !important;
+}
+
 .pt-identity-compact-backdrop {
-  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 2290;
+  background: rgba(15, 23, 42, 0.28);
 }
 
 .page-business-group-pane .pt-identity-panel.issue98-identity-modal {
