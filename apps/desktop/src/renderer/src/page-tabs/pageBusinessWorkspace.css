@@ -1,0 +1,267 @@
+.workspace.workspace-page-tabs > .page-tabs-route.page-business-workspace {
+  min-height: 0;
+  height: auto;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 8px;
+  overflow: hidden;
+}
+
+.page-business-tabs {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 8px 7px 10px;
+  background: #ffffff;
+  border: 1px solid #d5dde8;
+  border-radius: 5px;
+}
+
+.page-business-tabs-copy {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.page-business-tabs-copy > span {
+  color: #344054;
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.page-business-tabs-copy small {
+  color: #7a8799;
+  font-size: 9px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.page-business-tab-buttons {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: stretch;
+  gap: 5px;
+}
+
+.page-business-tab {
+  min-width: 112px;
+  display: grid;
+  gap: 1px;
+  padding: 6px 10px;
+  color: #526075;
+  background: #f8fafc;
+  border: 1px solid #d6dee8;
+  border-radius: 4px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.page-business-tab strong {
+  font-size: 10px;
+}
+
+.page-business-tab span {
+  color: #8a95a6;
+  font-size: 8px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.page-business-tab:hover {
+  border-color: #9db7df;
+  background: #f2f7ff;
+}
+
+.page-business-tab.active {
+  color: #173d88;
+  border-color: #79a2ea;
+  background: #edf5ff;
+  box-shadow: inset 0 -2px 0 #175cd3;
+}
+
+.page-business-tab.active span {
+  color: #175cd3;
+}
+
+.page-business-pane {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.page-business-group-pane.inactive {
+  display: none;
+}
+
+.page-business-group-pane > .page-tabs-manager {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+/* Keep the current Group workflow intact, only trim chrome around coordination/config. */
+.page-business-group-pane .multi-runtime-shell.compact {
+  gap: 6px;
+  padding: 8px;
+}
+
+.page-business-group-pane .multi-runtime-shell.compact .multi-runtime-heading h2 {
+  font-size: 14px;
+}
+
+.page-business-group-pane .multi-runtime-shell.compact .multi-runtime-bulk {
+  gap: 4px;
+  padding: 5px;
+}
+
+.page-business-group-pane .multi-runtime-shell.compact .multi-runtime-bulk-tab,
+.page-business-group-pane .multi-runtime-shell.compact .multi-runtime-bulk-actions button {
+  min-height: 24px;
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+
+.page-business-group-pane .pt-business-panel {
+  padding: 8px 9px;
+}
+
+.page-business-group-pane .pt-business-panel .pt-panel-heading {
+  margin-bottom: 5px;
+}
+
+.page-business-group-pane .pt-right-summary {
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+
+.page-business-placeholder {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 14px;
+  background: #ffffff;
+  border: 1px solid #d7dfe9;
+  border-radius: 5px;
+  overflow: auto;
+}
+
+.page-business-placeholder-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #e5eaf1;
+}
+
+.page-business-placeholder-head h2 {
+  margin: 3px 0 0;
+  font-size: 18px;
+}
+
+.page-business-placeholder-head p:not(.eyebrow) {
+  max-width: 720px;
+  margin: 4px 0 0;
+  color: #667085;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.page-business-shell-badge {
+  flex: 0 0 auto;
+  padding: 4px 7px;
+  color: #b54708;
+  background: #fffaeb;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.page-business-placeholder-grid {
+  align-content: start;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.page-business-placeholder-grid article {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  gap: 8px;
+  padding: 11px;
+  border: 1px solid #dce3eb;
+  border-radius: 4px;
+  background: #fbfcfe;
+}
+
+.page-business-placeholder-grid article > span {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  color: #175cd3;
+  background: #edf4ff;
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 900;
+}
+
+.page-business-placeholder-grid article div {
+  min-width: 0;
+}
+
+.page-business-placeholder-grid strong {
+  display: block;
+  color: #344054;
+  font-size: 11px;
+}
+
+.page-business-placeholder-grid p {
+  margin: 4px 0 0;
+  color: #667085;
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.page-business-foundation-note {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  color: #526075;
+  background: #f7f9fc;
+  border: 1px solid #dde4ed;
+  border-radius: 4px;
+}
+
+.page-business-foundation-note strong {
+  flex: 0 0 auto;
+  color: #344054;
+  font-size: 9px;
+}
+
+.page-business-foundation-note span {
+  font-size: 9px;
+}
+
+@media (max-width: 1100px) {
+  .page-business-tabs {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .page-business-tab-buttons {
+    overflow-x: auto;
+  }
+
+  .page-business-placeholder-grid {
+    grid-template-columns: 1fr;
+  }
+}
