@@ -5,6 +5,7 @@ import type {
   HotmailBatchResult,
   HotmailDashboardRow,
   HotmailOAuthStartResult,
+  HotmailPasswordBatchResult,
   HotmailProxyStatus,
   HotmailRecoveryBatchResult,
   HotmailRecoveryOperation,
@@ -23,8 +24,8 @@ interface SettingsDraft {
   proxyListText: string
 }
 
-type EmailPanel = 'network' | 'logs' | 'settings' | 'recovery' | null
-type ActionKey = 'oauth' | 'codes' | 'open' | 'check' | 'recovery' | 'rotate' | 'test' | 'save' | 'pick-root' | 'pick-browser' | 'copy' | 'refresh'
+type EmailPanel = 'network' | 'logs' | 'settings' | 'recovery' | 'password' | null
+type ActionKey = 'oauth' | 'codes' | 'open' | 'check' | 'recovery' | 'password' | 'rotate' | 'test' | 'save' | 'pick-root' | 'pick-browser' | 'copy' | 'refresh'
 type ContextMenuState = { x: number; y: number; accountId: number } | null
 
 const QUICK_FILTERS: Array<{ id: EmailQuickFilter; label: string }> = [
@@ -98,6 +99,14 @@ function recoverySummary(result: HotmailRecoveryBatchResult): string {
   return `Recovery ${result.results.length} tài khoản · ${success} thành công · ${attention} cần xử lý · ${failed} lỗi${detail ? ` · ${detail}` : ''}.`
 }
 
+function passwordSummary(result: HotmailPasswordBatchResult): string {
+  const success = result.results.filter((item) => item.status === 'success').length
+  const attention = result.results.filter((item) => item.status === 'needs_attention').length
+  const failed = result.results.length - success - attention
+  const detail = result.results.find((item) => item.status !== 'success')?.message
+  return `Password ${result.results.length} tài khoản · ${success} thành công · ${attention} cần xử lý · ${failed} lỗi${detail ? ` · ${detail}` : ''}.`
+}
+
 function Spinner() {
   return <span className="email-spinner" aria-hidden="true" />
 }
@@ -120,6 +129,9 @@ export function HotmailAuto() {
   const [recoveryEmail, setRecoveryEmail] = useState('')
   const [recoveryOperation, setRecoveryOperation] = useState<HotmailRecoveryOperation>('add')
   const [recoveryAwaitingConfirmation, setRecoveryAwaitingConfirmation] = useState(false)
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmNewPassword, setConfirmNewPassword] = useState('')
+  const [passwordAwaitingConfirmation, setPasswordAwaitingConfirmation] = useState(false)
 
   const visibleRows = useMemo(() => filterHotmailRows(rows, query, quickFilter), [rows, query, quickFilter])
   const selectedIds = useMemo(() => [...selection], [selection])
@@ -254,6 +266,37 @@ export function HotmailAuto() {
     return recoverySummary(result)
   })
 
+  const runPassword = (confirmCompleted = false) => runAction('password', async () => {
+    if (confirmCompleted) {
+      const result = await window.pageAuto.updateHotmailPassword({ accountIds: [], confirmCompleted: true })
+      const attention = result.results.some((item) => item.status === 'needs_attention')
+      setPasswordAwaitingConfirmation(attention)
+      if (!attention && result.results.every((item) => item.status === 'success')) {
+        setNewPassword('')
+        setConfirmNewPassword('')
+      }
+      return passwordSummary(result)
+    }
+
+    const ids = requireSelection()
+    if (newPassword !== confirmNewPassword) throw new Error('Password Email mới và ô xác nhận chưa khớp.')
+    if (!window.confirm(`Xác nhận đổi Password Email cho ${ids.length} tài khoản đã chọn? PassEmail chỉ cập nhật sau khi Microsoft xác nhận thành công.`)) {
+      return 'Đã hủy thao tác đổi Password Email.'
+    }
+    const result = await window.pageAuto.updateHotmailPassword({
+      accountIds: ids,
+      newPassword,
+      confirmCompleted: false
+    })
+    const attention = result.results.some((item) => item.status === 'needs_attention')
+    setPasswordAwaitingConfirmation(attention)
+    if (!attention && result.results.every((item) => item.status === 'success')) {
+      setNewPassword('')
+      setConfirmNewPassword('')
+    }
+    return passwordSummary(result)
+  })
+
   const rotateProxy = () => runAction('rotate', async () => {
     const status = await window.pageAuto.rotateHotmailProxy()
     setProxyStatus(status)
@@ -328,6 +371,7 @@ export function HotmailAuto() {
         <button className="email-button secondary" disabled={isBusy('copy')} onClick={() => void copyEmails()}>{isBusy('copy') && <Spinner />}Copy Email</button>
       </div>
       <div className="email-command-secondary">
+        <button className="email-button ghost" onClick={() => setPanel('password')}>Đổi Password</button>
         <button className="email-button ghost" onClick={() => setPanel('recovery')}>Mail khôi phục</button>
         <button className="email-button ghost" onClick={() => setPanel('network')}>Proxy / IP</button>
         <button className="email-button ghost" onClick={() => setPanel('logs')}>Nhật ký</button>
@@ -376,7 +420,7 @@ export function HotmailAuto() {
     <footer className="email-selection-footer"><div><strong>{visibleSelected}</strong> dòng đang hiện được chọn · <strong>{selectedRows.length}</strong> tổng selection</div><span>Double-click: Mở mail · Ctrl/Shift: chọn nhiều · Chuột phải: thao tác trên selection</span></footer>
 
     {panel ? <div className="email-panel-backdrop" onMouseDown={() => setPanel(null)}><aside className="email-side-panel" onMouseDown={(event) => event.stopPropagation()}>
-      <div className="email-panel-header"><div><span>EMAIL</span><h2>{panel === 'network' ? 'Proxy / IP' : panel === 'logs' ? 'Nhật ký gần nhất' : panel === 'recovery' ? 'Mail khôi phục' : 'Cài đặt'}</h2></div><button className="email-panel-close" onClick={() => setPanel(null)}>×</button></div>
+      <div className="email-panel-header"><div><span>EMAIL</span><h2>{panel === 'network' ? 'Proxy / IP' : panel === 'logs' ? 'Nhật ký gần nhất' : panel === 'recovery' ? 'Mail khôi phục' : panel === 'password' ? 'Đổi Password Email' : 'Cài đặt'}</h2></div><button className="email-panel-close" onClick={() => setPanel(null)}>×</button></div>
 
       {panel === 'network' ? <div className="email-panel-content">
         <div className="email-panel-summary"><div><span>Chế độ</span><strong>{proxyStatus?.mode === 'random_ipv4' ? 'IPv4 ngẫu nhiên' : 'Trực tiếp'}</strong></div><div><span>Proxy hiện tại</span><strong>{proxyStatus?.currentProxy ?? 'Chưa có'}</strong></div><div><span>Pool</span><strong>{proxyStatus?.poolSize ?? 0}</strong></div><div><span>Phiên đang dùng</span><strong>{proxyStatus?.activeSessions ?? 0}</strong></div></div>
@@ -386,6 +430,19 @@ export function HotmailAuto() {
       </div> : null}
 
       {panel === 'logs' ? <div className="email-panel-content"><p className="email-panel-note">{selectedRows.length ? `Đang xem ${selectedRows.length} tài khoản đã chọn.` : 'Không có selection; ưu tiên các tài khoản có lỗi.'}</p><div className="email-log-list">{logRows.length ? logRows.map((row) => <article key={row.accountId}><div><strong>{row.uid}</strong><span className={`email-chip ${row.runtimeStatus}`}>{runtimeStatusLabel(row.runtimeStatus)}</span></div><p>{row.email ?? 'Chưa có Email'}</p><small>Check: {formatTime(row.lastCheckAt)} · Code: {formatTime(row.lastCodeAt)}</small><div className={row.lastError ? 'log-error' : 'log-ok'}>{row.lastError ?? 'Không có lỗi gần nhất.'}</div></article>) : <div className="email-panel-empty">Chưa có lỗi hoặc tài khoản được chọn.</div>}</div></div> : null}
+
+      {panel === 'password' ? <div className="email-panel-content">
+        <p className="email-panel-note">E5.2 dùng đúng Email Profile Root/UID và mạng Email riêng. PAGE-AUTO chỉ tự điền khi nhận đúng surface Change Password/Password expired của Microsoft; login, identity/security review hoặc surface lạ sẽ giữ phiên `needs_attention`, không bypass.</p>
+        <div className="email-recovery-selection">{panelRows.slice(0, 20).map((row) => <div key={row.accountId}><span className="mono">{row.uid}</span><strong>{row.email ?? 'Chưa có Email Microsoft'}</strong><span className={`email-chip ${row.profileStatus}`}>{profileStatusLabel(row.profileStatus)}</span></div>)}</div>
+        <section className="email-settings-card"><div className="email-settings-heading"><div><span>E5.2 PASSWORD HOTMAIL</span><h3>Đổi Password Email</h3></div><span className="email-settings-badge">Canonical theo accountId</span></div><div className="email-settings-grid">
+          <label className="wide"><span>Password Email mới</span><input type="password" autoComplete="new-password" value={newPassword} disabled={passwordAwaitingConfirmation} onChange={(event: ChangeEvent<HTMLInputElement>) => setNewPassword(event.target.value)} placeholder="Tối thiểu 8 ký tự" /><small>Không trim/mutate password, không log plaintext. Batch sẽ áp dụng cùng password mới cho selection đã chốt.</small></label>
+          <label className="wide"><span>Xác nhận Password mới</span><input type="password" autoComplete="new-password" value={confirmNewPassword} disabled={passwordAwaitingConfirmation} onChange={(event: ChangeEvent<HTMLInputElement>) => setConfirmNewPassword(event.target.value)} placeholder="Nhập lại Password mới" /></label>
+        </div><div className="email-panel-actions">
+          <button className="email-button primary" disabled={isBusy('password') || selectedIds.length === 0 || passwordAwaitingConfirmation} onClick={() => void runPassword(false)}>{isBusy('password') && <Spinner />}Đổi Password</button>
+          {passwordAwaitingConfirmation ? <button className="email-button success" disabled={isBusy('password')} onClick={() => void runPassword(true)}>{isBusy('password') && <Spinner />}Xác nhận hoàn tất</button> : null}
+        </div></section>
+        <div className="email-info-card"><strong>Cách chạy</strong><p>Form Microsoft chuẩn sẽ được điền current/new/re-enter bằng worker Email. Nếu flow chuyển thủ công, selection + Password mới được đóng băng ở Main; nút Xác nhận hoàn tất không đọc lại selection hoặc input đã thay đổi. Chỉ result success mới cập nhật accounts.PassEmail.</p></div>
+      </div> : null}
 
       {panel === 'recovery' ? <div className="email-panel-content">
         <p className="email-panel-note">Recovery chạy trên đúng Email Profile Root/UID và mạng Email riêng. Microsoft yêu cầu login/xác minh bảo mật thì app giữ phiên và trả trạng thái cần xử lý; không bypass.</p>
@@ -416,6 +473,6 @@ export function HotmailAuto() {
       </> : <div className="email-panel-empty">Đang tải cài đặt Email...</div>}</div> : null}
     </aside></div> : null}
 
-    {contextMenu ? <div className="email-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onMouseDown={(event) => event.stopPropagation()}><div className="email-context-title">{contextIds.length} tài khoản trong selection</div><button onClick={() => { setContextMenu(null); void openMail(contextIds) }}>Mở mail</button><button onClick={() => { setContextMenu(null); void getCodes(contextIds) }}>Lấy mã</button><button onClick={() => { setContextMenu(null); void checkMail(contextIds) }}>Check Live Hotmail</button><button disabled={contextIds.length !== 1} onClick={() => { setContextMenu(null); void connectMailbox(contextIds[0]) }}>Lấy / cập nhật OAuth</button><div className="email-context-separator" /><button onClick={() => { setContextMenu(null); void copyEmails(contextIds) }}>Copy Email</button><button onClick={() => { setContextMenu(null); setPanel('recovery') }}>Thao tác Mail khôi phục</button><button onClick={() => { setContextMenu(null); setPanel('logs') }}>Xem trạng thái / lỗi</button></div> : null}
+    {contextMenu ? <div className="email-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onMouseDown={(event) => event.stopPropagation()}><div className="email-context-title">{contextIds.length} tài khoản trong selection</div><button onClick={() => { setContextMenu(null); void openMail(contextIds) }}>Mở mail</button><button onClick={() => { setContextMenu(null); void getCodes(contextIds) }}>Lấy mã</button><button onClick={() => { setContextMenu(null); void checkMail(contextIds) }}>Check Live Hotmail</button><button disabled={contextIds.length !== 1} onClick={() => { setContextMenu(null); void connectMailbox(contextIds[0]) }}>Lấy / cập nhật OAuth</button><div className="email-context-separator" /><button onClick={() => { setContextMenu(null); void copyEmails(contextIds) }}>Copy Email</button><button onClick={() => { setContextMenu(null); setPanel('password') }}>Đổi Password Email</button><button onClick={() => { setContextMenu(null); setPanel('recovery') }}>Thao tác Mail khôi phục</button><button onClick={() => { setContextMenu(null); setPanel('logs') }}>Xem trạng thái / lỗi</button></div> : null}
   </section>
 }

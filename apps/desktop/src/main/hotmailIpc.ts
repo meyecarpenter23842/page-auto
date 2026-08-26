@@ -7,6 +7,7 @@ import type {
   HotmailAccountPayload,
   HotmailBatchPayload,
   HotmailBatchResult,
+  HotmailPasswordActionPayload,
   HotmailRecoveryActionPayload
 } from '../shared/hotmail'
 import { BrowserEngineService } from './browser/browserEngineService'
@@ -25,6 +26,10 @@ export interface HotmailIpcRuntime {
 
 function uniqueAccountIds(payload: HotmailBatchPayload): number[] {
   return [...new Set(payload.accountIds.filter((id) => Number.isInteger(id) && id > 0))]
+}
+
+function needsAttentionAccountIds(results: Array<{ accountId: number; status: string }>): number[] {
+  return results.filter((item) => item.status === 'needs_attention').map((item) => item.accountId)
 }
 
 async function getManualCodes(provider: EmailCodeProvider, payload: HotmailBatchPayload): Promise<HotmailBatchResult> {
@@ -50,6 +55,7 @@ export function registerHotmailIpcHandlers(database: Database.Database): Hotmail
   const browserEngine = new BrowserEngineService()
   const validatedExecutables = new Set<string>()
   let pendingRecoveryPayload: HotmailRecoveryActionPayload | null = null
+  let pendingPasswordPayload: HotmailPasswordActionPayload | null = null
 
   const resolveBrowserExecutable = async (requestedExecutable: string, profileRoot: string): Promise<string> => {
     const candidates = emailBrowserExecutableCandidates(profileRoot, requestedExecutable)
@@ -136,6 +142,7 @@ export function registerHotmailIpcHandlers(database: Database.Database): Hotmail
   ipcMain.handle(IPC_CHANNELS.hotmailCodesGet, (_event, payload: HotmailBatchPayload) => getManualCodes(codeRuntime.provider, payload))
   ipcMain.handle(IPC_CHANNELS.hotmailCheck, (_event, payload: HotmailBatchPayload) => service.checkMail(payload))
   ipcMain.handle(IPC_CHANNELS.hotmailOpen, (_event, payload: HotmailAccountPayload) => service.openMail(payload.accountId))
+
   ipcMain.handle(IPC_CHANNELS.hotmailRecoveryAction, async (_event, payload: HotmailRecoveryActionPayload) => {
     if (payload.confirmCompleted) {
       if (!pendingRecoveryPayload) {
@@ -148,12 +155,20 @@ export function registerHotmailIpcHandlers(database: Database.Database): Hotmail
         confirmCompleted: true
       }
       const result = await service.updateRecoveryMail(frozenPayload)
-      if (!result.results.some((item) => item.status === 'needs_attention')) pendingRecoveryPayload = null
+      const attentionIds = needsAttentionAccountIds(result.results)
+      pendingRecoveryPayload = attentionIds.length > 0
+        ? {
+            accountIds: attentionIds,
+            operation: frozenPayload.operation,
+            ...(frozenPayload.recoveryEmail !== undefined ? { recoveryEmail: frozenPayload.recoveryEmail } : {}),
+            confirmCompleted: false
+          }
+        : null
       return result
     }
 
-    if (pendingRecoveryPayload) {
-      throw new Error('Đang có flow Mail khôi phục chờ xác nhận. Hoàn tất hoặc đóng phiên đó trước khi mở flow mới.')
+    if (pendingRecoveryPayload || pendingPasswordPayload) {
+      throw new Error('Đang có một flow bảo mật Email chờ xác nhận. Hoàn tất flow đó trước khi mở thao tác mới.')
     }
 
     const frozenPayload: HotmailRecoveryActionPayload = {
@@ -163,11 +178,53 @@ export function registerHotmailIpcHandlers(database: Database.Database): Hotmail
       confirmCompleted: false
     }
     const result = await service.updateRecoveryMail(frozenPayload)
-    if (result.results.some((item) => item.status === 'needs_attention')) {
-      pendingRecoveryPayload = frozenPayload
+    const attentionIds = needsAttentionAccountIds(result.results)
+    if (attentionIds.length > 0) {
+      pendingRecoveryPayload = { ...frozenPayload, accountIds: attentionIds }
     }
     return result
   })
+
+  ipcMain.handle(IPC_CHANNELS.hotmailPasswordAction, async (_event, payload: HotmailPasswordActionPayload) => {
+    if (payload.confirmCompleted) {
+      const confirmedPassword = pendingPasswordPayload?.newPassword
+      if (!confirmedPassword || !pendingPasswordPayload) {
+        throw new Error('Không có flow đổi Password Email nào đang chờ xác nhận. Hãy mở lại flow trước.')
+      }
+      const frozenPayload: HotmailPasswordActionPayload = {
+        accountIds: [...pendingPasswordPayload.accountIds],
+        newPassword: confirmedPassword,
+        confirmCompleted: true
+      }
+      const result = await service.updatePassword(frozenPayload)
+      const attentionIds = needsAttentionAccountIds(result.results)
+      pendingPasswordPayload = attentionIds.length > 0
+        ? {
+            accountIds: attentionIds,
+            newPassword: confirmedPassword,
+            confirmCompleted: false
+          }
+        : null
+      return result
+    }
+
+    if (pendingRecoveryPayload || pendingPasswordPayload) {
+      throw new Error('Đang có một flow bảo mật Email chờ xác nhận. Hoàn tất flow đó trước khi mở thao tác mới.')
+    }
+
+    const frozenPayload: HotmailPasswordActionPayload = {
+      accountIds: [...payload.accountIds],
+      ...(payload.newPassword !== undefined ? { newPassword: payload.newPassword } : {}),
+      confirmCompleted: false
+    }
+    const result = await service.updatePassword(frozenPayload)
+    const attentionIds = needsAttentionAccountIds(result.results)
+    if (attentionIds.length > 0) {
+      pendingPasswordPayload = { ...frozenPayload, accountIds: attentionIds }
+    }
+    return result
+  })
+
   ipcMain.handle(IPC_CHANNELS.hotmailProxyStatus, () => service.getProxyStatus())
   ipcMain.handle(IPC_CHANNELS.hotmailProxyRotate, () => service.rotateProxy())
   ipcMain.handle(IPC_CHANNELS.hotmailProxyTest, () => service.testProxy())
@@ -175,6 +232,7 @@ export function registerHotmailIpcHandlers(database: Database.Database): Hotmail
   return {
     dispose: () => {
       pendingRecoveryPayload = null
+      pendingPasswordPayload = null
       clearEmailCodeProvider(codeRuntime.provider)
       codeRuntime.dispose()
       service.dispose()

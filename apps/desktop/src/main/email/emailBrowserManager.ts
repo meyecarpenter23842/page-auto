@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import type { AccountRecord } from '../../shared/accounts'
 import type {
   HotmailBrowserOpenResult,
+  HotmailPasswordActionResult,
   HotmailRecoveryActionResult,
   HotmailRecoveryOperation
 } from '../../shared/hotmail'
@@ -29,7 +30,16 @@ interface WorkerRecoveryResult {
   message: string
 }
 
-type WorkerResponse = WorkerOpenResult | WorkerRecoveryResult
+interface WorkerPasswordResult {
+  type: 'password-result'
+  accountId: number
+  status: 'success' | 'needs_attention' | 'profile_in_use' | 'error'
+  needsAttentionReason?: HotmailPasswordActionResult['needsAttentionReason']
+  proxyManagedExternally: boolean
+  message: string
+}
+
+type WorkerResponse = WorkerOpenResult | WorkerRecoveryResult | WorkerPasswordResult
 
 type PendingKind = WorkerResponse['type']
 
@@ -61,7 +71,7 @@ interface MissingWorker {
 function isWorkerResponse(value: unknown): value is WorkerResponse {
   if (!value || typeof value !== 'object') return false
   const candidate = value as Partial<WorkerResponse>
-  return (candidate.type === 'open-result' || candidate.type === 'recovery-result')
+  return (candidate.type === 'open-result' || candidate.type === 'recovery-result' || candidate.type === 'password-result')
     && typeof candidate.accountId === 'number'
     && typeof candidate.message === 'string'
 }
@@ -74,6 +84,27 @@ function proxyPayload(proxy: EmailProxyCandidate | null) {
       ...(proxy.password ? { password: proxy.password } : {})
     }
   } : {}
+}
+
+function workerErrorResponse(kind: PendingKind, command: Record<string, unknown>, message: string): WorkerResponse {
+  const accountId = Number(command.accountId)
+  if (kind === 'open-result') {
+    return {
+      type: 'open-result', accountId, status: 'error', attached: false,
+      proxyManagedExternally: false, message
+    }
+  }
+  if (kind === 'password-result') {
+    return {
+      type: 'password-result', accountId, status: 'error',
+      proxyManagedExternally: false, message
+    }
+  }
+  return {
+    type: 'recovery-result', accountId,
+    operation: command.operation as HotmailRecoveryOperation,
+    status: 'error', proxyManagedExternally: false, message
+  }
 }
 
 export class EmailBrowserManager {
@@ -172,6 +203,59 @@ export class EmailBrowserManager {
     return result
   }
 
+  async runPasswordAction(
+    account: AccountRecord,
+    profileRoot: string,
+    browserExecutable: string,
+    proxy: EmailProxyCandidate | null,
+    newPassword: string,
+    confirmCompleted: boolean
+  ): Promise<HotmailPasswordActionResult & { proxyManagedExternally: boolean }> {
+    const prepared = await this.prepareWorker(account, profileRoot, true)
+    if ('status' in prepared) {
+      return {
+        accountId: account.id,
+        passwordUpdated: false,
+        status: prepared.status,
+        message: prepared.message,
+        proxyManagedExternally: false
+      }
+    }
+    const { entry } = prepared
+    if (entry.pending) {
+      return {
+        accountId: account.id,
+        passwordUpdated: false,
+        status: 'error',
+        message: 'Email browser đang xử lý một thao tác khác cho account này.',
+        proxyManagedExternally: false
+      }
+    }
+
+    const response = await this.send(entry, 'password-result', {
+      type: 'password-action',
+      accountId: account.id,
+      profileDirectory: entry.profileDirectory,
+      confirmCompleted,
+      ...(!confirmCompleted && account.emailPassword ? { currentPassword: account.emailPassword } : {}),
+      ...(!confirmCompleted ? { newPassword } : {}),
+      ...(browserExecutable.trim() ? { executablePath: browserExecutable.trim() } : {}),
+      ...proxyPayload(proxy)
+    }) as WorkerPasswordResult
+
+    const result = {
+      accountId: account.id,
+      passwordUpdated: response.status === 'success',
+      status: response.status,
+      message: response.message,
+      ...(response.needsAttentionReason ? { needsAttentionReason: response.needsAttentionReason } : {}),
+      proxyManagedExternally: response.proxyManagedExternally
+    } satisfies HotmailPasswordActionResult & { proxyManagedExternally: boolean }
+
+    if (entry.actionOnly && response.status !== 'needs_attention') this.stopEntry(account.id, entry)
+    return result
+  }
+
   closeAll(): void {
     for (const [accountId, entry] of this.workers) this.stopEntry(accountId, entry)
     this.workers.clear()
@@ -230,15 +314,11 @@ export class EmailBrowserManager {
       entry.pending = null
       if (pending) {
         clearTimeout(pending.timer)
-        pending.resolve(pending.kind === 'open-result'
-          ? {
-              type: 'open-result', accountId: account.id, status: 'error', attached: false,
-              proxyManagedExternally: false, message: 'Email browser worker đã thoát trước khi phản hồi.'
-            }
-          : {
-              type: 'recovery-result', accountId: account.id, operation: 'add', status: 'error',
-              proxyManagedExternally: false, message: 'Email browser worker đã thoát trước khi phản hồi.'
-            })
+        pending.resolve(workerErrorResponse(
+          pending.kind,
+          { accountId: account.id, operation: 'add' },
+          'Email browser worker đã thoát trước khi phản hồi.'
+        ))
       }
       if (this.workers.get(account.id) === entry) this.workers.delete(account.id)
       this.onClosed?.(account.id)
@@ -251,30 +331,19 @@ export class EmailBrowserManager {
     try {
       await entry.spawned
     } catch {
-      return kind === 'open-result'
-        ? {
-            type: 'open-result', accountId: Number(command.accountId), status: 'error', attached: false,
-            proxyManagedExternally: false, message: 'Email browser worker không khởi động được.'
-          }
-        : {
-            type: 'recovery-result', accountId: Number(command.accountId), operation: command.operation as HotmailRecoveryOperation,
-            status: 'error', proxyManagedExternally: false, message: 'Email browser worker không khởi động được.'
-          }
+      return workerErrorResponse(kind, command, 'Email browser worker không khởi động được.')
     }
 
     return await new Promise<WorkerResponse>((resolve) => {
       const timer = setTimeout(() => {
         if (!entry.pending) return
         entry.pending = null
-        resolve(kind === 'open-result'
-          ? {
-              type: 'open-result', accountId: Number(command.accountId), status: 'error', attached: false,
-              proxyManagedExternally: false, message: 'Email browser quá thời gian chờ phản hồi.'
-            }
-          : {
-              type: 'recovery-result', accountId: Number(command.accountId), operation: command.operation as HotmailRecoveryOperation,
-              status: 'error', proxyManagedExternally: false, message: 'Thao tác Mail khôi phục quá thời gian chờ phản hồi.'
-            })
+        const timeoutMessage = kind === 'password-result'
+          ? 'Thao tác đổi Password Email quá thời gian chờ phản hồi.'
+          : kind === 'recovery-result'
+            ? 'Thao tác Mail khôi phục quá thời gian chờ phản hồi.'
+            : 'Email browser quá thời gian chờ phản hồi.'
+        resolve(workerErrorResponse(kind, command, timeoutMessage))
       }, 45_000)
       entry.pending = { kind, resolve, timer }
       try {
@@ -282,15 +351,7 @@ export class EmailBrowserManager {
       } catch {
         clearTimeout(timer)
         entry.pending = null
-        resolve(kind === 'open-result'
-          ? {
-              type: 'open-result', accountId: Number(command.accountId), status: 'error', attached: false,
-              proxyManagedExternally: false, message: 'Không gửi được lệnh tới Email browser worker.'
-            }
-          : {
-              type: 'recovery-result', accountId: Number(command.accountId), operation: command.operation as HotmailRecoveryOperation,
-              status: 'error', proxyManagedExternally: false, message: 'Không gửi được thao tác tới Email browser worker.'
-            })
+        resolve(workerErrorResponse(kind, command, 'Không gửi được thao tác tới Email browser worker.'))
       }
     })
   }
