@@ -1,5 +1,8 @@
 import type { BrowserWindowPlacement } from '../../shared/browserWindowLayout'
+import type { EmailCodeWorkerResponseMessage } from '../../shared/emailCode'
 import type { PostingWorkerRequestMessage } from '../../shared/posting'
+import { createEmailCodeWorkerRpc } from '../email/emailCodeWorkerRpc'
+import { clearEmailCodeProvider, setEmailCodeProvider } from '../services/emailCodeProviderRegistry'
 import {
   closeManagedPostingBrowser,
   installManagedBrowserReuse,
@@ -13,6 +16,8 @@ if (!parentPort) {
 }
 
 installManagedBrowserReuse()
+const emailCodeRpc = createEmailCodeWorkerRpc((message) => parentPort.postMessage(message))
+setEmailCodeProvider(emailCodeRpc.provider)
 const postingEngine = import('./posting/postingEngine')
 let queue = Promise.resolve()
 let shuttingDown = false
@@ -27,7 +32,8 @@ function isRetileRequest(payload: unknown): payload is RetileRequest {
 }
 
 parentPort.on('message', (event) => {
-  const payload = event.data as PostingWorkerRequestMessage | RetileRequest | { type?: string }
+  if (emailCodeRpc.handleMessage(event.data)) return
+  const payload = event.data as PostingWorkerRequestMessage | RetileRequest | EmailCodeWorkerResponseMessage | { type?: string }
   if (payload?.type === 'shutdown') {
     if (shuttingDown) return
     shuttingDown = true
@@ -42,6 +48,9 @@ parentPort.on('message', (event) => {
           '[PAGE-AUTO browser-close] posting worker failed to close browser:',
           error instanceof Error ? error.message : String(error)
         )
+      } finally {
+        clearEmailCodeProvider(emailCodeRpc.provider)
+        emailCodeRpc.dispose()
       }
       setTimeout(() => process.exit(exitCode), 25)
     })

@@ -12,10 +12,17 @@ describe('parseVerificationCode', () => {
     expect(match?.messageId).toBe('new')
   })
 
+  it('does not treat a recent order/reference number as a verification code', () => {
+    const now = Date.UTC(2026, 7, 24, 8, 0, 0)
+    expect(parseVerificationCode([
+      { id: 'order', receivedAt: now - 2_000, sender: 'store@example.com', subject: 'Order 123456 shipped', bodyPreview: 'Tracking 887766', bodyText: '' }
+    ], now)).toBeNull()
+  })
+
   it('returns null when there is no plausible code', () => {
     const now = Date.UTC(2026, 7, 24, 8, 0, 0)
     expect(parseVerificationCode([
-      { id: 'x', receivedAt: now - 1_000, sender: 'news@example.com', subject: 'Hello', bodyPreview: 'No code here.', bodyText: 'Welcome!' }
+      { id: 'x', receivedAt: now - 1_000, sender: 'news@example.com', subject: 'Hello', bodyPreview: 'Welcome!', bodyText: 'Thanks for subscribing.' }
     ], now)).toBeNull()
   })
 })
