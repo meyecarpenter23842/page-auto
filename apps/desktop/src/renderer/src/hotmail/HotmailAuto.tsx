@@ -198,6 +198,9 @@ export function HotmailAuto() {
           visibleRows.slice(from, to + 1).forEach((row) => next.add(row.accountId))
           return next
         })
+      } else {
+        setSelection(new Set([accountId]))
+        setLastSelectedId(accountId)
       }
     } else if (event.ctrlKey || event.metaKey) {
       toggleOne(accountId)
@@ -213,8 +216,9 @@ export function HotmailAuto() {
   }
 
   const connectMailbox = (accountId?: number) => runAction('oauth', async () => {
-    const id = accountId ?? requireSelection()[0]
-    if (!id) throw new Error('Chưa chọn tài khoản.')
+    const ids = accountId === undefined ? requireSelection() : [accountId]
+    if (ids.length !== 1) throw new Error('OAuth chỉ thao tác một tài khoản mỗi lần.')
+    const id = ids[0]
     const result = await window.pageAuto.startHotmailOAuth({ accountId: id })
     setOauthPrompt(result)
     return result.message
@@ -306,7 +310,7 @@ export function HotmailAuto() {
           <button className="email-button primary" disabled={isBusy('open')} onClick={() => void openMail()}>{isBusy('open') && <Spinner />}Mở mail</button>
           <button className="email-button success" disabled={isBusy('codes')} onClick={() => void getCodes()}>{isBusy('codes') && <Spinner />}Lấy mã</button>
           <button className="email-button primary" disabled={isBusy('check')} onClick={() => void checkMail()}>{isBusy('check') && <Spinner />}Check Live</button>
-          <button className="email-button secondary" disabled={isBusy('oauth')} onClick={() => void connectMailbox()}>{isBusy('oauth') && <Spinner />}Lấy / cập nhật OAuth</button>
+          <button className="email-button secondary" disabled={isBusy('oauth') || selectedRows.length !== 1} title="OAuth chỉ thao tác một tài khoản mỗi lần" onClick={() => void connectMailbox()}>{isBusy('oauth') && <Spinner />}Lấy / cập nhật OAuth</button>
           <button className="email-button secondary" disabled={isBusy('copy')} onClick={() => void copyEmails()}>{isBusy('copy') && <Spinner />}Copy Email</button>
         </div>
         <div className="email-command-secondary">
@@ -426,7 +430,7 @@ export function HotmailAuto() {
         </div>
       ) : null}
 
-      {contextMenu ? <div className="email-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onMouseDown={(event: MouseEvent<HTMLDivElement>) => event.stopPropagation()}><div className="email-context-title">{contextIds.length} tài khoản trong selection</div><button onClick={() => { setContextMenu(null); void openMail(contextIds) }}>Mở mail</button><button onClick={() => { setContextMenu(null); void getCodes(contextIds) }}>Lấy mã</button><button onClick={() => { setContextMenu(null); void checkMail(contextIds) }}>Check Live Hotmail</button><button onClick={() => { setContextMenu(null); void connectMailbox(contextMenu.accountId) }}>Lấy / cập nhật OAuth</button><div className="email-context-separator" /><button onClick={() => { setContextMenu(null); void copyEmails(contextIds) }}>Copy Email</button><button onClick={() => { setContextMenu(null); setPanel('recovery') }}>Xem mail khôi phục</button><button onClick={() => { setContextMenu(null); setPanel('logs') }}>Xem trạng thái / lỗi</button></div> : null}
+      {contextMenu ? <div className="email-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onMouseDown={(event: MouseEvent<HTMLDivElement>) => event.stopPropagation()}><div className="email-context-title">{contextIds.length} tài khoản trong selection</div><button onClick={() => { setContextMenu(null); void openMail(contextIds) }}>Mở mail</button><button onClick={() => { setContextMenu(null); void getCodes(contextIds) }}>Lấy mã</button><button onClick={() => { setContextMenu(null); void checkMail(contextIds) }}>Check Live Hotmail</button><button disabled={contextIds.length !== 1} title="OAuth chỉ thao tác một tài khoản mỗi lần" onClick={() => { setContextMenu(null); void connectMailbox(contextIds[0]) }}>Lấy / cập nhật OAuth</button><div className="email-context-separator" /><button onClick={() => { setContextMenu(null); void copyEmails(contextIds) }}>Copy Email</button><button onClick={() => { setContextMenu(null); setPanel('recovery') }}>Xem mail khôi phục</button><button onClick={() => { setContextMenu(null); setPanel('logs') }}>Xem trạng thái / lỗi</button></div> : null}
     </section>
   )
 }
