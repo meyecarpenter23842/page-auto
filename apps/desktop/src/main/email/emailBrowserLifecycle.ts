@@ -23,3 +23,9 @@ export function friendlyEmailBrowserError(error: unknown): string {
 export function shouldKeepEmailBrowserWorker(status: 'started' | 'already_open' | 'profile_in_use' | 'error'): boolean {
   return status === 'started' || status === 'already_open'
 }
+
+export const EMAIL_PROFILE_IN_USE_CACHE_MS = 5_000
+
+export function isEmailProfileInUseOverrideActive(expiresAt: number | undefined, now = Date.now()): boolean {
+  return typeof expiresAt === 'number' && expiresAt > now
+}

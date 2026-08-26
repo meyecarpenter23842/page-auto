@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { friendlyEmailBrowserError, isEmailProfileInUseError, shouldKeepEmailBrowserWorker } from './emailBrowserLifecycle'
+import { EMAIL_PROFILE_IN_USE_CACHE_MS, friendlyEmailBrowserError, isEmailProfileInUseError, isEmailProfileInUseOverrideActive, shouldKeepEmailBrowserWorker } from './emailBrowserLifecycle'
 
 describe('email browser lifecycle errors', () => {
   it('recognizes Chromium profile ownership without deleting lock markers', () => {
@@ -13,6 +13,13 @@ describe('email browser lifecycle errors', () => {
     expect(shouldKeepEmailBrowserWorker('already_open')).toBe(true)
     expect(shouldKeepEmailBrowserWorker('profile_in_use')).toBe(false)
     expect(shouldKeepEmailBrowserWorker('error')).toBe(false)
+  })
+
+  it('expires cached profile ownership instead of keeping Đang sử dụng forever', () => {
+    const now = 10_000
+    expect(isEmailProfileInUseOverrideActive(now + EMAIL_PROFILE_IN_USE_CACHE_MS, now)).toBe(true)
+    expect(isEmailProfileInUseOverrideActive(now, now)).toBe(false)
+    expect(isEmailProfileInUseOverrideActive(undefined, now)).toBe(false)
   })
 
   it('keeps browser and proxy errors sanitized', () => {

@@ -81,9 +81,11 @@ async function readLiveCdpEndpoint(profileDirectory: string): Promise<string | n
   return endpoint && await probeCdpEndpoint(endpoint) ? endpoint : null
 }
 
-async function openOutlook(context: BrowserContext): Promise<void> {
+async function openOutlook(context: BrowserContext, requireNavigation: boolean): Promise<void> {
   const page = context.pages()[0] ?? await context.newPage()
-  await page.goto('https://outlook.live.com/mail/0/', { waitUntil: 'domcontentloaded', timeout: 30_000 }).catch(() => undefined)
+  const navigation = page.goto('https://outlook.live.com/mail/0/', { waitUntil: 'domcontentloaded', timeout: 30_000 })
+  if (requireNavigation) await navigation
+  else await navigation.catch(() => undefined)
   await page.bringToFront().catch(() => undefined)
 }
 
@@ -98,11 +100,13 @@ async function launchProfile(command: OpenCommand): Promise<BrowserContext> {
 }
 
 async function launchOrInUse(command: OpenCommand): Promise<{ context: BrowserContext | null; result: OpenResult | null }> {
+  let context: BrowserContext | null = null
   try {
-    const context = await launchProfile(command)
-    await openOutlook(context)
+    context = await launchProfile(command)
+    await openOutlook(context, Boolean(command.proxy))
     return { context, result: null }
   } catch (error) {
+    await context?.close().catch(() => undefined)
     if (isEmailProfileInUseError(error)) {
       return {
         context: null,
@@ -133,7 +137,7 @@ async function run(): Promise<void> {
       let result: OpenResult
       try {
         if (launchedContext) {
-          await openOutlook(launchedContext)
+          await openOutlook(launchedContext, Boolean(command.proxy))
           result = {
             type: 'open-result', accountId: command.accountId, status: 'already_open', attached: false,
             proxyManagedExternally: false, message: 'Email browser đang mở bằng đúng profile UID này.'
@@ -141,7 +145,7 @@ async function run(): Promise<void> {
         } else if (attachedBrowser) {
           const context = attachedBrowser.contexts()[0]
           if (!context) throw new Error('Browser CDP đang chạy nhưng không có context khả dụng.')
-          await openOutlook(context)
+          await openOutlook(context, false)
           result = {
             type: 'open-result', accountId: command.accountId, status: 'already_open', attached: true,
             proxyManagedExternally: true, message: 'Đã attach browser Email đang chạy; proxy do process sở hữu browser quản lý.'
@@ -153,7 +157,7 @@ async function run(): Promise<void> {
               attachedBrowser = await chromium.connectOverCDP(endpoint)
               const context = attachedBrowser.contexts()[0]
               if (!context) throw new Error('Không tìm thấy browser context qua CDP.')
-              await openOutlook(context)
+              await openOutlook(context, false)
               result = {
                 type: 'open-result', accountId: command.accountId, status: 'already_open', attached: true,
                 proxyManagedExternally: true, message: 'Đã attach browser Email đang chạy; không thay proxy giữa phiên.'

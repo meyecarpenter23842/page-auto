@@ -12,6 +12,7 @@ import type {
   SaveHotmailSettingsInput
 } from '../../shared/hotmail'
 import { EmailBrowserManager } from './emailBrowserManager'
+import { EMAIL_PROFILE_IN_USE_CACHE_MS, isEmailProfileInUseOverrideActive } from './emailBrowserLifecycle'
 import { inspectEmailProfile, validateEmailProfileRoot } from './emailProfileResolver'
 import { EmailProxyPool, normalizeEmailProxyLines } from './emailProxyPool'
 import { testEmailProxy } from './emailProxyTester'
@@ -32,7 +33,7 @@ export class HotmailService {
   private readonly browser: EmailBrowserManager
   private readonly proxyPool: EmailProxyPool
   private readonly runtimeStatus = new Map<number, HotmailDashboardRow['runtimeStatus']>()
-  private readonly profileStatusOverride = new Map<number, HotmailDashboardRow['profileStatus']>()
+  private readonly profileInUseUntil = new Map<number, number>()
 
   constructor(
     private readonly accounts: AccountRepository,
@@ -50,11 +51,15 @@ export class HotmailService {
     const rows = this.repository.listDashboardRows()
     return await Promise.all(rows.map(async (row) => {
       const profile = await inspectEmailProfile(settings.profileRoot, row.uid)
-      const profileStatus = this.browser.isOpen(row.accountId)
+      const inUseUntil = this.profileInUseUntil.get(row.accountId)
+      if (inUseUntil !== undefined && !isEmailProfileInUseOverrideActive(inUseUntil)) {
+        this.profileInUseUntil.delete(row.accountId)
+      }
+      const profileStatus = this.browser.isOpen(row.accountId) || profile.status === 'running'
         ? 'running'
-        : profile.status === 'running'
-          ? 'running'
-          : (this.profileStatusOverride.get(row.accountId) ?? profile.status)
+        : isEmailProfileInUseOverrideActive(this.profileInUseUntil.get(row.accountId))
+          ? 'in_use'
+          : profile.status
       return {
         ...row,
         profileStatus,
@@ -86,7 +91,7 @@ export class HotmailService {
     // Empty browserExecutable intentionally remains empty: that is Browser Auto.
     // Do not persist a Facebook/global browser fallback or pin one auto-detected path.
     this.repository.saveSettings(input, normalizedProxyEntries)
-    this.profileStatusOverride.clear()
+    this.profileInUseUntil.clear()
     return this.getSettings()
   }
 
@@ -207,7 +212,7 @@ export class HotmailService {
     try {
       const inspection = await inspectEmailProfile(settings.profileRoot, account.uid)
       if (inspection.status === 'not_configured' || inspection.status === 'missing') {
-        this.profileStatusOverride.delete(accountId)
+        this.profileInUseUntil.delete(accountId)
         const result = await this.browser.open(account, settings.profileRoot, settings.browserExecutable, null)
         this.runtimeStatus.set(accountId, 'error')
         return result
@@ -215,9 +220,9 @@ export class HotmailService {
 
       const attachedExternally = inspection.status === 'running' && !this.browser.isOpen(accountId)
       const activeAssignment = this.proxyPool.assignment(accountId)
-      const executable = attachedExternally
-        ? settings.browserExecutable
-        : await this.resolveBrowserExecutable(settings.browserExecutable, settings.profileRoot)
+      // Resolve even for a live CDP profile: connectOverCDP may race with browser shutdown,
+      // and the worker must have an executable ready for safe relaunch.
+      const executable = await this.resolveBrowserExecutable(settings.browserExecutable, settings.profileRoot)
       const proxy = attachedExternally ? null : (activeAssignment ?? this.proxyPool.acquire(accountId))
       const result = await this.browser.open(account, settings.profileRoot, executable, proxy)
 
@@ -226,8 +231,8 @@ export class HotmailService {
         else if (/proxy/i.test(result.message)) this.proxyPool.recordFailure(proxy)
       }
       if (result.proxyManagedExternally) this.proxyPool.release(accountId)
-      if (result.status === 'profile_in_use') this.profileStatusOverride.set(accountId, 'in_use')
-      else this.profileStatusOverride.delete(accountId)
+      if (result.status === 'profile_in_use') this.profileInUseUntil.set(accountId, Date.now() + EMAIL_PROFILE_IN_USE_CACHE_MS)
+      else this.profileInUseUntil.delete(accountId)
       if (result.status === 'error' || result.status === 'missing_profile' || result.status === 'profile_in_use') {
         this.proxyPool.release(accountId)
         this.runtimeStatus.set(accountId, 'error')
@@ -238,7 +243,7 @@ export class HotmailService {
       return result
     } catch (error) {
       this.proxyPool.release(accountId)
-      this.profileStatusOverride.delete(accountId)
+      this.profileInUseUntil.delete(accountId)
       this.runtimeStatus.set(accountId, 'error')
       return {
         accountId,
