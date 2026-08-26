@@ -8,6 +8,9 @@ import type {
   HotmailOAuthStartResult,
   HotmailProxyStatus,
   HotmailProxyTestResult,
+  HotmailRecoveryActionPayload,
+  HotmailRecoveryActionResult,
+  HotmailRecoveryBatchResult,
   HotmailSettingsView,
   SaveHotmailSettingsInput
 } from '../../shared/hotmail'
@@ -19,6 +22,7 @@ import { testEmailProxy } from './emailProxyTester'
 import { MicrosoftGraphMailAdapter } from './microsoftGraphMailAdapter'
 import { MicrosoftOAuthService } from './microsoftOAuthService'
 import type { EmailSecretCipher } from './emailSecretStore'
+import { canonicalBackupEmailAfterRecoverySuccess, validateRecoveryAction } from './emailAccountActionPolicy'
 import { parseVerificationCode } from './verificationCodeParser'
 
 function uniqueAccountIds(payload: HotmailBatchPayload): number[] {
@@ -84,12 +88,9 @@ export class HotmailService {
 
     if (input.profileRoot.trim()) await validateEmailProfileRoot(input.profileRoot)
     if (input.browserExecutable.trim()) {
-      // Manual mode is validated using the same persistent-context semantics as Email runtime.
       await this.resolveBrowserExecutable(input.browserExecutable, input.profileRoot)
     }
 
-    // Empty browserExecutable intentionally remains empty: that is Browser Auto.
-    // Do not persist a Facebook/global browser fallback or pin one auto-detected path.
     this.repository.saveSettings(input, normalizedProxyEntries)
     this.profileInUseUntil.clear()
     return this.getSettings()
@@ -220,8 +221,6 @@ export class HotmailService {
 
       const attachedExternally = inspection.status === 'running' && !this.browser.isOpen(accountId)
       const activeAssignment = this.proxyPool.assignment(accountId)
-      // Resolve even for a live CDP profile: connectOverCDP may race with browser shutdown,
-      // and the worker must have an executable ready for safe relaunch.
       const executable = await this.resolveBrowserExecutable(settings.browserExecutable, settings.profileRoot)
       const proxy = attachedExternally ? null : (activeAssignment ?? this.proxyPool.acquire(accountId))
       const result = await this.browser.open(account, settings.profileRoot, executable, proxy)
@@ -254,6 +253,110 @@ export class HotmailService {
         proxyManagedExternally: false
       }
     }
+  }
+
+  async updateRecoveryMail(payload: HotmailRecoveryActionPayload): Promise<HotmailRecoveryBatchResult> {
+    const accountIds = uniqueAccountIds(payload)
+    const recoveryEmail = validateRecoveryAction(payload.operation, payload.recoveryEmail)
+    const results: HotmailRecoveryActionResult[] = []
+
+    for (const accountId of accountIds) {
+      const account = this.accounts.getById(accountId)
+      if (!account) {
+        results.push({ accountId, operation: payload.operation, backupEmail: null, status: 'error', message: 'Account không tồn tại.' })
+        continue
+      }
+      if (!account.email) {
+        results.push({ accountId, operation: payload.operation, backupEmail: account.backupEmail, status: 'error', message: 'Account chưa có Email Microsoft.' })
+        continue
+      }
+      if ((payload.operation === 'add' || payload.operation === 'replace') && recoveryEmail === account.backupEmail?.trim().toLowerCase()) {
+        results.push({ accountId, operation: payload.operation, backupEmail: account.backupEmail, status: 'success', message: 'Mail khôi phục canonical đã đúng, không cần thay đổi.' })
+        continue
+      }
+      if (payload.operation === 'remove' && !account.backupEmail) {
+        results.push({ accountId, operation: payload.operation, backupEmail: null, status: 'success', message: 'Account hiện không có Mail khôi phục canonical.' })
+        continue
+      }
+      if (payload.confirmCompleted && !this.browser.isOpen(accountId)) {
+        results.push({
+          accountId,
+          operation: payload.operation,
+          backupEmail: account.backupEmail,
+          status: 'error',
+          message: 'Không còn phiên Email Security đang mở cho account này; mở lại flow trước khi xác nhận.'
+        })
+        continue
+      }
+
+      this.runtimeStatus.set(accountId, 'acting')
+      try {
+        const settings = this.repository.getProfileSettings()
+        const inspection = await inspectEmailProfile(settings.profileRoot, account.uid)
+        if (inspection.status === 'not_configured' || inspection.status === 'missing') {
+          const missing = await this.browser.runRecoveryAction(
+            account,
+            settings.profileRoot,
+            settings.browserExecutable,
+            null,
+            payload.operation,
+            account.backupEmail,
+            Boolean(payload.confirmCompleted)
+          )
+          this.runtimeStatus.set(accountId, 'error')
+          results.push(missing)
+          continue
+        }
+
+        const attachedExternally = inspection.status === 'running' && !this.browser.isOpen(accountId)
+        const executable = await this.resolveBrowserExecutable(settings.browserExecutable, settings.profileRoot)
+        const proxy = attachedExternally ? null : (this.proxyPool.assignment(accountId) ?? this.proxyPool.acquire(accountId))
+        const result = await this.browser.runRecoveryAction(
+          account,
+          settings.profileRoot,
+          executable,
+          proxy,
+          payload.operation,
+          account.backupEmail,
+          Boolean(payload.confirmCompleted)
+        )
+
+        if (result.proxyManagedExternally) this.proxyPool.release(accountId)
+        if (proxy && !result.proxyManagedExternally) {
+          if (result.status === 'success' || result.status === 'needs_attention') this.proxyPool.recordSuccess(proxy)
+          else if (/proxy/i.test(result.message)) this.proxyPool.recordFailure(proxy)
+        }
+        if (result.status === 'profile_in_use') this.profileInUseUntil.set(accountId, Date.now() + EMAIL_PROFILE_IN_USE_CACHE_MS)
+        else this.profileInUseUntil.delete(accountId)
+
+        if (result.status === 'success') {
+          const canonicalBackupEmail = canonicalBackupEmailAfterRecoverySuccess(payload.operation, recoveryEmail)
+          const updated = this.accounts.update(accountId, { backupEmail: canonicalBackupEmail })
+          this.repository.updateEmailState(accountId, { lastError: null })
+          this.runtimeStatus.set(accountId, 'idle')
+          results.push({ ...result, backupEmail: updated.backupEmail })
+          continue
+        }
+
+        if (result.status === 'needs_attention') {
+          this.repository.updateEmailState(accountId, { lastError: result.message })
+          this.runtimeStatus.set(accountId, 'idle')
+          results.push(result)
+          continue
+        }
+
+        this.repository.updateEmailState(accountId, { lastError: result.message })
+        this.runtimeStatus.set(accountId, 'error')
+        results.push(result)
+      } catch {
+        this.runtimeStatus.set(accountId, 'error')
+        const message = 'Thao tác Mail khôi phục chưa hoàn tất trong browser Email.'
+        this.repository.updateEmailState(accountId, { lastError: message })
+        results.push({ accountId, operation: payload.operation, backupEmail: account.backupEmail, status: 'error', message })
+      }
+    }
+
+    return { results }
   }
 
   getProxyStatus(): HotmailProxyStatus {
