@@ -19,6 +19,9 @@ export type UserAgentPolicy = (typeof USER_AGENT_POLICIES)[number]
 export const TIMEZONE_POLICIES = ['automatic', 'custom'] as const
 export type TimezonePolicy = (typeof TIMEZONE_POLICIES)[number]
 
+export const DEFAULT_BROWSER_ACTION_DELAY_MIN_MS = 1000
+export const DEFAULT_BROWSER_ACTION_DELAY_MAX_MS = 3000
+
 export type LogRetentionDays = 7 | 30 | 90 | null
 
 export interface BrowserSettings {
@@ -33,6 +36,10 @@ export interface BrowserSettings {
   startupTimeoutMs: number
   navigationTimeoutMs: number
   pageSettleDelayMs: number
+  /** Random pacing between major Facebook UI actions. Optional for legacy fixtures/config. */
+  actionDelayMinMs?: number
+  /** Random pacing between major Facebook UI actions. Optional for legacy fixtures/config. */
+  actionDelayMaxMs?: number
   closeDelayMs: number
   maxLifetimeMinutes: number
 }
@@ -114,6 +121,8 @@ export const DEFAULT_APP_SETTINGS: Readonly<AppSettings> = {
     startupTimeoutMs: 30000,
     navigationTimeoutMs: 30000,
     pageSettleDelayMs: 1500,
+    actionDelayMinMs: DEFAULT_BROWSER_ACTION_DELAY_MIN_MS,
+    actionDelayMaxMs: DEFAULT_BROWSER_ACTION_DELAY_MAX_MS,
     closeDelayMs: 0,
     maxLifetimeMinutes: 60
   },
@@ -161,8 +170,8 @@ export const DEFAULT_APP_SETTINGS: Readonly<AppSettings> = {
 const TOP_LEVEL_KEYS = ['browser', 'session', 'network', 'runtime', 'logging', 'advanced'] as const
 const BROWSER_KEYS = [
   'executablePath', 'mode', 'windowWidth', 'windowHeight', 'disableImageLoading', 'muteAudio', 'disableGpu',
-  'startupDelayMs', 'startupTimeoutMs', 'navigationTimeoutMs', 'pageSettleDelayMs', 'closeDelayMs',
-  'maxLifetimeMinutes'
+  'startupDelayMs', 'startupTimeoutMs', 'navigationTimeoutMs', 'pageSettleDelayMs', 'actionDelayMinMs',
+  'actionDelayMaxMs', 'closeDelayMs', 'maxLifetimeMinutes'
 ] as const
 const SESSION_KEYS = ['validateBeforeRun', 'validateAfterRun', 'facebookLocale', 'onSessionExpired', 'onCheckpoint'] as const
 const NETWORK_KEYS = ['checkProxyBeforeRun', 'proxyConnectionTimeoutMs', 'networkTimeoutMs', 'proxyRetryCount', 'abortAccountOnProxyFailure'] as const
@@ -203,6 +212,19 @@ function assertNullableString(path: string, value: unknown, maxLength: number): 
   if (typeof value !== 'string' || value.length > maxLength) {
     throw new Error(`${path} must be null or a string up to ${maxLength} characters.`)
   }
+}
+
+export function browserActionDelayRange(settings: BrowserSettings): { minMs: number; maxMs: number } {
+  const minMs = settings.actionDelayMinMs ?? DEFAULT_BROWSER_ACTION_DELAY_MIN_MS
+  const maxMs = settings.actionDelayMaxMs ?? DEFAULT_BROWSER_ACTION_DELAY_MAX_MS
+  return { minMs, maxMs }
+}
+
+export function randomBrowserActionDelayMs(settings: BrowserSettings, random: () => number = Math.random): number {
+  const { minMs, maxMs } = browserActionDelayRange(settings)
+  if (maxMs <= minMs) return minMs
+  const sample = Math.max(0, Math.min(1, random()))
+  return Math.round(minMs + ((maxMs - minMs) * sample))
 }
 
 export function cloneDefaultAppSettings(): AppSettings {
@@ -265,6 +287,12 @@ export function assertValidAppSettings(settings: AppSettings): void {
   assertInteger('browser.startupTimeoutMs', settings.browser.startupTimeoutMs, 1000, 300000)
   assertInteger('browser.navigationTimeoutMs', settings.browser.navigationTimeoutMs, 1000, 300000)
   assertInteger('browser.pageSettleDelayMs', settings.browser.pageSettleDelayMs, 0, 120000)
+  const actionDelay = browserActionDelayRange(settings.browser)
+  assertInteger('browser.actionDelayMinMs', actionDelay.minMs, 0, 30000)
+  assertInteger('browser.actionDelayMaxMs', actionDelay.maxMs, 0, 30000)
+  if (actionDelay.minMs > actionDelay.maxMs) {
+    throw new Error('browser.actionDelayMinMs must be less than or equal to browser.actionDelayMaxMs.')
+  }
   assertInteger('browser.closeDelayMs', settings.browser.closeDelayMs, 0, 120000)
   assertInteger('browser.maxLifetimeMinutes', settings.browser.maxLifetimeMinutes, 1, 1440)
 

@@ -110,7 +110,10 @@ class FakeLocator {
   ) {}
 
   first(): Locator { return this as unknown as Locator }
+  nth(): Locator { return this as unknown as Locator }
+  async count(): Promise<number> { return 1 }
   async isVisible(): Promise<boolean> { return this.visible() }
+  async isEnabled(): Promise<boolean> { return true }
   async fill(value: string): Promise<void> { this.onFill(value) }
   async scrollIntoViewIfNeeded(): Promise<void> {}
   async click(): Promise<void> { this.onClick() }

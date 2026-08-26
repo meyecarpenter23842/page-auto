@@ -127,6 +127,7 @@ const DEFAULT_CUSTOM_MAPPING: AccountImportMapping = [
 ]
 const MIN_CUSTOM_MAPPING_COLUMNS = DEFAULT_CUSTOM_MAPPING.length
 const PREVIEW_LIMIT = 12
+const ACCOUNT_RUNTIME_REFRESH_MS = 1_500
 
 function formatDate(value: unknown): string {
   if (typeof value !== 'number' || !value) return '—'
@@ -528,20 +529,25 @@ export function AccountManager() {
   const [openingProfiles, setOpeningProfiles] = useState(false)
   const [contextMenu, setContextMenu] = useState<ContextMenuState>(null)
 
-  const loadAccounts = useCallback(async () => {
-    setLoading(true)
+  const loadAccounts = useCallback(async (background = false) => {
+    if (!background) setLoading(true)
     try {
       const next = await window.pageAuto.listAccounts({ search, status: statusFilter, category: categoryFilter })
       setAccounts(next)
       setSelectedIds((current) => new Set([...current].filter((id) => next.some((account) => account.id === id))))
     } finally {
-      setLoading(false)
+      if (!background) setLoading(false)
     }
   }, [search, statusFilter, categoryFilter])
 
   useEffect(() => {
     const timer = window.setTimeout(() => void loadAccounts(), 180)
     return () => window.clearTimeout(timer)
+  }, [loadAccounts])
+
+  useEffect(() => {
+    const timer = window.setInterval(() => void loadAccounts(true), ACCOUNT_RUNTIME_REFRESH_MS)
+    return () => window.clearInterval(timer)
   }, [loadAccounts])
 
   useEffect(() => {

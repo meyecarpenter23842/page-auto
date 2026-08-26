@@ -35,11 +35,14 @@ export type PostingErrorCode = (typeof POSTING_ERROR_CODES)[number]
 export const POSTING_SESSION_STATES = ['valid', 'needs_login', 'verification_required'] as const
 export type PostingSessionState = (typeof POSTING_SESSION_STATES)[number]
 export type PostingSessionPhase = 'before_run' | 'after_run'
+export const POSTING_CHECKPOINT_KINDS = ['282', '956', 'unknown'] as const
+export type PostingCheckpointKind = (typeof POSTING_CHECKPOINT_KINDS)[number]
 
 export interface PostingSessionValidation {
   phase: PostingSessionPhase
   state: PostingSessionState
   message: string
+  checkpointKind?: PostingCheckpointKind
 }
 
 export interface PostingSessionAccount {

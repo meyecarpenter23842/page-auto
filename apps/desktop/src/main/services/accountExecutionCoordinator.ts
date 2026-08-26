@@ -13,15 +13,15 @@ export class AccountExecutionCoordinator {
     const tail = previous.then(() => gate)
     this.tails.set(accountId, tail)
 
-    diagnostic(accountId, queuedBehindExisting ? 'queued behind active account job' : 'queued for PostingService')
+    diagnostic(accountId, queuedBehindExisting ? 'queued behind active account operation' : 'queued for account operation')
     await previous
-    diagnostic(accountId, 'ENTER PostingService')
+    diagnostic(accountId, 'ENTER account operation')
     try {
       const result = await task()
-      diagnostic(accountId, 'EXIT PostingService resolved')
+      diagnostic(accountId, 'EXIT account operation resolved')
       return result
     } catch (error) {
-      diagnostic(accountId, `EXIT PostingService rejected type=${error instanceof Error ? error.name : typeof error}`)
+      diagnostic(accountId, `EXIT account operation rejected type=${error instanceof Error ? error.name : typeof error}`)
       throw error
     } finally {
       release()

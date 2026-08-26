@@ -69,10 +69,31 @@ export interface FacebookSessionValidation {
 
 type ContextCookie = FacebookCookieInput
 
+type TwoFactorSubmitResult = {
+  submitted: boolean
+  code: string | null
+}
+
 const SAVED_PROFILE_CONTINUE_PATTERN = /^(continue|tiếp tục|lanjutkan)$/i
 const USE_ANOTHER_PROFILE_PATTERN = /use another (?:profile|account)|dùng (?:một )?(?:trang cá nhân|hồ sơ|tài khoản) khác|sử dụng (?:một )?(?:trang cá nhân|hồ sơ|tài khoản) khác|gunakan (?:profil|akun) lain/i
 const LOGIN_ACTION_PATTERN = /^(log in|login|đăng nhập|masuk)$/i
 const PASSWORD_SUBMIT_PATTERN = /^(continue|tiếp tục|lanjutkan|log in|login|đăng nhập|masuk)$/i
+const TWO_FACTOR_SUBMIT_PATTERN = /^(continue|tiếp tục|submit|gửi|confirm|xác nhận)$/i
+const TWO_FACTOR_INPUT_TIMEOUT_MS = 20_000
+const TWO_FACTOR_OUTCOME_TIMEOUT_MS = 15_000
+const TWO_FACTOR_MAX_ATTEMPTS = 2
+const TEXT_ONLY_MANUAL_VERIFICATION_GRACE_MS = 2_000
+const TOTP_STEP_MS = 30_000
+const TOTP_MIN_REMAINING_MS = 8_000
+const TOTP_WINDOW_BUFFER_MS = 750
+
+function twoFactorCredentialKind(secret: string): 'direct_code' | 'totp_secret' {
+  return isDirectTwoFactorCode(secret) ? 'direct_code' : 'totp_secret'
+}
+
+function twoFactorDiagnostic(accountId: number, stage: string, detail = ''): void {
+  console.info(`[PAGE-AUTO session] account=${accountId} state=two_factor stage=${stage}${detail ? ` ${detail}` : ''}`)
+}
 
 function normalizeSameSite(value: unknown): FacebookCookieInput['sameSite'] | undefined {
   if (value === 'Strict' || value === 'Lax' || value === 'None') return value
@@ -180,9 +201,13 @@ function extractTotpSecret(rawSecret: string): string {
   }
 }
 
+function isDirectTwoFactorCode(rawSecret: string): boolean {
+  return /^\d{6,8}$/.test(rawSecret.trim().replace(/\s+/g, ''))
+}
+
 export function generateTotp(secret: string, timestampMs = Date.now(), digits = 6): string {
   const key = decodeBase32(extractTotpSecret(secret))
-  const counter = Math.floor(timestampMs / 30_000)
+  const counter = Math.floor(timestampMs / TOTP_STEP_MS)
   const buffer = Buffer.alloc(8)
   buffer.writeBigUInt64BE(BigInt(counter))
   const digest = createHmac('sha1', key).update(buffer).digest()
@@ -197,8 +222,15 @@ export function generateTotp(secret: string, timestampMs = Date.now(), digits = 
 
 export function resolveTwoFactorCode(rawSecret: string, timestampMs = Date.now()): string {
   const directCode = rawSecret.trim().replace(/\s+/g, '')
-  if (/^\d{6,8}$/.test(directCode)) return directCode
+  if (isDirectTwoFactorCode(rawSecret)) return directCode
   return generateTotp(rawSecret, timestampMs, 6)
+}
+
+export function twoFactorCodeFreshnessWaitMs(rawSecret: string, timestampMs = Date.now()): number {
+  if (isDirectTwoFactorCode(rawSecret)) return 0
+  const elapsed = ((timestampMs % TOTP_STEP_MS) + TOTP_STEP_MS) % TOTP_STEP_MS
+  const remaining = TOTP_STEP_MS - elapsed
+  return remaining < TOTP_MIN_REMAINING_MS ? remaining + TOTP_WINDOW_BUFFER_MS : 0
 }
 
 export function facebookLocaleCookieValue(locale: FacebookLocale): string | null {
@@ -244,13 +276,16 @@ async function loginInputVisibility(page: Page): Promise<{ loginFormVisible: boo
   }
 }
 
+function isTwoFactorVerificationUrl(url: string): boolean {
+  return url.toLowerCase().includes('/two_step_verification/')
+}
+
 function isManualVerificationUrl(url: string): boolean {
   const normalized = url.toLowerCase()
   return normalized.includes('/checkpoint/')
     || normalized.includes('/recover/')
     || normalized.includes('/confirmemail')
     || normalized.includes('/identity/')
-    || normalized.includes('/two_step_verification/')
 }
 
 async function hasManualVerificationText(page: Page): Promise<boolean> {
@@ -268,6 +303,28 @@ async function firstVisible(candidates: Locator[]): Promise<Locator | null> {
     if (await candidate.isVisible().catch(() => false)) return candidate
   }
   return null
+}
+
+async function firstVisibleEnabled(candidates: Locator[]): Promise<Locator | null> {
+  for (const candidate of candidates) {
+    const count = await candidate.count().catch(() => 0)
+    for (let index = 0; index < count; index += 1) {
+      const item = candidate.nth(index)
+      if (!await item.isVisible().catch(() => false)) continue
+      if (await item.isEnabled().catch(() => true)) return item
+    }
+  }
+  return null
+}
+
+async function domClick(locator: Locator): Promise<boolean> {
+  return locator.evaluate((element) => {
+    if (element instanceof HTMLElement) {
+      element.click()
+      return true
+    }
+    return element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }))
+  }).then(() => true).catch(() => false)
 }
 
 async function findSavedProfileContinue(page: Page): Promise<Locator | null> {
@@ -294,28 +351,70 @@ async function findUseAnotherProfile(page: Page): Promise<Locator | null> {
 }
 
 async function findTwoFactorInput(page: Page): Promise<Locator | null> {
-  const approvalsInput = await firstVisible([
+  const directInput = await firstVisible([
     page.locator('input[name="approvals_code"]').first(),
-    page.locator('input[name="approvalsCode"]').first()
-  ])
-  if (approvalsInput) return approvalsInput
-  if (!await hasAuthenticatorPrompt(page)) return null
-
-  return firstVisible([
+    page.locator('input[name="approvalsCode"]').first(),
     page.locator('input[name="code"]').first(),
     page.locator('input[autocomplete="one-time-code"]').first(),
     page.locator('input[inputmode="numeric"]').first(),
-    page.locator('input[type="tel"]').first()
+    page.locator('input[type="tel"]').first(),
+    page.locator('input[name*="otp" i]').first(),
+    page.locator('input[id*="code" i]').first(),
+    page.locator('input[placeholder*="code" i]').first(),
+    page.locator('input[aria-label*="code" i]').first()
   ])
+  if (directInput) return directInput
+
+  if (!isTwoFactorVerificationUrl(page.url()) && !await hasAuthenticatorPrompt(page)) return null
+
+  return firstVisible([
+    page.locator('input[type="text"]:visible').first(),
+    page.locator('input:not([type]):visible').first()
+  ])
+}
+
+async function isTwoFactorSurfaceActive(page: Page): Promise<boolean> {
+  if (isTwoFactorVerificationUrl(page.url())) return true
+  if (await hasAuthenticatorPrompt(page)) return true
+  return Boolean(await findTwoFactorInput(page))
+}
+
+async function waitForTwoFactorInputReady(page: Page, timeoutMs = TWO_FACTOR_INPUT_TIMEOUT_MS): Promise<Locator | null> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() <= deadline) {
+    const input = await findTwoFactorInput(page)
+    if (input && await input.isEnabled().catch(() => true)) return input
+    if (!await isTwoFactorSurfaceActive(page)) return null
+    await page.waitForTimeout(200)
+  }
+  return null
+}
+
+async function findTwoFactorSubmit(page: Page, timeoutMs = 8_000): Promise<Locator | null> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() <= deadline) {
+    const submit = await firstVisibleEnabled([
+      page.getByRole('button', { name: TWO_FACTOR_SUBMIT_PATTERN }),
+      page.getByRole('link', { name: TWO_FACTOR_SUBMIT_PATTERN }),
+      page.locator('button[type="submit"]:visible'),
+      page.locator('input[type="submit"]:visible'),
+      page.getByText(TWO_FACTOR_SUBMIT_PATTERN, { exact: true })
+    ])
+    if (submit) return submit
+    if (!await isTwoFactorSurfaceActive(page)) return null
+    await page.waitForTimeout(200)
+  }
+  return null
 }
 
 export function classifyFacebookSessionGate(input: FacebookSessionGateInput): FacebookSessionGate {
   if (input.twoFactorVisible) return 'two_factor'
-  if (isManualVerificationUrl(input.url) || input.manualVerificationTextVisible) return 'manual_verification'
+  if (isManualVerificationUrl(input.url)) return 'manual_verification'
   if (input.passwordOnlyVisible) return 'password_only'
   if (input.savedProfileVisible) return 'saved_profile'
   if (input.loginFormVisible) return 'login'
   if (input.hasUserCookie) return 'valid'
+  if (input.manualVerificationTextVisible) return 'manual_verification'
   return 'unknown'
 }
 
@@ -344,12 +443,60 @@ async function waitForPostLoginGate(context: BrowserContext, page: Page, timeout
   let latest: FacebookSessionGate = 'unknown'
   while (Date.now() < deadline) {
     latest = await inspectFacebookSessionGate(context, page)
+    if (latest === 'unknown' && isTwoFactorVerificationUrl(page.url())) return 'two_factor'
     if (
       latest === 'valid'
       || latest === 'two_factor'
       || latest === 'manual_verification'
       || latest === 'password_only'
     ) return latest
+    await page.waitForTimeout(250)
+  }
+  return latest
+}
+
+async function waitForPasswordOnlyTransition(
+  context: BrowserContext,
+  page: Page,
+  timeoutMs = 12_000
+): Promise<FacebookSessionGate> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const gate = await inspectFacebookSessionGate(context, page)
+    if (gate === 'unknown' && isTwoFactorVerificationUrl(page.url())) return 'two_factor'
+    if (
+      gate === 'valid'
+      || gate === 'two_factor'
+      || gate === 'manual_verification'
+      || gate === 'login'
+    ) return gate
+    await page.waitForTimeout(250)
+  }
+  return 'unknown'
+}
+
+async function waitForTwoFactorOutcome(
+  context: BrowserContext,
+  page: Page,
+  timeoutMs = TWO_FACTOR_OUTCOME_TIMEOUT_MS
+): Promise<FacebookSessionGate> {
+  const deadline = Date.now() + timeoutMs
+  let latest: FacebookSessionGate = 'two_factor'
+  let textOnlyManualSince: number | null = null
+  while (Date.now() < deadline) {
+    latest = await inspectFacebookSessionGate(context, page)
+    if (latest === 'valid' || latest === 'password_only' || latest === 'login' || latest === 'saved_profile') {
+      return latest
+    }
+    if (latest === 'manual_verification') {
+      if (isManualVerificationUrl(page.url())) return latest
+      textOnlyManualSince ??= Date.now()
+      if (Date.now() - textOnlyManualSince >= TEXT_ONLY_MANUAL_VERIFICATION_GRACE_MS) return latest
+      await page.waitForTimeout(250)
+      continue
+    }
+    textOnlyManualSince = null
+    if (latest === 'unknown' && !await isTwoFactorSurfaceActive(page)) return latest
     await page.waitForTimeout(250)
   }
   return latest
@@ -364,6 +511,7 @@ async function waitForLoginSurfaceGate(
   let latest: FacebookSessionGate = 'unknown'
   while (Date.now() < deadline) {
     latest = await inspectFacebookSessionGate(context, page)
+    if (latest === 'unknown' && isTwoFactorVerificationUrl(page.url())) return 'two_factor'
     if (latest !== 'unknown') return latest
     await page.waitForTimeout(250)
   }
@@ -470,24 +618,85 @@ async function submitPasswordOnly(page: Page, password: string): Promise<void> {
   await page.waitForTimeout(800)
 }
 
-async function submitTotp(page: Page, secret: string): Promise<boolean> {
-  const input = await findTwoFactorInput(page)
-  if (!input) return false
-  await input.fill(resolveTwoFactorCode(secret))
-
-  const submit = await firstVisible([
-    page.getByRole('button', { name: /continue|tiếp tục|submit|gửi|confirm|xác nhận/i }).first(),
-    page.locator('button[type="submit"]:visible').first(),
-    page.locator('input[type="submit"]:visible').first()
-  ])
-  if (submit) {
-    await submit.click({ timeout: 15_000 })
-  } else {
-    await input.press('Enter')
+async function waitForDifferentTwoFactorCode(page: Page, secret: string, previousCode: string): Promise<void> {
+  if (isDirectTwoFactorCode(secret)) return
+  while (resolveTwoFactorCode(secret, Date.now()) === previousCode && await isTwoFactorSurfaceActive(page)) {
+    await page.waitForTimeout(250)
   }
+}
+
+async function submitTotp(
+  page: Page,
+  secret: string,
+  accountId: number,
+  attempt: number,
+  maxAttempts: number
+): Promise<TwoFactorSubmitResult> {
+  const attemptDetail = `attempt=${attempt}/${maxAttempts}`
+  twoFactorDiagnostic(accountId, 'input_wait_start', attemptDetail)
+  let input = await waitForTwoFactorInputReady(page)
+  if (!input) {
+    twoFactorDiagnostic(accountId, 'input_unavailable', attemptDetail)
+    return { submitted: false, code: null }
+  }
+  twoFactorDiagnostic(accountId, 'input_ready', attemptDetail)
+
+  const freshnessWait = twoFactorCodeFreshnessWaitMs(secret)
+  if (freshnessWait > 0) {
+    twoFactorDiagnostic(accountId, 'freshness_wait_start', `${attemptDetail} waitMs=${freshnessWait}`)
+    await page.waitForTimeout(freshnessWait)
+    input = await waitForTwoFactorInputReady(page, 4_000)
+    if (!input) {
+      twoFactorDiagnostic(accountId, 'input_lost_after_freshness_wait', attemptDetail)
+      return { submitted: false, code: null }
+    }
+    twoFactorDiagnostic(accountId, 'freshness_wait_done', attemptDetail)
+  }
+
+  const code = resolveTwoFactorCode(secret, Date.now())
+  twoFactorDiagnostic(accountId, 'code_generated', `${attemptDetail} credential=${twoFactorCredentialKind(secret)}`)
+  try {
+    await input.fill(code)
+    twoFactorDiagnostic(accountId, 'input_filled', attemptDetail)
+  } catch {
+    twoFactorDiagnostic(accountId, 'fill_retry', attemptDetail)
+    input = await waitForTwoFactorInputReady(page, 4_000)
+    if (!input) {
+      twoFactorDiagnostic(accountId, 'input_unavailable_on_fill_retry', attemptDetail)
+      return { submitted: false, code: null }
+    }
+    await input.fill(code)
+    twoFactorDiagnostic(accountId, 'input_filled', `${attemptDetail} retry=1`)
+  }
+
+  twoFactorDiagnostic(accountId, 'submit_wait_start', attemptDetail)
+  const submit = await findTwoFactorSubmit(page)
+  let submitted = false
+  if (submit) {
+    twoFactorDiagnostic(accountId, 'submit_ready', attemptDetail)
+    await submit.scrollIntoViewIfNeeded().catch(() => undefined)
+    submitted = await submit.click({ timeout: 5_000 }).then(() => true).catch(() => false)
+    twoFactorDiagnostic(accountId, 'submit_click', `${attemptDetail} success=${submitted}`)
+    if (!submitted) {
+      submitted = await domClick(submit)
+      twoFactorDiagnostic(accountId, 'submit_dom_click', `${attemptDetail} success=${submitted}`)
+    }
+  } else {
+    twoFactorDiagnostic(accountId, 'submit_not_found', `${attemptDetail} fallback=enter`)
+  }
+
+  if (!submitted) {
+    submitted = await input.press('Enter').then(() => true).catch(() => false)
+    twoFactorDiagnostic(accountId, 'submit_enter', `${attemptDetail} success=${submitted}`)
+  }
+  if (!submitted) {
+    twoFactorDiagnostic(accountId, 'submit_failed', attemptDetail)
+    return { submitted: false, code }
+  }
+
+  twoFactorDiagnostic(accountId, 'submit_sent', attemptDetail)
   await page.waitForLoadState('domcontentloaded', { timeout: 20_000 }).catch(() => undefined)
-  await page.waitForTimeout(800)
-  return true
+  return { submitted: true, code }
 }
 
 function needsLoginResult(accountId: number, reason: Exclude<FacebookSessionReason, 'valid'>, message: string): FacebookSessionResult {
@@ -533,24 +742,68 @@ async function completeTwoFactor(
   account: FacebookSessionAccount,
   successMessage: string
 ): Promise<FacebookSessionResult> {
-  if (!account.twoFactorSecret?.trim()) {
+  const secret = account.twoFactorSecret?.trim()
+  if (!secret) {
+    twoFactorDiagnostic(account.id, 'missing_credential')
     return needsLoginResult(account.id, 'two_factor_missing', 'Facebook yêu cầu mã 2FA nhưng account chưa có dữ liệu 2FA.')
   }
 
-  try {
-    if (!await submitTotp(page, account.twoFactorSecret)) {
-      return needsLoginResult(account.id, 'two_factor_failed', 'Không phát hiện được ô nhập mã 2FA để tiếp tục đăng nhập.')
+  const maxAttempts = isDirectTwoFactorCode(secret) ? 1 : TWO_FACTOR_MAX_ATTEMPTS
+  const credentialKind = twoFactorCredentialKind(secret)
+  twoFactorDiagnostic(account.id, 'handler_start', `credential=${credentialKind} maxAttempts=${maxAttempts}`)
+  let previousCode: string | null = null
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const attemptDetail = `attempt=${attempt}/${maxAttempts}`
+    twoFactorDiagnostic(account.id, 'attempt_start', attemptDetail)
+    if (previousCode) {
+      twoFactorDiagnostic(account.id, 'fresh_code_wait_start', attemptDetail)
+      await waitForDifferentTwoFactorCode(page, secret, previousCode)
+      twoFactorDiagnostic(account.id, 'fresh_code_wait_done', attemptDetail)
     }
-  } catch {
-    return needsLoginResult(account.id, 'two_factor_failed', 'Không thể tạo/nhập mã 2FA từ dữ liệu 2FA của account.')
+    if (!await isTwoFactorSurfaceActive(page)) {
+      const gate = await inspectFacebookSessionGate(context, page)
+      twoFactorDiagnostic(account.id, 'surface_inactive', `${attemptDetail} gate=${gate}`)
+      if (gate === 'valid') return verifiedSuccessResult(account, context, successMessage)
+      if (gate === 'manual_verification') {
+        return needsLoginResult(account.id, 'checkpoint', 'Facebook yêu cầu checkpoint/xác minh danh tính sau 2FA; cần xử lý thủ công.')
+      }
+      return needsLoginResult(account.id, 'two_factor_failed', 'Facebook đã rời màn 2FA nhưng chưa tạo session hợp lệ; giữ account hiện tại để kiểm tra.')
+    }
+
+    let submitted: TwoFactorSubmitResult
+    try {
+      submitted = await submitTotp(page, secret, account.id, attempt, maxAttempts)
+    } catch (error) {
+      twoFactorDiagnostic(account.id, 'attempt_exception', `${attemptDetail} error=${error instanceof Error ? error.name : 'unknown'}`)
+      return needsLoginResult(account.id, 'two_factor_failed', 'Không thể tạo/nhập/gửi mã 2FA từ dữ liệu 2FA của account.')
+    }
+    if (!submitted.submitted || !submitted.code) {
+      twoFactorDiagnostic(account.id, 'attempt_not_submitted', attemptDetail)
+      return needsLoginResult(account.id, 'two_factor_failed', 'Màn 2FA đã được nhận diện nhưng chưa tìm được ô Code/nút Continue ở trạng thái sẵn sàng; giữ account hiện tại để kiểm tra.')
+    }
+
+    previousCode = submitted.code
+    twoFactorDiagnostic(account.id, 'outcome_wait_start', attemptDetail)
+    const gate = await waitForTwoFactorOutcome(context, page)
+    twoFactorDiagnostic(account.id, 'outcome', `${attemptDetail} gate=${gate}`)
+    if (gate === 'valid') return verifiedSuccessResult(account, context, successMessage)
+    if (gate === 'manual_verification') {
+      return needsLoginResult(account.id, 'checkpoint', 'Facebook yêu cầu checkpoint/xác minh danh tính sau 2FA; cần xử lý thủ công.')
+    }
+
+    const stillTwoFactor = gate === 'two_factor' || await isTwoFactorSurfaceActive(page)
+    if (!stillTwoFactor) {
+      twoFactorDiagnostic(account.id, 'surface_left_without_valid_session', `${attemptDetail} gate=${gate}`)
+      return needsLoginResult(account.id, 'two_factor_failed', 'Facebook đã phản hồi sau 2FA nhưng chưa tạo session hợp lệ; giữ account hiện tại để kiểm tra.')
+    }
+    if (attempt < maxAttempts) {
+      twoFactorDiagnostic(account.id, 'retry_pending', `nextAttempt=${attempt + 1}/${maxAttempts}`)
+    }
   }
 
-  const gate = await waitForPostLoginGate(context, page)
-  if (gate === 'valid') return verifiedSuccessResult(account, context, successMessage)
-  if (gate === 'manual_verification') {
-    return needsLoginResult(account.id, 'checkpoint', 'Facebook yêu cầu checkpoint/xác minh danh tính sau 2FA; cần xử lý thủ công.')
-  }
-  return needsLoginResult(account.id, 'two_factor_failed', 'Đã nhập mã 2FA nhưng Facebook chưa xác nhận session; cần kiểm tra thủ công trên browser.')
+  twoFactorDiagnostic(account.id, 'handler_exhausted', `credential=${credentialKind} attempts=${maxAttempts}`)
+  return needsLoginResult(account.id, 'two_factor_failed', 'Đã thử mã 2FA tối đa 2 lần nhưng Facebook vẫn giữ màn 2FA; tạm dừng tại account hiện tại để kiểm tra thủ công.')
 }
 
 async function resolveAuthenticatedGate(
@@ -561,7 +814,9 @@ async function resolveAuthenticatedGate(
   successMessage: string
 ): Promise<FacebookSessionResult | null> {
   if (gate === 'valid') return verifiedSuccessResult(account, context, successMessage)
-  if (gate === 'two_factor') return completeTwoFactor(context, page, account, successMessage)
+  if (gate === 'two_factor' || (gate === 'unknown' && isTwoFactorVerificationUrl(page.url()))) {
+    return completeTwoFactor(context, page, account, successMessage)
+  }
   if (gate === 'manual_verification') {
     return needsLoginResult(account.id, 'checkpoint', 'Facebook yêu cầu checkpoint/xác minh danh tính; cần xử lý thủ công trên browser đang mở.')
   }
@@ -574,7 +829,7 @@ export async function validateFacebookSession(context: BrowserContext, page: Pag
   if (gate === 'manual_verification') {
     return { state: 'verification_required', message: 'Facebook yêu cầu checkpoint/xác minh danh tính; cần xử lý thủ công.' }
   }
-  if (gate === 'two_factor') {
+  if (gate === 'two_factor' || isTwoFactorVerificationUrl(page.url())) {
     return { state: 'needs_login', message: 'Facebook đang yêu cầu mã 2FA; cần hoàn tất luồng đăng nhập trước khi tiếp tục.' }
   }
   return { state: 'needs_login', message: 'Session Facebook đã hết hoặc chưa đăng nhập.' }
@@ -688,7 +943,7 @@ export async function bootstrapFacebookSession(
       return needsLoginResult(account.id, 'login_failed', error instanceof Error ? error.message : String(error))
     }
 
-    gate = await waitForPostLoginGate(context, page)
+    gate = await waitForPasswordOnlyTransition(context, page)
     const passwordOnlyResolved = await resolveAuthenticatedGate(
       context,
       page,
@@ -697,8 +952,8 @@ export async function bootstrapFacebookSession(
       'Đăng nhập saved profile Facebook bằng password thành công.'
     )
     if (passwordOnlyResolved) return passwordOnlyResolved
-    if (gate === 'password_only') {
-      return needsLoginResult(account.id, 'login_failed', 'Facebook vẫn yêu cầu password cho saved profile; kiểm tra password hoặc thông báo trên browser.')
+    if (gate === 'unknown') {
+      return needsLoginResult(account.id, 'unknown', 'Facebook chưa hoàn tất chuyển trạng thái sau khi gửi password saved profile; browser được giữ mở để kiểm tra thủ công.')
     }
   }
 

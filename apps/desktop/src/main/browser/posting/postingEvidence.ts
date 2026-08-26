@@ -2,6 +2,7 @@ import { mkdir } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import type { BrowserContext, Page } from 'playwright-core'
 import type { PostingJobRequest, PostingJobResult } from '../../../shared/posting'
+import { detectFacebookCheckpointKind } from './facebookCheckpoint'
 import { capturePostingFailureScreenshot } from './screenshotService'
 
 function dataDirectoryFor(job: PostingJobRequest): string {
@@ -30,14 +31,31 @@ export async function startPostingTrace(context: BrowserContext, job: PostingJob
   }
 }
 
+async function enrichCheckpointClassification(page: Page, result: PostingJobResult): Promise<PostingJobResult> {
+  const validation = result.sessionValidation
+  const verificationRequired = result.code === 'verification_required' || validation?.state === 'verification_required'
+  if (!verificationRequired || validation?.checkpointKind !== undefined) return result
+
+  const checkpointKind = await detectFacebookCheckpointKind(page).catch(() => 'unknown' as const) ?? 'unknown'
+  return {
+    ...result,
+    sessionValidation: {
+      phase: validation?.phase ?? 'before_run',
+      state: 'verification_required',
+      message: validation?.message ?? result.message,
+      checkpointKind
+    }
+  }
+}
+
 export async function finishPostingEvidence(
   page: Page,
   job: PostingJobRequest,
   result: PostingJobResult,
   traceStarted: boolean
 ): Promise<PostingJobResult> {
-  const isFailure = result.status !== 'success' && result.status !== 'skipped'
-  let next = result
+  let next = await enrichCheckpointClassification(page, result)
+  const isFailure = next.status !== 'success' && next.status !== 'skipped'
 
   if (isFailure && job.logging.saveCurrentUrlOnFailure) {
     const currentUrl = safeFailureUrl(page.url())

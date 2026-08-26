@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { shouldRetainPostingBrowserForManualSession } from './postingWorkerLifecycle'
 
 describe('shouldRetainPostingBrowserForManualSession', () => {
-  it('retains browser for login and verification states from result code/status/session validation', () => {
+  it('retains browser for unresolved login and unidentified verification states', () => {
     expect(shouldRetainPostingBrowserForManualSession({ status: 'failed', code: 'needs_login', message: 'login' })).toBe(true)
     expect(shouldRetainPostingBrowserForManualSession({ status: 'failed', code: 'verification_required', message: 'checkpoint' })).toBe(true)
     expect(shouldRetainPostingBrowserForManualSession({ status: 'needs_login', message: 'login' })).toBe(true)
@@ -13,9 +13,29 @@ describe('shouldRetainPostingBrowserForManualSession', () => {
     })).toBe(true)
     expect(shouldRetainPostingBrowserForManualSession({
       status: 'failed',
+      code: 'verification_required',
       message: 'verification',
-      sessionValidation: { phase: 'before_run', state: 'verification_required', message: 'checkpoint' }
+      sessionValidation: {
+        phase: 'before_run',
+        state: 'verification_required',
+        message: 'checkpoint',
+        checkpointKind: 'unknown'
+      }
     })).toBe(true)
+  })
+
+  it.each(['282', '956'] as const)('releases browser when checkpoint %s ends the account turn', (checkpointKind) => {
+    expect(shouldRetainPostingBrowserForManualSession({
+      status: 'needs_login',
+      code: 'verification_required',
+      message: `checkpoint ${checkpointKind}`,
+      sessionValidation: {
+        phase: 'before_run',
+        state: 'verification_required',
+        message: `checkpoint ${checkpointKind}`,
+        checkpointKind
+      }
+    })).toBe(false)
   })
 
   it('releases browser normally after success or unrelated posting failures', () => {
