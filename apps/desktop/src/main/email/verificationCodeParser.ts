@@ -65,6 +65,12 @@ export function parseVerificationCode(messages: MailMessageSnapshot[], now = Dat
   for (const message of messages) {
     if (!Number.isFinite(message.receivedAt) || message.receivedAt <= 0 || message.receivedAt > now + 5 * 60_000) continue
     const messageScore = scoreMessage(message, now)
+    // A bare order/reference number is not an OTP. Require at least one verification
+    // signal from content or sender before considering numeric candidates.
+    const text = `${message.sender}\n${message.subject}\n${message.bodyPreview}\n${message.bodyText}`.toLowerCase()
+    const hasVerificationSignal = KEYWORDS.some((keyword) => text.includes(keyword))
+      || /security|verify|verification/i.test(message.sender)
+    if (!hasVerificationSignal || messageScore <= 0) continue
     const codes = candidatesFromMessage(message)
     for (const [index, code] of codes.entries()) {
       if (!code) continue

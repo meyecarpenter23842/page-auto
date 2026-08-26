@@ -1,17 +1,41 @@
 import { dialog, ipcMain, shell } from 'electron'
 import type Database from 'better-sqlite3'
 import { IPC_CHANNELS } from '../ipc/channels'
-import type { SaveHotmailSettingsInput, HotmailAccountPayload, HotmailBatchPayload } from '../shared/hotmail'
+import { EMAIL_CODE_DB_RETENTION_MS, type EmailCodeProvider } from '../shared/emailCode'
+import type { SaveHotmailSettingsInput, HotmailAccountPayload, HotmailBatchPayload, HotmailBatchResult } from '../shared/hotmail'
 import { BrowserEngineService } from './browser/browserEngineService'
 import { AccountRepository } from './database/accountRepository'
 import { HotmailRepository } from './database/hotmailRepository'
+import { createCanonicalEmailCodeRuntime } from './email/canonicalEmailCodeProvider'
 import { emailBrowserExecutableCandidates } from './email/emailBrowserExecutable'
 import { testEmailBrowserExecutable } from './email/emailProxyTester'
 import { ElectronEmailSecretCipher } from './email/emailSecretStore'
 import { HotmailService } from './email/hotmailService'
+import { clearEmailCodeProvider, setEmailCodeProvider } from './services/emailCodeProviderRegistry'
 
 export interface HotmailIpcRuntime {
   dispose: () => void
+}
+
+function uniqueAccountIds(payload: HotmailBatchPayload): number[] {
+  return [...new Set(payload.accountIds.filter((id) => Number.isInteger(id) && id > 0))]
+}
+
+async function getManualCodes(provider: EmailCodeProvider, payload: HotmailBatchPayload): Promise<HotmailBatchResult> {
+  const results: HotmailBatchResult['results'] = []
+  for (const accountId of uniqueAccountIds(payload)) {
+    const result = await provider.getEmailCode({ accountId, consumer: 'manual', timeoutMs: 0 })
+    results.push(result.status === 'success'
+      ? {
+          accountId,
+          status: 'success',
+          message: result.message,
+          code: result.code,
+          receivedAt: result.receivedAt
+        }
+      : { accountId, status: 'error', message: result.message, code: null, receivedAt: null })
+  }
+  return { results }
 }
 
 export function registerHotmailIpcHandlers(database: Database.Database): HotmailIpcRuntime {
@@ -55,14 +79,31 @@ export function registerHotmailIpcHandlers(database: Database.Database): Hotmail
     throw new Error('Không tìm thấy Browser Email chạy được. Anh chọn file browser thủ công trong Cài đặt Email.')
   }
 
+  const cipher = new ElectronEmailSecretCipher()
   const service = new HotmailService(
     accounts,
     repository,
-    new ElectronEmailSecretCipher(),
+    cipher,
     resolveBrowserExecutable
   )
+  const codeRuntime = createCanonicalEmailCodeRuntime(accounts, repository, cipher)
+  setEmailCodeProvider(codeRuntime.provider)
 
-  ipcMain.handle(IPC_CHANNELS.hotmailDashboardList, () => service.listDashboard())
+  const listDashboard = async () => {
+    let rows = await service.listDashboard()
+    const cutoff = Date.now() - EMAIL_CODE_DB_RETENTION_MS
+    let purged = false
+    for (const row of rows) {
+      if (!row.latestCode) continue
+      if (row.lastCodeAt !== null && row.lastCodeAt >= cutoff) continue
+      repository.updateEmailState(row.accountId, { lastCode: null, lastCodeAt: null })
+      purged = true
+    }
+    if (purged) rows = await service.listDashboard()
+    return rows
+  }
+
+  ipcMain.handle(IPC_CHANNELS.hotmailDashboardList, () => listDashboard())
   ipcMain.handle(IPC_CHANNELS.hotmailSettingsGet, () => service.getSettings())
   ipcMain.handle(IPC_CHANNELS.hotmailSettingsSave, (_event, input: SaveHotmailSettingsInput) => service.saveSettings(input))
   ipcMain.handle(IPC_CHANNELS.hotmailPickProfileRoot, async () => {
@@ -87,7 +128,8 @@ export function registerHotmailIpcHandlers(database: Database.Database): Hotmail
     if (result.verificationUri) void shell.openExternal(result.verificationUri).catch(() => undefined)
     return result
   })
-  ipcMain.handle(IPC_CHANNELS.hotmailCodesGet, (_event, payload: HotmailBatchPayload) => service.getCodes(payload))
+  // Manual "Lấy mã" and Facebook Common Runtime share the same canonical provider.
+  ipcMain.handle(IPC_CHANNELS.hotmailCodesGet, (_event, payload: HotmailBatchPayload) => getManualCodes(codeRuntime.provider, payload))
   ipcMain.handle(IPC_CHANNELS.hotmailCheck, (_event, payload: HotmailBatchPayload) => service.checkMail(payload))
   ipcMain.handle(IPC_CHANNELS.hotmailOpen, (_event, payload: HotmailAccountPayload) => service.openMail(payload.accountId))
   ipcMain.handle(IPC_CHANNELS.hotmailProxyStatus, () => service.getProxyStatus())
@@ -96,6 +138,8 @@ export function registerHotmailIpcHandlers(database: Database.Database): Hotmail
 
   return {
     dispose: () => {
+      clearEmailCodeProvider(codeRuntime.provider)
+      codeRuntime.dispose()
       service.dispose()
       browserEngine.closeAll()
     }

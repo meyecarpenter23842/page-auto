@@ -17,10 +17,19 @@ import {
 import { classifyPageIdentityUid, PageIdentitySwitcher } from '../browser/posting/pageIdentitySwitcher'
 import { activeFacebookProfileId, detectFacebookAccessBlock } from '../browser/posting/pageState'
 import { effectiveNavigationTimeoutMs, probeFacebookThroughProxy } from '../browser/proxyPreflight'
+import {
+  bootstrapFacebookSessionWithEmailSupport,
+  type FacebookEmailSupportFailureCode
+} from './facebookEmailSupportedSession'
 
 export type FacebookCommonErrorCode =
   | 'needs_login'
   | 'verification_required'
+  | 'email_auth_missing'
+  | 'email_auth_expired'
+  | 'email_code_not_found'
+  | 'email_support_error'
+  | 'email_code_failed'
   | 'proxy_unavailable'
   | 'profile_in_use'
   | 'browser_launch_failed'
@@ -101,6 +110,22 @@ export function beforeRunFacebookSessionFailure(session: FacebookSessionResult):
       phase: 'before_run',
       state: verificationRequired ? 'verification_required' : 'needs_login',
       message: session.message
+    }
+  }
+}
+
+export function beforeRunFacebookEmailSupportFailure(
+  code: FacebookEmailSupportFailureCode,
+  message: string
+): FacebookCommonStepResult {
+  return {
+    status: 'needs_login',
+    code,
+    message,
+    sessionValidation: {
+      phase: 'before_run',
+      state: 'needs_login',
+      message
     }
   }
 }
@@ -261,12 +286,16 @@ export class FacebookCommonRuntime {
       }
     }
 
-    const session = await bootstrapFacebookSession(
+    const bootstrap = await bootstrapFacebookSessionWithEmailSupport(
       this.context,
       this.page,
       this.request.sessionAccount,
       this.request.session.facebookLocale
     )
+    if (bootstrap.status === 'email_failure') {
+      return beforeRunFacebookEmailSupportFailure(bootstrap.code, bootstrap.message)
+    }
+    const session = bootstrap.session
     if (session.status !== 'valid') return beforeRunFacebookSessionFailure(session)
     this.sessionValidated = true
     this.sessionCookie = session.cookie
