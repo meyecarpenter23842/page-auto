@@ -38,14 +38,50 @@ describe('resolveSessionFailureDecision', () => {
     })
   })
 
-  it('uses the checkpoint policy for identity verification', () => {
+  it.each(['282', '956'] as const)('treats checkpoint %s as a terminal account turn even when the legacy checkpoint setting says stop', (checkpointKind) => {
+    const result: PostingJobResult = {
+      status: 'needs_login',
+      code: 'verification_required',
+      message: `checkpoint ${checkpointKind}`,
+      sessionValidation: {
+        phase: 'before_run',
+        state: 'verification_required',
+        message: `checkpoint ${checkpointKind}`,
+        checkpointKind
+      }
+    }
+    expect(resolveSessionFailureDecision(result, settings({ onCheckpoint: 'needs_login_stop' }))).toEqual({
+      kind: 'checkpoint',
+      action: 'continue'
+    })
+  })
+
+  it('always pauses an unidentified checkpoint instead of rotating by the legacy continue setting', () => {
+    const result: PostingJobResult = {
+      status: 'needs_login',
+      code: 'verification_required',
+      message: 'manual checkpoint',
+      sessionValidation: {
+        phase: 'before_run',
+        state: 'verification_required',
+        message: 'manual checkpoint',
+        checkpointKind: 'unknown'
+      }
+    }
+    expect(resolveSessionFailureDecision(result, settings({ onCheckpoint: 'needs_login_continue' }))).toEqual({
+      kind: 'checkpoint',
+      action: 'stop'
+    })
+  })
+
+  it('pauses an unclassified verification result instead of assuming it is 282/956', () => {
     const result: PostingJobResult = {
       status: 'needs_login',
       code: 'verification_required',
       message: 'manual checkpoint',
       sessionValidation: { phase: 'before_run', state: 'verification_required', message: 'manual checkpoint' }
     }
-    expect(resolveSessionFailureDecision(result, settings({ onCheckpoint: 'needs_login_stop' }))).toEqual({
+    expect(resolveSessionFailureDecision(result, settings({ onCheckpoint: 'needs_login_continue' }))).toEqual({
       kind: 'checkpoint',
       action: 'stop'
     })
