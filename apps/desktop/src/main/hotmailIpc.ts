@@ -3,10 +3,10 @@ import type Database from 'better-sqlite3'
 import { IPC_CHANNELS } from '../ipc/channels'
 import type { SaveHotmailSettingsInput, HotmailAccountPayload, HotmailBatchPayload } from '../shared/hotmail'
 import { BrowserEngineService } from './browser/browserEngineService'
-import { AppSettingsRepository } from './database/appSettingsRepository'
 import { AccountRepository } from './database/accountRepository'
 import { HotmailRepository } from './database/hotmailRepository'
 import { emailBrowserExecutableCandidates } from './email/emailBrowserExecutable'
+import { testEmailBrowserExecutable } from './email/emailProxyTester'
 import { ElectronEmailSecretCipher } from './email/emailSecretStore'
 import { HotmailService } from './email/hotmailService'
 
@@ -16,19 +16,14 @@ export interface HotmailIpcRuntime {
 
 export function registerHotmailIpcHandlers(database: Database.Database): HotmailIpcRuntime {
   const accounts = new AccountRepository(database)
-  const appSettings = new AppSettingsRepository(database)
   const repository = new HotmailRepository(database)
   const browserEngine = new BrowserEngineService()
   const validatedExecutables = new Set<string>()
 
   const resolveBrowserExecutable = async (requestedExecutable: string, profileRoot: string): Promise<string> => {
-    const candidates = emailBrowserExecutableCandidates(
-      profileRoot,
-      requestedExecutable,
-      appSettings.get().browser.executablePath
-    )
+    const candidates = emailBrowserExecutableCandidates(profileRoot, requestedExecutable)
     if (candidates.length === 0) {
-      throw new Error('Không tìm thấy Browser Email. Anh chửn Chrome/Edge/Chromium chạy được trong Thiết lập Email.')
+      throw new Error('Không tìm thấy Browser Email. Anh chọn Chrome/Edge/Chromium chạy được trong Cài đặt Email.')
     }
 
     let foundExecutable = false
@@ -38,28 +33,26 @@ export function registerHotmailIpcHandlers(database: Database.Database): Hotmail
       foundExecutable = true
       if (validatedExecutables.has(candidate)) return candidate
 
-      const result = await browserEngine.testBrowser({
-        ...appSettings.get().browser,
-        executablePath: candidate,
-        mode: 'visible'
-      })
-      if (result.status === 'success') {
+      // Validate Email Browser with a disposable persistent profile, matching the
+      // real Email runtime. Do not borrow Facebook browser settings or profile.
+      const result = await testEmailBrowserExecutable(candidate)
+      if (result.ok) {
         validatedExecutables.add(candidate)
         return candidate
       }
 
       if (requestedExecutable.trim()) {
-        throw new Error('Browser Email không khởi động được. Anh chọn một Chrome/Edge/Chromium khác rồi lưu lại.')
+        throw new Error('Browser Email đã chọn không mở persistent profile được. Anh chọn Chrome/Edge/Chromium khác rồi thử lại.')
       }
     }
 
     if (requestedExecutable.trim() && !foundExecutable) {
-      throw new Error('Không tìm thấy file Browser Email đã chửn.')
+      throw new Error('Không tìm thấy file Browser Email đã chọn.')
     }
     if (foundExecutable) {
-      throw new Error('Browser Email không khởi động được. Anh chọn một Chrome/Edge/Chromium khác rồi lưu lại.')
+      throw new Error('Các Browser Email tự tìm thấy đều không mở persistent profile được. Anh chọn file browser thủ công trong Cài đặt Email.')
     }
-    throw new Error('Không tìm thấy Browser Email chạy được. Anh chọn file browser thủ công trong Thiết lập Email.')
+    throw new Error('Không tìm thấy Browser Email chạy được. Anh chọn file browser thủ công trong Cài đặt Email.')
   }
 
   const service = new HotmailService(
@@ -73,12 +66,17 @@ export function registerHotmailIpcHandlers(database: Database.Database): Hotmail
   ipcMain.handle(IPC_CHANNELS.hotmailSettingsGet, () => service.getSettings())
   ipcMain.handle(IPC_CHANNELS.hotmailSettingsSave, (_event, input: SaveHotmailSettingsInput) => service.saveSettings(input))
   ipcMain.handle(IPC_CHANNELS.hotmailPickProfileRoot, async () => {
-    const result = await dialog.showOpenDialog({ title: 'Chọn Email Profile Root', properties: ['openDirectory'] })
+    const savedRoot = repository.getProfileSettings().profileRoot
+    const result = await dialog.showOpenDialog({
+      title: 'Chọn thư mục chứa profile Email theo UID',
+      properties: ['openDirectory'],
+      ...(savedRoot ? { defaultPath: savedRoot } : {})
+    })
     return result.canceled ? null : (result.filePaths[0] ?? null)
   })
   ipcMain.handle(IPC_CHANNELS.hotmailPickBrowserExecutable, async () => {
     const result = await dialog.showOpenDialog({
-      title: 'Chửn Browser Email',
+      title: 'Chọn Browser Email',
       properties: ['openFile'],
       ...(process.platform === 'win32' ? { filters: [{ name: 'Browser', extensions: ['exe'] }] } : {})
     })

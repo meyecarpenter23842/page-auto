@@ -1,7 +1,8 @@
-import { access, readFile } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import { request } from 'node:http'
 import { join } from 'node:path'
 import { chromium, type Browser, type BrowserContext } from 'playwright-core'
+import { friendlyEmailBrowserError, isEmailProfileInUseError } from './emailBrowserLifecycle'
 
 interface ProxyConfig {
   server: string
@@ -38,17 +39,6 @@ function parseCommand(event: unknown): OpenCommand | null {
   const candidate = payload as Partial<OpenCommand>
   if (candidate.type !== 'open-mail' || typeof candidate.accountId !== 'number' || typeof candidate.profileDirectory !== 'string') return null
   return candidate as OpenCommand
-}
-
-function friendlyBrowserError(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error)
-  if (/browser context|connectovercdp|cdp/i.test(message)) {
-    return 'Browser Email đang chạy nhưng PAGE-AUTO không attach được qua CDP.'
-  }
-  if (/executable.*(doesn.t exist|not found)|enoent/i.test(message)) {
-    return 'Không tìm thấy file Browser Email đã cấu hình.'
-  }
-  return 'Browser Email không khởi động được. Anh chọn Chrome/Edge/Chromium khác trong Thiết lập Email rồi thử lại.'
 }
 
 async function readCdpEndpoint(profileDirectory: string): Promise<string | null> {
@@ -91,34 +81,47 @@ async function readLiveCdpEndpoint(profileDirectory: string): Promise<string | n
   return endpoint && await probeCdpEndpoint(endpoint) ? endpoint : null
 }
 
-async function hasProfileLock(profileDirectory: string): Promise<boolean> {
-  for (const name of ['SingletonLock', 'SingletonCookie', 'SingletonSocket']) {
-    try {
-      await access(join(profileDirectory, name))
-      return true
-    } catch {
-      // Try the next lock marker.
-    }
-  }
-  return false
-}
-
-async function openOutlook(context: BrowserContext): Promise<void> {
+async function openOutlook(context: BrowserContext, requireNavigation: boolean): Promise<void> {
   const page = context.pages()[0] ?? await context.newPage()
-  await page.goto('https://outlook.live.com/mail/0/', { waitUntil: 'domcontentloaded', timeout: 30_000 }).catch(() => undefined)
+  const navigation = page.goto('https://outlook.live.com/mail/0/', { waitUntil: 'domcontentloaded', timeout: 30_000 })
+  if (requireNavigation) await navigation
+  else await navigation.catch(() => undefined)
   await page.bringToFront().catch(() => undefined)
 }
 
 async function launchProfile(command: OpenCommand): Promise<BrowserContext> {
-  if (!command.executablePath?.trim()) {
-    throw new Error('Browser executable not found')
-  }
+  if (!command.executablePath?.trim()) throw new Error('Browser executable not found')
   return await chromium.launchPersistentContext(command.profileDirectory, {
     headless: false,
     viewport: null,
     executablePath: command.executablePath,
     ...(command.proxy ? { proxy: command.proxy } : {})
   })
+}
+
+async function launchOrInUse(command: OpenCommand): Promise<{ context: BrowserContext | null; result: OpenResult | null }> {
+  let context: BrowserContext | null = null
+  try {
+    context = await launchProfile(command)
+    await openOutlook(context, Boolean(command.proxy))
+    return { context, result: null }
+  } catch (error) {
+    await context?.close().catch(() => undefined)
+    if (isEmailProfileInUseError(error)) {
+      return {
+        context: null,
+        result: {
+          type: 'open-result',
+          accountId: command.accountId,
+          status: 'profile_in_use',
+          attached: false,
+          proxyManagedExternally: true,
+          message: friendlyEmailBrowserError(error)
+        }
+      }
+    }
+    throw error
+  }
 }
 
 async function run(): Promise<void> {
@@ -134,15 +137,15 @@ async function run(): Promise<void> {
       let result: OpenResult
       try {
         if (launchedContext) {
-          await openOutlook(launchedContext)
+          await openOutlook(launchedContext, Boolean(command.proxy))
           result = {
             type: 'open-result', accountId: command.accountId, status: 'already_open', attached: false,
-            proxyManagedExternally: false, message: 'Email browser đang mở bằng profile này.'
+            proxyManagedExternally: false, message: 'Email browser đang mở bằng đúng profile UID này.'
           }
         } else if (attachedBrowser) {
           const context = attachedBrowser.contexts()[0]
           if (!context) throw new Error('Browser CDP đang chạy nhưng không có context khả dụng.')
-          await openOutlook(context)
+          await openOutlook(context, false)
           result = {
             type: 'open-result', accountId: command.accountId, status: 'already_open', attached: true,
             proxyManagedExternally: true, message: 'Đã attach browser Email đang chạy; proxy do process sở hữu browser quản lý.'
@@ -154,38 +157,34 @@ async function run(): Promise<void> {
               attachedBrowser = await chromium.connectOverCDP(endpoint)
               const context = attachedBrowser.contexts()[0]
               if (!context) throw new Error('Không tìm thấy browser context qua CDP.')
-              await openOutlook(context)
+              await openOutlook(context, false)
               result = {
                 type: 'open-result', accountId: command.accountId, status: 'already_open', attached: true,
                 proxyManagedExternally: true, message: 'Đã attach browser Email đang chạy; không thay proxy giữa phiên.'
               }
             } catch {
               attachedBrowser = null
-              if (await hasProfileLock(command.profileDirectory)) {
-                result = {
-                  type: 'open-result', accountId: command.accountId, status: 'profile_in_use', attached: false,
-                  proxyManagedExternally: true, message: 'Profile đang được process khác sử dụng nhưng không attach CDP được.'
-                }
+              const relaunched = await launchOrInUse(command)
+              if (relaunched.result) {
+                result = relaunched.result
               } else {
-                launchedContext = await launchProfile(command)
-                await openOutlook(launchedContext)
+                launchedContext = relaunched.context
                 result = {
                   type: 'open-result', accountId: command.accountId, status: 'started', attached: false,
-                  proxyManagedExternally: false, message: 'CDP cũ không còn dùng được; đã mở lại đúng profile Email theo UID.'
+                  proxyManagedExternally: false, message: 'CDP cũ/attach lỗi; đã mở lại đúng profile Email theo UID mà không xóa lock.'
                 }
               }
             }
-          } else if (await hasProfileLock(command.profileDirectory)) {
-            result = {
-              type: 'open-result', accountId: command.accountId, status: 'profile_in_use', attached: false,
-              proxyManagedExternally: true, message: 'Profile đang được process khác sử dụng; PAGE-AUTO không mở process thứ hai.'
-            }
           } else {
-            launchedContext = await launchProfile(command)
-            await openOutlook(launchedContext)
-            result = {
-              type: 'open-result', accountId: command.accountId, status: 'started', attached: false,
-              proxyManagedExternally: false, message: 'Đã mở trực tiếp profile Email theo UID.'
+            const launched = await launchOrInUse(command)
+            if (launched.result) {
+              result = launched.result
+            } else {
+              launchedContext = launched.context
+              result = {
+                type: 'open-result', accountId: command.accountId, status: 'started', attached: false,
+                proxyManagedExternally: false, message: 'Đã mở trực tiếp profile Email có sẵn theo UID.'
+              }
             }
           }
 
@@ -202,7 +201,7 @@ async function run(): Promise<void> {
       } catch (error) {
         result = {
           type: 'open-result', accountId: command.accountId, status: 'error', attached: false,
-          proxyManagedExternally: false, message: friendlyBrowserError(error)
+          proxyManagedExternally: false, message: friendlyEmailBrowserError(error)
         }
       }
       process.parentPort?.postMessage(result)
@@ -211,6 +210,6 @@ async function run(): Promise<void> {
 }
 
 void run().catch((error) => {
-  console.error('[PAGE-AUTO email browser worker]', error instanceof Error ? error.message : String(error))
+  console.error('[PAGE-AUTO email browser worker]', friendlyEmailBrowserError(error))
   process.exitCode = 1
 })

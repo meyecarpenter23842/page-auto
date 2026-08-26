@@ -2,7 +2,8 @@ import { utilityProcess, type UtilityProcess } from 'electron'
 import { join } from 'node:path'
 import type { HotmailBrowserOpenResult } from '../../shared/hotmail'
 import type { AccountRecord } from '../../shared/accounts'
-import { ensureEmailProfileDirectory, inspectEmailProfile } from './emailProfileResolver'
+import { shouldKeepEmailBrowserWorker } from './emailBrowserLifecycle'
+import { inspectEmailProfile } from './emailProfileResolver'
 import type { EmailProxyCandidate } from './emailProxyPool'
 
 interface WorkerResult {
@@ -41,28 +42,18 @@ export class EmailBrowserManager {
     if (inspection.status === 'not_configured') {
       return this.result(account.id, 'missing_profile', null, 'Chưa cấu hình Email Profile Root.', false, false)
     }
-
-    let profileDirectory = inspection.profileDirectory
-    let createdProfile = false
-    if (inspection.status === 'missing') {
-      try {
-        profileDirectory = await ensureEmailProfileDirectory(profileRoot, account.uid)
-        createdProfile = true
-      } catch (error) {
-        return this.result(
-          account.id,
-          'missing_profile',
-          inspection.profileDirectory,
-          error instanceof Error ? error.message : String(error),
-          false,
-          false
-        )
-      }
-    }
-    if (!profileDirectory) {
-      return this.result(account.id, 'missing_profile', null, 'Không xác định được profile Email theo UID.', false, false)
+    if (inspection.status === 'missing' || !inspection.profileDirectory) {
+      return this.result(
+        account.id,
+        'missing_profile',
+        inspection.profileDirectory,
+        `Không tìm thấy profile Email có sẵn cho UID ${account.uid}. Hãy chọn đúng thư mục gốc đang chứa ${account.uid}; PAGE-AUTO không tự tạo hoặc clone profile.`,
+        false,
+        false
+      )
     }
 
+    const profileDirectory = inspection.profileDirectory
     const existing = this.workers.get(account.id)
     if (existing) {
       if (existing.pending) return this.result(account.id, 'already_open', existing.profileDirectory, 'Email browser đang xử lý lệnh mở.', false, false)
@@ -88,6 +79,10 @@ export class EmailBrowserManager {
         attached: message.attached,
         proxyManagedExternally: message.proxyManagedExternally
       })
+      if (!shouldKeepEmailBrowserWorker(message.status)) {
+        if (this.workers.get(account.id) === entry) this.workers.delete(account.id)
+        process.kill()
+      }
     })
     process.once('exit', () => {
       const pending = entry.pending
@@ -110,9 +105,6 @@ export class EmailBrowserManager {
       process.once('exit', () => finish(this.result(account.id, 'error', entry.profileDirectory, 'Email browser worker đã thoát trước khi khởi động.', false, false)))
     })
 
-    if (createdProfile && (result.status === 'started' || result.status === 'already_open')) {
-      return { ...result, message: `Đã tạo profile ${account.uid} tại ${entry.profileDirectory} và mở Browser Email.` }
-    }
     return result
   }
 

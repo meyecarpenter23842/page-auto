@@ -1,4 +1,4 @@
-import { access, mkdir, readFile, stat } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
 import { request } from 'node:http'
 import { isAbsolute, relative, resolve } from 'node:path'
 import type { HotmailProfileInspection } from '../../shared/hotmail'
@@ -14,6 +14,22 @@ function safeProfileDirectory(root: string, uid: string): string | null {
   const rel = relative(base, candidate)
   if (!rel || rel.startsWith('..') || isAbsolute(rel)) return null
   return candidate
+}
+
+export async function validateEmailProfileRoot(root: string): Promise<string> {
+  const normalizedRoot = root.trim()
+  if (!normalizedRoot) throw new Error('Chưa cấu hình Email Profile Root.')
+  if (!isAbsolute(normalizedRoot)) throw new Error('Email Profile Root phải là đường dẫn tuyệt đối.')
+
+  const resolvedRoot = resolve(normalizedRoot)
+  let info
+  try {
+    info = await stat(resolvedRoot)
+  } catch {
+    throw new Error('Email Profile Root không tồn tại.')
+  }
+  if (!info.isDirectory()) throw new Error('Email Profile Root không phải thư mục.')
+  return resolvedRoot
 }
 
 async function readCdpEndpoint(profileDirectory: string): Promise<string | null> {
@@ -54,18 +70,6 @@ export async function probeCdpEndpoint(endpoint: string, timeoutMs = 650): Promi
   })
 }
 
-async function hasProfileLock(profileDirectory: string): Promise<boolean> {
-  for (const name of ['SingletonLock', 'SingletonCookie', 'SingletonSocket']) {
-    try {
-      await access(resolve(profileDirectory, name))
-      return true
-    } catch {
-      // Try the next Chromium lock marker.
-    }
-  }
-  return false
-}
-
 export async function inspectEmailProfile(root: string, uid: string): Promise<HotmailProfileInspection> {
   if (!root.trim()) {
     return { status: 'not_configured', profileDirectory: null, cdpEndpoint: null }
@@ -84,46 +88,19 @@ export async function inspectEmailProfile(root: string, uid: string): Promise<Ho
   }
 
   const candidateEndpoint = await readCdpEndpoint(profileDirectory)
-  const cdpEndpoint = candidateEndpoint && await probeCdpEndpoint(candidateEndpoint) ? candidateEndpoint : null
-  const locked = !cdpEndpoint && await hasProfileLock(profileDirectory)
+  if (!candidateEndpoint) {
+    return { status: 'available', profileDirectory, cdpEndpoint: null }
+  }
+
+  const live = await probeCdpEndpoint(candidateEndpoint)
   return {
-    status: cdpEndpoint ? 'running' : locked ? 'in_use' : 'available',
+    // A dead DevToolsActivePort is stale metadata, not proof of a real lock.
+    // Treat the existing UID profile as launchable; Chromium itself will decide
+    // whether a real ProcessSingleton owner blocks the persistent launch.
+    status: live ? 'running' : 'available',
     profileDirectory,
-    cdpEndpoint
+    cdpEndpoint: live ? candidateEndpoint : null
   }
-}
-
-export async function ensureEmailProfileDirectory(root: string, uid: string): Promise<string> {
-  const normalizedRoot = root.trim()
-  if (!normalizedRoot) throw new Error('Chưa cấu hình Email Profile Root.')
-
-  const profileDirectory = safeProfileDirectory(normalizedRoot, uid)
-  if (!profileDirectory) throw new Error('Email Profile Root hoặc UID không hợp lệ.')
-
-  let rootInfo
-  try {
-    rootInfo = await stat(resolve(normalizedRoot))
-  } catch {
-    throw new Error('Email Profile Root không tồn tại.')
-  }
-  if (!rootInfo.isDirectory()) throw new Error('Email Profile Root không phải thư mục.')
-
-  try {
-    const existing = await stat(profileDirectory)
-    if (!existing.isDirectory()) throw new Error('Đường dẫn profile UID đã tồn tại nhưng không phải thư mục.')
-    return profileDirectory
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-  }
-
-  try {
-    await mkdir(profileDirectory)
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
-    const raced = await stat(profileDirectory).catch(() => null)
-    if (!raced?.isDirectory()) throw new Error('Đường dẫn profile UID đã tồn tại nhưng không phải thư mục.')
-  }
-  return profileDirectory
 }
 
 export function resolveEmailProfileDirectory(root: string, uid: string): string | null {

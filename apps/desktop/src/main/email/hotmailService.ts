@@ -12,7 +12,8 @@ import type {
   SaveHotmailSettingsInput
 } from '../../shared/hotmail'
 import { EmailBrowserManager } from './emailBrowserManager'
-import { inspectEmailProfile } from './emailProfileResolver'
+import { EMAIL_PROFILE_IN_USE_CACHE_MS, isEmailProfileInUseOverrideActive } from './emailBrowserLifecycle'
+import { inspectEmailProfile, validateEmailProfileRoot } from './emailProfileResolver'
 import { EmailProxyPool, normalizeEmailProxyLines } from './emailProxyPool'
 import { testEmailProxy } from './emailProxyTester'
 import { MicrosoftGraphMailAdapter } from './microsoftGraphMailAdapter'
@@ -32,6 +33,7 @@ export class HotmailService {
   private readonly browser: EmailBrowserManager
   private readonly proxyPool: EmailProxyPool
   private readonly runtimeStatus = new Map<number, HotmailDashboardRow['runtimeStatus']>()
+  private readonly profileInUseUntil = new Map<number, number>()
 
   constructor(
     private readonly accounts: AccountRepository,
@@ -49,9 +51,18 @@ export class HotmailService {
     const rows = this.repository.listDashboardRows()
     return await Promise.all(rows.map(async (row) => {
       const profile = await inspectEmailProfile(settings.profileRoot, row.uid)
+      const inUseUntil = this.profileInUseUntil.get(row.accountId)
+      if (inUseUntil !== undefined && !isEmailProfileInUseOverrideActive(inUseUntil)) {
+        this.profileInUseUntil.delete(row.accountId)
+      }
+      const profileStatus = this.browser.isOpen(row.accountId) || profile.status === 'running'
+        ? 'running'
+        : isEmailProfileInUseOverrideActive(this.profileInUseUntil.get(row.accountId))
+          ? 'in_use'
+          : profile.status
       return {
         ...row,
-        profileStatus: this.browser.isOpen(row.accountId) ? 'running' : profile.status,
+        profileStatus,
         profileDirectory: profile.profileDirectory,
         runtimeStatus: this.runtimeStatus.get(row.accountId) ?? row.runtimeStatus
       }
@@ -71,11 +82,16 @@ export class HotmailService {
       if (effectiveCount === 0) throw new Error('Random IPv4 cần ít nhất một proxy Email hợp lệ trong pool.')
     }
 
-    const shouldResolveBrowser = Boolean(input.profileRoot.trim() || input.browserExecutable.trim())
-    const browserExecutable = shouldResolveBrowser
-      ? await this.resolveBrowserExecutable(input.browserExecutable, input.profileRoot)
-      : ''
-    this.repository.saveSettings({ ...input, browserExecutable }, normalizedProxyEntries)
+    if (input.profileRoot.trim()) await validateEmailProfileRoot(input.profileRoot)
+    if (input.browserExecutable.trim()) {
+      // Manual mode is validated using the same persistent-context semantics as Email runtime.
+      await this.resolveBrowserExecutable(input.browserExecutable, input.profileRoot)
+    }
+
+    // Empty browserExecutable intentionally remains empty: that is Browser Auto.
+    // Do not persist a Facebook/global browser fallback or pin one auto-detected path.
+    this.repository.saveSettings(input, normalizedProxyEntries)
+    this.profileInUseUntil.clear()
     return this.getSettings()
   }
 
@@ -195,22 +211,39 @@ export class HotmailService {
     this.runtimeStatus.set(accountId, 'opening')
     try {
       const inspection = await inspectEmailProfile(settings.profileRoot, account.uid)
-      const attachedExternally = inspection.status === 'running' || inspection.status === 'in_use'
-      const needsLaunchExecutable = inspection.status === 'missing' || inspection.status === 'available'
-      const executable = needsLaunchExecutable
-        ? await this.resolveBrowserExecutable(settings.browserExecutable, settings.profileRoot)
-        : settings.browserExecutable
-      const proxy = attachedExternally ? null : this.proxyPool.acquire(accountId)
+      if (inspection.status === 'not_configured' || inspection.status === 'missing') {
+        this.profileInUseUntil.delete(accountId)
+        const result = await this.browser.open(account, settings.profileRoot, settings.browserExecutable, null)
+        this.runtimeStatus.set(accountId, 'error')
+        return result
+      }
+
+      const attachedExternally = inspection.status === 'running' && !this.browser.isOpen(accountId)
+      const activeAssignment = this.proxyPool.assignment(accountId)
+      // Resolve even for a live CDP profile: connectOverCDP may race with browser shutdown,
+      // and the worker must have an executable ready for safe relaunch.
+      const executable = await this.resolveBrowserExecutable(settings.browserExecutable, settings.profileRoot)
+      const proxy = attachedExternally ? null : (activeAssignment ?? this.proxyPool.acquire(accountId))
       const result = await this.browser.open(account, settings.profileRoot, executable, proxy)
+
+      if (proxy && !result.proxyManagedExternally) {
+        if (result.status === 'started' || result.status === 'already_open') this.proxyPool.recordSuccess(proxy)
+        else if (/proxy/i.test(result.message)) this.proxyPool.recordFailure(proxy)
+      }
+      if (result.proxyManagedExternally) this.proxyPool.release(accountId)
+      if (result.status === 'profile_in_use') this.profileInUseUntil.set(accountId, Date.now() + EMAIL_PROFILE_IN_USE_CACHE_MS)
+      else this.profileInUseUntil.delete(accountId)
       if (result.status === 'error' || result.status === 'missing_profile' || result.status === 'profile_in_use') {
-        if (!this.browser.isOpen(accountId)) this.proxyPool.release(accountId)
+        this.proxyPool.release(accountId)
         this.runtimeStatus.set(accountId, 'error')
       } else {
         this.runtimeStatus.set(accountId, 'idle')
       }
+
       return result
     } catch (error) {
       this.proxyPool.release(accountId)
+      this.profileInUseUntil.delete(accountId)
       this.runtimeStatus.set(accountId, 'error')
       return {
         accountId,
@@ -236,10 +269,22 @@ export class HotmailService {
     const proxySettings = this.repository.getProxySettings()
     const proxy = proxySettings.mode === 'direct' ? null : this.proxyPool.peek()
     if (proxySettings.mode === 'random_ipv4' && !proxy) {
-      return { ok: false, proxy: null, publicIp: null, message: 'Pool Random IPv4 chưa có proxy hợp lệ.' }
+      return {
+        ok: false,
+        proxy: null,
+        publicIp: null,
+        message: this.proxyPool.cooldownCount() > 0
+          ? 'Tất cả proxy Email đang cooldown. Hãy chờ hoặc cập nhật pool rồi kiểm tra lại.'
+          : 'Pool Random IPv4 chưa có proxy hợp lệ.'
+      }
     }
     const executable = await this.resolveBrowserExecutable(settings.browserExecutable, settings.profileRoot)
-    return testEmailProxy(proxy, executable)
+    const result = await testEmailProxy(proxy, executable)
+    if (proxy) {
+      if (result.ok) this.proxyPool.recordSuccess(proxy)
+      else this.proxyPool.recordFailure(proxy)
+    }
+    return result
   }
 
   dispose(): void {
