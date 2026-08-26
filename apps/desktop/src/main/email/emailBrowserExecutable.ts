@@ -20,21 +20,18 @@ function addCandidate(target: string[], seen: Set<string>, value: string | null 
 export function emailBrowserExecutableCandidates(
   profileRoot: string,
   requestedExecutable: string,
-  fallbackExecutable: string | null,
   env: NodeJS.ProcessEnv = process.env
 ): string[] {
   const candidates: string[] = []
   const seen = new Set<string>()
   const requested = requestedExecutable.trim()
 
-  // A manually selected executable is authoritative: never silently swap it for
-  // another browser if it fails validation.
+  // Manual Email browser selection is authoritative. Browser Auto must never
+  // borrow the Facebook browser setting as a hidden fallback.
   if (requested) {
     addCandidate(candidates, seen, requested)
     return candidates
   }
-
-  addCandidate(candidates, seen, fallbackExecutable)
 
   const normalizedRoot = profileRoot.trim()
   if (normalizedRoot && isAbsolute(normalizedRoot)) {
