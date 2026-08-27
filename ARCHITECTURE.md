@@ -871,3 +871,52 @@ Giới hạn cố ý của 5B:
 Invariant sau 5B:
 
 > Business Tường đã có flow đăng ngay với strong verification riêng và có thể chạy khi được cấp prepared common runtime; production orchestration vẫn chỉ dispatch Group cho tới lô wiring kế tiếp.
+
+---
+
+## 23. Trạng thái Đăng Tường — lô 5C production task dispatch
+
+Lô 5C đưa `page_wall_post` qua **production Main/utility-worker execution boundary** nhưng chưa bật renderer, IPC, scheduler hay Wall run-items. Mục tiêu là làm worker đa nghiệp vụ thật mà vẫn giữ Group production behavior hiện hữu.
+
+Source/wiring trong lô:
+
+- `apps/desktop/src/shared/facebookTasks.ts`
+  - `FacebookPostWorkerRequestMessage` mang `FacebookPostTaskJobRequest` explicit thay vì worker phải giả định mọi job đều có `groupUid`;
+  - legacy Group contract vẫn được giữ qua `groupPostTaskFromLegacy()`.
+- `apps/desktop/src/main/facebook/facebookPostTaskDispatcher.ts`
+  - validate task rồi route `group_post` về `executePostingJob()` hiện hữu;
+  - route `page_wall_post` sang executor Tường riêng;
+  - không chứa selector, session/login hoặc Page-switch logic.
+- `apps/desktop/src/main/business/page-wall-post/executePageWallPostJob.ts`
+  - mở đúng `FacebookCommonRuntime` dùng chung;
+  - chạy `prepareForPage()` để xác minh session/account/Page identity trước business task;
+  - sau đó mới gọi `PageWallTask.execute()`;
+  - dùng chung trace/screenshot evidence và after-run session validation/metadata như production Group path.
+- `apps/desktop/src/main/browser/postingWorkerManager.ts`
+  - `run(job: PostingJobRequest)` của Group vẫn tồn tại và chỉ wrap sang `group_post`;
+  - `runTask(job: FacebookPostTaskJobRequest)` là đường generic mới dùng cùng worker-per-account, timeout, browser reuse/retile và Email-code bridge.
+- `apps/desktop/src/main/browser/posting-worker.ts`
+  - utility process gọi dispatcher generic thay vì gọi thẳng Group engine.
+- `apps/desktop/src/main/services/postingService.ts`
+  - có `executeFacebookPostTask()` cho orchestration Main tương lai dùng cùng production worker pool;
+  - kết quả Group và task generic dùng cùng helper sync account name/cookie/session status; secret vẫn bị strip/redact trước khi trả public result.
+- `postingEvidence.ts` / `screenshotService.ts`
+  - chỉ broaden input type sang common task-base vì evidence dùng `profileDirectory/runId/itemId/logging`, không phụ thuộc Group UID.
+
+Verifier hardening kèm 5C sau review 5B:
+
+- nhận diện cả Page permalink/post key dạng `pfbid...`, không chỉ numeric ID;
+- caption ngắn không còn được xác minh bằng substring 1 ký tự: phải có **post key mới** và exact non-interactive text trong article; image-only vẫn chỉ dùng key-only khi baseline hợp lệ;
+- sau khi thấy evidence, verifier vẫn gọi common access gate trước khi trả success để checkpoint/login overlay sau click không bị success giả;
+- default Group fingerprint 12 ký tự và Group publish verifier không đổi.
+
+Giới hạn cố ý của 5C:
+
+- `PageBusinessWorkspace` vẫn là UI shell; chưa có nút renderer gọi Đăng Tường thật.
+- Chưa tạo Wall run-item DB, scheduler/hẹn giờ, IPC/preload hay config persistence riêng cho Tường.
+- `RotationService`, Group `run_items`, Group anti-duplicate và Group `PublishResultDetector` không đổi semantics.
+- `executeFacebookPostTask()` là Main execution entrypoint; account-turn scheduling cho Wall phải được nối ở lô orchestration/UI tiếp theo, không giả lập bằng Group run-item.
+
+Invariant sau 5C:
+
+> Khi Main orchestration cung cấp một `PageWallPostTaskJobRequest` hợp lệ, production utility worker có thể chạy Tường qua cùng Facebook Common Runtime, evidence lifecycle và account-session sync như Group mà không cần `groupUid`; UI/scheduler chưa được coi là hoàn thành cho tới lô wiring riêng tiếp theo.

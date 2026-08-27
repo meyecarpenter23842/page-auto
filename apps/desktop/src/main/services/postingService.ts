@@ -13,6 +13,7 @@ import {
   type BrowserWindowLayoutSettings,
   type BrowserWindowPlacement
 } from '../../shared/browserWindowLayout'
+import type { FacebookPostTaskJobRequest } from '../../shared/facebookTasks'
 import type {
   ExecuteSinglePostingJobPayload,
   ExecuteSinglePostingJobResult,
@@ -154,6 +155,81 @@ export class PostingService {
       ...(proxy ? { proxy } : {})
     })
 
+    const result = this.syncWorkerResult(account, workerResult)
+
+    if (shouldReleasePreflightItem(result)) {
+      const run = this.runs.releaseItem({
+        runId: payload.runId,
+        itemId: item.id,
+        errorMessage: result.message
+      })
+      return { accountId: account.id, item: null, result, run }
+    }
+
+    const run = this.runs.completeItem({
+      runId: payload.runId,
+      itemId: item.id,
+      status: result.status === 'success' ? 'success' : result.status === 'skipped' ? 'skipped' : 'failed',
+      ...(result.status === 'success' || result.status === 'skipped' ? {} : { errorMessage: result.message })
+    })
+    return { accountId: account.id, item, result, run }
+  }
+
+  async executeFacebookPostTask(job: FacebookPostTaskJobRequest): Promise<PostingJobResult> {
+    const account = this.accounts.getById(job.accountId)
+    if (!account || account.status === 'disabled') {
+      return terminalFailure('Tài khoản không tồn tại hoặc đang bị tắt.', 'account_disabled')
+    }
+    if (job.sessionAccount.id !== account.id || job.sessionAccount.uid.trim() !== account.uid.trim()) {
+      return terminalFailure('Facebook task job không khớp account canonical trong Main process.')
+    }
+
+    const proxyResolution = resolveAccountProxyState(account)
+    if (proxyResolution.status === 'invalid') {
+      return terminalFailure(proxyResolution.message, 'proxy_invalid')
+    }
+    const proxy = proxyResolution.status === 'valid' ? proxyResolution.proxy : undefined
+
+    const runtimeJob: FacebookPostTaskJobRequest = {
+      ...job,
+      profileDirectory: accountProfileDirectory(this.dataDirectory, account.id),
+      browser: { ...this.getBrowserSettings() },
+      session: { ...this.getSessionSettings() },
+      network: { ...this.getNetworkSettings() },
+      logging: { ...this.getLoggingSettings() },
+      sessionAccount: {
+        id: account.id,
+        uid: account.uid,
+        username: account.username,
+        password: account.password,
+        cookie: account.cookie,
+        twoFactorSecret: account.twoFactorSecret,
+        name: account.name
+      }
+    }
+    delete runtimeJob.userAgent
+    delete runtimeJob.proxy
+    if (account.userAgent) runtimeJob.userAgent = account.userAgent
+    if (proxy) runtimeJob.proxy = proxy
+
+    const workerResult = await this.workers.runTask(runtimeJob)
+    return this.syncWorkerResult(account, workerResult)
+  }
+
+  async releaseAccount(accountId: number): Promise<void> {
+    await this.workers.closeAccount(accountId)
+    await this.releaseManagedBrowser(accountId)
+  }
+
+  retileBrowsers(placements: Map<number, BrowserWindowPlacement>): number {
+    return this.workers.retile(placements)
+  }
+
+  closeAll(): void {
+    this.workers.closeAll()
+  }
+
+  private syncWorkerResult(account: AccountRecord, workerResult: PostingJobResult): PostingJobResult {
     const sessionCookie = workerResult.sessionCookie?.trim() || null
     const publicWorkerResult: PostingJobResult = { ...workerResult }
     delete publicWorkerResult.sessionCookie
@@ -194,34 +270,6 @@ export class PostingService {
       this.accounts.update(account.id, { name: syncedName, lastUsedAt: now })
     }
 
-    if (shouldReleasePreflightItem(result)) {
-      const run = this.runs.releaseItem({
-        runId: payload.runId,
-        itemId: item.id,
-        errorMessage: result.message
-      })
-      return { accountId: account.id, item: null, result, run }
-    }
-
-    const run = this.runs.completeItem({
-      runId: payload.runId,
-      itemId: item.id,
-      status: result.status === 'success' ? 'success' : result.status === 'skipped' ? 'skipped' : 'failed',
-      ...(result.status === 'success' || result.status === 'skipped' ? {} : { errorMessage: result.message })
-    })
-    return { accountId: account.id, item, result, run }
-  }
-
-  async releaseAccount(accountId: number): Promise<void> {
-    await this.workers.closeAccount(accountId)
-    await this.releaseManagedBrowser(accountId)
-  }
-
-  retileBrowsers(placements: Map<number, BrowserWindowPlacement>): number {
-    return this.workers.retile(placements)
-  }
-
-  closeAll(): void {
-    this.workers.closeAll()
+    return result
   }
 }

@@ -11,11 +11,16 @@ import type {
   EmailCodeWorkerRequestMessage,
   EmailCodeWorkerResponseMessage
 } from '../../shared/emailCode'
+import {
+  groupPostTaskFromLegacy,
+  type FacebookPostTaskJobRequest,
+  type FacebookPostWorkerRequestMessage,
+  type FacebookTaskJobBase
+} from '../../shared/facebookTasks'
 import type {
   PostingJobRequest,
   PostingJobResult,
-  PostingWorkerMessage,
-  PostingWorkerRequestMessage
+  PostingWorkerMessage
 } from '../../shared/posting'
 import { getEmailCodeProvider } from '../services/emailCodeProviderRegistry'
 import { BrowserWindowLayoutManager } from './browserWindowLayoutManager'
@@ -27,7 +32,7 @@ const MANAGED_CDP_ARG_PREFIX = '--page-auto-managed-cdp='
 const ACCOUNT_SHUTDOWN_TIMEOUT_MS = 5_000
 
 interface PendingJob {
-  job: PostingJobRequest
+  job: FacebookPostTaskJobRequest
   resolve: (result: PostingJobResult) => void
   timer: NodeJS.Timeout
   sent: boolean
@@ -42,7 +47,7 @@ interface AccountWorkerEntry {
   retainForManualSession: boolean
 }
 
-function diagnostic(job: PostingJobRequest, message: string): void {
+function diagnostic(job: FacebookTaskJobBase, message: string): void {
   console.info(`[PAGE-AUTO posting] run=${job.runId} item=${job.itemId} account=${job.accountId} ${message}`)
 }
 
@@ -71,7 +76,11 @@ export class PostingWorkerManager {
     private readonly getWindowLayoutSettings: () => BrowserWindowLayoutSettings = () => cloneDefaultBrowserWindowLayout()
   ) {}
 
-  async run(job: PostingJobRequest): Promise<PostingJobResult> {
+  run(job: PostingJobRequest): Promise<PostingJobResult> {
+    return this.runTask(groupPostTaskFromLegacy(job))
+  }
+
+  async runTask(job: FacebookPostTaskJobRequest): Promise<PostingJobResult> {
     const runtime = { ...this.getRuntimeSettings() }
     this.windowLayout?.claim(job.accountId, 'posting')
     const placement = this.windowLayout?.placementFor(
@@ -79,7 +88,7 @@ export class PostingWorkerManager {
       this.getWindowLayoutSettings(),
       job.browser
     ) ?? null
-    const runtimeJob: PostingJobRequest = { ...job, browserPlacement: placement }
+    const runtimeJob = { ...job, browserPlacement: placement } as FacebookPostTaskJobRequest
     let entry = this.workers.get(job.accountId)
 
     if (!entry || entry.shuttingDown) {
@@ -232,7 +241,7 @@ export class PostingWorkerManager {
     this.workers.clear()
   }
 
-  private spawnWorker(job: PostingJobRequest): AccountWorkerEntry {
+  private spawnWorker(job: FacebookPostTaskJobRequest): AccountWorkerEntry {
     const managedEndpoint = getManagedBrowserEndpoint(job.accountId)
     const workerArgs = managedEndpoint ? [`${MANAGED_CDP_ARG_PREFIX}${managedEndpoint}`] : []
     const worker = utilityProcess.fork(join(__dirname, 'posting-worker.js'), workerArgs, {
@@ -330,8 +339,8 @@ export class PostingWorkerManager {
     const pending = entry.pending
     if (!entry.ready || !pending || pending.sent || entry.shuttingDown) return
     pending.sent = true
-    const request: PostingWorkerRequestMessage = { type: 'execute', job: pending.job }
-    diagnostic(pending.job, 'SEND execute → posting engine')
+    const request: FacebookPostWorkerRequestMessage = { type: 'execute', job: pending.job }
+    diagnostic(pending.job, `SEND execute → ${pending.job.task.type}`)
     try {
       entry.process.postMessage(request)
     } catch (error) {

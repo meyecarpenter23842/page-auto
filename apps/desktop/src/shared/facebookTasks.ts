@@ -44,9 +44,8 @@ export type FacebookTaskDescriptor =
 /**
  * Transitional multi-business job base.
  *
- * `PostingJobRequest` remains the legacy Group worker contract during Batch 5A.
- * New business jobs derive from the same common account/Page/runtime material but
- * do not inherit Group-only target fields.
+ * Group still exposes `PostingJobRequest` to its existing orchestration, while the
+ * worker boundary can now carry explicit business tasks without inheriting a Group UID.
  */
 export type FacebookTaskJobBase = Omit<PostingJobRequest, 'groupUid'>
 
@@ -59,6 +58,11 @@ export type PageWallPostTaskJobRequest = FacebookTaskJobBase & {
 }
 
 export type FacebookPostTaskJobRequest = GroupPostTaskJobRequest | PageWallPostTaskJobRequest
+
+export interface FacebookPostWorkerRequestMessage {
+  type: 'execute'
+  job: FacebookPostTaskJobRequest
+}
 
 export function groupPostTaskFromLegacy(job: PostingJobRequest): GroupPostTaskJobRequest {
   const { groupUid, ...base } = job

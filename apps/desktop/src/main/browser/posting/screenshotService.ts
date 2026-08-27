@@ -1,11 +1,11 @@
 import { mkdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type { Page } from 'playwright-core'
-import type { PostingJobRequest } from '../../../shared/posting'
+import type { FacebookTaskJobBase } from '../../../shared/facebookTasks'
 
 export async function capturePostingFailureScreenshot(
   page: Page,
-  job: PostingJobRequest
+  job: FacebookTaskJobBase
 ): Promise<string | null> {
   const dataDirectory = dirname(dirname(job.profileDirectory))
   const screenshotDirectory = join(dataDirectory, 'screenshots')

@@ -1,6 +1,6 @@
 import type { BrowserWindowPlacement } from '../../shared/browserWindowLayout'
 import type { EmailCodeWorkerResponseMessage } from '../../shared/emailCode'
-import type { PostingWorkerRequestMessage } from '../../shared/posting'
+import type { FacebookPostWorkerRequestMessage } from '../../shared/facebookTasks'
 import { createEmailCodeWorkerRpc } from '../email/emailCodeWorkerRpc'
 import { clearEmailCodeProvider, setEmailCodeProvider } from '../services/emailCodeProviderRegistry'
 import {
@@ -18,7 +18,7 @@ if (!parentPort) {
 installManagedBrowserReuse()
 const emailCodeRpc = createEmailCodeWorkerRpc((message) => parentPort.postMessage(message))
 setEmailCodeProvider(emailCodeRpc.provider)
-const postingEngine = import('./posting/postingEngine')
+const postTaskDispatcher = import('../facebook/facebookPostTaskDispatcher')
 let queue = Promise.resolve()
 let shuttingDown = false
 
@@ -33,7 +33,7 @@ function isRetileRequest(payload: unknown): payload is RetileRequest {
 
 parentPort.on('message', (event) => {
   if (emailCodeRpc.handleMessage(event.data)) return
-  const payload = event.data as PostingWorkerRequestMessage | RetileRequest | EmailCodeWorkerResponseMessage | { type?: string }
+  const payload = event.data as FacebookPostWorkerRequestMessage | RetileRequest | EmailCodeWorkerResponseMessage | { type?: string }
   if (payload?.type === 'shutdown') {
     if (shuttingDown) return
     shuttingDown = true
@@ -70,11 +70,11 @@ parentPort.on('message', (event) => {
     return
   }
 
-  const message = payload as PostingWorkerRequestMessage
+  const message = payload as FacebookPostWorkerRequestMessage
   queue = queue.then(async () => {
     setManagedBrowserPlacement(message.job.browserPlacement ?? null)
-    const result = await postingEngine
-      .then(({ executePostingJob }) => executePostingJob(message.job))
+    const result = await postTaskDispatcher
+      .then(({ executeFacebookPostTaskJob }) => executeFacebookPostTaskJob(message.job))
       .catch((error) => ({
         status: 'failed' as const,
         code: 'unexpected_error' as const,

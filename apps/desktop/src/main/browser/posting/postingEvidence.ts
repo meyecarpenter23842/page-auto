@@ -1,11 +1,12 @@
 import { mkdir } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import type { BrowserContext, Page } from 'playwright-core'
-import type { PostingJobRequest, PostingJobResult } from '../../../shared/posting'
+import type { FacebookTaskJobBase } from '../../../shared/facebookTasks'
+import type { PostingJobResult } from '../../../shared/posting'
 import { detectFacebookCheckpointKind } from './facebookCheckpoint'
 import { capturePostingFailureScreenshot } from './screenshotService'
 
-function dataDirectoryFor(job: PostingJobRequest): string {
+function dataDirectoryFor(job: FacebookTaskJobBase): string {
   return dirname(dirname(job.profileDirectory))
 }
 
@@ -21,7 +22,7 @@ export function safeFailureUrl(rawUrl: string): string | null {
   }
 }
 
-export async function startPostingTrace(context: BrowserContext, job: PostingJobRequest): Promise<boolean> {
+export async function startPostingTrace(context: BrowserContext, job: FacebookTaskJobBase): Promise<boolean> {
   if (!job.logging.playwrightTrace) return false
   try {
     await context.tracing.start({ screenshots: true, snapshots: true, sources: false })
@@ -70,7 +71,7 @@ async function enrichSessionClassification(page: Page, result: PostingJobResult)
 
 export async function finishPostingEvidence(
   page: Page,
-  job: PostingJobRequest,
+  job: FacebookTaskJobBase,
   result: PostingJobResult,
   traceStarted: boolean
 ): Promise<PostingJobResult> {
