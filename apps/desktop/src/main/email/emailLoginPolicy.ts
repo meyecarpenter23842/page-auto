@@ -3,6 +3,7 @@ import type { HotmailActionStatus, HotmailNeedsAttentionReason } from '../../sha
 export type MicrosoftLoginSurface =
   | 'authenticated'
   | 'stay_signed_in'
+  | 'outlook_landing'
   | 'username'
   | 'password'
   | 'password_change'
@@ -42,6 +43,10 @@ export function classifyMicrosoftLoginSurface(snapshot: MicrosoftLoginSnapshot):
   }
   if (snapshot.passwordInputCount > 0) return 'password'
   if (snapshot.emailInputCount > 0) return 'username'
+  if (/microsoft\.com\/[^?#]*\/microsoft-365\/outlook\/email-and-calendar-software-microsoft-outlook/.test(url)
+    && /sign in|open outlook/.test(text)) {
+    return 'outlook_landing'
+  }
   if (/login\.live\.com|signin|oauth20_authorize/.test(url) || /sign in|đăng nhập|enter your email|email, phone, or skype/.test(text)) {
     return 'manual_login'
   }

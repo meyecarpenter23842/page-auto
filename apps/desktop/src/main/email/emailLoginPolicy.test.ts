@@ -50,6 +50,12 @@ describe('email Microsoft login policy', () => {
       passwordInputCount: 0
     })).toBe('stay_signed_in')
     expect(classifyMicrosoftLoginSurface({
+      url: 'https://www.microsoft.com/en-us/microsoft-365/outlook/email-and-calendar-software-microsoft-outlook?deeplink=%2Fmail%2F0%2F&sdf=0&sessionId=test',
+      text: 'Your inbox, organized. Sign in Download Create free account. Open Outlook',
+      emailInputCount: 0,
+      passwordInputCount: 0
+    })).toBe('outlook_landing')
+    expect(classifyMicrosoftLoginSurface({
       url: 'https://outlook.live.com/mail/0/',
       text: 'Inbox',
       emailInputCount: 0,
