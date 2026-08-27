@@ -252,6 +252,18 @@ async function continueFromOutlookLanding(page: Page): Promise<boolean> {
   return true
 }
 
+async function continueFromMicrosoftOAuthAuthorize(page: Page): Promise<boolean> {
+  const anotherAccount = await firstVisible([
+    page.getByRole('button', { name: /^(use another account|sign in with another account|sử dụng tài khoản khác|đăng nhập bằng tài khoản khác)$/i }).first(),
+    page.getByRole('link', { name: /^(use another account|sign in with another account|sử dụng tài khoản khác|đăng nhập bằng tài khoản khác)$/i }).first(),
+    page.getByText(/^(use another account|sign in with another account|sử dụng tài khoản khác|đăng nhập bằng tài khoản khác)$/i).first()
+  ])
+  if (!anotherAccount) return false
+  await anotherAccount.click()
+  await waitForMicrosoftStep(page)
+  return true
+}
+
 function loginNeedsAttention(reason: HotmailNeedsAttentionReason, attempted: boolean, message?: string): MicrosoftLoginAttempt {
   return {
     status: 'needs_attention',
@@ -303,6 +315,18 @@ async function autoLoginMicrosoft(
           'needs_login',
           attempted,
           'Đã tới Outlook landing nhưng PAGE-AUTO không nhận diện được nút Sign in/Open Outlook an toàn.'
+        )
+      }
+      attempted = true
+      continue
+    }
+
+    if (surface === 'oauth_authorize') {
+      if (!await continueFromMicrosoftOAuthAuthorize(page)) {
+        return loginNeedsAttention(
+          'needs_login',
+          attempted,
+          'Đã tới Microsoft OAuth authorize nhưng PAGE-AUTO không nhận diện được nút Use another account/Sign in with another account an toàn.'
         )
       }
       attempted = true
@@ -406,7 +430,7 @@ async function detectAttention(page: Page): Promise<HotmailNeedsAttentionReason 
   const surface = classifyMicrosoftLoginSurface(snapshot)
   if (surface === 'identity_review') return 'identity_review'
   if (surface === 'security_review') return 'security_review'
-  if (surface === 'username' || surface === 'password' || surface === 'password_change' || surface === 'credential_error' || surface === 'manual_login' || surface === 'stay_signed_in' || surface === 'outlook_landing') {
+  if (surface === 'username' || surface === 'password' || surface === 'password_change' || surface === 'credential_error' || surface === 'manual_login' || surface === 'stay_signed_in' || surface === 'outlook_landing' || surface === 'oauth_authorize') {
     return 'needs_login'
   }
   return null
@@ -521,7 +545,7 @@ function isPasswordChangeSurface(snapshot: PasswordSnapshot): boolean {
 function passwordAttention(snapshot: PasswordSnapshot): HotmailNeedsAttentionReason | null {
   if (/verify your identity|confirm your identity|identity verification|xác minh danh tính/.test(snapshot.text)) return 'identity_review'
   if (/enter.*code|security code|verification code|two[- ]step|two[- ]factor|approve.*sign.?in|authenticator|help us protect|xác minh bảo mật|mã bảo mật|trình xác thực|phê duyệt.*đăng nhập/.test(snapshot.text)) return 'security_review'
-  if ((/login\.live\.com|signin|oauth20_authorize/.test(snapshot.url) || /sign in|đăng nhập/.test(snapshot.text)) && !isPasswordChangeSurface(snapshot)) {
+  if ((/login\.live\.com|login\.microsoftonline\.com|signin|oauth20_authorize/.test(snapshot.url) || /sign in|đăng nhập/.test(snapshot.text)) && !isPasswordChangeSurface(snapshot)) {
     return 'needs_login'
   }
   return null

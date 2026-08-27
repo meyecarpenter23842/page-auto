@@ -69,6 +69,29 @@ describe('email Microsoft login policy', () => {
     })).toBe('authenticated')
   })
 
+  it('classifies Microsoft Online OAuth authorize without hardcoding per-run OAuth values', () => {
+    const authorizeUrl = 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=test-client&response_type=code&state=dynamic-state&nonce=dynamic-nonce&code_challenge=dynamic-challenge&prompt=select_account'
+
+    expect(classifyMicrosoftLoginSurface({
+      url: authorizeUrl,
+      text: 'Pick an account Use another account',
+      emailInputCount: 0,
+      passwordInputCount: 0
+    })).toBe('oauth_authorize')
+    expect(classifyMicrosoftLoginSurface({
+      url: authorizeUrl,
+      text: 'Sign in',
+      emailInputCount: 1,
+      passwordInputCount: 0
+    })).toBe('username')
+    expect(classifyMicrosoftLoginSurface({
+      url: authorizeUrl,
+      text: 'Enter the security code',
+      emailInputCount: 0,
+      passwordInputCount: 0
+    })).toBe('security_review')
+  })
+
   it('does not treat blank or unknown pages as an authenticated Microsoft session', () => {
     expect(classifyMicrosoftLoginSurface({
       url: 'about:blank',

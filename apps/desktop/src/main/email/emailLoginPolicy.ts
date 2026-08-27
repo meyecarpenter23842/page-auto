@@ -4,6 +4,7 @@ export type MicrosoftLoginSurface =
   | 'authenticated'
   | 'stay_signed_in'
   | 'outlook_landing'
+  | 'oauth_authorize'
   | 'username'
   | 'password'
   | 'password_change'
@@ -46,6 +47,9 @@ export function classifyMicrosoftLoginSurface(snapshot: MicrosoftLoginSnapshot):
   if (/microsoft\.com\/[^?#]*\/microsoft-365\/outlook\/email-and-calendar-software-microsoft-outlook/.test(url)
     && /sign in|open outlook/.test(text)) {
     return 'outlook_landing'
+  }
+  if (/login\.microsoftonline\.com\/[^/?#]+\/oauth2\/v2\.0\/authorize(?:[?#]|$)/.test(url)) {
+    return 'oauth_authorize'
   }
   if (/login\.live\.com|signin|oauth20_authorize/.test(url) || /sign in|đăng nhập|enter your email|email, phone, or skype/.test(text)) {
     return 'manual_login'
