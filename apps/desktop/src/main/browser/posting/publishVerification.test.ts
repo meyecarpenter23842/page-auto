@@ -6,6 +6,7 @@ import {
   isNewFacebookPostHref,
   publishContentFingerprint,
   publishContentMatches,
+  publishContentMatchesAtLeast,
   type PublishBaseline
 } from './publishVerification'
 
@@ -35,6 +36,12 @@ describe('strong publish verification helpers', () => {
     expect(publishContentMatches('prefix hello\u200B world again ' + 'x'.repeat(80), long)).toBe(true)
     expect(publishContentMatches('completely different body', long)).toBe(false)
     expect(absoluteFacebookPostUrl('/groups/111/posts/333/')).toBe('https://www.facebook.com/groups/111/posts/333/')
+  })
+
+  it('keeps the Group default at 12 characters but allows a stronger new-key caller to match short Wall content', () => {
+    expect(publishContentMatches('prefix short suffix', 'short')).toBe(false)
+    expect(publishContentMatchesAtLeast('prefix short suffix', 'short', 1)).toBe(true)
+    expect(publishContentMatchesAtLeast('different text', 'short', 1)).toBe(false)
   })
 
   it('builds my_posted_content from the current Group UID instead of a fixed UID', () => {

@@ -30,9 +30,18 @@ export function publishContentFingerprint(content: string): string {
   return normalizeText(content).slice(0, 48)
 }
 
-export function publishContentMatches(renderedText: string, content: string): boolean {
+export function publishContentMatchesAtLeast(
+  renderedText: string,
+  content: string,
+  minimumFingerprintLength = 12
+): boolean {
   const fingerprint = publishContentFingerprint(content)
-  return fingerprint.length >= 12 && normalizeText(renderedText).includes(fingerprint)
+  const minimum = Math.max(1, Math.round(minimumFingerprintLength))
+  return fingerprint.length >= minimum && normalizeText(renderedText).includes(fingerprint)
+}
+
+export function publishContentMatches(renderedText: string, content: string): boolean {
+  return publishContentMatchesAtLeast(renderedText, content, 12)
 }
 
 export function facebookPostKey(rawHref: string | null | undefined): string | null {
@@ -92,10 +101,14 @@ export async function findNewPublishedPost(
   page: Page,
   content: string,
   baseline: PublishBaseline,
-  allowKeyOnly = false
+  allowKeyOnly = false,
+  minimumFingerprintLength = 12
 ): Promise<NewPublishedPost | null> {
   if (!baseline.captured) return null
-  if (publishContentFingerprint(content).length < 12) return null
+  const fingerprint = publishContentFingerprint(content)
+  const minimum = Math.max(1, Math.round(minimumFingerprintLength))
+  const canMatchContent = fingerprint.length >= minimum
+  if (!canMatchContent && !allowKeyOnly) return null
 
   const links = page.locator(FACEBOOK_POST_LINK_SELECTOR)
   const linkCount = Math.min(await links.count(), 400)
@@ -111,11 +124,12 @@ export async function findNewPublishedPost(
     if (!postKey || !publishedUrl) continue
     const candidate = { postKey, publishedUrl }
     if (!keyOnlyCandidate) keyOnlyCandidate = candidate
+    if (!canMatchContent) continue
 
     const article = link.locator('xpath=ancestor::*[self::article or @role="article"][1]')
     if (!await article.isVisible().catch(() => false)) continue
     const text = await article.innerText().catch(() => '')
-    if (publishContentMatches(text, content)) return candidate
+    if (publishContentMatchesAtLeast(text, content, minimum)) return candidate
   }
 
   return allowKeyOnly ? keyOnlyCandidate : null
