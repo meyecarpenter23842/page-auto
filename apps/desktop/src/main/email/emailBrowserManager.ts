@@ -7,6 +7,7 @@ import type {
   HotmailRecoveryActionResult,
   HotmailRecoveryOperation
 } from '../../shared/hotmail'
+import { startEmailProxyAuthBridge, type EmailProxyAuthBridge } from './emailProxyAuthBridge'
 import { shouldKeepEmailBrowserWorker } from './emailBrowserLifecycle'
 import { ensureEmailProfileDirectory, inspectEmailProfile } from './emailProfileResolver'
 import {
@@ -45,7 +46,6 @@ interface WorkerPasswordResult {
 }
 
 type WorkerResponse = WorkerOpenResult | WorkerRecoveryResult | WorkerPasswordResult
-
 type PendingKind = WorkerResponse['type']
 
 interface WorkerPending {
@@ -61,6 +61,8 @@ interface WorkerEntry {
   spawned: Promise<void>
   actionOnly: boolean
   authResumeKind: EmailAuthResumeKind | null
+  proxyBridge: EmailProxyAuthBridge | null
+  proxyKey: string | null
 }
 
 interface PreparedWorker {
@@ -120,6 +122,26 @@ function workerErrorResponse(kind: PendingKind, command: Record<string, unknown>
   }
 }
 
+function openTimeoutResponse(command: Record<string, unknown>): WorkerOpenResult {
+  return {
+    type: 'open-result',
+    accountId: Number(command.accountId),
+    status: 'needs_attention',
+    attached: false,
+    proxyManagedExternally: false,
+    message: 'Email browser vẫn đang chuyển trang hoặc chờ Microsoft login. PAGE-AUTO giữ worker/profile mở thay vì đóng Chrome.'
+  }
+}
+
+function routedProxy(proxy: EmailProxyCandidate | null, bridge: EmailProxyAuthBridge | null): EmailProxyCandidate | null {
+  if (!proxy || !bridge) return proxy
+  return {
+    server: bridge.server,
+    display: proxy.display,
+    key: proxy.key
+  }
+}
+
 export class EmailBrowserManager {
   private readonly workers = new Map<number, WorkerEntry>()
 
@@ -140,13 +162,14 @@ export class EmailBrowserManager {
       return this.openResult(account.id, 'already_open', entry.profileDirectory, 'Email browser đang xử lý một thao tác khác.', false, false)
     }
 
+    const effectiveProxy = await this.prepareProxy(entry, proxy)
     const response = await this.send(entry, 'open-result', {
       type: 'open-mail',
       accountId: account.id,
       profileDirectory: entry.profileDirectory,
       ...loginPayload(account),
       ...(browserExecutable.trim() ? { executablePath: browserExecutable.trim() } : {}),
-      ...proxyPayload(proxy)
+      ...proxyPayload(effectiveProxy)
     }) as WorkerOpenResult
 
     const result: HotmailBrowserOpenResult = {
@@ -194,6 +217,7 @@ export class EmailBrowserManager {
     }
 
     const resumeAfterAuth = shouldResumeEmailActionAfterAuth(entry.authResumeKind, 'recovery-result', confirmCompleted)
+    const effectiveProxy = await this.prepareProxy(entry, proxy)
     const response = await this.send(entry, 'recovery-result', {
       type: 'recovery-action',
       accountId: account.id,
@@ -202,7 +226,7 @@ export class EmailBrowserManager {
       confirmCompleted: resumeAfterAuth ? false : confirmCompleted,
       ...loginPayload(account),
       ...(browserExecutable.trim() ? { executablePath: browserExecutable.trim() } : {}),
-      ...proxyPayload(proxy)
+      ...proxyPayload(effectiveProxy)
     }) as WorkerRecoveryResult
     entry.authResumeKind = nextEmailAuthResumeKind('recovery-result', response.status, response.needsAttentionReason)
 
@@ -250,6 +274,7 @@ export class EmailBrowserManager {
     }
 
     const resumeAfterAuth = shouldResumeEmailActionAfterAuth(entry.authResumeKind, 'password-result', confirmCompleted)
+    const effectiveProxy = await this.prepareProxy(entry, proxy)
     const response = await this.send(entry, 'password-result', {
       type: 'password-action',
       accountId: account.id,
@@ -259,7 +284,7 @@ export class EmailBrowserManager {
       ...(account.emailPassword ? { currentPassword: account.emailPassword } : {}),
       newPassword,
       ...(browserExecutable.trim() ? { executablePath: browserExecutable.trim() } : {}),
-      ...proxyPayload(proxy)
+      ...proxyPayload(effectiveProxy)
     }) as WorkerPasswordResult
     entry.authResumeKind = nextEmailAuthResumeKind('password-result', response.status, response.needsAttentionReason)
 
@@ -328,7 +353,9 @@ export class EmailBrowserManager {
       pending: null,
       spawned,
       actionOnly,
-      authResumeKind: null
+      authResumeKind: null,
+      proxyBridge: null,
+      proxyKey: null
     }
     this.workers.set(account.id, entry)
 
@@ -353,11 +380,25 @@ export class EmailBrowserManager {
           'Email browser worker đã thoát trước khi phản hồi.'
         ))
       }
+      void entry.proxyBridge?.close().catch(() => undefined)
+      entry.proxyBridge = null
       if (this.workers.get(account.id) === entry) this.workers.delete(account.id)
       this.onClosed?.(account.id)
     })
 
     return { entry, created: true }
+  }
+
+  private async prepareProxy(entry: WorkerEntry, proxy: EmailProxyCandidate | null): Promise<EmailProxyCandidate | null> {
+    if (!proxy) return null
+    if (entry.proxyKey && entry.proxyKey !== proxy.key) {
+      throw new Error('Email browser đang giữ proxy của phiên hiện tại; không đổi proxy giữa một browser process đang chạy.')
+    }
+    if (!entry.proxyKey) entry.proxyKey = proxy.key
+    if (!entry.proxyBridge && (proxy.username || proxy.password)) {
+      entry.proxyBridge = await startEmailProxyAuthBridge(proxy)
+    }
+    return routedProxy(proxy, entry.proxyBridge)
   }
 
   private async send(entry: WorkerEntry, kind: PendingKind, command: Record<string, unknown>): Promise<WorkerResponse> {
@@ -368,16 +409,19 @@ export class EmailBrowserManager {
     }
 
     return await new Promise<WorkerResponse>((resolve) => {
+      const timeoutMs = kind === 'open-result' ? 90_000 : 45_000
       const timer = setTimeout(() => {
         if (!entry.pending) return
         entry.pending = null
+        if (kind === 'open-result') {
+          resolve(openTimeoutResponse(command))
+          return
+        }
         const timeoutMessage = kind === 'password-result'
           ? 'Thao tác đổi Password Email quá thời gian chờ phản hồi.'
-          : kind === 'recovery-result'
-            ? 'Thao tác Mail khôi phục quá thời gian chờ phản hồi.'
-            : 'Email browser quá thời gian chờ phản hồi.'
+          : 'Thao tác Mail khôi phục quá thời gian chờ phản hồi.'
         resolve(workerErrorResponse(kind, command, timeoutMessage))
-      }, 45_000)
+      }, timeoutMs)
       entry.pending = { kind, resolve, timer }
       try {
         entry.process.postMessage(command)
@@ -391,6 +435,8 @@ export class EmailBrowserManager {
 
   private stopEntry(accountId: number, entry: WorkerEntry): void {
     if (this.workers.get(accountId) === entry) this.workers.delete(accountId)
+    void entry.proxyBridge?.close().catch(() => undefined)
+    entry.proxyBridge = null
     entry.process.kill()
   }
 

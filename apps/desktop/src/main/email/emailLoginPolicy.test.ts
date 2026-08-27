@@ -69,7 +69,64 @@ describe('email Microsoft login policy', () => {
     })).toBe('authenticated')
   })
 
-  it('classifies Microsoft Online OAuth authorize without hardcoding per-run OAuth values', () => {
+  it('retries the Microsoft username surface when inline validation still exposes the Email field', () => {
+    expect(classifyMicrosoftLoginSurface({
+      url: 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=test-client&prompt=select_account',
+      text: 'Sign in Enter a valid email address, phone number, or Skype name.',
+      emailInputCount: 1,
+      passwordInputCount: 0
+    })).toBe('username')
+    expect(classifyMicrosoftLoginSurface({
+      url: 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=test-client&prompt=select_account',
+      text: 'Enter a valid email address, phone number, or Skype name.',
+      emailInputCount: 0,
+      passwordInputCount: 0
+    })).toBe('credential_error')
+  })
+
+  it('keeps Outlook and Microsoft login return URLs transitional until their UI is ready', () => {
+    expect(classifyMicrosoftLoginSurface({
+      url: 'https://outlook.live.com/mail/0/',
+      text: 'Loading...',
+      emailInputCount: 0,
+      passwordInputCount: 0
+    })).toBe('outlook_transition')
+    expect(classifyMicrosoftLoginSurface({
+      url: 'https://outlook.live.com/mail/0/',
+      text: 'Hộp thư đến Thư mới Bản nháp',
+      emailInputCount: 0,
+      passwordInputCount: 0
+    })).toBe('authenticated')
+    expect(classifyMicrosoftLoginSurface({
+      url: 'https://outlook.live.com/mail/0/inbox',
+      text: '',
+      emailInputCount: 0,
+      passwordInputCount: 0
+    })).toBe('authenticated')
+    expect(classifyMicrosoftLoginSurface({
+      url: 'https://login.live.com/login.srf',
+      text: 'Sign in',
+      emailInputCount: 0,
+      passwordInputCount: 0
+    })).toBe('login_transition')
+    expect(classifyMicrosoftLoginSurface({
+      url: 'https://login.microsoftonline.com/common/login',
+      text: 'Loading...',
+      emailInputCount: 0,
+      passwordInputCount: 0
+    })).toBe('login_transition')
+  })
+
+  it('classifies Outlook marketing landing from its stable path even before CTA text renders', () => {
+    expect(classifyMicrosoftLoginSurface({
+      url: 'https://www.microsoft.com/en-us/microsoft-365/outlook/email-and-calendar-software-microsoft-outlook?deeplink=%2Fmail%2F0%2F&sdf=0&sessionId=dynamic-session',
+      text: '',
+      emailInputCount: 0,
+      passwordInputCount: 0
+    })).toBe('outlook_landing')
+  })
+
+  it('classifies Microsoft OAuth authorize surfaces without hardcoding per-run OAuth values', () => {
     const authorizeUrl = 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=test-client&response_type=code&state=dynamic-state&nonce=dynamic-nonce&code_challenge=dynamic-challenge&prompt=select_account'
 
     expect(classifyMicrosoftLoginSurface({
@@ -90,6 +147,26 @@ describe('email Microsoft login policy', () => {
       emailInputCount: 0,
       passwordInputCount: 0
     })).toBe('security_review')
+
+    const consumerAuthorizeUrl = 'https://login.live.com/oauth20_authorize.srf?client_id=test-client&state=dynamic-state&nonce=dynamic-nonce&code_challenge=dynamic-challenge'
+    expect(classifyMicrosoftLoginSurface({
+      url: consumerAuthorizeUrl,
+      text: 'Pick an account Use another account',
+      emailInputCount: 0,
+      passwordInputCount: 0
+    })).toBe('oauth_authorize')
+    expect(classifyMicrosoftLoginSurface({
+      url: consumerAuthorizeUrl,
+      text: 'Sign in',
+      emailInputCount: 1,
+      passwordInputCount: 0
+    })).toBe('username')
+    expect(classifyMicrosoftLoginSurface({
+      url: consumerAuthorizeUrl,
+      text: 'Enter the security code',
+      emailInputCount: 0,
+      passwordInputCount: 0
+    })).toBe('security_review')
   })
 
   it('does not treat blank or unknown pages as an authenticated Microsoft session', () => {
@@ -102,6 +179,12 @@ describe('email Microsoft login policy', () => {
     expect(classifyMicrosoftLoginSurface({
       url: 'https://example.test/',
       text: '',
+      emailInputCount: 0,
+      passwordInputCount: 0
+    })).toBe('manual_login')
+    expect(classifyMicrosoftLoginSurface({
+      url: 'https://example.test/signin',
+      text: 'Sign in',
       emailInputCount: 0,
       passwordInputCount: 0
     })).toBe('manual_login')
