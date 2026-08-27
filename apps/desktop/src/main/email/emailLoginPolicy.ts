@@ -45,7 +45,10 @@ export function classifyMicrosoftLoginSurface(snapshot: MicrosoftLoginSnapshot):
   if (/login\.live\.com|signin|oauth20_authorize/.test(url) || /sign in|đăng nhập|enter your email|email, phone, or skype/.test(text)) {
     return 'manual_login'
   }
-  return 'authenticated'
+  if (/outlook\.live\.com\/(mail|owa)(\/|$)/.test(url) || /account\.live\.com(\/|$)/.test(url)) {
+    return 'authenticated'
+  }
+  return 'manual_login'
 }
 
 export function nextEmailAuthResumeKind(

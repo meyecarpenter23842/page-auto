@@ -55,6 +55,27 @@ describe('email Microsoft login policy', () => {
       emailInputCount: 0,
       passwordInputCount: 0
     })).toBe('authenticated')
+    expect(classifyMicrosoftLoginSurface({
+      url: 'https://account.live.com/proofs/manage/additional',
+      text: 'Security',
+      emailInputCount: 0,
+      passwordInputCount: 0
+    })).toBe('authenticated')
+  })
+
+  it('does not treat blank or unknown pages as an authenticated Microsoft session', () => {
+    expect(classifyMicrosoftLoginSurface({
+      url: 'about:blank',
+      text: '',
+      emailInputCount: 0,
+      passwordInputCount: 0
+    })).toBe('manual_login')
+    expect(classifyMicrosoftLoginSurface({
+      url: 'https://example.test/',
+      text: '',
+      emailInputCount: 0,
+      passwordInputCount: 0
+    })).toBe('manual_login')
   })
 
   it('resumes an action after auth attention instead of treating auth completion as business completion', () => {

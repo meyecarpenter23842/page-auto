@@ -151,11 +151,12 @@ async function readLiveCdpEndpoint(profileDirectory: string): Promise<string | n
   return endpoint && await probeCdpEndpoint(endpoint) ? endpoint : null
 }
 
-async function openOutlook(context: BrowserContext, requireNavigation: boolean): Promise<Page> {
+async function openOutlook(context: BrowserContext): Promise<Page> {
   const page = context.pages()[0] ?? await context.newPage()
-  const navigation = page.goto('https://outlook.live.com/mail/0/', { waitUntil: 'domcontentloaded', timeout: 30_000 })
-  if (requireNavigation) await navigation
-  else await navigation.catch(() => undefined)
+  await page.goto('https://outlook.live.com/mail/0/', {
+    waitUntil: 'domcontentloaded',
+    timeout: 30_000
+  })
   await page.bringToFront().catch(() => undefined)
   return page
 }
@@ -196,10 +197,13 @@ async function readMicrosoftLoginSnapshot(page: Page): Promise<MicrosoftLoginSna
 }
 
 async function waitForMicrosoftStep(page: Page): Promise<void> {
+  const previousUrl = page.url()
   await Promise.race([
-    page.waitForLoadState('domcontentloaded', { timeout: 7_000 }).catch(() => undefined),
+    page.waitForURL((url) => url.toString() !== previousUrl, { timeout: 7_000 }).catch(() => undefined),
     page.waitForTimeout(1_200)
   ])
+  await page.waitForLoadState('domcontentloaded', { timeout: 7_000 }).catch(() => undefined)
+  await page.waitForTimeout(250)
 }
 
 async function clickMicrosoftLoginSubmit(page: Page): Promise<boolean> {
@@ -752,7 +756,7 @@ async function run(): Promise<void> {
           const prepared = await prepareAuthenticatedPage(
             resolved.context,
             command,
-            (context) => openOutlook(context, Boolean(command.proxy) && !resolved.proxyManagedExternally)
+            openOutlook
           )
           if (prepared.status === 'needs_attention') {
             const result: OpenResult = {
