@@ -57,10 +57,6 @@ const ACCOUNT_MENU_PATTERN = /^(?:your profile(?:\b.*)?|profile picture(?:\b.*)?
 const CHOOSER_MARKER_PATTERN = /see all profiles|switch profile|select profile|your profiles|profiles and pages|xem tất cả trang cá nhân|xem tất cả hồ sơ|chuyển trang cá nhân|chọn trang cá nhân|trang và trang cá nhân/i
 const PROFILE_KIND_PATTERN = /^(?:page|profile|trang|trang cá nhân)(?:\b.*)?$/i
 const POLL_MS = 200
-const ACTION_SETTLE_MS = 650
-const DISCOVERY_TIMEOUT_MS = 3_000
-const SURFACE_TIMEOUT_MS = 4_000
-const IDENTITY_TIMEOUT_MS = 8_000
 const MAX_ACTION_CANDIDATES = 24
 const MAX_DIAGNOSTIC_ATTEMPTS = 28
 
@@ -253,7 +249,8 @@ export class PageIdentitySwitcher {
   constructor(
     private readonly page: Page,
     private readonly context: BrowserContext,
-    private readonly browser: BrowserSettings
+    private readonly browser: BrowserSettings,
+    private readonly networkTimeoutMs = browser.navigationTimeoutMs
   ) {}
 
   private remember(value: string): void {
@@ -388,8 +385,8 @@ export class PageIdentitySwitcher {
     return null
   }
 
-  private async identityMatches(pageUid: string, timeoutMs = IDENTITY_TIMEOUT_MS): Promise<boolean> {
-    const deadline = Date.now() + Math.max(500, Math.min(timeoutMs, this.browser.navigationTimeoutMs))
+  private async identityMatches(pageUid: string, timeoutMs = this.networkTimeoutMs): Promise<boolean> {
+    const deadline = Date.now() + Math.max(500, timeoutMs)
     while (Date.now() < deadline) {
       if (classifyPageIdentityUid(pageUid, await activeFacebookProfileId(this.context).catch(() => null)) === 'match') return true
       if (await detectFacebookAccessBlock(this.page)) return false
@@ -399,8 +396,10 @@ export class PageIdentitySwitcher {
   }
 
   private async settle(): Promise<void> {
-    await this.page.waitForLoadState('domcontentloaded', { timeout: 5_000 }).catch(() => undefined)
-    await this.page.waitForTimeout(ACTION_SETTLE_MS).catch(() => undefined)
+    await this.page.waitForLoadState('domcontentloaded', { timeout: this.browser.navigationTimeoutMs }).catch(() => undefined)
+    if (this.browser.pageSettleDelayMs > 0) {
+      await this.page.waitForTimeout(this.browser.pageSettleDelayMs).catch(() => undefined)
+    }
   }
 
   private async domClick(item: Locator): Promise<boolean> {
@@ -417,7 +416,7 @@ export class PageIdentitySwitcher {
     action: string,
     buildCandidates: () => NamedLocator[],
     verify: VerifyClick,
-    discoveryTimeoutMs = DISCOVERY_TIMEOUT_MS
+    discoveryTimeoutMs = this.networkTimeoutMs
   ): Promise<boolean> {
     const discoveryDeadline = Date.now() + discoveryTimeoutMs
     while (Date.now() <= discoveryDeadline) {
@@ -449,7 +448,7 @@ export class PageIdentitySwitcher {
             break
           }
 
-          let clicked = await item.click({ timeout: Math.min(this.browser.navigationTimeoutMs, 5_000) })
+          let clicked = await item.click({ timeout: this.networkTimeoutMs })
             .then(() => true)
             .catch(() => false)
           this.remember(`${action}:${key}:${clicked ? 'clicked' : 'click-failed'}`)
@@ -509,7 +508,7 @@ export class PageIdentitySwitcher {
   }
 
   private async verifyChooser(pageUid: string, beforePageWideSeeAllCount: number): Promise<boolean> {
-    const deadline = Date.now() + SURFACE_TIMEOUT_MS
+    const deadline = Date.now() + this.networkTimeoutMs
     while (Date.now() < deadline) {
       if (await countAcross(this.seeAllCandidates(this.chooserRoots())) > 0) return true
       const target = await this.targetCounts(pageUid, 'account_menu')
@@ -522,7 +521,7 @@ export class PageIdentitySwitcher {
   }
 
   private async verifySurfaceAdvance(pageUid: string, before: PageIdentitySurfaceSnapshot): Promise<boolean> {
-    const deadline = Date.now() + SURFACE_TIMEOUT_MS
+    const deadline = Date.now() + this.networkTimeoutMs
     while (Date.now() < deadline) {
       if (pageIdentitySurfaceAdvanced(before, await this.surfaceSnapshot(pageUid))) return true
       await this.page.waitForTimeout(POLL_MS)
@@ -535,8 +534,8 @@ export class PageIdentitySwitcher {
     const matched = await this.clickFreshCandidates(
       'direct',
       () => this.directCandidates(),
-      () => this.identityMatches(pageUid, 10_000),
-      SURFACE_TIMEOUT_MS
+      () => this.identityMatches(pageUid),
+      this.networkTimeoutMs
     )
     if (matched) return { status: 'success', message: 'Đã chuyển sang Page identity bằng direct switch và xác minh i_user.' }
     return (await this.blocked()) ?? null
@@ -546,8 +545,8 @@ export class PageIdentitySwitcher {
     const matched = await this.clickFreshCandidates(
       'select-target',
       () => this.targetCandidates(pageUid, stage),
-      () => this.identityMatches(pageUid, 12_000),
-      SURFACE_TIMEOUT_MS
+      () => this.identityMatches(pageUid),
+      this.networkTimeoutMs
     )
     if (matched) return { status: 'success', message: 'Đã chọn Page trong profile chooser và xác minh i_user đúng Page UID.' }
     return (await this.blocked()) ?? null
@@ -624,7 +623,13 @@ export class PageIdentitySwitcher {
   async switchTo(pageUid: string): Promise<PostingJobResult> {
     const uid = pageUid.trim()
 
-    const managedPages = await tryManagedPagesSwitch(this.page, this.context, this.browser, uid)
+    const managedPages = await tryManagedPagesSwitch(
+      this.page,
+      this.context,
+      this.browser,
+      uid,
+      this.networkTimeoutMs
+    )
     this.remember(`managed-pages:${managedPages.diagnostic}`)
     if (managedPages.result) return managedPages.result
 

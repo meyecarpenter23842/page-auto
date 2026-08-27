@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { isMediaAttachmentReady, pollForReady, readinessAttempts } from './postingReadiness'
+import { firstReadyCandidate, isMediaAttachmentReady, pollForReady, readinessAttempts } from './postingReadiness'
 
 describe('posting readiness polling', () => {
   it('returns immediately when the first probe is ready', async () => {
@@ -38,6 +38,35 @@ describe('posting readiness polling', () => {
     expect(readinessAttempts(12_000, 250)).toBe(48)
     expect(readinessAttempts(0, 250)).toBe(1)
     expect(readinessAttempts(1_001, 250)).toBe(5)
+  })
+
+  it('selects only one ready media target when chooser and input become ready together', async () => {
+    const chooserSet = vi.fn(async () => undefined)
+    const inputSet = vi.fn(async () => undefined)
+    const neverTimeout = new Promise<never>(() => undefined)
+
+    const selected = await firstReadyCandidate([
+      Promise.resolve({ source: 'filechooser', setFiles: chooserSet }),
+      Promise.resolve({ source: 'file-input', setFiles: inputSet })
+    ], neverTimeout)
+
+    expect(selected).not.toBeNull()
+    await selected?.setFiles()
+    expect(chooserSet.mock.calls.length + inputSet.mock.calls.length).toBe(1)
+  })
+
+  it('ignores a null readiness candidate while another source can still become ready', async () => {
+    const neverTimeout = new Promise<never>(() => undefined)
+    await expect(firstReadyCandidate([
+      Promise.resolve(null),
+      Promise.resolve('file-input')
+    ], neverTimeout)).resolves.toBe('file-input')
+  })
+
+  it('returns null when the readiness race reaches its timeout without a target', async () => {
+    await expect(firstReadyCandidate([
+      Promise.resolve(null)
+    ], Promise.resolve())).resolves.toBeNull()
   })
 
   it('does not treat FileList selection alone as media readiness', () => {
