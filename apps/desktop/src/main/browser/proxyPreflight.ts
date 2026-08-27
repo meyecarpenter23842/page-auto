@@ -10,8 +10,11 @@ export interface ProxyPreflightResult {
 export type ProxyProbeAttempt = (timeoutMs: number) => Promise<void>
 export type ProxyProbeWait = (milliseconds: number) => Promise<void>
 
-export function effectiveNavigationTimeoutMs(browserTimeoutMs: number, networkTimeoutMs: number): number {
-  return Math.max(1_000, Math.min(browserTimeoutMs, networkTimeoutMs))
+export function effectiveNavigationTimeoutMs(browserTimeoutMs: number, _networkTimeoutMs: number): number {
+  // Navigation and DOM/action readiness are separate budgets. The caller applies
+  // networkTimeoutMs through page.setDefaultTimeout(); page.goto/load-state waits
+  // must keep the configured browser.navigationTimeoutMs budget intact.
+  return Math.max(1_000, browserTimeoutMs)
 }
 
 export async function runProxyPreflight(
