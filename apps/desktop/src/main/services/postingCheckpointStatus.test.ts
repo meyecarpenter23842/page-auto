@@ -109,7 +109,8 @@ describe('checkpoint status propagation', () => {
     expect(released.accountStates?.find((entry) => entry.accountId === account.id)).toEqual({
       accountId: account.id,
       status: 'error',
-      message: 'Facebook yêu cầu checkpoint 282.'
+      message: 'Facebook yêu cầu checkpoint 282.',
+      checkpointKind: '282'
     })
 
     service.closeAll()

@@ -1,4 +1,4 @@
-import type { ExecuteSinglePostingJobResult } from '../../shared/posting'
+import type { ExecuteSinglePostingJobResult, PostingCheckpointKind } from '../../shared/posting'
 import type {
   PostingJobPreview,
   RotationAccountRuntimeState,
@@ -28,6 +28,13 @@ function runtimeAccountError(outcome: ExecuteSinglePostingJobResult): boolean {
   if (outcome.result.status === 'needs_login') return true
   if (outcome.result.status !== 'failed') return false
   return !NON_ACCOUNT_FAILURE_CODES.has(outcome.result.code ?? '')
+}
+
+function runtimeCheckpointKind(outcome: ExecuteSinglePostingJobResult): PostingCheckpointKind | undefined {
+  const validation = outcome.result.sessionValidation
+  const checkpoint = outcome.result.code === 'verification_required' || validation?.state === 'verification_required'
+  if (!checkpoint) return undefined
+  return validation?.checkpointKind ?? 'unknown'
 }
 
 export class RotationRuntimeOverlayRegistry {
@@ -120,7 +127,7 @@ export class RotationRuntimeOverlayRegistry {
     if (!state || accountId === null) return
 
     if (runtimeAccountError(outcome)) {
-      this.setAccountState(state, accountId, 'error', outcome.result.message)
+      this.setAccountState(state, accountId, 'error', outcome.result.message, runtimeCheckpointKind(outcome))
     } else if (state.accountStates.get(accountId)?.status !== 'error') {
       this.setAccountState(state, accountId, 'running', outcome.result.message)
     }
@@ -205,10 +212,16 @@ export class RotationRuntimeOverlayRegistry {
     state: PageRuntimeState,
     accountId: number,
     status: RotationAccountRuntimeStatus,
-    message: string | null
+    message: string | null,
+    checkpointKind?: PostingCheckpointKind
   ): void {
     if (!state.accountStates.has(accountId)) state.accountOrder.push(accountId)
-    state.accountStates.set(accountId, { accountId, status, message })
+    state.accountStates.set(accountId, {
+      accountId,
+      status,
+      message,
+      ...(checkpointKind ? { checkpointKind } : {})
+    })
   }
 
   private stateForRun(runId: number): PageRuntimeState | null {
