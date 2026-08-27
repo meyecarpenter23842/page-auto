@@ -9,6 +9,7 @@ import {
 import { COMPOSER_MEDIA_PATTERN } from './composerSurface'
 import { finishPostingEvidence, startPostingTrace } from './postingEvidence'
 import {
+  firstReadyCandidate,
   isMediaAttachmentReady,
   pollForReady,
   readinessAttempts,
@@ -28,6 +29,10 @@ import {
 } from './robustComposerDetector'
 
 type PostingCode = NonNullable<PostingJobResult['code']>
+type MediaFileTarget = {
+  source: 'filechooser' | 'file-input'
+  setFiles: (imagePaths: string[]) => Promise<void>
+}
 
 const ACTION_SETTLE_MS = 850
 const READINESS_POLL_MS = 250
@@ -199,20 +204,20 @@ export class MediaUploader {
     return current?.container ?? fallback
   }
 
-  private async setInputFiles(container: Locator, imagePaths: string[]): Promise<boolean> {
+  private async findFileInput(container: Locator): Promise<Locator | null> {
     const current = await this.currentContainer(container)
     const localInput = current.locator('input[type="file"]').last()
-    if (await localInput.count().catch(() => 0)) {
-      await localInput.setInputFiles(imagePaths, { timeout: this.networkTimeoutMs })
-      return true
-    }
+    if (await localInput.count().catch(() => 0)) return localInput
 
     const pageInput = this.page.locator('input[type="file"]').last()
-    if (await pageInput.count().catch(() => 0)) {
-      await pageInput.setInputFiles(imagePaths, { timeout: this.networkTimeoutMs })
-      return true
-    }
-    return false
+    return await pageInput.count().catch(() => 0) ? pageInput : null
+  }
+
+  private async setInputFiles(container: Locator, imagePaths: string[]): Promise<boolean> {
+    const input = await this.findFileInput(container)
+    if (!input) return false
+    await input.setInputFiles(imagePaths, { timeout: this.networkTimeoutMs })
+    return true
   }
 
   private async mediaSnapshot(container: Locator): Promise<MediaReadinessSnapshot> {
@@ -253,11 +258,8 @@ export class MediaUploader {
     })
   }
 
-  private async waitForInputAndSet(container: Locator, imagePaths: string[]): Promise<boolean> {
-    const ready = await pollPage(this.page, this.networkTimeoutMs, async () => (
-      await this.setInputFiles(container, imagePaths) ? true : null
-    ))
-    return Boolean(ready)
+  private waitForFileInput(container: Locator): Promise<Locator | null> {
+    return pollPage(this.page, this.networkTimeoutMs, () => this.findFileInput(container))
   }
 
   async upload(container: Locator, imagePaths: string[]): Promise<PostingJobResult> {
@@ -275,30 +277,46 @@ export class MediaUploader {
       const mediaButton = await this.waitForMediaButton(container)
       if (!mediaButton) return failure('media_failed', 'Không tìm thấy control Photo/Video trong composer.')
 
-      const chooserPromise = this.page.waitForEvent('filechooser', { timeout: this.networkTimeoutMs }).catch(() => null)
+      const chooserReady = this.page.waitForEvent('filechooser', { timeout: this.networkTimeoutMs })
+        .then((chooser): MediaFileTarget => ({
+          source: 'filechooser',
+          setFiles: (paths) => chooser.setFiles(paths)
+        }))
+        .catch(() => null)
       await mediaButton.click({ timeout: this.networkTimeoutMs })
       await settleAction(this.page, this.pageSettleDelayMs)
 
-      const inputReady = this.waitForInputAndSet(container, imagePaths)
-      const chooser = await Promise.race([
-        chooserPromise,
-        inputReady.then((ready) => ready ? null : chooserPromise)
-      ])
-      if (chooser) {
-        await chooser.setFiles(imagePaths)
-        if (!await this.waitForMediaReady(container, imagePaths.length, baseline)) {
-          return failure('media_failed', 'Đã chọn ảnh qua file chooser nhưng Facebook chưa render đủ media đã xử lý.')
-        }
-        return { status: 'success', message: `Đã chọn và xác nhận ${imagePaths.length} ảnh qua file chooser.` }
-      }
-
-      if (!await inputReady) {
+      const inputReady = this.waitForFileInput(container).then((input): MediaFileTarget | null => (
+        input
+          ? {
+              source: 'file-input',
+              setFiles: (paths) => input.setInputFiles(paths, { timeout: this.networkTimeoutMs })
+            }
+          : null
+      ))
+      const target = await firstReadyCandidate(
+        [chooserReady, inputReady],
+        this.page.waitForTimeout(this.networkTimeoutMs)
+      )
+      if (!target) {
         return failure('media_failed', 'Đã mở Photo/Video nhưng không tìm thấy file chooser hoặc file input.')
       }
+
+      await target.setFiles(imagePaths)
       if (!await this.waitForMediaReady(container, imagePaths.length, baseline)) {
-        return failure('media_failed', 'Đã chọn ảnh sau khi mở Photo/Video nhưng Facebook chưa render đủ media đã xử lý.')
+        return failure(
+          'media_failed',
+          target.source === 'filechooser'
+            ? 'Đã chọn ảnh qua file chooser nhưng Facebook chưa render đủ media đã xử lý.'
+            : 'Đã chọn ảnh qua file input nhưng Facebook chưa render đủ media đã xử lý.'
+        )
       }
-      return { status: 'success', message: `Đã chọn và xác nhận ${imagePaths.length} ảnh sau khi mở Photo/Video.` }
+      return {
+        status: 'success',
+        message: target.source === 'filechooser'
+          ? `Đã chọn và xác nhận ${imagePaths.length} ảnh qua file chooser.`
+          : `Đã chọn và xác nhận ${imagePaths.length} ảnh sau khi mở Photo/Video.`
+      }
     } catch (error) {
       return failure('media_failed', error instanceof Error ? error.message : String(error))
     }
