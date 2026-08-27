@@ -8,9 +8,10 @@ describe('email browser lifecycle errors', () => {
     expect(friendlyEmailBrowserError('Failed to create a ProcessSingleton')).toMatch(/không xóa lock/)
   })
 
-  it('drops idle utility workers after terminal open failures', () => {
+  it('keeps live workers for open sessions and manual login attention', () => {
     expect(shouldKeepEmailBrowserWorker('started')).toBe(true)
     expect(shouldKeepEmailBrowserWorker('already_open')).toBe(true)
+    expect(shouldKeepEmailBrowserWorker('needs_attention')).toBe(true)
     expect(shouldKeepEmailBrowserWorker('profile_in_use')).toBe(false)
     expect(shouldKeepEmailBrowserWorker('error')).toBe(false)
   })

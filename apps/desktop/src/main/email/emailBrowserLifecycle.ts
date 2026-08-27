@@ -20,8 +20,8 @@ export function friendlyEmailBrowserError(error: unknown): string {
   return 'Browser Email không khởi động được. Hãy chọn Chrome/Edge/Chromium khác trong Cài đặt Email rồi thử lại.'
 }
 
-export function shouldKeepEmailBrowserWorker(status: 'started' | 'already_open' | 'profile_in_use' | 'error'): boolean {
-  return status === 'started' || status === 'already_open'
+export function shouldKeepEmailBrowserWorker(status: 'started' | 'already_open' | 'needs_attention' | 'profile_in_use' | 'error'): boolean {
+  return status === 'started' || status === 'already_open' || status === 'needs_attention'
 }
 
 export const EMAIL_PROFILE_IN_USE_CACHE_MS = 5_000
