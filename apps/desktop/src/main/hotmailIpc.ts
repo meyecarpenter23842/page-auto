@@ -16,6 +16,7 @@ import { AccountRepository } from './database/accountRepository'
 import { HotmailRepository } from './database/hotmailRepository'
 import { createCanonicalEmailCodeRuntime } from './email/canonicalEmailCodeProvider'
 import { emailBrowserExecutableCandidates } from './email/emailBrowserExecutable'
+import { EmailCommonRuntime } from './email/emailCommonRuntime'
 import { HotmailComboService } from './email/hotmailComboService'
 import { testEmailBrowserExecutable } from './email/emailProxyTester'
 import { ElectronEmailSecretCipher } from './email/emailSecretStore'
@@ -93,13 +94,15 @@ export function registerHotmailIpcHandlers(database: Database.Database): Hotmail
   }
 
   const cipher = new ElectronEmailSecretCipher()
+  const runtime = new EmailCommonRuntime(() => repository.getProxySettings())
   const service = new HotmailService(
     accounts,
     repository,
     cipher,
-    resolveBrowserExecutable
+    resolveBrowserExecutable,
+    runtime
   )
-  const comboService = new HotmailComboService(accounts, repository, resolveBrowserExecutable)
+  const comboService = new HotmailComboService(accounts, repository, resolveBrowserExecutable, runtime)
   const codeRuntime = createCanonicalEmailCodeRuntime(accounts, repository, cipher)
   setEmailCodeProvider(codeRuntime.provider)
 
