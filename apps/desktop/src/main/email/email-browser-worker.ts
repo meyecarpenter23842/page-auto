@@ -231,6 +231,27 @@ async function clickStaySignedIn(page: Page): Promise<boolean> {
   return true
 }
 
+async function continueFromOutlookLanding(page: Page): Promise<boolean> {
+  const link = await firstVisible([
+    page.getByRole('link', { name: /^(sign in|open outlook|continue to sign in)$/i }).first(),
+    page.getByRole('button', { name: /^(sign in|open outlook|continue to sign in)$/i }).first(),
+    page.locator('a[href*="outlook.live.com"]:visible').first(),
+    page.locator('a[href*="go.microsoft.com"]:visible').filter({ hasText: /sign in|open outlook|continue to sign in/i }).first()
+  ])
+  if (!link) return false
+
+  const href = await link.getAttribute('href').catch(() => null)
+  if (href && !href.toLowerCase().startsWith('javascript:')) {
+    const target = new URL(href, page.url()).toString()
+    await page.goto(target, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+  } else {
+    await link.click()
+    await waitForMicrosoftStep(page)
+  }
+  await page.bringToFront().catch(() => undefined)
+  return true
+}
+
 function loginNeedsAttention(reason: HotmailNeedsAttentionReason, attempted: boolean, message?: string): MicrosoftLoginAttempt {
   return {
     status: 'needs_attention',
@@ -246,7 +267,7 @@ async function autoLoginMicrosoft(
   allowPasswordChangeSurface = false
 ): Promise<MicrosoftLoginAttempt> {
   let attempted = false
-  for (let step = 0; step < 6; step += 1) {
+  for (let step = 0; step < 8; step += 1) {
     const snapshot = await readMicrosoftLoginSnapshot(page)
     if (!snapshot) {
       return loginNeedsAttention(
@@ -274,6 +295,18 @@ async function autoLoginMicrosoft(
         attempted,
         'Microsoft không chấp nhận Email/PassEmail canonical hiện tại. PAGE-AUTO không thử credential khác và giữ phiên để xử lý thủ công.'
       )
+    }
+
+    if (surface === 'outlook_landing') {
+      if (!await continueFromOutlookLanding(page)) {
+        return loginNeedsAttention(
+          'needs_login',
+          attempted,
+          'Đã tới Outlook landing nhưng PAGE-AUTO không nhận diện được nút Sign in/Open Outlook an toàn.'
+        )
+      }
+      attempted = true
+      continue
     }
 
     if (surface === 'stay_signed_in') {
@@ -373,7 +406,7 @@ async function detectAttention(page: Page): Promise<HotmailNeedsAttentionReason 
   const surface = classifyMicrosoftLoginSurface(snapshot)
   if (surface === 'identity_review') return 'identity_review'
   if (surface === 'security_review') return 'security_review'
-  if (surface === 'username' || surface === 'password' || surface === 'password_change' || surface === 'credential_error' || surface === 'manual_login' || surface === 'stay_signed_in') {
+  if (surface === 'username' || surface === 'password' || surface === 'password_change' || surface === 'credential_error' || surface === 'manual_login' || surface === 'stay_signed_in' || surface === 'outlook_landing') {
     return 'needs_login'
   }
   return null
