@@ -23,6 +23,7 @@ import type { BrowserExecutableResult, BrowserTestRequest, BrowserTestResult } f
 import type { BrowserDisplayInfo, BrowserRetileResult, BrowserWindowLayoutSettings } from '../shared/browserWindowLayout'
 import type { CaptchaSettingsView, SaveCaptchaSettingsInput } from '../shared/captchaSettings'
 import type { ConfigBackupExportResult, ConfigBackupRestoreResult } from '../shared/configBackup'
+import type { HotmailComboActionPayload, HotmailComboBatchResult } from '../shared/emailCombo'
 import type { ExecutionLogFilters, ExecutionLogRecord, RetryRunItemPayload, RetryRunItemResult } from '../shared/executionLogs'
 import type {
   HotmailAccountPayload,
@@ -70,6 +71,7 @@ const api = {
   openHotmail: (payload: HotmailAccountPayload): Promise<HotmailBrowserOpenResult> => ipcRenderer.invoke(IPC_CHANNELS.hotmailOpen, payload) as Promise<HotmailBrowserOpenResult>,
   updateHotmailRecovery: (payload: HotmailRecoveryActionPayload): Promise<HotmailRecoveryBatchResult> => ipcRenderer.invoke(IPC_CHANNELS.hotmailRecoveryAction, payload) as Promise<HotmailRecoveryBatchResult>,
   updateHotmailPassword: (payload: HotmailPasswordActionPayload): Promise<HotmailPasswordBatchResult> => ipcRenderer.invoke(IPC_CHANNELS.hotmailPasswordAction, payload) as Promise<HotmailPasswordBatchResult>,
+  runHotmailCombo: (payload: HotmailComboActionPayload): Promise<HotmailComboBatchResult> => ipcRenderer.invoke(IPC_CHANNELS.hotmailComboAction, payload) as Promise<HotmailComboBatchResult>,
   getHotmailProxyStatus: (): Promise<HotmailProxyStatus> => ipcRenderer.invoke(IPC_CHANNELS.hotmailProxyStatus) as Promise<HotmailProxyStatus>,
   rotateHotmailProxy: (): Promise<HotmailProxyStatus> => ipcRenderer.invoke(IPC_CHANNELS.hotmailProxyRotate) as Promise<HotmailProxyStatus>,
   testHotmailProxy: (): Promise<HotmailProxyTestResult> => ipcRenderer.invoke(IPC_CHANNELS.hotmailProxyTest) as Promise<HotmailProxyTestResult>,

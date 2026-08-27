@@ -13,6 +13,7 @@ import type {
   SaveHotmailSettingsInput
 } from '../../../shared/hotmail'
 import { filterHotmailRows, previewClientId, type EmailQuickFilter } from './hotmailUiModel'
+import { HotmailComboPanel } from './HotmailComboPanel'
 import './hotmailAuto.css'
 
 interface SettingsDraft {
@@ -24,7 +25,7 @@ interface SettingsDraft {
   proxyListText: string
 }
 
-type EmailPanel = 'network' | 'logs' | 'settings' | 'recovery' | 'password' | null
+type EmailPanel = 'network' | 'logs' | 'settings' | 'recovery' | 'password' | 'combo' | null
 type ActionKey = 'oauth' | 'codes' | 'open' | 'check' | 'recovery' | 'password' | 'rotate' | 'test' | 'save' | 'pick-root' | 'pick-browser' | 'copy' | 'refresh'
 type ContextMenuState = { x: number; y: number; accountId: number } | null
 
@@ -371,6 +372,7 @@ export function HotmailAuto() {
         <button className="email-button secondary" disabled={isBusy('copy')} onClick={() => void copyEmails()}>{isBusy('copy') && <Spinner />}Copy Email</button>
       </div>
       <div className="email-command-secondary">
+        <button className="email-button ghost" onClick={() => setPanel('combo')}>Combo Email</button>
         <button className="email-button ghost" onClick={() => setPanel('password')}>Đổi Password</button>
         <button className="email-button ghost" onClick={() => setPanel('recovery')}>Mail khôi phục</button>
         <button className="email-button ghost" onClick={() => setPanel('network')}>Proxy / IP</button>
@@ -420,7 +422,9 @@ export function HotmailAuto() {
     <footer className="email-selection-footer"><div><strong>{visibleSelected}</strong> dòng đang hiện được chọn · <strong>{selectedRows.length}</strong> tổng selection</div><span>Double-click: Mở mail · Ctrl/Shift: chọn nhiều · Chuột phải: thao tác trên selection</span></footer>
 
     {panel ? <div className="email-panel-backdrop" onMouseDown={() => setPanel(null)}><aside className="email-side-panel" onMouseDown={(event) => event.stopPropagation()}>
-      <div className="email-panel-header"><div><span>EMAIL</span><h2>{panel === 'network' ? 'Proxy / IP' : panel === 'logs' ? 'Nhật ký gần nhất' : panel === 'recovery' ? 'Mail khôi phục' : panel === 'password' ? 'Đổi Password Email' : 'Cài đặt'}</h2></div><button className="email-panel-close" onClick={() => setPanel(null)}>×</button></div>
+      <div className="email-panel-header"><div><span>EMAIL</span><h2>{panel === 'network' ? 'Proxy / IP' : panel === 'logs' ? 'Nhật ký gần nhất' : panel === 'recovery' ? 'Mail khôi phục' : panel === 'password' ? 'Đổi Password Email' : panel === 'combo' ? 'Combo Email' : 'Cài đặt'}</h2></div><button className="email-panel-close" onClick={() => setPanel(null)}>×</button></div>
+
+      {panel === 'combo' ? <HotmailComboPanel selectedIds={selectedIds} rows={panelRows} onMessage={setMessage} onRefresh={refreshRows} /> : null}
 
       {panel === 'network' ? <div className="email-panel-content">
         <div className="email-panel-summary"><div><span>Chế độ</span><strong>{proxyStatus?.mode === 'random_ipv4' ? 'IPv4 ngẫu nhiên' : 'Trực tiếp'}</strong></div><div><span>Proxy hiện tại</span><strong>{proxyStatus?.currentProxy ?? 'Chưa có'}</strong></div><div><span>Pool</span><strong>{proxyStatus?.poolSize ?? 0}</strong></div><div><span>Phiên đang dùng</span><strong>{proxyStatus?.activeSessions ?? 0}</strong></div></div>
@@ -473,6 +477,6 @@ export function HotmailAuto() {
       </> : <div className="email-panel-empty">Đang tải cài đặt Email...</div>}</div> : null}
     </aside></div> : null}
 
-    {contextMenu ? <div className="email-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onMouseDown={(event) => event.stopPropagation()}><div className="email-context-title">{contextIds.length} tài khoản trong selection</div><button onClick={() => { setContextMenu(null); void openMail(contextIds) }}>Mở mail</button><button onClick={() => { setContextMenu(null); void getCodes(contextIds) }}>Lấy mã</button><button onClick={() => { setContextMenu(null); void checkMail(contextIds) }}>Check Live Hotmail</button><button disabled={contextIds.length !== 1} onClick={() => { setContextMenu(null); void connectMailbox(contextIds[0]) }}>Lấy / cập nhật OAuth</button><div className="email-context-separator" /><button onClick={() => { setContextMenu(null); void copyEmails(contextIds) }}>Copy Email</button><button onClick={() => { setContextMenu(null); setPanel('password') }}>Đổi Password Email</button><button onClick={() => { setContextMenu(null); setPanel('recovery') }}>Thao tác Mail khôi phục</button><button onClick={() => { setContextMenu(null); setPanel('logs') }}>Xem trạng thái / lỗi</button></div> : null}
+    {contextMenu ? <div className="email-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onMouseDown={(event) => event.stopPropagation()}><div className="email-context-title">{contextIds.length} tài khoản trong selection</div><button onClick={() => { setContextMenu(null); void openMail(contextIds) }}>Mở mail</button><button onClick={() => { setContextMenu(null); void getCodes(contextIds) }}>Lấy mã</button><button onClick={() => { setContextMenu(null); void checkMail(contextIds) }}>Check Live Hotmail</button><button disabled={contextIds.length !== 1} onClick={() => { setContextMenu(null); void connectMailbox(contextIds[0]) }}>Lấy / cập nhật OAuth</button><div className="email-context-separator" /><button onClick={() => { setContextMenu(null); void copyEmails(contextIds) }}>Copy Email</button><button onClick={() => { setContextMenu(null); setPanel('combo') }}>Combo Email</button><button onClick={() => { setContextMenu(null); setPanel('password') }}>Đổi Password Email</button><button onClick={() => { setContextMenu(null); setPanel('recovery') }}>Thao tác Mail khôi phục</button><button onClick={() => { setContextMenu(null); setPanel('logs') }}>Xem trạng thái / lỗi</button></div> : null}
   </section>
 }
