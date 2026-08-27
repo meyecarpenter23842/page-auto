@@ -31,19 +31,39 @@ export async function startPostingTrace(context: BrowserContext, job: PostingJob
   }
 }
 
-async function enrichCheckpointClassification(page: Page, result: PostingJobResult): Promise<PostingJobResult> {
+async function enrichSessionClassification(page: Page, result: PostingJobResult): Promise<PostingJobResult> {
   const validation = result.sessionValidation
   const verificationRequired = result.code === 'verification_required' || validation?.state === 'verification_required'
-  if (!verificationRequired || validation?.checkpointKind !== undefined) return result
+  if (verificationRequired) {
+    const checkpointKind = validation?.checkpointKind
+      ?? await detectFacebookCheckpointKind(page).catch(() => 'unknown' as const)
+      ?? 'unknown'
+    const message = validation?.state === 'verification_required'
+      ? validation.message
+      : result.message
 
-  const checkpointKind = await detectFacebookCheckpointKind(page).catch(() => 'unknown' as const) ?? 'unknown'
+    return {
+      ...result,
+      sessionValidation: {
+        phase: validation?.phase ?? 'before_run',
+        state: 'verification_required',
+        message,
+        checkpointKind
+      }
+    }
+  }
+
+  const needsLogin = result.code === 'needs_login'
+    || result.status === 'needs_login'
+    || validation?.state === 'needs_login'
+  if (!needsLogin || validation?.state === 'needs_login') return result
+
   return {
     ...result,
     sessionValidation: {
       phase: validation?.phase ?? 'before_run',
-      state: 'verification_required',
-      message: validation?.message ?? result.message,
-      checkpointKind
+      state: 'needs_login',
+      message: result.message
     }
   }
 }
@@ -54,7 +74,7 @@ export async function finishPostingEvidence(
   result: PostingJobResult,
   traceStarted: boolean
 ): Promise<PostingJobResult> {
-  let next = await enrichCheckpointClassification(page, result)
+  let next = await enrichSessionClassification(page, result)
   const isFailure = next.status !== 'success' && next.status !== 'skipped'
 
   if (isFailure && job.logging.saveCurrentUrlOnFailure) {
