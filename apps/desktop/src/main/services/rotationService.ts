@@ -7,7 +7,7 @@ import { resolveNetworkFailureDecision } from './networkFailurePolicy'
 import {
   isWithinSchedule,
   nextScheduleStart,
-  nextScheduleStartAfterDay,
+  nextScheduleWindowStart,
   randomDelaySeconds,
   scheduleWindowKey
 } from './rotationSchedule'
@@ -189,7 +189,7 @@ export class RotationService {
       inFlight: false,
       activeDateKey: restoredRotationState.activeDateKey,
       activeWindowKey: null,
-      completedWindowKey: null,
+      completedWindowKey: restoredRotationState.completedWindowKey,
       disposed: false
     }
 
@@ -245,10 +245,6 @@ export class RotationService {
     const session = existing ?? this.restoreSession(payload.pageTabId)
     const restoredAfterRestart = existing === null
 
-    if (session.status === 'completed') {
-      if (restoredAfterRestart) this.session = session
-      return snapshotSession(session)
-    }
     if (session.status === 'stopped' || session.run.run.status === 'stopped') {
       throw new Error('Page Tab đã Stop; hãy bấm Bắt đầu để tạo run mới từ Group gốc.')
     }
@@ -257,7 +253,6 @@ export class RotationService {
     session.manualPaused = false
     session.stopRequested = false
     session.disposed = false
-    session.completedWindowKey = null
     session.message = restoredAfterRestart
       ? 'Đã khôi phục phiên chạy sau khi khởi động lại ứng dụng.'
       : 'Đang tiếp tục run hiện tại.'
@@ -271,13 +266,18 @@ export class RotationService {
         this.rolloverForDay(session, todayKey)
       } else if (session.activeDateKey === null) {
         session.activeDateKey = todayKey
+        this.persistRotationState(session)
       }
-      this.persistRotationState(session)
 
-      if (isRunExhausted(session.run)) {
+      if (session.completedWindowKey === windowKey) {
+        const next = nextScheduleWindowStart(schedules, now)
         session.status = 'waiting_window'
-        session.nextActionAt = nextScheduleStartAfterDay(schedules, now).getTime()
+        session.nextActionAt = next.getTime()
+        session.message = `Khung giờ hiện tại đã chạy đủ một vòng tài khoản; chờ khung tiếp theo ${next.toLocaleString()}.`
       } else {
+        if (isRunExhausted(session.run)) {
+          this.refillGroupRun(session, 'Group của phiên trước đã cạn; tạo phiên Group mới từ danh sách gốc.')
+        }
         session.activeWindowKey = windowKey
         if (session.run.run.status !== 'running') session.run = this.runs.resume(session.runId)
         session.status = 'running'
@@ -404,7 +404,7 @@ export class RotationService {
       cycle: 0,
       nextActionAt: null,
       message: run.run.status === 'completed'
-        ? 'Phiên chạy đã hoàn tất.'
+        ? 'Phiên Group trước đã cạn; sẵn sàng tạo vòng Group mới khi lịch cho phép.'
         : 'Đã tìm thấy phiên chạy trước đó; sẵn sàng khôi phục.',
       lastResult: null,
       run,
@@ -413,7 +413,7 @@ export class RotationService {
       inFlight: false,
       activeDateKey: restoredRotationState.activeDateKey,
       activeWindowKey: null,
-      completedWindowKey: null,
+      completedWindowKey: restoredRotationState.completedWindowKey,
       disposed: false
     }
   }
@@ -486,6 +486,19 @@ export class RotationService {
     session.message = 'Đã sang ngày chạy mới; tạo run mới từ Group gốc và reset vòng tài khoản.'
     this.persistRotationState(session)
     this.beginCycleWait()
+  }
+
+  private refillGroupRun(session: RotationSession, message: string): void {
+    if (!isRunExhausted(session.run)) return
+    const fresh = this.runs.createForPageTab(session.pageTabId)
+    if (sortedEnabledAccounts(fresh).length === 0) {
+      throw new Error('Page Tab không có tài khoản được bật cho vòng Group mới.')
+    }
+    session.run = fresh
+    session.runId = fresh.run.id
+    session.nextActionAt = null
+    session.message = message
+    this.persistRotationState(session)
   }
 
   private pauseForSessionFailure(session: RotationSession, accountId: number, kind: 'session_expired' | 'checkpoint'): void {
@@ -604,7 +617,8 @@ export class RotationService {
               break
             }
             if (result.result.code === 'no_pending_item' || isRunExhausted(result.run)) {
-              continue runLoop
+              this.refillGroupRun(session, `Tài khoản #${account.accountId}: Group đã cạn; tạo vòng Group mới từ danh sách gốc.`)
+              continue
             }
             if (isAccountUnavailable(result)) {
               accountUnavailable = true
@@ -632,7 +646,9 @@ export class RotationService {
           if (result.result.status === 'skipped') {
             unavailableStreak = 0
             session.message = `Tài khoản #${account.accountId}: item được bỏ qua theo policy; không tính vào Bài/lượt và tiếp tục item kế tiếp.`
-            if (isRunExhausted(result.run)) continue runLoop
+            if (isRunExhausted(result.run)) {
+              this.refillGroupRun(session, `Tài khoản #${account.accountId}: Group đã cạn sau item bỏ qua; tạo vòng Group mới.`)
+            }
             continue
           }
 
@@ -646,15 +662,15 @@ export class RotationService {
           unavailableStreak = 0
           session.slotsCompletedThisTurn += 1
 
-          if (isRunExhausted(result.run)) {
-            continue runLoop
-          }
-
           if (session.slotsCompletedThisTurn < targetSlots) {
+            if (isRunExhausted(result.run)) {
+              this.refillGroupRun(session, `Tài khoản #${account.accountId}: Group đã cạn giữa lượt; tạo vòng Group mới từ danh sách gốc.`)
+            }
+            const rotation = session.run.run.snapshot.rotation
             const sameRun = await this.waitConfiguredDelay(
               session,
-              current.run.snapshot.rotation.postDelayMinSeconds,
-              current.run.snapshot.rotation.postDelayMaxSeconds,
+              rotation.postDelayMinSeconds,
+              rotation.postDelayMaxSeconds,
               'Chờ giữa các bài'
             )
             if (!sameRun) continue runLoop
@@ -693,18 +709,34 @@ export class RotationService {
       const completedCycle = accountIndex === 0 && previousIndex === cycleAccounts.length - 1
       if (completedCycle) {
         session.cycle += 1
-        session.completedWindowKey = null
+        session.completedWindowKey = session.activeWindowKey
         this.persistRotationState(session)
         session.currentAccountId = null
         session.currentAccountIndex = null
         session.slotsCompletedThisTurn = 0
         session.targetSlotsThisTurn = 0
         cycleAccounts = []
+
+        const now = this.clock.now()
+        const schedules = this.schedulesFor(session)
+        const next = nextScheduleWindowStart(schedules, now)
+        if (session.run.run.status === 'running' || session.run.run.status === 'created') {
+          session.run = this.runs.pause(session.runId)
+        }
+        session.status = 'waiting_window'
+        session.nextActionAt = next.getTime()
+        session.message = `Khung giờ đã chạy đủ một vòng tài khoản; chờ khung tiếp theo ${next.toLocaleString()}.`
+        this.settleCycle()
+        continue
+      }
+
+      if (isRunExhausted(session.run)) {
+        this.refillGroupRun(session, 'Group đã cạn trước khi hết vòng tài khoản; tạo vòng Group mới từ danh sách gốc.')
       }
 
       if (session.run.metrics.remaining > 0) {
         const rotation = session.run.run.snapshot.rotation
-        const sameRun = enabledAccounts.length > 1
+        const sameRun = cycleAccounts.length > 1
           ? await this.waitConfiguredDelay(
               session,
               rotation.accountDelayMinSeconds,
@@ -749,19 +781,6 @@ export class RotationService {
       const now = this.clock.now()
       const schedules = this.schedulesFor(session)
       const todayKey = localDateKey(now)
-
-      if (isRunExhausted(session.run) && session.activeDateKey === todayKey) {
-        await this.releaseIdleCurrentAccount(session)
-        const next = nextScheduleStartAfterDay(schedules, now)
-        session.status = 'waiting_window'
-        session.nextActionAt = next.getTime()
-        session.message = `Phiên hôm nay đã xong; chờ ngày chạy kế tiếp ${next.toLocaleString()}.`
-        this.settleCycle()
-        const waitMs = Math.max(250, Math.min(30_000, next.getTime() - now.getTime()))
-        await this.clock.sleep(waitMs)
-        continue
-      }
-
       const windowKey = scheduleWindowKey(schedules, now)
       if (!windowKey) {
         await this.releaseIdleCurrentAccount(session)
@@ -779,22 +798,36 @@ export class RotationService {
         continue
       }
 
-      let rotationStateChanged = false
       if (session.activeDateKey !== null && session.activeDateKey !== todayKey) {
         this.rolloverForDay(session, todayKey)
       } else if (session.activeDateKey === null) {
         session.activeDateKey = todayKey
-        rotationStateChanged = true
+        this.persistRotationState(session)
       }
 
-      if (session.completedWindowKey !== null) {
-        session.completedWindowKey = null
-        rotationStateChanged = true
+      if (session.completedWindowKey === windowKey) {
+        await this.releaseIdleCurrentAccount(session)
+        if (!session.inFlight && (session.run.run.status === 'running' || session.run.run.status === 'created')) {
+          session.run = this.runs.pause(session.runId)
+        }
+        const next = nextScheduleWindowStart(schedules, now)
+        session.status = 'waiting_window'
+        session.nextActionAt = next.getTime()
+        session.message = `Khung giờ hiện tại đã chạy đủ một vòng tài khoản; chờ khung tiếp theo ${next.toLocaleString()}.`
+        const waitMs = Math.max(250, Math.min(30_000, next.getTime() - now.getTime()))
+        await this.clock.sleep(waitMs)
+        continue
       }
-      if (rotationStateChanged) this.persistRotationState(session)
+
+      if (session.completedWindowKey && session.completedWindowKey !== windowKey) {
+        session.completedWindowKey = null
+        this.persistRotationState(session)
+      }
       session.activeWindowKey = windowKey
 
-      if (isRunExhausted(session.run)) continue
+      if (isRunExhausted(session.run)) {
+        this.refillGroupRun(session, 'Group đã cạn; tạo vòng Group mới từ danh sách gốc cho khung giờ hiện tại.')
+      }
       if (session.run.run.status !== 'running') session.run = this.runs.resume(session.runId)
       session.status = 'running'
       session.nextActionAt = null

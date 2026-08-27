@@ -97,7 +97,7 @@ function never(): Promise<never> {
 }
 
 describe('RotationService review regressions', () => {
-  it('runs all remaining groups inside the active window and stays exhausted after service recreation', async () => {
+  it('keeps a completed schedule window bounded after service recreation', async () => {
     const store = new Store()
     const now = new Date(2026, 7, 24, 10, 0)
     const firstCalls: number[] = []
@@ -117,9 +117,8 @@ describe('RotationService review regressions', () => {
 
     first.start({ pageTabId: 10 })
     await first.waitForSettled()
-    expect(firstCalls).toEqual([101, 202, 101, 202, 101])
-    expect(store.details.metrics.remaining).toBe(0)
-    expect(store.rotationState?.completedWindowKey).toBeNull()
+    expect(firstCalls).toEqual([101, 202])
+    expect(store.rotationState?.completedWindowKey).toContain('2026-08-24')
     expect(first.status({ pageTabId: 10 }).status).toBe('waiting_window')
     first.dispose()
 
@@ -144,7 +143,7 @@ describe('RotationService review regressions', () => {
     second.dispose()
   })
 
-  it('continues a single-account run after an intentional skipped item without consuming quota', async () => {
+  it('continues a single-account cycle after an intentional skipped item without consuming quota', async () => {
     const store = new Store()
     store.details = makeRun(3)
     store.details.run.snapshot.accounts = [{ accountId: 101, enabled: true, sortOrder: 0, postsPerTurn: 1 }]
@@ -169,7 +168,7 @@ describe('RotationService review regressions', () => {
         const run = store.finishOne('success')
         return {
           accountId,
-          item: item(attempt, 'success'),
+          item: item(2, 'success'),
           result: { status: 'success', message: 'ok' },
           run
         }
@@ -183,10 +182,9 @@ describe('RotationService review regressions', () => {
     service.start({ pageTabId: 10 })
     await service.waitForSettled()
 
-    expect(calls).toEqual([101, 101, 101])
+    expect(calls).toEqual([101, 101])
     expect(store.details.metrics.skipped).toBe(1)
-    expect(store.details.metrics.success).toBe(2)
-    expect(store.details.metrics.remaining).toBe(0)
+    expect(store.details.metrics.success).toBe(1)
     expect(service.status({ pageTabId: 10 }).status).toBe('waiting_window')
     service.dispose()
   })
