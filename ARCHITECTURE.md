@@ -804,3 +804,34 @@ Security invariant:
 - Access Token/Refresh Token không log plaintext và không đi qua worker RPC.
 - OTP/code không được ghi vào log; nếu lưu `lastCode` để UI thao tác thì TTL ngắn và được purge theo policy Email.
 - Worker timeout/crash trả typed support error; không treo phiên Facebook vô hạn.
+
+---
+
+## 21. Trạng thái Đăng Tường — lô nền 5A
+
+Lô 5A trong trao đổi hiện tại thuộc **Batch 7 — Đăng Tường** của `PROJECT_PLAN.md`. Mục tiêu của lô này là tạo contract/runtime boundary trước khi nối publish thật.
+
+Source mới trong lô:
+
+- `apps/desktop/src/shared/facebookTasks.ts`
+  - định nghĩa `FacebookTaskType` cho `group_post`, `page_wall_post`, `page_edit`, `comment`;
+  - target là discriminated union theo business;
+  - `FacebookTaskJobBase` lấy common account/Page/runtime material từ contract posting hiện hành nhưng bỏ `groupUid`;
+  - `PageWallPostTaskJobRequest` vì vậy **không cần Group UID**;
+  - Group hiện tại có adapter `groupPostTaskFromLegacy` / `legacyPostingJobFromGroupTask` để chứng minh round-trip không đổi observable fields trong lúc migrate dần.
+- `apps/desktop/src/main/business/page-wall-post/pageWallTask.ts`
+  - là business module đầu tiên của Tường;
+  - chỉ nhận `PreparedPageWallRuntime` đã có `Page`, timing, common pacing và `checkAccessBlock`;
+  - tự sở hữu navigation tới surface Tường theo Page UID;
+  - không chứa login selector, 2FA, checkpoint classifier, account identity hoặc Page switch.
+
+Giới hạn cố ý của 5A:
+
+- `PostingJobRequest` + posting worker hiện tại vẫn là **legacy Group execution path**; chưa đổi worker dispatch để tránh tạo đường `success` giả cho bài Tường chưa publish.
+- Chưa nối composer/content/media/publish/result verification cho `page_wall_post`.
+- Chưa tạo DB migration, run item/scheduler mới, IPC hoặc renderer wiring cho Tường.
+- `PageWallTask.prepare()` chỉ xác minh boundary prepared-runtime + mở surface Tường; 5B mới được phép nối đường đăng ngay và phải có result/evidence riêng trước khi coi publish thành công.
+
+Invariant sau 5A:
+
+> Có thể biểu diễn `page_wall_post` bằng typed contract mà không giả định `groupUid`, và business Tường có thể chạy trên runtime đã chuẩn bị mà không copy session/login/2FA/checkpoint/Page switch. Group Post production path chưa bị thay đổi.
