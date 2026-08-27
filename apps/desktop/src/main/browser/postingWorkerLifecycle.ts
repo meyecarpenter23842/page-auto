@@ -1,3 +1,4 @@
+import type { FacebookPostTaskJobRequest } from '../../shared/facebookTasks'
 import type { PostingJobResult } from '../../shared/posting'
 
 /**
@@ -19,4 +20,14 @@ export function shouldRetainPostingBrowserForManualSession(result: PostingJobRes
     || result.status === 'needs_login'
     || state === 'needs_login'
     || state === 'verification_required'
+}
+
+/**
+ * Manual Page Wall "Đăng ngay" uses runId=0 as a one-shot task sentinel.
+ * It owns no account turn after the result, so its posting worker/browser must be
+ * released before the result is returned to Main. Scheduled/rotation tasks keep the
+ * reusable account-turn lifecycle owned by orchestration.
+ */
+export function shouldAutoReleasePostingBrowserForOneShot(job: FacebookPostTaskJobRequest): boolean {
+  return job.runId === 0 && job.task.type === 'page_wall_post'
 }
