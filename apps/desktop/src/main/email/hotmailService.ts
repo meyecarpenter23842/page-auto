@@ -17,7 +17,7 @@ import type {
   HotmailSettingsView,
   SaveHotmailSettingsInput
 } from '../../shared/hotmail'
-import { EmailBrowserManager } from './emailBrowserManager'
+import { EmailCommonRuntime } from './emailCommonRuntime'
 import { EMAIL_PROFILE_IN_USE_CACHE_MS, isEmailProfileInUseOverrideActive } from './emailBrowserLifecycle'
 import { inspectEmailProfile, validateEmailProfileRoot } from './emailProfileResolver'
 import { EmailProxyPool, normalizeEmailProxyLines } from './emailProxyPool'
@@ -38,7 +38,7 @@ type ResolveEmailBrowserExecutable = (requestedExecutable: string, profileRoot: 
 export class HotmailService {
   private readonly oauth: MicrosoftOAuthService
   private readonly mail = new MicrosoftGraphMailAdapter()
-  private readonly browser: EmailBrowserManager
+  private readonly browser: EmailCommonRuntime
   private readonly proxyPool: EmailProxyPool
   private readonly runtimeStatus = new Map<number, HotmailDashboardRow['runtimeStatus']>()
   private readonly profileInUseUntil = new Map<number, number>()
@@ -47,11 +47,12 @@ export class HotmailService {
     private readonly accounts: AccountRepository,
     private readonly repository: HotmailRepository,
     cipher: EmailSecretCipher,
-    private readonly resolveBrowserExecutable: ResolveEmailBrowserExecutable
+    private readonly resolveBrowserExecutable: ResolveEmailBrowserExecutable,
+    runtime: EmailCommonRuntime
   ) {
     this.oauth = new MicrosoftOAuthService(cipher)
-    this.proxyPool = new EmailProxyPool(() => this.repository.getProxySettings())
-    this.browser = new EmailBrowserManager((accountId) => this.proxyPool.release(accountId))
+    this.proxyPool = runtime.proxyPool
+    this.browser = runtime
   }
 
   async listDashboard(): Promise<HotmailDashboardRow[]> {

@@ -14,9 +14,9 @@ import type {
   HotmailComboStage,
   HotmailComboStageResult
 } from '../../shared/emailCombo'
-import { EmailBrowserManager } from './emailBrowserManager'
+import { EmailCommonRuntime } from './emailCommonRuntime'
 import { inspectEmailProfile } from './emailProfileResolver'
-import { EmailProxyPool, type EmailProxyCandidate } from './emailProxyPool'
+import type { EmailProxyCandidate } from './emailProxyPool'
 import { canonicalBackupEmailAfterRecoverySuccess, validateRecoveryAction } from './emailAccountActionPolicy'
 import { validateEmailPassword } from './emailPasswordActionPolicy'
 import {
@@ -38,7 +38,7 @@ interface ActiveComboAccount {
   stageIndex: number
   history: HotmailComboStageResult[]
   completedStages: HotmailComboStage[]
-  manager: EmailBrowserManager
+  manager: EmailCommonRuntime
   executable: string
   profileRoot: string
   proxy: EmailProxyCandidate | null
@@ -58,16 +58,18 @@ function uniqueAccountIds(accountIds: number[]): number[] {
 }
 
 export class HotmailComboService {
-  private readonly proxyPool: EmailProxyPool
   private readonly active = new Map<number, ActiveComboAccount>()
   private running = false
 
   constructor(
     private readonly accounts: AccountRepository,
     private readonly repository: HotmailRepository,
-    private readonly resolveBrowserExecutable: ResolveEmailBrowserExecutable
-  ) {
-    this.proxyPool = new EmailProxyPool(() => this.repository.getProxySettings())
+    private readonly resolveBrowserExecutable: ResolveEmailBrowserExecutable,
+    private readonly runtime: EmailCommonRuntime
+  ) {}
+
+  private get proxyPool() {
+    return this.runtime.proxyPool
   }
 
   hasActiveFlow(): boolean {
@@ -85,7 +87,7 @@ export class HotmailComboService {
   }
 
   dispose(): void {
-    for (const state of this.active.values()) state.manager.closeAll()
+    for (const state of this.active.values()) this.runtime.closeWorkflow(state.accountId, 'combo')
     this.active.clear()
   }
 
@@ -145,20 +147,19 @@ export class HotmailComboService {
       return this.simpleError(accountId, 'Chưa cấu hình Email Profile Root.', account.backupEmail, 'missing_profile')
     }
 
-    const manager = new EmailBrowserManager((id) => this.proxyPool.release(id))
+    const manager = this.runtime
     let proxy: EmailProxyCandidate | null = null
     try {
       const executable = await this.resolveBrowserExecutable(settings.browserExecutable, settings.profileRoot)
-      const attachedExternally = inspection.status === 'running'
-      proxy = attachedExternally ? null : this.proxyPool.acquire(accountId)
-      const opened = await manager.open(account, settings.profileRoot, executable, proxy)
+      const attachedExternally = inspection.status === 'running' && !manager.isOpen(accountId)
+      proxy = attachedExternally ? null : (this.proxyPool.assignment(accountId) ?? this.proxyPool.acquire(accountId))
+      const opened = await manager.openWorkflow('combo', account, settings.profileRoot, executable, proxy)
       if (opened.proxyManagedExternally) this.proxyPool.release(accountId)
       if (proxy && !opened.proxyManagedExternally) {
         if (opened.status === 'started' || opened.status === 'already_open') this.proxyPool.recordSuccess(proxy)
         else if (/proxy/i.test(opened.message)) this.proxyPool.recordFailure(proxy)
       }
       if (opened.status !== 'started' && opened.status !== 'already_open') {
-        manager.closeAll()
         const safeMessage = redactEmailComboSecrets(opened.message, [newPassword, account.emailPassword, proxy?.password, proxy?.username])
         return this.simpleError(accountId, safeMessage, account.backupEmail, opened.status)
       }
@@ -184,8 +185,7 @@ export class HotmailComboService {
       this.active.set(accountId, state)
       return await this.runStages(state, false)
     } catch {
-      manager.closeAll()
-      this.proxyPool.release(accountId)
+      manager.closeWorkflow(accountId, 'combo')
       return this.simpleError(accountId, 'Không thể khởi động Combo Email bằng profile/session đã cấu hình.', account.backupEmail)
     }
   }
@@ -238,7 +238,8 @@ export class HotmailComboService {
     if (!account) return { status: 'error', message: 'Account không còn tồn tại.' }
 
     if (stage === 'password') {
-      const result = await state.manager.runPasswordAction(
+      const result = await state.manager.runWorkflowPasswordAction(
+        'combo',
         account,
         state.profileRoot,
         state.executable,
@@ -258,7 +259,8 @@ export class HotmailComboService {
     }
 
     const recoveryOperation: HotmailRecoveryOperation = stage === 'recovery_remove' ? 'remove' : state.recoveryOperation
-    const result = await state.manager.runRecoveryAction(
+    const result = await state.manager.runWorkflowRecoveryAction(
+      'combo',
       account,
       state.profileRoot,
       state.executable,
@@ -302,8 +304,7 @@ export class HotmailComboService {
 
   private finishAccount(state: ActiveComboAccount): void {
     this.active.delete(state.accountId)
-    state.manager.closeAll()
-    this.proxyPool.release(state.accountId)
+    state.manager.closeWorkflow(state.accountId, 'combo')
   }
 
   private secretValues(state: ActiveComboAccount): Array<string | null | undefined> {
