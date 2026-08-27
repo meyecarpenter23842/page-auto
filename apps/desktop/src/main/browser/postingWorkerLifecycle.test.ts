@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { shouldRetainPostingBrowserForManualSession } from './postingWorkerLifecycle'
+import type { FacebookPostTaskJobRequest } from '../../shared/facebookTasks'
+import {
+  shouldAutoReleasePostingBrowserForOneShot,
+  shouldRetainPostingBrowserForManualSession
+} from './postingWorkerLifecycle'
 
 describe('shouldRetainPostingBrowserForManualSession', () => {
   it('retains browser for unresolved login and unidentified verification states', () => {
@@ -46,5 +50,29 @@ describe('shouldRetainPostingBrowserForManualSession', () => {
       message: 'ok',
       sessionValidation: { phase: 'before_run', state: 'valid', message: 'valid' }
     })).toBe(false)
+  })
+})
+
+describe('shouldAutoReleasePostingBrowserForOneShot', () => {
+  const wallJob = (runId: number): FacebookPostTaskJobRequest => ({
+    runId,
+    task: {
+      type: 'page_wall_post',
+      target: { kind: 'page_wall', pageUid: '90001' }
+    }
+  } as FacebookPostTaskJobRequest)
+
+  it('auto-releases only manual Page Wall run-now jobs', () => {
+    expect(shouldAutoReleasePostingBrowserForOneShot(wallJob(0))).toBe(true)
+    expect(shouldAutoReleasePostingBrowserForOneShot(wallJob(42))).toBe(false)
+
+    const groupJob = {
+      runId: 0,
+      task: {
+        type: 'group_post',
+        target: { kind: 'group', groupUid: '123' }
+      }
+    } as FacebookPostTaskJobRequest
+    expect(shouldAutoReleasePostingBrowserForOneShot(groupJob)).toBe(false)
   })
 })

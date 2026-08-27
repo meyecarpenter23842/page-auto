@@ -9,6 +9,10 @@ import {
   retileManagedPostingBrowser,
   setManagedBrowserPlacement
 } from './managedBrowserBridge'
+import {
+  shouldAutoReleasePostingBrowserForOneShot,
+  shouldRetainPostingBrowserForManualSession
+} from './postingWorkerLifecycle'
 
 const parentPort = process.parentPort
 if (!parentPort) {
@@ -31,6 +35,30 @@ function isRetileRequest(payload: unknown): payload is RetileRequest {
   return Boolean(payload && typeof payload === 'object' && (payload as { type?: unknown }).type === 'retile')
 }
 
+async function closeWorkerBrowser(reason: string): Promise<number> {
+  try {
+    await closeManagedPostingBrowser()
+    console.info(`[PAGE-AUTO browser-close] ${reason} → posting worker confirmed browser shutdown`)
+    return 0
+  } catch (error) {
+    console.error(
+      `[PAGE-AUTO browser-close] ${reason} → posting worker failed to close browser:`,
+      error instanceof Error ? error.message : String(error)
+    )
+    return 1
+  }
+}
+
+function disposeWorkerSupport(): void {
+  clearEmailCodeProvider(emailCodeRpc.provider)
+  emailCodeRpc.dispose()
+}
+
+function exitSoon(exitCode: number): void {
+  disposeWorkerSupport()
+  setTimeout(() => process.exit(exitCode), 25)
+}
+
 parentPort.on('message', (event) => {
   if (emailCodeRpc.handleMessage(event.data)) return
   const payload = event.data as FacebookPostWorkerRequestMessage | RetileRequest | EmailCodeWorkerResponseMessage | { type?: string }
@@ -38,21 +66,8 @@ parentPort.on('message', (event) => {
     if (shuttingDown) return
     shuttingDown = true
     queue = queue.finally(async () => {
-      let exitCode = 0
-      try {
-        await closeManagedPostingBrowser()
-        console.info('[PAGE-AUTO browser-close] posting worker confirmed browser shutdown')
-      } catch (error) {
-        exitCode = 1
-        console.error(
-          '[PAGE-AUTO browser-close] posting worker failed to close browser:',
-          error instanceof Error ? error.message : String(error)
-        )
-      } finally {
-        clearEmailCodeProvider(emailCodeRpc.provider)
-        emailCodeRpc.dispose()
-      }
-      setTimeout(() => process.exit(exitCode), 25)
+      const exitCode = await closeWorkerBrowser('shutdown requested by Main')
+      exitSoon(exitCode)
     })
     return
   }
@@ -80,6 +95,17 @@ parentPort.on('message', (event) => {
         code: 'unexpected_error' as const,
         message: error instanceof Error ? error.message : String(error)
       }))
+
+    const autoRelease = shouldAutoReleasePostingBrowserForOneShot(message.job)
+      && !shouldRetainPostingBrowserForManualSession(result)
+    if (autoRelease) {
+      shuttingDown = true
+      const exitCode = await closeWorkerBrowser('one-shot Page Wall complete')
+      parentPort.postMessage({ type: 'result', result })
+      exitSoon(exitCode)
+      return
+    }
+
     parentPort.postMessage({ type: 'result', result })
   })
 })
