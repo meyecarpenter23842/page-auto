@@ -9,12 +9,17 @@ import type {
 } from '../../shared/hotmail'
 import { shouldKeepEmailBrowserWorker } from './emailBrowserLifecycle'
 import { ensureEmailProfileDirectory, inspectEmailProfile } from './emailProfileResolver'
+import {
+  nextEmailAuthResumeKind,
+  shouldResumeEmailActionAfterAuth,
+  type EmailAuthResumeKind
+} from './emailLoginPolicy'
 import type { EmailProxyCandidate } from './emailProxyPool'
 
 interface WorkerOpenResult {
   type: 'open-result'
   accountId: number
-  status: 'started' | 'already_open' | 'profile_in_use' | 'error'
+  status: 'started' | 'already_open' | 'needs_attention' | 'profile_in_use' | 'error'
   attached: boolean
   proxyManagedExternally: boolean
   message: string
@@ -55,6 +60,7 @@ interface WorkerEntry {
   pending: WorkerPending | null
   spawned: Promise<void>
   actionOnly: boolean
+  authResumeKind: EmailAuthResumeKind | null
 }
 
 interface PreparedWorker {
@@ -84,6 +90,13 @@ function proxyPayload(proxy: EmailProxyCandidate | null) {
       ...(proxy.password ? { password: proxy.password } : {})
     }
   } : {}
+}
+
+function loginPayload(account: AccountRecord) {
+  return {
+    ...(account.email?.trim() ? { loginEmail: account.email.trim() } : {}),
+    ...(account.emailPassword ? { loginPassword: account.emailPassword } : {})
+  }
 }
 
 function workerErrorResponse(kind: PendingKind, command: Record<string, unknown>, message: string): WorkerResponse {
@@ -131,6 +144,7 @@ export class EmailBrowserManager {
       type: 'open-mail',
       accountId: account.id,
       profileDirectory: entry.profileDirectory,
+      ...loginPayload(account),
       ...(browserExecutable.trim() ? { executablePath: browserExecutable.trim() } : {}),
       ...proxyPayload(proxy)
     }) as WorkerOpenResult
@@ -179,15 +193,18 @@ export class EmailBrowserManager {
       }
     }
 
+    const resumeAfterAuth = shouldResumeEmailActionAfterAuth(entry.authResumeKind, 'recovery-result', confirmCompleted)
     const response = await this.send(entry, 'recovery-result', {
       type: 'recovery-action',
       accountId: account.id,
       profileDirectory: entry.profileDirectory,
       operation,
-      confirmCompleted,
+      confirmCompleted: resumeAfterAuth ? false : confirmCompleted,
+      ...loginPayload(account),
       ...(browserExecutable.trim() ? { executablePath: browserExecutable.trim() } : {}),
       ...proxyPayload(proxy)
     }) as WorkerRecoveryResult
+    entry.authResumeKind = nextEmailAuthResumeKind('recovery-result', response.status, response.needsAttentionReason)
 
     const result = {
       accountId: account.id,
@@ -232,16 +249,19 @@ export class EmailBrowserManager {
       }
     }
 
+    const resumeAfterAuth = shouldResumeEmailActionAfterAuth(entry.authResumeKind, 'password-result', confirmCompleted)
     const response = await this.send(entry, 'password-result', {
       type: 'password-action',
       accountId: account.id,
       profileDirectory: entry.profileDirectory,
-      confirmCompleted,
-      ...(!confirmCompleted && account.emailPassword ? { currentPassword: account.emailPassword } : {}),
-      ...(!confirmCompleted ? { newPassword } : {}),
+      confirmCompleted: resumeAfterAuth ? false : confirmCompleted,
+      ...loginPayload(account),
+      ...(account.emailPassword ? { currentPassword: account.emailPassword } : {}),
+      newPassword,
       ...(browserExecutable.trim() ? { executablePath: browserExecutable.trim() } : {}),
       ...proxyPayload(proxy)
     }) as WorkerPasswordResult
+    entry.authResumeKind = nextEmailAuthResumeKind('password-result', response.status, response.needsAttentionReason)
 
     const result = {
       accountId: account.id,
@@ -307,7 +327,8 @@ export class EmailBrowserManager {
       profileDirectory: inspection.profileDirectory,
       pending: null,
       spawned,
-      actionOnly
+      actionOnly,
+      authResumeKind: null
     }
     this.workers.set(account.id, entry)
 
