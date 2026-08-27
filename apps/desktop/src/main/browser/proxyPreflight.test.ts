@@ -44,8 +44,8 @@ describe('proxy preflight', () => {
     expect(result.message).not.toContain('do-not-log')
   })
 
-  it('caps navigation by the stricter browser/network timeout', () => {
-    expect(effectiveNavigationTimeoutMs(30_000, 12_000)).toBe(12_000)
+  it('keeps navigation timeout independent from the DOM/network timeout budget', () => {
+    expect(effectiveNavigationTimeoutMs(30_000, 12_000)).toBe(30_000)
     expect(effectiveNavigationTimeoutMs(8_000, 30_000)).toBe(8_000)
   })
 })
