@@ -65,18 +65,18 @@ class Store implements RotationRunStore {
     this.details.metrics.pending -= 1
     this.details.metrics.remaining -= 1
     this.details.metrics.failed += 1
-    this.details.metrics.progressPercent = Math.round((this.details.metrics.failed / this.details.metrics.total) * 100)
+    this.details.metrics.progressPercent = 50
     return this.details
   }
 }
 
-function failedItem(id: number): RunItem {
+function failedItem(): RunItem {
   return {
-    id,
+    id: 500,
     runId: 91,
     sourceGroupItemId: null,
-    groupUid: `group-${id}`,
-    sortOrder: id,
+    groupUid: 'group-500',
+    sortOrder: 0,
     status: 'failed',
     attemptCount: 1,
     lastError: 'composer failed',
@@ -87,20 +87,22 @@ function failedItem(id: number): RunItem {
 }
 
 describe('RotationService live-retest regressions', () => {
-  it('keeps using the only account for remaining groups after terminal composer failures without marking it unavailable', async () => {
+  it('does not classify a one-account composer failure as account-unavailable or release the same idle browser repeatedly', async () => {
     const store = new Store()
     const releaseCalls: number[] = []
-    let nextItemId = 500
+    let released!: () => void
+    const firstRelease = new Promise<void>((resolve) => { released = resolve })
 
     const service = new RotationService(store, {
       executeSingle: async (): Promise<ExecuteSinglePostingJobResult> => ({
         accountId: 101,
-        item: failedItem(nextItemId++),
+        item: failedItem(),
         result: { status: 'failed', code: 'composer_not_found', message: 'composer failed' },
         run: store.failOne()
       }),
       releaseAccount: async (accountId: number) => {
         releaseCalls.push(accountId)
+        released()
       }
     }, {
       now: () => new Date(2026, 7, 25, 8, 0),
@@ -109,14 +111,13 @@ describe('RotationService live-retest regressions', () => {
     })
 
     service.start({ pageTabId: 10 })
-    await service.waitForSettled()
+    await firstRelease
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
 
     const status = service.status({ pageTabId: 10 })
     expect(status.status).toBe('waiting_window')
     expect(status.message).not.toContain('Không còn tài khoản khả dụng')
-    expect(store.details.metrics.failed).toBe(2)
-    expect(store.details.metrics.remaining).toBe(0)
-    expect(releaseCalls).toEqual([101, 101])
+    expect(releaseCalls).toEqual([101])
     service.dispose()
   })
 })

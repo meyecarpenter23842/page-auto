@@ -19,10 +19,10 @@ function makeRun(total = 7): RunDetails {
         pageUid: '90001',
         rotation: {
           postsPerAccount: 1,
-          postDelayMinSeconds: 0,
-          postDelayMaxSeconds: 0,
-          accountDelayMinSeconds: 0,
-          accountDelayMaxSeconds: 0,
+          postDelayMinSeconds: 1,
+          postDelayMaxSeconds: 1,
+          accountDelayMinSeconds: 1,
+          accountDelayMaxSeconds: 1,
           accountOrderMode: 'sequential'
         },
         accounts: [
@@ -61,7 +61,9 @@ class FakeRunStore implements RotationRunStore {
   stopCalls = 0
   createCalls = 0
 
-  getLatestForPageTab(): RunDetails | null { return this.details }
+  getLatestForPageTab(): RunDetails | null {
+    return this.details
+  }
 
   createForPageTab(): RunDetails {
     const previous = this.details
@@ -82,7 +84,9 @@ class FakeRunStore implements RotationRunStore {
     return next
   }
 
-  get(): RunDetails | null { return this.details }
+  get(): RunDetails | null {
+    return this.details
+  }
 
   pause(): RunDetails {
     if (!this.details) throw new Error('missing run')
@@ -133,7 +137,9 @@ function item(id: number, runId: number, status: 'success' | 'failed' | 'skipped
   }
 }
 
-function never(): Promise<never> { return new Promise<never>(() => undefined) }
+function never(): Promise<never> {
+  return new Promise<never>(() => undefined)
+}
 
 const mondayTwoWindows: PageTabScheduleInput[] = [
   { dayOfWeek: 1, startMinute: 420, endMinute: 720, enabled: true, sortOrder: 0 },
@@ -141,7 +147,7 @@ const mondayTwoWindows: PageTabScheduleInput[] = [
 ]
 
 describe('RotationService', () => {
-  it('keeps rotating accounts in the same window until the run is exhausted', async () => {
+  it('runs exactly one account cycle per window and honors per-account quota before fallback quota', async () => {
     const store = new FakeRunStore()
     const accountCalls: number[] = []
     let nextItemId = 1
@@ -150,64 +156,47 @@ describe('RotationService', () => {
         const accountId = payload.accountId ?? -1
         accountCalls.push(accountId)
         const run = store.finishOne()
-        return { accountId, item: item(nextItemId++, payload.runId), result: { status: 'success', message: 'ok' }, run }
+        return {
+          accountId,
+          item: item(nextItemId++, payload.runId),
+          result: { status: 'success', message: 'ok' },
+          run
+        }
       }
     }
+    const sleeps: number[] = []
     const service = new RotationService(store, posting, {
       now: () => new Date(2026, 7, 24, 10, 30),
       random: () => 0,
-      sleep: async () => store.details?.run.status === 'completed' ? never() : undefined
-    })
-
-    service.start({ pageTabId: 10 })
-    await service.waitForSettled()
-
-    expect(accountCalls).toEqual([101, 101, 202, 101, 101, 202, 101])
-    expect(service.status({ pageTabId: 10 }).cycle).toBe(2)
-    expect(service.status({ pageTabId: 10 }).status).toBe('waiting_window')
-    expect(store.details?.metrics.remaining).toBe(0)
-    service.dispose()
-  })
-
-  it('starts the next account cycle inside the current configured window', async () => {
-    const store = new FakeRunStore()
-    store.details = makeRun(4)
-    store.details.run.snapshot.accounts = [
-      { accountId: 101, enabled: true, sortOrder: 0, postsPerTurn: 1 },
-      { accountId: 202, enabled: true, sortOrder: 1, postsPerTurn: 1 }
-    ]
-    store.details.run.snapshot.schedules = mondayTwoWindows
-    const calls: number[] = []
-    let nextItemId = 1
-    const posting = {
-      executeSingle: async (payload: { runId: number; accountId?: number }): Promise<ExecuteSinglePostingJobResult> => {
-        const accountId = payload.accountId ?? -1
-        calls.push(accountId)
-        const run = store.finishOne()
-        return { accountId, item: item(nextItemId++, payload.runId), result: { status: 'success', message: 'ok' }, run }
+      sleep: async (milliseconds) => {
+        if (service.status({ pageTabId: 10 }).status === 'waiting_window') return never()
+        sleeps.push(milliseconds)
       }
-    }
-    const service = new RotationService(store, posting, {
-      now: () => new Date(2026, 7, 24, 8, 0),
-      random: () => 0,
-      sleep: async () => store.details?.run.status === 'completed' ? never() : undefined
     })
 
     service.start({ pageTabId: 10 })
     await service.waitForSettled()
-    expect(calls).toEqual([101, 202, 101, 202])
-    expect(service.status({ pageTabId: 10 }).cycle).toBe(1)
+
+    expect(accountCalls).toEqual([101, 101, 202])
+    expect(sleeps).toEqual([1000, 1000])
+    expect(service.status({ pageTabId: 10 }).status).toBe('waiting_window')
+    expect(store.resumeCalls).toBe(1)
     service.dispose()
   })
 
-  it('continues an unfinished account quota when the next same-day window opens', async () => {
+  it('continues the same account quota in the next window when the first window closes mid-turn', async () => {
     const store = new FakeRunStore()
-    store.details = makeRun(3)
+    store.details = makeRun(6)
     store.details.run.snapshot.schedules = mondayTwoWindows
+    store.details.run.snapshot.rotation.postDelayMinSeconds = 0
+    store.details.run.snapshot.rotation.postDelayMaxSeconds = 0
+    store.details.run.snapshot.rotation.accountDelayMinSeconds = 0
+    store.details.run.snapshot.rotation.accountDelayMaxSeconds = 0
     store.details.run.snapshot.accounts = [
       { accountId: 101, enabled: true, sortOrder: 0, postsPerTurn: 2 },
       { accountId: 202, enabled: true, sortOrder: 1, postsPerTurn: 1 }
     ]
+
     let now = new Date(2026, 7, 24, 11, 59, 59)
     const calls: Array<{ accountId: number; hour: number }> = []
     let nextItemId = 1
@@ -223,31 +212,126 @@ describe('RotationService', () => {
     const service = new RotationService(store, posting, {
       now: () => now,
       random: () => 0,
-      sleep: async (milliseconds) => {
-        if (store.details?.run.status === 'completed') return never()
-        now = new Date(now.getTime() + milliseconds)
-      }
+      sleep: async (milliseconds) => { now = new Date(now.getTime() + milliseconds) }
     })
 
     service.start({ pageTabId: 10 })
     await service.waitForSettled()
+
     expect(calls).toEqual([
       { accountId: 101, hour: 11 },
       { accountId: 101, hour: 13 },
       { accountId: 202, hour: 13 }
     ])
+    expect(service.status({ pageTabId: 10 }).status).toBe('waiting_window')
     service.dispose()
   })
 
-  it('randomizes once per cycle without repeating an account inside a cycle', async () => {
+  it('carries an incomplete account-cycle cursor into the next same-day window', async () => {
     const store = new FakeRunStore()
-    store.details = makeRun(6)
+    store.details = makeRun(12)
+    store.details.run.snapshot.schedules = mondayTwoWindows
+    store.details.run.snapshot.rotation.postDelayMinSeconds = 0
+    store.details.run.snapshot.rotation.postDelayMaxSeconds = 0
+    store.details.run.snapshot.rotation.accountDelayMinSeconds = 0
+    store.details.run.snapshot.rotation.accountDelayMaxSeconds = 0
+    store.details.run.snapshot.accounts = [101, 202, 303, 404, 505].map((accountId, index) => ({
+      accountId,
+      enabled: true,
+      sortOrder: index,
+      postsPerTurn: 1
+    }))
+
+    let now = new Date(2026, 7, 24, 11, 59, 57)
+    const calls: Array<{ accountId: number; hour: number }> = []
+    let nextItemId = 1
+    const posting = {
+      executeSingle: async (payload: { runId: number; accountId?: number }): Promise<ExecuteSinglePostingJobResult> => {
+        const accountId = payload.accountId ?? -1
+        calls.push({ accountId, hour: now.getHours() })
+        const run = store.finishOne()
+        now = new Date(now.getTime() + 1000)
+        return { accountId, item: item(nextItemId++, payload.runId), result: { status: 'success', message: 'ok' }, run }
+      }
+    }
+    const service = new RotationService(store, posting, {
+      now: () => now,
+      random: () => 0,
+      sleep: async (milliseconds) => { now = new Date(now.getTime() + milliseconds) }
+    })
+
+    service.start({ pageTabId: 10 })
+    await service.waitForSettled()
+
+    expect(calls).toEqual([
+      { accountId: 101, hour: 11 },
+      { accountId: 202, hour: 11 },
+      { accountId: 303, hour: 11 },
+      { accountId: 404, hour: 13 },
+      { accountId: 505, hour: 13 }
+    ])
+    expect(service.status({ pageTabId: 10 }).status).toBe('waiting_window')
+    service.dispose()
+  })
+
+  it('starts a fresh cycle from the first account in the next window after a full sequential cycle', async () => {
+    const store = new FakeRunStore()
+    store.details = makeRun(8)
+    store.details.run.snapshot.schedules = mondayTwoWindows
+    store.details.run.snapshot.rotation.postDelayMinSeconds = 0
+    store.details.run.snapshot.rotation.postDelayMaxSeconds = 0
+    store.details.run.snapshot.rotation.accountDelayMinSeconds = 0
+    store.details.run.snapshot.rotation.accountDelayMaxSeconds = 0
+    store.details.run.snapshot.accounts = [
+      { accountId: 101, enabled: true, sortOrder: 0, postsPerTurn: 1 },
+      { accountId: 202, enabled: true, sortOrder: 1, postsPerTurn: 1 }
+    ]
+
+    let now = new Date(2026, 7, 24, 8, 0)
+    const accountCalls: number[] = []
+    let nextItemId = 1
+    let secondCycleStarted!: () => void
+    const secondCycle = new Promise<void>((resolve) => { secondCycleStarted = resolve })
+    const posting = {
+      executeSingle: async (payload: { runId: number; accountId?: number }): Promise<ExecuteSinglePostingJobResult> => {
+        const accountId = payload.accountId ?? -1
+        accountCalls.push(accountId)
+        if (accountCalls.length === 3) {
+          secondCycleStarted()
+          return never()
+        }
+        const run = store.finishOne()
+        return { accountId, item: item(nextItemId++, payload.runId), result: { status: 'success', message: 'ok' }, run }
+      }
+    }
+    const service = new RotationService(store, posting, {
+      now: () => now,
+      random: () => 0,
+      sleep: async (milliseconds) => { now = new Date(now.getTime() + milliseconds) }
+    })
+
+    service.start({ pageTabId: 10 })
+    await secondCycle
+
+    expect(accountCalls).toEqual([101, 202, 101])
+    expect(now.getHours()).toBe(13)
+    service.dispose()
+  })
+
+  it('randomizes account order once per cycle without repeating an account inside that cycle', async () => {
+    const store = new FakeRunStore()
+    store.details = makeRun(8)
     store.details.run.snapshot.rotation.accountOrderMode = 'random'
+    store.details.run.snapshot.rotation.postDelayMinSeconds = 0
+    store.details.run.snapshot.rotation.postDelayMaxSeconds = 0
+    store.details.run.snapshot.rotation.accountDelayMinSeconds = 0
+    store.details.run.snapshot.rotation.accountDelayMaxSeconds = 0
     store.details.run.snapshot.accounts = [
       { accountId: 101, enabled: true, sortOrder: 0, postsPerTurn: 1 },
       { accountId: 202, enabled: true, sortOrder: 1, postsPerTurn: 1 },
       { accountId: 303, enabled: true, sortOrder: 2, postsPerTurn: 1 }
     ]
+
     const calls: number[] = []
     let nextItemId = 1
     const posting = {
@@ -261,33 +345,43 @@ describe('RotationService', () => {
     const service = new RotationService(store, posting, {
       now: () => new Date(2026, 7, 24, 10, 30),
       random: () => 0,
-      sleep: async () => store.details?.run.status === 'completed' ? never() : undefined
+      sleep: async () => never()
     })
 
     service.start({ pageTabId: 10 })
     await service.waitForSettled()
-    expect(calls).toEqual([202, 303, 101, 202, 303, 101])
-    expect(new Set(calls.slice(0, 3)).size).toBe(3)
-    expect(new Set(calls.slice(3, 6)).size).toBe(3)
+
+    expect(calls).toEqual([202, 303, 101])
+    expect(new Set(calls).size).toBe(3)
     service.dispose()
   })
 
-  it('does not count a failed post toward Bài/lượt and moves to the next account', async () => {
+  it('does not consume Bài/lượt quota for a terminal failed posting result', async () => {
     const store = new FakeRunStore()
-    store.details = makeRun(2)
+    store.details = makeRun(5)
+    store.details.run.snapshot.rotation.postDelayMinSeconds = 0
+    store.details.run.snapshot.rotation.postDelayMaxSeconds = 0
+    store.details.run.snapshot.rotation.accountDelayMinSeconds = 0
+    store.details.run.snapshot.rotation.accountDelayMaxSeconds = 0
     store.details.run.snapshot.accounts = [
       { accountId: 101, enabled: true, sortOrder: 0, postsPerTurn: 2 },
       { accountId: 202, enabled: true, sortOrder: 1, postsPerTurn: 1 }
     ]
-    const calls: number[] = []
+
+    const accountCalls: number[] = []
     let nextItemId = 1
     const posting = {
       executeSingle: async (payload: { runId: number; accountId?: number }): Promise<ExecuteSinglePostingJobResult> => {
         const accountId = payload.accountId ?? -1
-        calls.push(accountId)
+        accountCalls.push(accountId)
         if (accountId === 101) {
           const run = store.finishOne('failed')
-          return { accountId, item: item(nextItemId++, payload.runId, 'failed'), result: { status: 'failed', code: 'composer_not_found', message: 'failed' }, run }
+          return {
+            accountId,
+            item: item(nextItemId++, payload.runId, 'failed'),
+            result: { status: 'failed', code: 'composer_not_found', message: 'composer failed' },
+            run
+          }
         }
         const run = store.finishOne()
         return { accountId, item: item(nextItemId++, payload.runId), result: { status: 'success', message: 'ok' }, run }
@@ -296,14 +390,51 @@ describe('RotationService', () => {
     const service = new RotationService(store, posting, {
       now: () => new Date(2026, 7, 24, 10, 30),
       random: () => 0,
-      sleep: async () => store.details?.run.status === 'completed' ? never() : undefined
+      sleep: async () => never()
     })
 
     service.start({ pageTabId: 10 })
     await service.waitForSettled()
-    expect(calls).toEqual([101, 202])
-    expect(store.details?.metrics.failed).toBe(1)
-    expect(store.details?.metrics.success).toBe(1)
+
+    expect(accountCalls).toEqual([101, 202])
+    expect(store.details.metrics.failed).toBe(1)
+    expect(store.details.metrics.success).toBe(1)
+    service.dispose()
+  })
+
+  it('pauses outside the configured window and resumes when the window opens', async () => {
+    const store = new FakeRunStore()
+    store.details = makeRun(1)
+    store.details.run.snapshot.accounts = [{ accountId: 101, enabled: true, sortOrder: 0, postsPerTurn: 1 }]
+    store.details.run.snapshot.schedules = [{ dayOfWeek: 1, startMinute: 600, endMinute: 660, enabled: true, sortOrder: 0 }]
+
+    let now = new Date(2026, 7, 24, 9, 59)
+    const posting = {
+      executeSingle: async (payload: { runId: number; accountId?: number }): Promise<ExecuteSinglePostingJobResult> => {
+        const run = store.finishOne()
+        return {
+          accountId: payload.accountId ?? null,
+          item: item(1, payload.runId),
+          result: { status: 'success', message: 'ok' },
+          run
+        }
+      }
+    }
+    const service = new RotationService(store, posting, {
+      now: () => now,
+      random: () => 0,
+      sleep: async (milliseconds) => {
+        if (store.details?.run.status === 'completed') return never()
+        now = new Date(now.getTime() + milliseconds)
+      }
+    })
+
+    service.start({ pageTabId: 10 })
+    await service.waitForSettled()
+
+    expect(store.pauseCalls).toBeGreaterThan(0)
+    expect(store.resumeCalls).toBe(1)
+    expect(service.status({ pageTabId: 10 }).status).toBe('waiting_window')
     service.dispose()
   })
 
@@ -312,27 +443,80 @@ describe('RotationService', () => {
     store.details = makeRun(1)
     store.details.run.snapshot.accounts = [{ accountId: 101, enabled: true, sortOrder: 0, postsPerTurn: 1 }]
     store.details.run.snapshot.schedules = [{ dayOfWeek: 1, startMinute: 600, endMinute: 660, enabled: true, sortOrder: 0 }]
-    const liveSchedules: PageTabScheduleInput[] = [{ dayOfWeek: 1, startMinute: 460, endMinute: 600, enabled: true, sortOrder: 0 }]
-    const posting = { executeSingle: async (): Promise<ExecuteSinglePostingJobResult> => never() }
+
+    const liveSchedules: PageTabScheduleInput[] = [
+      { dayOfWeek: 1, startMinute: 460, endMinute: 600, enabled: true, sortOrder: 0 }
+    ]
+    const posting = {
+      executeSingle: async (): Promise<ExecuteSinglePostingJobResult> => new Promise(() => undefined)
+    }
     const service = new RotationService(
       store,
       posting,
-      { now: () => new Date(2026, 7, 24, 7, 50), random: () => 0, sleep: async () => never() },
+      {
+        now: () => new Date(2026, 7, 24, 7, 50),
+        random: () => 0,
+        sleep: async () => new Promise(() => undefined)
+      },
       undefined,
       undefined,
       () => liveSchedules
     )
 
     service.start({ pageTabId: 10 })
-    expect(service.pause({ pageTabId: 10 }).status).toBe('paused')
-    expect(service.resume({ pageTabId: 10 }).status).toBe('running')
+    const paused = service.pause({ pageTabId: 10 })
+    expect(paused.status).toBe('paused')
+
+    const resumed = service.resume({ pageTabId: 10 })
+    expect(resumed.status).toBe('running')
+    expect(resumed.nextActionAt).toBeNull()
     service.dispose()
   })
 
-  it('defers Stop until an in-flight posting job finishes', async () => {
+  it('restores a paused run and restarts the scheduler when Resume is clicked after app restart', async () => {
+    const store = new FakeRunStore()
+    store.details = makeRun(1)
+    store.details.run.status = 'paused'
+    store.details.run.snapshot.accounts = [{ accountId: 101, enabled: true, sortOrder: 0, postsPerTurn: 1 }]
+    store.details.run.snapshot.schedules = [{ dayOfWeek: 1, startMinute: 460, endMinute: 600, enabled: true, sortOrder: 0 }]
+
+    const accountCalls: number[] = []
+    const posting = {
+      executeSingle: async (payload: { runId: number; accountId?: number }): Promise<ExecuteSinglePostingJobResult> => {
+        const accountId = payload.accountId ?? -1
+        accountCalls.push(accountId)
+        const run = store.finishOne()
+        return {
+          accountId,
+          item: item(1, payload.runId),
+          result: { status: 'success', message: 'ok' },
+          run
+        }
+      }
+    }
+    const service = new RotationService(store, posting, {
+      now: () => new Date(2026, 7, 24, 7, 50),
+      random: () => 0,
+      sleep: async () => never()
+    })
+
+    const resumed = service.resume({ pageTabId: 10 })
+    expect(resumed.status).toBe('running')
+    expect(resumed.message).toContain('khôi phục')
+
+    await service.waitForSettled()
+
+    expect(accountCalls).toEqual([101])
+    expect(store.resumeCalls).toBe(1)
+    expect(service.status({ pageTabId: 10 }).status).toBe('waiting_window')
+    service.dispose()
+  })
+
+  it('defers Stop until an in-flight posting job finishes, then marks the run stopped', async () => {
     const store = new FakeRunStore()
     store.details = makeRun(1)
     store.details.run.snapshot.accounts = [{ accountId: 101, enabled: true, sortOrder: 0, postsPerTurn: 1 }]
+
     let resolveJob!: () => void
     let jobStarted!: () => void
     const started = new Promise<void>((resolve) => { jobStarted = resolve })
@@ -342,7 +526,12 @@ describe('RotationService', () => {
         return new Promise((resolve) => {
           resolveJob = () => {
             const run = store.finishOne()
-            resolve({ accountId: payload.accountId ?? null, item: item(1, payload.runId), result: { status: 'success', message: 'ok' }, run })
+            resolve({
+              accountId: payload.accountId ?? null,
+              item: item(1, payload.runId),
+              result: { status: 'success', message: 'ok' },
+              run
+            })
           }
         })
       }
@@ -355,15 +544,17 @@ describe('RotationService', () => {
 
     service.start({ pageTabId: 10 })
     await started
-    expect(service.stop({ pageTabId: 10 }).status).toBe('stopping')
+    const stopping = service.stop({ pageTabId: 10 })
+    expect(stopping.status).toBe('stopping')
     expect(store.stopCalls).toBe(0)
+
     resolveJob()
     await service.waitForSettled()
     expect(service.status({ pageTabId: 10 }).status).toBe('stopped')
     expect(store.stopCalls).toBe(1)
   })
 
-  it('creates a fresh run and resets to the first account on the next eligible local day', async () => {
+  it('creates a fresh run and resets to the first sequential account on the next eligible local day', async () => {
     const store = new FakeRunStore()
     store.details = makeRun(3)
     store.details.run.snapshot.accounts = [
@@ -374,6 +565,11 @@ describe('RotationService', () => {
       { dayOfWeek: 1, startMinute: 1438, endMinute: 1439, enabled: true, sortOrder: 0 },
       { dayOfWeek: 2, startMinute: 0, endMinute: 1, enabled: true, sortOrder: 1 }
     ]
+    store.details.run.snapshot.rotation.postDelayMinSeconds = 0
+    store.details.run.snapshot.rotation.postDelayMaxSeconds = 0
+    store.details.run.snapshot.rotation.accountDelayMinSeconds = 0
+    store.details.run.snapshot.rotation.accountDelayMaxSeconds = 0
+
     let now = new Date(2026, 7, 24, 23, 58, 59)
     const calls: Array<{ runId: number; accountId: number }> = []
     let nextItemId = 1
@@ -389,7 +585,12 @@ describe('RotationService', () => {
         }
         const run = store.finishOne()
         now = new Date(now.getTime() + 1000)
-        return Promise.resolve({ accountId, item: item(nextItemId++, payload.runId), result: { status: 'success', message: 'ok' }, run })
+        return Promise.resolve({
+          accountId,
+          item: item(nextItemId++, payload.runId),
+          result: { status: 'success', message: 'ok' },
+          run
+        })
       }
     }
     const service = new RotationService(store, posting, {
@@ -400,10 +601,12 @@ describe('RotationService', () => {
 
     service.start({ pageTabId: 10 })
     await secondRunStarted
+
     expect(store.createCalls).toBe(1)
     expect(calls[0]).toEqual({ runId: 1, accountId: 101 })
     expect(calls.at(-1)).toEqual({ runId: 2, accountId: 101 })
     expect(service.status({ pageTabId: 10 }).runId).toBe(2)
+    expect(service.status({ pageTabId: 10 }).status).toBe('running')
     service.dispose()
   })
 })
