@@ -2,8 +2,11 @@ import { describe, expect, it, vi } from 'vitest'
 import type { Locator } from 'playwright-core'
 import {
   choosePageWallAdvanceCandidateStrategy,
+  isPageWallOptionalCtaPromptOwned,
+  waitForPageWallFinalPublishStage,
   waitForPageWallPublishStage,
-  type PageWallAdvanceCandidateResolution
+  type PageWallAdvanceCandidateResolution,
+  type PageWallOptionalCtaPromptResolution
 } from './pageWallPublishAction'
 
 function advanceResolution(
@@ -22,6 +25,15 @@ function advanceResolution(
       pageRoleEnabled: strategy === 'page-unique-role' ? 1 : 0,
       pageAriaEnabled: strategy === 'page-unique-aria' ? 1 : 0
     }
+  }
+}
+
+function optionalCtaResolution(owned = true): PageWallOptionalCtaPromptResolution {
+  return {
+    dismissButton: owned ? {} as Locator : null,
+    titleVisible: owned ? 1 : 0,
+    addButtonEnabled: owned ? 1 : 0,
+    dismissButtonEnabled: owned ? 1 : 0
   }
 }
 
@@ -100,5 +112,56 @@ describe('Page Wall publish stage selection', () => {
 
     expect(stage?.kind).toBe('advance')
     expect(probes).toBe(4)
+  })
+})
+
+describe('Page Wall optional CTA ownership', () => {
+  it('requires the known title plus exactly one Add Button and one Not now action', () => {
+    expect(isPageWallOptionalCtaPromptOwned(1, 1, 1)).toBe(true)
+    expect(isPageWallOptionalCtaPromptOwned(0, 1, 1)).toBe(false)
+    expect(isPageWallOptionalCtaPromptOwned(1, 0, 1)).toBe(false)
+    expect(isPageWallOptionalCtaPromptOwned(1, 1, 0)).toBe(false)
+    expect(isPageWallOptionalCtaPromptOwned(1, 2, 1)).toBe(false)
+    expect(isPageWallOptionalCtaPromptOwned(1, 1, 2)).toBe(false)
+  })
+
+  it('dismisses the owned CTA before trusting a Post control that may be visible behind the modal', async () => {
+    const publishProbe = vi.fn(async () => true)
+    const stage = await waitForPageWallFinalPublishStage(
+      async () => optionalCtaResolution(true),
+      publishProbe,
+      1_000,
+      async () => undefined
+    )
+
+    expect(stage?.kind).toBe('optional-cta')
+    expect(publishProbe).not.toHaveBeenCalled()
+  })
+
+  it('continues directly to Post when the optional CTA is absent', async () => {
+    const stage = await waitForPageWallFinalPublishStage(
+      async () => optionalCtaResolution(false),
+      async () => true,
+      1_000,
+      async () => undefined
+    )
+
+    expect(stage).toEqual({ kind: 'publish' })
+  })
+
+  it('keeps polling until the optional CTA appears after Next', async () => {
+    let probes = 0
+    const stage = await waitForPageWallFinalPublishStage(
+      async () => {
+        probes += 1
+        return optionalCtaResolution(probes >= 3)
+      },
+      async () => false,
+      1_000,
+      async () => undefined
+    )
+
+    expect(stage?.kind).toBe('optional-cta')
+    expect(probes).toBe(3)
   })
 })
