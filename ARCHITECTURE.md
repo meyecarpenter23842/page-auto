@@ -91,7 +91,7 @@ Tầng này sở hữu mọi hành vi Facebook có thể tái sử dụng giữa
 
 - kiểm tra session;
 - bootstrap session từ profile/cookie;
-- login lại khi hết session;
+- login lại khi session hết;
 - saved-profile/password-only flow;
 - 2FA;
 - xác minh sau login/2FA;
@@ -835,3 +835,39 @@ Giới hạn cố ý của 5A:
 Invariant sau 5A:
 
 > Có thể biểu diễn `page_wall_post` bằng typed contract mà không giả định `groupUid`, và business Tường có thể chạy trên runtime đã chuẩn bị mà không copy session/login/2FA/checkpoint/Page switch. Group Post production path chưa bị thay đổi.
+
+---
+
+## 22. Trạng thái Đăng Tường — lô 5B publish trực tiếp
+
+Lô 5B nối **đăng ngay** ở business layer trên `PreparedPageWallRuntime`, nhưng vẫn chưa wire Main/worker/UI/scheduler. Mục tiêu là hoàn tất và test được flow publish Tường trước khi đưa nó vào orchestration production.
+
+Source trong lô:
+
+- `apps/desktop/src/main/business/page-wall-post/pageWallPostFlow.ts`
+  - điều phối baseline -> composer -> content/media -> publish -> verification;
+  - tái sử dụng `RobustComposerDetector`, `PostComposer`, `MediaUploader`, `PublishAction` hiện hữu thay vì copy selector/logic;
+  - hỗ trợ bài text+ảnh và image-only; không gửi publish nếu không chụp được baseline xác minh trước đó.
+- `apps/desktop/src/main/business/page-wall-post/pageWallPublishVerifier.ts`
+  - verifier riêng của Tường, không dùng Group bucket verifier;
+  - evidence mạnh là post key mới so với baseline và, khi có text, nội dung khớp bài cần đăng;
+  - kiểm DOM ngay sau publish, nếu chưa thấy thì tải lại đúng Tường Page bằng navigation timeout rồi kiểm lần nữa;
+  - nếu vẫn không có evidence thì trả `publish_unconfirmed`, **không coi click nút Đăng là success và không tự retry**;
+  - nếu login/checkpoint xuất hiện sau click thì giữ typed common state và kèm cảnh báo review Tường trước khi retry.
+- `apps/desktop/src/main/browser/posting/publishVerification.ts`
+  - giữ default Group fingerprint 12 ký tự;
+  - mở rộng helper theo tham số để Page Wall có thể xác minh text ngắn bằng new-post-key + content, và image-only bằng new-post-key khi baseline hợp lệ;
+  - default call path của Group không đổi.
+- `apps/desktop/src/main/business/page-wall-post/pageWallTask.ts`
+  - `prepare()` vẫn chỉ dùng prepared common runtime;
+  - `execute()` mới gọi flow 5B sau khi Wall surface qua common access check.
+
+Giới hạn cố ý của 5B:
+
+- `posting-worker.ts`, `PostingWorkerManager`, `PostingService`, DB run/scheduler, IPC và renderer **chưa dispatch `page_wall_post`**; Group production path vì vậy chưa bị đổi bởi lô này.
+- Chưa làm hẹn ngày/giờ hoặc danh sách bài đã hẹn; đó là wiring/scheduler/UI lô sau.
+- Chưa đổi Group `PublishResultDetector` hay Group anti-duplicate semantics.
+
+Invariant sau 5B:
+
+> Business Tường đã có flow đăng ngay với strong verification riêng và có thể chạy khi được cấp prepared common runtime; production orchestration vẫn chỉ dispatch Group cho tới lô wiring kế tiếp.

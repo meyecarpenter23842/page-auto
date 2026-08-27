@@ -1,7 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { Page } from 'playwright-core'
 import type { PageWallPostTaskDescriptor } from '../../../shared/facebookTasks'
-import { PageWallTask, pageWallUrl, type PreparedPageWallRuntime } from './pageWallTask'
+import type { PostingJobResult } from '../../../shared/posting'
+import {
+  PageWallTask,
+  pageWallUrl,
+  type PageWallPostFlowFactory,
+  type PreparedPageWallRuntime
+} from './pageWallTask'
 
 function task(pageUid = '90001'): PageWallPostTaskDescriptor {
   return {
@@ -80,5 +86,53 @@ describe('PageWallTask', () => {
       code: 'page_navigation_failed',
       message: 'navigation timeout'
     })
+  })
+
+  it('delegates publish only after the prepared Page wall surface is ready', async () => {
+    const prepared = runtime()
+    const published: PostingJobResult = {
+      status: 'success',
+      message: 'wall published',
+      publishedUrl: 'https://www.facebook.com/90001/posts/123'
+    }
+    const execute = vi.fn(async () => published)
+    const createFlow: PageWallPostFlowFactory = vi.fn(() => ({ execute }))
+
+    const result = await new PageWallTask(prepared.value, task(), createFlow).execute({
+      content: 'hello wall',
+      imagePaths: ['C:\\images\\one.jpg'],
+      networkTimeoutMs: 30_000
+    })
+
+    expect(createFlow).toHaveBeenCalledWith(
+      prepared.value,
+      'https://www.facebook.com/profile.php?id=90001',
+      30_000
+    )
+    expect(execute).toHaveBeenCalledWith('hello wall', ['C:\\images\\one.jpg'])
+    expect(result).toEqual(published)
+  })
+
+  it('does not construct the publish flow when common access blocks the wall', async () => {
+    const prepared = runtime({
+      checkAccessBlock: vi.fn(async () => ({
+        status: 'needs_login' as const,
+        code: 'needs_login' as const,
+        message: 'login required'
+      }))
+    })
+    const createFlow: PageWallPostFlowFactory = vi.fn(() => ({
+      execute: vi.fn(async () => ({ status: 'success' as const, message: 'unexpected' }))
+    }))
+
+    const result = await new PageWallTask(prepared.value, task(), createFlow).execute({
+      content: 'hello wall',
+      imagePaths: [],
+      networkTimeoutMs: 30_000
+    })
+
+    expect(createFlow).not.toHaveBeenCalled()
+    expect(result.status).toBe('needs_login')
+    expect(result.code).toBe('needs_login')
   })
 })
