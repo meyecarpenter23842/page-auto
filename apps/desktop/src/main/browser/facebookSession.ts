@@ -67,6 +67,12 @@ export interface FacebookSessionValidation {
   message: string
 }
 
+export interface FacebookSessionTiming {
+  networkTimeoutMs: number
+  navigationTimeoutMs: number
+  pageSettleDelayMs: number
+}
+
 type ContextCookie = FacebookCookieInput
 
 type TwoFactorSubmitResult = {
@@ -79,13 +85,40 @@ const USE_ANOTHER_PROFILE_PATTERN = /use another (?:profile|account)|dùng (?:m�
 const LOGIN_ACTION_PATTERN = /^(log in|login|đăng nhập|masuk)$/i
 const PASSWORD_SUBMIT_PATTERN = /^(continue|tiếp tục|lanjutkan|log in|login|đăng nhập|masuk)$/i
 const TWO_FACTOR_SUBMIT_PATTERN = /^(continue|tiếp tục|submit|gửi|confirm|xác nhận)$/i
-const TWO_FACTOR_INPUT_TIMEOUT_MS = 20_000
-const TWO_FACTOR_OUTCOME_TIMEOUT_MS = 15_000
 const TWO_FACTOR_MAX_ATTEMPTS = 2
 const TEXT_ONLY_MANUAL_VERIFICATION_GRACE_MS = 2_000
 const TOTP_STEP_MS = 30_000
 const TOTP_MIN_REMAINING_MS = 8_000
 const TOTP_WINDOW_BUFFER_MS = 750
+const DEFAULT_SESSION_TIMING: FacebookSessionTiming = {
+  networkTimeoutMs: 20_000,
+  navigationTimeoutMs: 45_000,
+  pageSettleDelayMs: 700
+}
+const SESSION_TIMINGS = new WeakMap<Page, FacebookSessionTiming>()
+
+function normalizeSessionTiming(timing: FacebookSessionTiming): FacebookSessionTiming {
+  return {
+    networkTimeoutMs: Math.max(1_000, Math.round(timing.networkTimeoutMs)),
+    navigationTimeoutMs: Math.max(1_000, Math.round(timing.navigationTimeoutMs)),
+    pageSettleDelayMs: Math.max(0, Math.round(timing.pageSettleDelayMs))
+  }
+}
+
+function sessionTiming(page: Page): FacebookSessionTiming {
+  return SESSION_TIMINGS.get(page) ?? DEFAULT_SESSION_TIMING
+}
+
+async function settleSessionAction(page: Page): Promise<void> {
+  const timing = sessionTiming(page)
+  await page.waitForLoadState('domcontentloaded', { timeout: timing.navigationTimeoutMs }).catch(() => undefined)
+  if (timing.pageSettleDelayMs > 0) await page.waitForTimeout(timing.pageSettleDelayMs)
+}
+
+async function settleSessionNavigation(page: Page): Promise<void> {
+  const delayMs = sessionTiming(page).pageSettleDelayMs
+  if (delayMs > 0) await page.waitForTimeout(delayMs)
+}
 
 function twoFactorCredentialKind(secret: string): 'direct_code' | 'totp_secret' {
   return isDirectTwoFactorCode(secret) ? 'direct_code' : 'totp_secret'
@@ -379,7 +412,10 @@ async function isTwoFactorSurfaceActive(page: Page): Promise<boolean> {
   return Boolean(await findTwoFactorInput(page))
 }
 
-async function waitForTwoFactorInputReady(page: Page, timeoutMs = TWO_FACTOR_INPUT_TIMEOUT_MS): Promise<Locator | null> {
+async function waitForTwoFactorInputReady(
+  page: Page,
+  timeoutMs = sessionTiming(page).networkTimeoutMs
+): Promise<Locator | null> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() <= deadline) {
     const input = await findTwoFactorInput(page)
@@ -390,7 +426,10 @@ async function waitForTwoFactorInputReady(page: Page, timeoutMs = TWO_FACTOR_INP
   return null
 }
 
-async function findTwoFactorSubmit(page: Page, timeoutMs = 8_000): Promise<Locator | null> {
+async function findTwoFactorSubmit(
+  page: Page,
+  timeoutMs = sessionTiming(page).networkTimeoutMs
+): Promise<Locator | null> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() <= deadline) {
     const submit = await firstVisibleEnabled([
@@ -438,7 +477,11 @@ export async function inspectFacebookSessionGate(context: BrowserContext, page: 
   })
 }
 
-async function waitForPostLoginGate(context: BrowserContext, page: Page, timeoutMs = 12_000): Promise<FacebookSessionGate> {
+async function waitForPostLoginGate(
+  context: BrowserContext,
+  page: Page,
+  timeoutMs = sessionTiming(page).networkTimeoutMs
+): Promise<FacebookSessionGate> {
   const deadline = Date.now() + timeoutMs
   let latest: FacebookSessionGate = 'unknown'
   while (Date.now() < deadline) {
@@ -458,7 +501,7 @@ async function waitForPostLoginGate(context: BrowserContext, page: Page, timeout
 async function waitForPasswordOnlyTransition(
   context: BrowserContext,
   page: Page,
-  timeoutMs = 12_000
+  timeoutMs = sessionTiming(page).networkTimeoutMs
 ): Promise<FacebookSessionGate> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
@@ -478,7 +521,7 @@ async function waitForPasswordOnlyTransition(
 async function waitForTwoFactorOutcome(
   context: BrowserContext,
   page: Page,
-  timeoutMs = TWO_FACTOR_OUTCOME_TIMEOUT_MS
+  timeoutMs = sessionTiming(page).networkTimeoutMs
 ): Promise<FacebookSessionGate> {
   const deadline = Date.now() + timeoutMs
   let latest: FacebookSessionGate = 'two_factor'
@@ -505,7 +548,7 @@ async function waitForTwoFactorOutcome(
 async function waitForLoginSurfaceGate(
   context: BrowserContext,
   page: Page,
-  timeoutMs = 12_000
+  timeoutMs = sessionTiming(page).networkTimeoutMs
 ): Promise<FacebookSessionGate> {
   const deadline = Date.now() + timeoutMs
   let latest: FacebookSessionGate = 'unknown'
@@ -521,12 +564,13 @@ async function waitForLoginSurfaceGate(
 async function openExplicitFacebookLoginSurface(
   context: BrowserContext,
   page: Page,
-  timeoutMs = 12_000
+  timeoutMs = sessionTiming(page).networkTimeoutMs
 ): Promise<FacebookSessionGate> {
   await page.goto('https://www.facebook.com/login/', {
     waitUntil: 'domcontentloaded',
-    timeout: 45_000
+    timeout: sessionTiming(page).navigationTimeoutMs
   }).catch(() => undefined)
+  await settleSessionNavigation(page)
   return waitForLoginSurfaceGate(context, page, timeoutMs)
 }
 
@@ -535,12 +579,11 @@ async function clickSavedProfileContinue(page: Page): Promise<boolean> {
   if (!continueAction) return false
   try {
     await continueAction.scrollIntoViewIfNeeded().catch(() => undefined)
-    await continueAction.click({ timeout: 15_000 })
+    await continueAction.click({ timeout: sessionTiming(page).networkTimeoutMs })
   } catch {
     return false
   }
-  await page.waitForLoadState('domcontentloaded', { timeout: 20_000 }).catch(() => undefined)
-  await page.waitForTimeout(700)
+  await settleSessionAction(page)
   return true
 }
 
@@ -549,12 +592,11 @@ async function clickUseAnotherProfile(page: Page): Promise<boolean> {
   if (!action) return false
   try {
     await action.scrollIntoViewIfNeeded().catch(() => undefined)
-    await action.click({ timeout: 15_000 })
+    await action.click({ timeout: sessionTiming(page).networkTimeoutMs })
   } catch {
     return false
   }
-  await page.waitForLoadState('domcontentloaded', { timeout: 20_000 }).catch(() => undefined)
-  await page.waitForTimeout(500)
+  await settleSessionAction(page)
   return true
 }
 
@@ -565,8 +607,9 @@ async function submitLogin(page: Page, identifier: string, password: string): Pr
     throw new Error('Không tìm thấy form đăng nhập Facebook.')
   }
 
-  await emailInput.fill(identifier)
-  await passwordInput.fill(password)
+  const timeoutMs = sessionTiming(page).networkTimeoutMs
+  await emailInput.fill(identifier, { timeout: timeoutMs })
+  await passwordInput.fill(password, { timeout: timeoutMs })
 
   const loginButton = await firstVisible([
     page.locator('button[name="login"]:visible').first(),
@@ -579,16 +622,15 @@ async function submitLogin(page: Page, identifier: string, password: string): Pr
   if (loginButton) {
     try {
       await loginButton.scrollIntoViewIfNeeded().catch(() => undefined)
-      await loginButton.click({ timeout: 15_000 })
+      await loginButton.click({ timeout: timeoutMs })
     } catch {
-      await passwordInput.press('Enter')
+      await passwordInput.press('Enter', { timeout: timeoutMs })
     }
   } else {
-    await passwordInput.press('Enter')
+    await passwordInput.press('Enter', { timeout: timeoutMs })
   }
 
-  await page.waitForLoadState('domcontentloaded', { timeout: 20_000 }).catch(() => undefined)
-  await page.waitForTimeout(1_000)
+  await settleSessionAction(page)
 }
 
 async function submitPasswordOnly(page: Page, password: string): Promise<void> {
@@ -596,7 +638,8 @@ async function submitPasswordOnly(page: Page, password: string): Promise<void> {
   if (!await passwordInput.isVisible().catch(() => false)) {
     throw new Error('Không tìm thấy ô password của saved profile Facebook.')
   }
-  await passwordInput.fill(password)
+  const timeoutMs = sessionTiming(page).networkTimeoutMs
+  await passwordInput.fill(password, { timeout: timeoutMs })
 
   const submit = await firstVisible([
     page.getByRole('button', { name: PASSWORD_SUBMIT_PATTERN }).first(),
@@ -606,16 +649,15 @@ async function submitPasswordOnly(page: Page, password: string): Promise<void> {
   if (submit) {
     try {
       await submit.scrollIntoViewIfNeeded().catch(() => undefined)
-      await submit.click({ timeout: 15_000 })
+      await submit.click({ timeout: timeoutMs })
     } catch {
-      await passwordInput.press('Enter')
+      await passwordInput.press('Enter', { timeout: timeoutMs })
     }
   } else {
-    await passwordInput.press('Enter')
+    await passwordInput.press('Enter', { timeout: timeoutMs })
   }
 
-  await page.waitForLoadState('domcontentloaded', { timeout: 20_000 }).catch(() => undefined)
-  await page.waitForTimeout(800)
+  await settleSessionAction(page)
 }
 
 async function waitForDifferentTwoFactorCode(page: Page, secret: string, previousCode: string): Promise<void> {
@@ -633,6 +675,7 @@ async function submitTotp(
   maxAttempts: number
 ): Promise<TwoFactorSubmitResult> {
   const attemptDetail = `attempt=${attempt}/${maxAttempts}`
+  const timeoutMs = sessionTiming(page).networkTimeoutMs
   twoFactorDiagnostic(accountId, 'input_wait_start', attemptDetail)
   let input = await waitForTwoFactorInputReady(page)
   if (!input) {
@@ -645,7 +688,7 @@ async function submitTotp(
   if (freshnessWait > 0) {
     twoFactorDiagnostic(accountId, 'freshness_wait_start', `${attemptDetail} waitMs=${freshnessWait}`)
     await page.waitForTimeout(freshnessWait)
-    input = await waitForTwoFactorInputReady(page, 4_000)
+    input = await waitForTwoFactorInputReady(page)
     if (!input) {
       twoFactorDiagnostic(accountId, 'input_lost_after_freshness_wait', attemptDetail)
       return { submitted: false, code: null }
@@ -656,16 +699,16 @@ async function submitTotp(
   const code = resolveTwoFactorCode(secret, Date.now())
   twoFactorDiagnostic(accountId, 'code_generated', `${attemptDetail} credential=${twoFactorCredentialKind(secret)}`)
   try {
-    await input.fill(code)
+    await input.fill(code, { timeout: timeoutMs })
     twoFactorDiagnostic(accountId, 'input_filled', attemptDetail)
   } catch {
     twoFactorDiagnostic(accountId, 'fill_retry', attemptDetail)
-    input = await waitForTwoFactorInputReady(page, 4_000)
+    input = await waitForTwoFactorInputReady(page)
     if (!input) {
       twoFactorDiagnostic(accountId, 'input_unavailable_on_fill_retry', attemptDetail)
       return { submitted: false, code: null }
     }
-    await input.fill(code)
+    await input.fill(code, { timeout: timeoutMs })
     twoFactorDiagnostic(accountId, 'input_filled', `${attemptDetail} retry=1`)
   }
 
@@ -675,7 +718,7 @@ async function submitTotp(
   if (submit) {
     twoFactorDiagnostic(accountId, 'submit_ready', attemptDetail)
     await submit.scrollIntoViewIfNeeded().catch(() => undefined)
-    submitted = await submit.click({ timeout: 5_000 }).then(() => true).catch(() => false)
+    submitted = await submit.click({ timeout: timeoutMs }).then(() => true).catch(() => false)
     twoFactorDiagnostic(accountId, 'submit_click', `${attemptDetail} success=${submitted}`)
     if (!submitted) {
       submitted = await domClick(submit)
@@ -686,7 +729,7 @@ async function submitTotp(
   }
 
   if (!submitted) {
-    submitted = await input.press('Enter').then(() => true).catch(() => false)
+    submitted = await input.press('Enter', { timeout: timeoutMs }).then(() => true).catch(() => false)
     twoFactorDiagnostic(accountId, 'submit_enter', `${attemptDetail} success=${submitted}`)
   }
   if (!submitted) {
@@ -695,7 +738,7 @@ async function submitTotp(
   }
 
   twoFactorDiagnostic(accountId, 'submit_sent', attemptDetail)
-  await page.waitForLoadState('domcontentloaded', { timeout: 20_000 }).catch(() => undefined)
+  await settleSessionAction(page)
   return { submitted: true, code }
 }
 
@@ -838,17 +881,20 @@ export async function validateFacebookSession(context: BrowserContext, page: Pag
 async function navigateFacebookHome(page: Page): Promise<void> {
   await page.goto('https://www.facebook.com/', {
     waitUntil: 'domcontentloaded',
-    timeout: 45_000
+    timeout: sessionTiming(page).navigationTimeoutMs
   })
-  await page.waitForTimeout(700)
+  await settleSessionNavigation(page)
 }
 
 export async function bootstrapFacebookSession(
   context: BrowserContext,
   page: Page,
   account: FacebookSessionAccount,
-  locale: FacebookLocale = 'auto'
+  locale: FacebookLocale = 'auto',
+  timing?: FacebookSessionTiming
 ): Promise<FacebookSessionResult> {
+  if (timing) SESSION_TIMINGS.set(page, normalizeSessionTiming(timing))
+
   const storedCookies = canUseStoredFacebookCookies(account.cookie, account.uid)
     ? parseFacebookCookies(account.cookie)
     : []
