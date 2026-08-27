@@ -43,6 +43,7 @@ import type {
 } from '../shared/hotmail'
 import type { LogCleanupResult } from '../shared/loggingMaintenance'
 import type { CreatePageTabInput, ImageFolderInspection, PageTabConfig, PageTabIdPayload, PageTabPostLibrary, PageTabSummary, PickTextFileResult, SavePageTabPostLibraryInput, UpdatePageTabPayload } from '../shared/pageTabs'
+import type { PageWallRunNowPayload, PageWallRunNowResult } from '../shared/pageWall'
 import type { ExecuteSinglePostingJobPayload, ExecuteSinglePostingJobResult } from '../shared/posting'
 import type { RotationPageTabPayload, RotationRuntimeSnapshot } from '../shared/rotation'
 import type { CreateRunPayload, RunDetails, RunIdPayload } from '../shared/runs'
@@ -86,6 +87,8 @@ const api = {
   pickPageTabImageFolder: (): Promise<string | null> => ipcRenderer.invoke(IPC_CHANNELS.pageTabsPickImageFolder) as Promise<string | null>,
   inspectPageTabImageFolder: (folderPath: string): Promise<ImageFolderInspection> => ipcRenderer.invoke(IPC_CHANNELS.pageTabsInspectImageFolder, folderPath) as Promise<ImageFolderInspection>,
   pickPageTabTextFile: (): Promise<PickTextFileResult | null> => ipcRenderer.invoke(IPC_CHANNELS.pageTabsPickTextFile) as Promise<PickTextFileResult | null>,
+  pickPageWallImages: (): Promise<string[]> => ipcRenderer.invoke(IPC_CHANNELS.pageWallPickImages) as Promise<string[]>,
+  runPageWallNow: (payload: PageWallRunNowPayload): Promise<PageWallRunNowResult> => ipcRenderer.invoke(IPC_CHANNELS.pageWallRunNow, payload) as Promise<PageWallRunNowResult>,
   getLatestRunForPageTab: (payload: CreateRunPayload): Promise<RunDetails | null> => ipcRenderer.invoke(IPC_CHANNELS.runsLatestForPageTab, payload) as Promise<RunDetails | null>,
   createRun: (payload: CreateRunPayload): Promise<RunDetails> => ipcRenderer.invoke(IPC_CHANNELS.runsCreate, payload) as Promise<RunDetails>,
   pauseRun: (payload: RunIdPayload): Promise<RunDetails> => ipcRenderer.invoke(IPC_CHANNELS.runsPause, payload) as Promise<RunDetails>,

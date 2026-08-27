@@ -53,6 +53,7 @@ import type {
   SavePageTabPostLibraryInput,
   UpdatePageTabPayload
 } from '../shared/pageTabs'
+import type { PageWallRunNowPayload, PageWallRunNowResult } from '../shared/pageWall'
 import type { ExecuteSinglePostingJobPayload, ExecuteSinglePostingJobResult } from '../shared/posting'
 import type { RotationPageTabPayload, RotationRuntimeSnapshot } from '../shared/rotation'
 import type { CreateRunPayload, RunDetails, RunIdPayload } from '../shared/runs'
@@ -96,6 +97,8 @@ export const IPC_CHANNELS = {
   pageTabsPickImageFolder: 'page-tabs:pick-image-folder',
   pageTabsInspectImageFolder: 'page-tabs:inspect-image-folder',
   pageTabsPickTextFile: 'page-tabs:pick-text-file',
+  pageWallPickImages: 'page-wall:pick-images',
+  pageWallRunNow: 'page-wall:run-now',
   runsLatestForPageTab: 'runs:latest-for-page-tab',
   runsCreate: 'runs:create',
   runsPause: 'runs:pause',
@@ -178,6 +181,8 @@ export interface PageAutoIpcContract {
   pickPageTabImageFolder: () => Promise<string | null>
   inspectPageTabImageFolder: (folderPath: string) => Promise<ImageFolderInspection>
   pickPageTabTextFile: () => Promise<PickTextFileResult | null>
+  pickPageWallImages: () => Promise<string[]>
+  runPageWallNow: (payload: PageWallRunNowPayload) => Promise<PageWallRunNowResult>
   getLatestRunForPageTab: (payload: CreateRunPayload) => Promise<RunDetails | null>
   createRun: (payload: CreateRunPayload) => Promise<RunDetails>
   pauseRun: (payload: RunIdPayload) => Promise<RunDetails>
