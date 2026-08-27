@@ -13,6 +13,7 @@ const POST_TWO_FACTOR_MESSAGE_PATTERN = /(?:sau|after)\s+2fa/i
 export interface PostTwoFactorSettleOptions {
   attempts?: number
   pollMs?: number
+  timeoutMs?: number
 }
 
 function postTwoFactorDiagnostic(accountId: number, stage: string, detail = ''): void {
@@ -65,6 +66,15 @@ async function facebookCookieSnapshot(context: BrowserContext): Promise<{
   }
 }
 
+function settleAttemptCount(options: PostTwoFactorSettleOptions, pollMs: number): number {
+  if (options.attempts !== undefined) return Math.max(1, Math.floor(options.attempts))
+  if (options.timeoutMs !== undefined) {
+    const timeoutMs = Math.max(0, Math.floor(options.timeoutMs))
+    return Math.max(1, Math.ceil(timeoutMs / Math.max(1, pollMs)))
+  }
+  return POST_TWO_FACTOR_SETTLE_ATTEMPTS
+}
+
 export async function settleFacebookSessionAfterTwoFactor(
   context: BrowserContext,
   page: Page,
@@ -74,8 +84,8 @@ export async function settleFacebookSessionAfterTwoFactor(
 ): Promise<FacebookSessionResult> {
   if (!shouldSettlePostTwoFactorResult(page, previous)) return previous
 
-  const attempts = Math.max(1, Math.floor(options.attempts ?? POST_TWO_FACTOR_SETTLE_ATTEMPTS))
   const pollMs = Math.max(0, Math.floor(options.pollMs ?? POST_TWO_FACTOR_SETTLE_POLL_MS))
+  const attempts = settleAttemptCount(options, pollMs)
   postTwoFactorDiagnostic(
     account.id,
     'settle_start',

@@ -12,7 +12,8 @@ import {
   bootstrapFacebookSession,
   validateFacebookSession,
   type FacebookSessionAccount,
-  type FacebookSessionResult
+  type FacebookSessionResult,
+  type FacebookSessionTiming
 } from '../browser/facebookSession'
 import { classifyPageIdentityUid, PageIdentitySwitcher } from '../browser/posting/pageIdentitySwitcher'
 import { activeFacebookProfileId, detectFacebookAccessBlock } from '../browser/posting/pageState'
@@ -253,6 +254,14 @@ export class FacebookCommonRuntime {
     }
   }
 
+  private sessionTiming(): FacebookSessionTiming {
+    return {
+      networkTimeoutMs: this.request.network.networkTimeoutMs,
+      navigationTimeoutMs: this.browser.navigationTimeoutMs,
+      pageSettleDelayMs: this.browser.pageSettleDelayMs
+    }
+  }
+
   async pace(boundary: string): Promise<void> {
     const delayMs = randomBrowserActionDelayMs(this.browser)
     if (delayMs <= 0) return
@@ -268,7 +277,12 @@ export class FacebookCommonRuntime {
     }
 
     await this.pace('login-to-page')
-    const identity = await new PageIdentitySwitcher(this.page, this.context, this.browser).switchTo(this.request.pageUid)
+    const identity = await new PageIdentitySwitcher(
+      this.page,
+      this.context,
+      this.browser,
+      this.request.network.networkTimeoutMs
+    ).switchTo(this.request.pageUid)
     if (identity.status !== 'success') return normalizePageIdentityFailure(identity)
     this.request.diagnostic?.('state=page_identity switched')
     return { status: 'success', message: identity.message }
@@ -290,7 +304,8 @@ export class FacebookCommonRuntime {
       this.context,
       this.page,
       this.request.sessionAccount,
-      this.request.session.facebookLocale
+      this.request.session.facebookLocale,
+      this.sessionTiming()
     )
     if (bootstrap.status === 'email_failure') {
       return beforeRunFacebookEmailSupportFailure(bootstrap.code, bootstrap.message)
@@ -329,7 +344,8 @@ export class FacebookCommonRuntime {
         this.context,
         this.page,
         this.request.sessionAccount,
-        this.request.session.facebookLocale
+        this.request.session.facebookLocale,
+        this.sessionTiming()
       )
       if (recovered.status === 'valid') {
         const recoveredIdentity = await inspectFacebookAccountIdentity(

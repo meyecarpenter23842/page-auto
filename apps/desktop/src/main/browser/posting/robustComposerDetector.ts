@@ -11,7 +11,6 @@ const PUBLISH_PATTERN = /^(post|đăng)$/i
 const POLL_MS = 250
 const INITIAL_OBSERVE_MS = 1_500
 const TRIGGER_TIMEOUT_MS = 18_000
-const OPEN_TIMEOUT_MS = 18_000
 const ACTION_SETTLE_MS = 850
 const MAX_ANCESTOR_DEPTH = 48
 const COMPOSER_BOUNDARY_ROLES = new Set(['banner', 'feed', 'main', 'navigation'])
@@ -205,7 +204,11 @@ export class RobustComposerDetector {
   private lastTriggerStrategy = 'not-attempted'
   private lastTriggerDescriptor = 'tag=none role=none aria-label=missing'
 
-  constructor(private readonly page: Page) {}
+  constructor(
+    private readonly page: Page,
+    private readonly networkTimeoutMs = TRIGGER_TIMEOUT_MS,
+    private readonly pageSettleDelayMs = ACTION_SETTLE_MS
+  ) {}
 
   private stage(message: string): void {
     console.info(`[PAGE-AUTO composer] ${message}`)
@@ -405,7 +408,7 @@ export class RobustComposerDetector {
           this.lastTriggerStrategy = `${candidate.strategy}[${index}]`
           this.lastTriggerDescriptor = await locatorDescriptor(item)
           this.stage(`stage=trigger_ready strategy=${this.lastTriggerStrategy} triggerElement{${this.lastTriggerDescriptor}}`)
-          const clicked = await item.click({ timeout: 8_000 }).then(() => true).catch(() => false)
+          const clicked = await item.click({ timeout: this.networkTimeoutMs }).then(() => true).catch(() => false)
           if (clicked) {
             this.stage(`stage=trigger_click sent strategy=${this.lastTriggerStrategy}`)
             return { kind: 'clicked' }
@@ -487,27 +490,28 @@ export class RobustComposerDetector {
   }
 
   async open(): Promise<RobustComposerHandle | null> {
-    this.stage(`stage=existing_editor_wait timeoutMs=${INITIAL_OBSERVE_MS}`)
-    const existing = await this.waitForHandle(INITIAL_OBSERVE_MS)
+    const initialObserveMs = Math.min(INITIAL_OBSERVE_MS, this.networkTimeoutMs)
+    this.stage(`stage=existing_editor_wait timeoutMs=${initialObserveMs}`)
+    const existing = await this.waitForHandle(initialObserveMs)
     if (existing) {
       this.lastTriggerStrategy = 'existing-composer'
       this.lastTriggerDescriptor = 'tag=existing role=existing aria-label=not-applicable'
       return existing
     }
 
-    this.stage(`stage=trigger_wait timeoutMs=${TRIGGER_TIMEOUT_MS}`)
-    const triggerOutcome = await this.waitForTriggerOrComposer(TRIGGER_TIMEOUT_MS)
+    this.stage(`stage=trigger_wait timeoutMs=${this.networkTimeoutMs}`)
+    const triggerOutcome = await this.waitForTriggerOrComposer(this.networkTimeoutMs)
     if (!triggerOutcome) {
       this.stage('stage=trigger_timeout')
       return null
     }
     if (triggerOutcome.kind === 'handle') return triggerOutcome.handle
-    if (triggerOutcome.kind === 'clicked') {
-      await this.page.waitForTimeout(ACTION_SETTLE_MS).catch(() => undefined)
+    if (triggerOutcome.kind === 'clicked' && this.pageSettleDelayMs > 0) {
+      await this.page.waitForTimeout(this.pageSettleDelayMs).catch(() => undefined)
     }
 
-    this.stage(`stage=editor_wait timeoutMs=${OPEN_TIMEOUT_MS}`)
-    const handle = await this.waitForHandle(OPEN_TIMEOUT_MS)
+    this.stage(`stage=editor_wait timeoutMs=${this.networkTimeoutMs}`)
+    const handle = await this.waitForHandle(this.networkTimeoutMs)
     if (!handle) this.stage('stage=editor_timeout')
     return handle
   }

@@ -105,6 +105,21 @@ describe('post-2FA session continuation', () => {
     expect(result.cookie).toContain('xs=session-token')
   })
 
+  it('uses the configured network timeout for a session that settles after the old 12-second window', async () => {
+    const delayedCookies = [...Array.from({ length: 55 }, () => null), '123', '123']
+    const result = await settleFacebookSessionAfterTwoFactor(
+      fakeContext(delayedCookies),
+      fakePage(),
+      account,
+      transientFailure,
+      { timeoutMs: 30_000, pollMs: 250 }
+    )
+
+    expect(result.status).toBe('valid')
+    expect(result.reason).toBe('valid')
+    expect(result.cookie).toContain('c_user=123')
+  })
+
   it('continues a text-only manual gate on Facebook home when it came directly after 2FA', async () => {
     const result = await settleFacebookSessionAfterTwoFactor(
       fakeContext([null, null, null, '123', '123']),

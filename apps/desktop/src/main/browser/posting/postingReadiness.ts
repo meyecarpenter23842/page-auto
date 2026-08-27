@@ -23,11 +23,22 @@ export function isMediaAttachmentReady(
 }
 
 const defaultSleep = (milliseconds: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, milliseconds))
+const NEVER_READY = new Promise<never>(() => undefined)
 
 export function readinessAttempts(timeoutMs: number, intervalMs: number): number {
   const normalizedTimeout = Math.max(0, Math.round(timeoutMs))
   const normalizedInterval = Math.max(1, Math.round(intervalMs))
   return Math.max(1, Math.ceil(normalizedTimeout / normalizedInterval))
+}
+
+export async function firstReadyCandidate<T>(
+  candidates: Array<Promise<T | null>>,
+  timeout: Promise<unknown>
+): Promise<T | null> {
+  return Promise.race([
+    ...candidates.map((candidate) => candidate.then((value) => value === null ? NEVER_READY : value)),
+    timeout.then(() => null)
+  ])
 }
 
 export async function pollForReady<T>(

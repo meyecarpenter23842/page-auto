@@ -87,6 +87,17 @@ describe('composer delayed readiness polling', () => {
     expect(editor).toBe('editor-ready')
     expect(editorProbeCount).toBe(3)
   })
+
+  it('allows DOM readiness after the old 18-second composer window when network timeout is larger', async () => {
+    let probeCount = 0
+    const ready = await waitForComposerStage(async () => {
+      probeCount += 1
+      return probeCount >= 80 ? 'late-editor-ready' : null
+    }, 30_000, async () => undefined)
+
+    expect(ready).toBe('late-editor-ready')
+    expect(probeCount).toBe(80)
+  })
 })
 
 describe('publish candidate ownership', () => {
