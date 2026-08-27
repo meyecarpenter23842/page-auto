@@ -78,19 +78,12 @@ class Store implements RotationRunStore {
     if (!previous) throw new Error('missing previous run')
     const id = this.latestRunId + 1
     const next = makeRun(id, previous.run.snapshot.groupSourceCount, previous.run.snapshot.schedules)
-    next.run.snapshot = {
-      ...previous.run.snapshot,
-      rotation: { ...previous.run.snapshot.rotation },
-      accounts: previous.run.snapshot.accounts.map((account) => ({ ...account })),
-      schedules: previous.run.snapshot.schedules.map((schedule) => ({ ...schedule })),
-      contents: [...previous.run.snapshot.contents],
-      image: { ...previous.run.snapshot.image },
-      posts: previous.run.snapshot.posts?.map((post) => ({
-        ...post,
-        variants: [...post.variants],
-        image: { ...post.image }
-      }))
-    }
+    next.run.snapshot.rotation = { ...previous.run.snapshot.rotation }
+    next.run.snapshot.accounts = previous.run.snapshot.accounts.map((account) => ({ ...account }))
+    next.run.snapshot.schedules = previous.run.snapshot.schedules.map((schedule) => ({ ...schedule }))
+    next.run.snapshot.contentMode = previous.run.snapshot.contentMode
+    next.run.snapshot.contents = [...previous.run.snapshot.contents]
+    next.run.snapshot.image = { ...previous.run.snapshot.image }
     this.latestRunId = id
     this.runs.set(id, next)
     this.createCalls += 1
