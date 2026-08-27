@@ -99,6 +99,42 @@ describe('PostingService Facebook task entrypoint', () => {
     runtime.close()
   })
 
+  it('builds a page_wall_post task from the secret-free one-shot input', async () => {
+    const { directory, runtime, account } = setupAccount()
+    const service = new PostingService(runtime.client, directory)
+    const runTask = vi.fn(async (_job: FacebookPostTaskJobRequest): Promise<PostingJobResult> => ({
+      status: 'success',
+      message: 'published'
+    }))
+    Object.defineProperty(service, 'workers', {
+      value: { runTask, closeAll: vi.fn() },
+      configurable: true
+    })
+
+    const result = await service.executePageWallPostNow({
+      accountId: account.id,
+      pageUid: ' 90001 ',
+      content: 'hello wall',
+      imagePaths: ['C:\\media\\one.jpg']
+    })
+
+    expect(result.status).toBe('success')
+    const dispatched = runTask.mock.calls[0]![0]
+    expect(dispatched.task).toEqual({
+      type: 'page_wall_post',
+      target: { kind: 'page_wall', pageUid: '90001' }
+    })
+    expect(dispatched.pageUid).toBe('90001')
+    expect(dispatched.content).toBe('hello wall')
+    expect(dispatched.imagePaths).toEqual(['C:\\media\\one.jpg'])
+    expect(dispatched.runId).toBe(0)
+    expect(dispatched.itemId).toBeGreaterThan(0)
+    expect(dispatched.sessionAccount).toMatchObject({ id: account.id, uid: account.uid })
+
+    service.closeAll()
+    runtime.close()
+  })
+
   it('rejects malformed canonical proxy before the generic worker can run', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'page-auto-facebook-task-proxy-'))
     tempDirectories.push(directory)

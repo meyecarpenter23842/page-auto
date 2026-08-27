@@ -13,7 +13,12 @@ import {
   type BrowserWindowLayoutSettings,
   type BrowserWindowPlacement
 } from '../../shared/browserWindowLayout'
-import type { FacebookPostTaskJobRequest } from '../../shared/facebookTasks'
+import {
+  pageWallPostTaskFromBase,
+  type FacebookPostTaskJobRequest,
+  type FacebookTaskJobBase
+} from '../../shared/facebookTasks'
+import type { PageWallExecutionInput } from '../../shared/pageWall'
 import type {
   ExecuteSinglePostingJobPayload,
   ExecuteSinglePostingJobResult,
@@ -28,6 +33,13 @@ import { RunRepository } from '../database/runRepository'
 import { redactExecutionText } from './executionLogSanitizer'
 import { selectRunImages, selectRunPost } from './postingSelection'
 import { rotationRuntimeOverlay } from './rotationRuntimeOverlay'
+
+let manualPageWallSequence = 0
+
+function nextManualPageWallItemId(): number {
+  manualPageWallSequence = (manualPageWallSequence + 1) % 1000
+  return (Date.now() * 1000) + manualPageWallSequence
+}
 
 function accountSecrets(account: AccountRecord): Array<string | null | undefined> {
   return [account.password, account.cookie, account.twoFactorSecret, account.emailPassword, account.proxy, account.proxyPassword]
@@ -173,6 +185,41 @@ export class PostingService {
       ...(result.status === 'success' || result.status === 'skipped' ? {} : { errorMessage: result.message })
     })
     return { accountId: account.id, item, result, run }
+  }
+
+  async executePageWallPostNow(input: PageWallExecutionInput): Promise<PostingJobResult> {
+    const account = this.accounts.getById(input.accountId)
+    if (!account || account.status === 'disabled') {
+      return terminalFailure('Tài khoản không tồn tại hoặc đang bị tắt.', 'account_disabled')
+    }
+
+    const pageUid = input.pageUid.trim()
+    if (!pageUid) return terminalFailure('Page UID không hợp lệ.', 'page_navigation_failed')
+
+    const base: FacebookTaskJobBase = {
+      runId: 0,
+      itemId: nextManualPageWallItemId(),
+      accountId: account.id,
+      profileDirectory: accountProfileDirectory(this.dataDirectory, account.id),
+      pageUid,
+      content: input.content,
+      imagePaths: [...input.imagePaths],
+      browser: { ...this.getBrowserSettings() },
+      session: { ...this.getSessionSettings() },
+      network: { ...this.getNetworkSettings() },
+      logging: { ...this.getLoggingSettings() },
+      sessionAccount: {
+        id: account.id,
+        uid: account.uid,
+        username: account.username,
+        password: account.password,
+        cookie: account.cookie,
+        twoFactorSecret: account.twoFactorSecret,
+        name: account.name
+      }
+    }
+
+    return this.executeFacebookPostTask(pageWallPostTaskFromBase(base))
   }
 
   async executeFacebookPostTask(job: FacebookPostTaskJobRequest): Promise<PostingJobResult> {

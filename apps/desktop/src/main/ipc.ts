@@ -23,6 +23,7 @@ import type { SaveCaptchaSettingsInput } from '../shared/captchaSettings'
 import type { ConfigBackupRestoreResult } from '../shared/configBackup'
 import type { ExecutionLogFilters, RetryRunItemPayload } from '../shared/executionLogs'
 import type { CreatePageTabInput, PageTabIdPayload, UpdatePageTabPayload } from '../shared/pageTabs'
+import type { PageWallRunNowPayload } from '../shared/pageWall'
 import type { ExecuteSinglePostingJobPayload } from '../shared/posting'
 import type { RotationPageTabPayload } from '../shared/rotation'
 import type { CreateRunPayload, RunIdPayload } from '../shared/runs'
@@ -40,6 +41,7 @@ import { AccountExecutionCoordinator } from './services/accountExecutionCoordina
 import { ConfigBackupService } from './services/configBackupService'
 import { LogMaintenanceService } from './services/logMaintenanceService'
 import { PageTabWorkerManager } from './services/pageTabWorkerManager'
+import { PageWallRunNowService } from './services/pageWallRunNowService'
 import { PostingService } from './services/postingService'
 import { ResilientPostingService } from './services/resilientPostingService'
 import { RotationService, type RotationPostingExecutor } from './services/rotationService'
@@ -105,6 +107,12 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
     () => appSettings.get().logging
   )
   const accountExecution = new AccountExecutionCoordinator()
+  const pageWallRunNowService = new PageWallRunNowService(pageTabs, {
+    executePageWallPostNow: (input) => accountExecution.run(
+      input.accountId,
+      () => corePosting.executePageWallPostNow(input)
+    )
+  })
   const coordinatedPosting: RotationPostingExecutor = {
     executeSingle: (payload) => {
       const accountId = payload.accountId
@@ -184,6 +192,15 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
     if (fileStat.size > 10 * 1024 * 1024) throw new Error('File import lớn hơn giới hạn 10 MB.')
     return { path: filePath, content: await readFile(filePath, 'utf8') }
   })
+  ipcMain.handle(IPC_CHANNELS.pageWallPickImages, async () => {
+    const result = await dialog.showOpenDialog({
+      title: 'Chọn ảnh Đăng Tường',
+      properties: ['openFile', 'multiSelections'],
+      filters: [{ name: 'Ảnh', extensions: ['jpg', 'jpeg', 'png', 'webp'] }]
+    })
+    return result.canceled ? [] : result.filePaths
+  })
+  ipcMain.handle(IPC_CHANNELS.pageWallRunNow, (_event, payload: PageWallRunNowPayload) => pageWallRunNowService.execute(payload))
 
   ipcMain.handle(IPC_CHANNELS.runsLatestForPageTab, (_event, payload: CreateRunPayload) => runs.getLatestForPageTab(payload.pageTabId))
   ipcMain.handle(IPC_CHANNELS.runsCreate, (_event, payload: CreateRunPayload) => runs.createForPageTab(payload.pageTabId))

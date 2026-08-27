@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import type { PageTabSummary } from '../../../shared/pageTabs'
 import type { RotationRuntimeSnapshot, RotationRuntimeStatus } from '../../../shared/rotation'
 import { PageTabsManager } from './PageTabsManagerV2'
+import { PageWallWorkspace } from './PageWallWorkspace'
 import './pageBusinessWorkspace.css'
 import './pageTabs3c.css'
 import './pageTabs3d.css'
@@ -33,14 +34,10 @@ const businesses: PageBusinessDefinition[] = [
   {
     id: 'wall',
     label: 'Đăng Tường',
-    status: 'UI shell',
+    status: 'Đăng ngay',
     title: 'Đăng Tường Page',
-    description: 'Khung nghiệp vụ được dựng trước; runtime thật chỉ nối sau khi tầng Facebook dùng chung ổn định.',
-    items: [
-      { title: 'Dùng chung Page + tài khoản', description: 'Không tạo session/account riêng; sẽ dùng Page UID và danh sách account của Page Tab.' },
-      { title: 'Cấu hình bài viết riêng', description: 'Content, ảnh, thứ tự/random, lịch và delay của Đăng Tường sẽ độc lập với Đăng Nhóm.' },
-      { title: 'Runtime riêng', description: 'Start/Pause/Resume, preview và log sẽ tách theo nghiệp vụ nhưng dùng chung điều phối phiên.' }
-    ]
+    description: 'Đăng trực tiếp bằng production runtime dùng chung; hẹn giờ và rotation nhiều account sẽ nối ở lô tiếp theo.',
+    items: []
   },
   {
     id: 'edit',
@@ -369,7 +366,9 @@ export function PageBusinessWorkspace() {
         <PageTabsManager />
       </div>
 
-      {activeBusiness !== 'groups' && active ? (
+      {activeBusiness === 'wall' ? <PageWallWorkspace /> : null}
+
+      {activeBusiness === 'edit' && active ? (
         <section className="page-business-pane page-business-placeholder" role="tabpanel">
           <header className="page-business-placeholder-head">
             <div>
@@ -391,7 +390,7 @@ export function PageBusinessWorkspace() {
 
           <div className="page-business-foundation-note">
             <strong>Thứ tự #77 được giữ nguyên</strong>
-            <span>UI có trước để chốt thao tác. Không gọi Facebook, không tạo config giả và không nhân bản login/2FA/Page switch ở batch này.</span>
+            <span>Sửa Page vẫn là shell. Khi triển khai sẽ dùng chung login/2FA/checkpoint/Page switch, không nhét logic vào Đăng Nhóm.</span>
           </div>
         </section>
       ) : null}
