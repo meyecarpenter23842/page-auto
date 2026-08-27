@@ -4,7 +4,17 @@ import { join } from 'node:path'
 import { chromium, type Browser, type BrowserContext, type Locator, type Page } from 'playwright-core'
 import type { HotmailNeedsAttentionReason, HotmailRecoveryOperation } from '../../shared/hotmail'
 import { friendlyEmailBrowserError, isEmailProfileInUseError } from './emailBrowserLifecycle'
-import { classifyMicrosoftLoginSurface, type MicrosoftLoginSnapshot } from './emailLoginPolicy'
+import {
+  classifyMicrosoftLoginSurface,
+  microsoftAccountPickerEntryMatchesCanonicalEmail,
+  type MicrosoftLoginSnapshot
+} from './emailLoginPolicy'
+import {
+  adoptNewestMicrosoftFlowPage,
+  closeMicrosoftOwnedOpenerChain,
+  microsoftRouteLogLabel,
+  waitForMicrosoftOwnedPage
+} from './emailMicrosoftPageOwnership'
 
 interface ProxyConfig {
   server: string
@@ -151,12 +161,37 @@ async function readLiveCdpEndpoint(profileDirectory: string): Promise<string | n
   return endpoint && await probeCdpEndpoint(endpoint) ? endpoint : null
 }
 
+function isMicrosoftOwnedNavigationUrl(value: string): boolean {
+  try {
+    const hostname = new URL(value).hostname.toLowerCase()
+    return hostname === 'outlook.live.com'
+      || hostname === 'login.live.com'
+      || hostname === 'account.live.com'
+      || hostname === 'login.microsoftonline.com'
+      || hostname === 'microsoft.com'
+      || hostname.endsWith('.microsoft.com')
+  } catch {
+    return false
+  }
+}
+
+function isExpectedMicrosoftNavigationInterruption(error: unknown, currentUrl: string): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return isMicrosoftOwnedNavigationUrl(currentUrl)
+    && /err_aborted|navigation.*interrupted|frame was detached|page\.goto:.*interrupted/i.test(message)
+}
+
 async function openOutlook(context: BrowserContext): Promise<Page> {
   const page = context.pages()[0] ?? await context.newPage()
-  await page.goto('https://outlook.live.com/mail/0/', {
-    waitUntil: 'domcontentloaded',
-    timeout: 30_000
-  })
+  try {
+    await page.goto('https://outlook.live.com/mail/0/', {
+      waitUntil: 'domcontentloaded',
+      timeout: 30_000
+    })
+  } catch (error) {
+    if (!isExpectedMicrosoftNavigationInterruption(error, page.url())) throw error
+    await waitForMicrosoftStep(page)
+  }
   await page.bringToFront().catch(() => undefined)
   return page
 }
@@ -180,16 +215,38 @@ function manualReasonMessage(reason: HotmailNeedsAttentionReason): string {
 
 async function readMicrosoftLoginSnapshot(page: Page): Promise<MicrosoftLoginSnapshot | null> {
   try {
-    const [text, emailInputCount, passwordInputCount] = await Promise.all([
+    const [
+      text,
+      emailInputCount,
+      usernameInputCount,
+      proofEmailInputCount,
+      verificationCodeInputCount,
+      passwordInputCount,
+      useAnotherAccountControlCount,
+      sendCodeControlCount,
+      usePasswordControlCount
+    ] = await Promise.all([
       page.locator('body').innerText({ timeout: 3_000 }),
       page.locator('input[name="loginfmt"]:visible, input[type="email"]:visible').count(),
-      page.locator('input[type="password"]:visible').count()
+      page.locator('input[name="loginfmt"]:visible, input[autocomplete="username"]:visible').count(),
+      page.locator('input[type="email"]:visible:not([name="loginfmt"]):not([autocomplete="username"]), input[autocomplete="email"]:visible:not([name="loginfmt"]):not([autocomplete="username"]), input[name*="proof" i]:visible:not([name="loginfmt"]), input[id*="proof" i]:visible, input[name*="recovery" i]:visible, input[id*="recovery" i]:visible').count(),
+      page.locator('input[autocomplete="one-time-code"]:visible, input[name*="otc" i]:visible, input[name*="code" i]:visible').count(),
+      page.locator('input[type="password"]:visible').count(),
+      page.getByText(/^(use another account|sign in with another account|sử dụng tài khoản khác|đăng nhập bằng tài khoản khác)$/i).count(),
+      page.locator('button:visible, a:visible, [role="button"]:visible, [role="link"]:visible').filter({ hasText: /send\s+code|gửi\s+mã/i }).count(),
+      page.locator('button:visible, a:visible, [role="button"]:visible, [role="link"]:visible').filter({ hasText: /use\s+your\s+password|sử dụng\s+mật khẩu|dùng\s+mật khẩu/i }).count()
     ])
     return {
       url: page.url(),
       text,
       emailInputCount,
-      passwordInputCount
+      usernameInputCount,
+      proofEmailInputCount,
+      verificationCodeInputCount,
+      passwordInputCount,
+      useAnotherAccountControlCount,
+      sendCodeControlCount,
+      usePasswordControlCount
     }
   } catch {
     return null
@@ -199,11 +256,14 @@ async function readMicrosoftLoginSnapshot(page: Page): Promise<MicrosoftLoginSna
 async function waitForMicrosoftStep(page: Page): Promise<void> {
   const previousUrl = page.url()
   await Promise.race([
-    page.waitForURL((url) => url.toString() !== previousUrl, { timeout: 7_000 }).catch(() => undefined),
-    page.waitForTimeout(1_200)
+    page.waitForURL((url) => url.toString() !== previousUrl, { timeout: 4_000 }).catch(() => undefined),
+    page.waitForTimeout(900)
   ])
-  await page.waitForLoadState('domcontentloaded', { timeout: 7_000 }).catch(() => undefined)
-  await page.waitForTimeout(250)
+  await Promise.race([
+    page.waitForLoadState('domcontentloaded', { timeout: 2_500 }).catch(() => undefined),
+    page.waitForTimeout(900)
+  ])
+  await page.waitForTimeout(150)
 }
 
 async function clickMicrosoftLoginSubmit(page: Page): Promise<boolean> {
@@ -231,28 +291,136 @@ async function clickStaySignedIn(page: Page): Promise<boolean> {
   return true
 }
 
-async function continueFromOutlookLanding(page: Page): Promise<boolean> {
-  const link = await firstVisible([
-    page.getByRole('link', { name: /^(sign in|open outlook|continue to sign in)$/i }).first(),
-    page.getByRole('button', { name: /^(sign in|open outlook|continue to sign in)$/i }).first(),
-    page.locator('a[href*="outlook.live.com"]:visible').first(),
-    page.locator('a[href*="go.microsoft.com"]:visible').filter({ hasText: /sign in|open outlook|continue to sign in/i }).first()
+async function clickUseYourPassword(page: Page): Promise<boolean> {
+  const control = await firstVisible([
+    page.locator('button:visible, a:visible, [role="button"]:visible, [role="link"]:visible').filter({ hasText: /use\s+your\s+password|sử dụng\s+mật khẩu|dùng\s+mật khẩu/i }).first(),
+    page.getByRole('link', { name: /use\s+your\s+password|sử dụng\s+mật khẩu|dùng\s+mật khẩu/i }).first(),
+    page.getByRole('button', { name: /use\s+your\s+password|sử dụng\s+mật khẩu|dùng\s+mật khẩu/i }).first(),
+    page.getByText(/use\s+your\s+password|sử dụng\s+mật khẩu|dùng\s+mật khẩu/i).first()
   ])
-  if (!link) return false
-
-  const href = await link.getAttribute('href').catch(() => null)
-  if (href && !href.toLowerCase().startsWith('javascript:')) {
-    const target = new URL(href, page.url()).toString()
-    await page.goto(target, { waitUntil: 'domcontentloaded', timeout: 30_000 })
-  } else {
-    await link.click()
-    await waitForMicrosoftStep(page)
+  if (!control) return false
+  try {
+    await control.click({ timeout: 8_000 })
+  } catch (error) {
+    if (!isExpectedMicrosoftNavigationInterruption(error, page.url())) throw error
   }
-  await page.bringToFront().catch(() => undefined)
+  await waitForMicrosoftStep(page)
   return true
 }
 
-async function continueFromMicrosoftOAuthAuthorize(page: Page): Promise<boolean> {
+async function continueFromOutlookLanding(page: Page): Promise<Page | null> {
+  const link = await firstVisible([
+    page.locator('a[href*="go.microsoft.com"]:visible').filter({ hasText: /sign in|open outlook|continue to sign in/i }).first(),
+    page.locator('a[href*="outlook.live.com"]:visible').filter({ hasText: /sign in|open outlook|continue to sign in/i }).first(),
+    page.getByRole('link', { name: /sign in|open outlook|continue to sign in/i }).first(),
+    page.getByRole('button', { name: /sign in|open outlook|continue to sign in/i }).first()
+  ])
+  if (!link) return null
+
+  const beforeUrl = page.url()
+  const href = await link.getAttribute('href').catch(() => null)
+  const popupPromise = page.waitForEvent('popup', { timeout: 2_500 }).catch(() => null)
+
+  try {
+    await link.click({ timeout: 8_000 })
+  } catch (error) {
+    if (!isExpectedMicrosoftNavigationInterruption(error, page.url())) throw error
+  }
+
+  const popup = await popupPromise
+  if (popup) {
+    const popupIsMicrosoftOwned = await waitForMicrosoftOwnedPage(popup, 8_000)
+    await waitForMicrosoftStep(page)
+
+    const sourceContinuedMicrosoftFlow = !page.isClosed()
+      && page.url() !== beforeUrl
+      && isMicrosoftOwnedNavigationUrl(page.url())
+
+    if (sourceContinuedMicrosoftFlow) {
+      if (!popup.isClosed()) await popup.close({ runBeforeUnload: false }).catch(() => undefined)
+      await page.bringToFront().catch(() => undefined)
+      return page
+    }
+
+    if (popupIsMicrosoftOwned) {
+      await closeMicrosoftOwnedOpenerChain(popup)
+      await popup.bringToFront().catch(() => undefined)
+      return popup
+    }
+
+    if (!popup.isClosed() && (popup.url() === 'about:blank' || popup.url().startsWith('chrome-error://'))) {
+      await popup.close({ runBeforeUnload: false }).catch(() => undefined)
+    }
+    await page.bringToFront().catch(() => undefined)
+    return page
+  }
+
+  await waitForMicrosoftStep(page)
+
+  if (page.url() === beforeUrl && href && !href.toLowerCase().startsWith('javascript:')) {
+    try {
+      const target = new URL(href, beforeUrl).toString()
+      if (isMicrosoftOwnedNavigationUrl(target)) {
+        try {
+          await page.goto(target, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+        } catch (error) {
+          if (!isExpectedMicrosoftNavigationInterruption(error, page.url())) throw error
+          await waitForMicrosoftStep(page)
+        }
+      }
+    } catch {
+      // The visible CTA is authoritative; malformed/non-Microsoft hrefs are ignored safely.
+    }
+  }
+
+  await page.bringToFront().catch(() => undefined)
+  return page
+}
+
+async function findCanonicalMicrosoftAccountPickerEntry(page: Page, canonicalEmail: string): Promise<Locator | null> {
+  const email = canonicalEmail.trim()
+  if (!email) return null
+
+  const candidates = page.locator(
+    'button:visible, a:visible, [role="button"]:visible, [role="link"]:visible, [tabindex="0"]:visible, [data-test-id]:visible, [data-testid]:visible'
+  )
+  const count = Math.min(await candidates.count(), 80)
+  let bestMatch: Locator | null = null
+  let bestTextLength = Number.POSITIVE_INFINITY
+
+  for (let index = 0; index < count; index += 1) {
+    const candidate = candidates.nth(index)
+    const text = await candidate.innerText({ timeout: 800 }).catch(() => '')
+    if (!microsoftAccountPickerEntryMatchesCanonicalEmail(text, email)) continue
+    if (!await candidate.isVisible().catch(() => false)) continue
+
+    const textLength = text.replace(/\s+/g, ' ').trim().length
+    if (textLength < bestTextLength) {
+      bestMatch = candidate
+      bestTextLength = textLength
+    }
+  }
+
+  if (bestMatch) return bestMatch
+
+  const escapedEmail = email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return await firstVisible([
+    page.getByText(new RegExp(`^\\s*${escapedEmail}\\s*$`, 'i')).first()
+  ])
+}
+
+async function continueFromMicrosoftOAuthAuthorize(page: Page, canonicalEmail: string): Promise<boolean> {
+  const canonicalAccount = await findCanonicalMicrosoftAccountPickerEntry(page, canonicalEmail)
+  if (canonicalAccount) {
+    try {
+      await canonicalAccount.click({ timeout: 8_000 })
+    } catch (error) {
+      if (!isExpectedMicrosoftNavigationInterruption(error, page.url())) throw error
+    }
+    await waitForMicrosoftStep(page)
+    return true
+  }
+
   const anotherAccount = await firstVisible([
     page.getByRole('button', { name: /^(use another account|sign in with another account|sử dụng tài khoản khác|đăng nhập bằng tài khoản khác)$/i }).first(),
     page.getByRole('link', { name: /^(use another account|sign in with another account|sử dụng tài khoản khác|đăng nhập bằng tài khoản khác)$/i }).first(),
@@ -278,30 +446,64 @@ async function autoLoginMicrosoft(
   command: BrowserCommandBase,
   allowPasswordChangeSurface = false
 ): Promise<MicrosoftLoginAttempt> {
+  const pagesAtFlowStart = new Set(page.context().pages())
   let attempted = false
-  for (let step = 0; step < 8; step += 1) {
-    const snapshot = await readMicrosoftLoginSnapshot(page)
-    if (!snapshot) {
-      return loginNeedsAttention(
-        'security_review',
-        attempted,
-        'Không đọc được trạng thái đăng nhập Microsoft; PAGE-AUTO dừng an toàn và giữ nguyên profile Email.'
+  let unreadableSteps = 0
+  let usernameSubmitAttempts = 0
+  for (let step = 0; step < 16; step += 1) {
+    const previousPage = page
+    const previousRoute = microsoftRouteLogLabel(previousPage.url())
+    page = await adoptNewestMicrosoftFlowPage(page, pagesAtFlowStart)
+    if (page !== previousPage) {
+      console.info(
+        `[PAGE-AUTO email auth] adopt-page ${previousRoute} -> ${microsoftRouteLogLabel(page.url())}; pages=${page.context().pages().length}`
       )
     }
 
+    const snapshot = await readMicrosoftLoginSnapshot(page)
+    if (!snapshot) {
+      unreadableSteps += 1
+      if (unreadableSteps < 3) {
+        await waitForMicrosoftStep(page)
+        continue
+      }
+      await closeMicrosoftOwnedOpenerChain(page)
+      return loginNeedsAttention(
+        'security_review',
+        attempted,
+        'Không đọc được trạng thái đăng nhập Microsoft sau nhiều lần chờ; PAGE-AUTO dừng an toàn và giữ nguyên profile Email.'
+      )
+    }
+    unreadableSteps = 0
+
     const surface = classifyMicrosoftLoginSurface(snapshot)
-    if (surface === 'authenticated') return { status: 'authenticated', attempted }
+    console.info(
+      `[PAGE-AUTO email auth] step=${step} route=${microsoftRouteLogLabel(snapshot.url)} state=${surface} pages=${page.context().pages().length}`
+    )
+
+    if (surface === 'authenticated') {
+      await closeMicrosoftOwnedOpenerChain(page)
+      return { status: 'authenticated', attempted }
+    }
     if (surface === 'password_change') {
       if (allowPasswordChangeSurface) return { status: 'authenticated', attempted }
+      await closeMicrosoftOwnedOpenerChain(page)
       return loginNeedsAttention(
         'needs_login',
         attempted,
         'Microsoft yêu cầu đổi Password trước khi tiếp tục. PAGE-AUTO không tự xử lý bước đổi Password ngoài action Password được chọn.'
       )
     }
-    if (surface === 'identity_review') return loginNeedsAttention('identity_review', attempted)
-    if (surface === 'security_review') return loginNeedsAttention('security_review', attempted)
+    if (surface === 'identity_review') {
+      await closeMicrosoftOwnedOpenerChain(page)
+      return loginNeedsAttention('identity_review', attempted)
+    }
+    if (surface === 'security_review') {
+      await closeMicrosoftOwnedOpenerChain(page)
+      return loginNeedsAttention('security_review', attempted)
+    }
     if (surface === 'credential_error') {
+      await closeMicrosoftOwnedOpenerChain(page)
       return loginNeedsAttention(
         'needs_login',
         attempted,
@@ -310,24 +512,34 @@ async function autoLoginMicrosoft(
     }
 
     if (surface === 'outlook_landing') {
-      if (!await continueFromOutlookLanding(page)) {
-        return loginNeedsAttention(
-          'needs_login',
-          attempted,
-          'Đã tới Outlook landing nhưng PAGE-AUTO không nhận diện được nút Sign in/Open Outlook an toàn.'
-        )
+      const nextPage = await continueFromOutlookLanding(page)
+      if (!nextPage) {
+        await waitForMicrosoftStep(page)
+        continue
+      }
+      page = nextPage
+      attempted = true
+      continue
+    }
+
+    if (surface === 'outlook_transition' || surface === 'login_transition') {
+      await waitForMicrosoftStep(page)
+      continue
+    }
+
+    if (surface === 'oauth_authorize' || surface === 'account_picker') {
+      if (!await continueFromMicrosoftOAuthAuthorize(page, command.loginEmail?.trim() ?? '')) {
+        await waitForMicrosoftStep(page)
+        continue
       }
       attempted = true
       continue
     }
 
-    if (surface === 'oauth_authorize') {
-      if (!await continueFromMicrosoftOAuthAuthorize(page)) {
-        return loginNeedsAttention(
-          'needs_login',
-          attempted,
-          'Đã tới Microsoft OAuth authorize nhưng PAGE-AUTO không nhận diện được nút Use another account/Sign in with another account an toàn.'
-        )
+    if (surface === 'password_method_choice') {
+      if (!await clickUseYourPassword(page)) {
+        await waitForMicrosoftStep(page)
+        continue
       }
       attempted = true
       continue
@@ -335,7 +547,8 @@ async function autoLoginMicrosoft(
 
     if (surface === 'stay_signed_in') {
       if (!await clickStaySignedIn(page)) {
-        return loginNeedsAttention('needs_login', attempted, 'Microsoft đang hỏi giữ đăng nhập nhưng PAGE-AUTO không nhận diện được nút xác nhận an toàn.')
+        await waitForMicrosoftStep(page)
+        continue
       }
       attempted = true
       continue
@@ -344,6 +557,7 @@ async function autoLoginMicrosoft(
     const loginEmail = command.loginEmail?.trim() ?? ''
     const loginPassword = command.loginPassword ?? ''
     if (!loginEmail || !loginPassword) {
+      await closeMicrosoftOwnedOpenerChain(page)
       return loginNeedsAttention(
         'needs_login',
         attempted,
@@ -352,17 +566,36 @@ async function autoLoginMicrosoft(
     }
 
     if (surface === 'username') {
+      if (usernameSubmitAttempts >= 2) {
+        await closeMicrosoftOwnedOpenerChain(page)
+        return loginNeedsAttention(
+          'needs_login',
+          attempted,
+          'Microsoft vẫn từ chối Email canonical sau khi PAGE-AUTO đã xác nhận field chứa đúng giá trị và thử lại có giới hạn. PAGE-AUTO giữ phiên để kiểm tra dữ liệu Email.'
+        )
+      }
       const username = await firstVisible([
         page.locator('input[name="loginfmt"]:visible').first(),
-        page.locator('input[type="email"]:visible').first(),
-        page.getByLabel(/email|phone|skype|email.*điện thoại|email.*skype/i).first()
+        page.locator('input[autocomplete="username"]:visible').first()
       ])
       if (!username) {
-        return loginNeedsAttention('needs_login', attempted, 'Microsoft đang dùng form tài khoản khác form auto login được hỗ trợ. PAGE-AUTO không tự đoán field.')
+        await waitForMicrosoftStep(page)
+        continue
       }
       await username.fill(loginEmail)
+      const filledEmail = (await username.inputValue().catch(() => '')).trim()
+      if (filledEmail !== loginEmail) {
+        await closeMicrosoftOwnedOpenerChain(page)
+        return loginNeedsAttention(
+          'needs_login',
+          attempted,
+          'PAGE-AUTO không xác nhận được field Microsoft đã nhận đúng Email canonical nên không bấm Next.'
+        )
+      }
+      usernameSubmitAttempts += 1
       if (!await clickMicrosoftLoginSubmit(page)) {
-        return loginNeedsAttention('needs_login', attempted, 'Không nhận diện được nút tiếp tục ở bước Email Microsoft. PAGE-AUTO giữ phiên để xử lý thủ công.')
+        await waitForMicrosoftStep(page)
+        continue
       }
       attempted = true
       continue
@@ -375,16 +608,19 @@ async function autoLoginMicrosoft(
         page.getByLabel(/password|mật khẩu/i).first()
       ])
       if (!password) {
-        return loginNeedsAttention('needs_login', attempted, 'Microsoft đang dùng form Password khác form auto login được hỗ trợ. PAGE-AUTO không tự đoán field.')
+        await waitForMicrosoftStep(page)
+        continue
       }
       await password.fill(loginPassword)
       if (!await clickMicrosoftLoginSubmit(page)) {
-        return loginNeedsAttention('needs_login', attempted, 'Không nhận diện được nút đăng nhập Microsoft sau khi điền PassEmail. PAGE-AUTO giữ phiên để xử lý thủ công.')
+        await waitForMicrosoftStep(page)
+        continue
       }
       attempted = true
       continue
     }
 
+    await closeMicrosoftOwnedOpenerChain(page)
     return loginNeedsAttention(
       'needs_login',
       attempted,
@@ -392,6 +628,7 @@ async function autoLoginMicrosoft(
     )
   }
 
+  await closeMicrosoftOwnedOpenerChain(page)
   return loginNeedsAttention(
     'needs_login',
     attempted,
@@ -403,7 +640,8 @@ async function prepareAuthenticatedPage(
   context: BrowserContext,
   command: BrowserCommandBase,
   openTarget: (context: BrowserContext) => Promise<Page>,
-  allowPasswordChangeSurface = false
+  allowPasswordChangeSurface = false,
+  reopenTargetAfterLogin = true
 ): Promise<PreparedMicrosoftPage> {
   let page = await openTarget(context)
   let login = await autoLoginMicrosoft(page, command, allowPasswordChangeSurface)
@@ -412,7 +650,7 @@ async function prepareAuthenticatedPage(
   }
 
   let autoLoginAttempted = login.attempted
-  if (login.attempted) {
+  if (login.attempted && reopenTargetAfterLogin) {
     page = await openTarget(context)
     login = await autoLoginMicrosoft(page, command, allowPasswordChangeSurface)
     autoLoginAttempted = autoLoginAttempted || login.attempted
@@ -430,7 +668,7 @@ async function detectAttention(page: Page): Promise<HotmailNeedsAttentionReason 
   const surface = classifyMicrosoftLoginSurface(snapshot)
   if (surface === 'identity_review') return 'identity_review'
   if (surface === 'security_review') return 'security_review'
-  if (surface === 'username' || surface === 'password' || surface === 'password_change' || surface === 'credential_error' || surface === 'manual_login' || surface === 'stay_signed_in' || surface === 'outlook_landing' || surface === 'oauth_authorize') {
+  if (surface === 'username' || surface === 'password_method_choice' || surface === 'password' || surface === 'password_change' || surface === 'credential_error' || surface === 'manual_login' || surface === 'stay_signed_in' || surface === 'outlook_landing' || surface === 'outlook_transition' || surface === 'login_transition' || surface === 'oauth_authorize' || surface === 'account_picker') {
     return 'needs_login'
   }
   return null
@@ -544,7 +782,7 @@ function isPasswordChangeSurface(snapshot: PasswordSnapshot): boolean {
 
 function passwordAttention(snapshot: PasswordSnapshot): HotmailNeedsAttentionReason | null {
   if (/verify your identity|confirm your identity|identity verification|xác minh danh tính/.test(snapshot.text)) return 'identity_review'
-  if (/enter.*code|security code|verification code|two[- ]step|two[- ]factor|approve.*sign.?in|authenticator|help us protect|xác minh bảo mật|mã bảo mật|trình xác thực|phê duyệt.*đăng nhập/.test(snapshot.text)) return 'security_review'
+  if (/enter.*code|security code|verification code|two[- ]step|two[- ]factor|approve.*sign.?in|authenticator|help us protect|verify your email|send code|already received a code|use your password|xác minh bảo mật|xác minh email|mã bảo mật|trình xác thực|phê duyệt.*đăng nhập/.test(snapshot.text)) return 'security_review'
   if ((/login\.live\.com|login\.microsoftonline\.com|signin|oauth20_authorize/.test(snapshot.url) || /sign in|đăng nhập/.test(snapshot.text)) && !isPasswordChangeSurface(snapshot)) {
     return 'needs_login'
   }
@@ -813,7 +1051,9 @@ async function run(): Promise<void> {
           const prepared = await prepareAuthenticatedPage(
             resolved.context,
             command,
-            openOutlook
+            openOutlook,
+            false,
+            false
           )
           if (prepared.status === 'needs_attention') {
             const result: OpenResult = {
@@ -855,13 +1095,18 @@ async function run(): Promise<void> {
         process.parentPort?.postMessage(result)
       } catch (error) {
         if (command.type === 'open-mail') {
+          const attachedLive = attachedBrowser?.isConnected() ?? false
+          const browserStillOpen = launchedContext !== null || attachedLive
           const result: OpenResult = {
             type: 'open-result',
             accountId: command.accountId,
-            status: 'error',
-            attached: false,
-            proxyManagedExternally: false,
-            message: friendlyEmailBrowserError(error)
+            status: browserStillOpen ? 'needs_attention' : 'error',
+            ...(browserStillOpen ? { needsAttentionReason: 'needs_login' as const } : {}),
+            attached: attachedLive,
+            proxyManagedExternally: attachedExternally,
+            message: browserStillOpen
+              ? 'Browser Email đã mở nhưng Microsoft navigation/login chưa hoàn tất ổn định. PAGE-AUTO giữ nguyên profile mở thay vì đóng Chrome.'
+              : friendlyEmailBrowserError(error)
           }
           process.parentPort?.postMessage(result)
         } else if (command.type === 'password-action') {
