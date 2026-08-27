@@ -25,8 +25,11 @@ vi.mock('../../browser/posting/postingEngine', () => ({
   },
   MediaUploader: class {
     upload = mocks.mediaUpload
-  },
-  PublishAction: class {
+  }
+}))
+
+vi.mock('./pageWallPublishAction', () => ({
+  PageWallPublishAction: class {
     click = mocks.publishClick
   }
 }))
@@ -69,7 +72,7 @@ describe('PageWallPostFlow', () => {
     })
   })
 
-  it('runs baseline -> composer -> content -> media -> publish -> wall verification', async () => {
+  it('runs baseline -> composer -> content -> media -> wall publish action -> wall verification', async () => {
     const prepared = runtime()
     const result = await new PageWallPostFlow(
       prepared.value,
@@ -117,7 +120,7 @@ describe('PageWallPostFlow', () => {
     expect(mocks.publishClick).not.toHaveBeenCalled()
   })
 
-  it('stops before verification when the publish action itself fails', async () => {
+  it('stops before verification when the wall publish action itself fails', async () => {
     mocks.publishClick.mockResolvedValueOnce({
       status: 'failed',
       code: 'publish_action_failed',

@@ -1,6 +1,7 @@
 import type { PostingErrorCode, PostingJobResult } from '../../../shared/posting'
-import { MediaUploader, PostComposer, PublishAction } from '../../browser/posting/postingEngine'
+import { MediaUploader, PostComposer } from '../../browser/posting/postingEngine'
 import { RobustComposerDetector } from '../../browser/posting/robustComposerDetector'
+import { PageWallPublishAction } from './pageWallPublishAction'
 import type { PreparedPageWallRuntime } from './pageWallTask'
 import { PageWallPublishVerifier } from './pageWallPublishVerifier'
 
@@ -71,11 +72,10 @@ export class PageWallPostFlow {
     if (mediaResult.status !== 'success') return mediaResult
 
     await this.runtime.pace('media-to-publish')
-    const publishResult = await new PublishAction(
-      this.runtime.page,
+    const publishResult = await new PageWallPublishAction(
+      this.runtime,
       composerDetector,
-      this.networkTimeoutMs,
-      this.runtime.browser.pageSettleDelayMs
+      this.networkTimeoutMs
     ).click(composer.container)
     if (publishResult.status !== 'success') return publishResult
 
