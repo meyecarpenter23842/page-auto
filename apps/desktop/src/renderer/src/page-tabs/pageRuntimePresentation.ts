@@ -1,3 +1,4 @@
+import type { PostingCheckpointKind } from '../../../shared/posting'
 import type {
   RotationAccountRuntimeStatus,
   RotationRuntimeSnapshot,
@@ -9,8 +10,14 @@ const ACCOUNT_RUNTIME_LABELS: Record<RotationAccountRuntimeStatus, string> = {
   not_run: 'Chưa chạy',
   completed_turn: 'Đã chạy lượt',
   running: 'Đang chạy',
-  error: 'Lỗi/Checkpoint',
+  error: 'Lỗi',
   waiting: 'Chờ'
+}
+
+const CHECKPOINT_RUNTIME_LABELS: Record<PostingCheckpointKind, string> = {
+  '282': 'Checkpoint 282',
+  '956': 'Checkpoint 956',
+  unknown: 'Checkpoint không xác định'
 }
 
 const ROTATION_RUNTIME_LABELS: Record<RotationRuntimeStatus, string> = {
@@ -25,7 +32,11 @@ const ROTATION_RUNTIME_LABELS: Record<RotationRuntimeStatus, string> = {
   error: 'Lỗi'
 }
 
-export function accountRuntimeLabel(status: RotationAccountRuntimeStatus): string {
+export function accountRuntimeLabel(
+  status: RotationAccountRuntimeStatus,
+  checkpointKind?: PostingCheckpointKind
+): string {
+  if (status === 'error' && checkpointKind) return CHECKPOINT_RUNTIME_LABELS[checkpointKind]
   return ACCOUNT_RUNTIME_LABELS[status]
 }
 

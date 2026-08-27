@@ -1,4 +1,4 @@
-import type { PostingJobResult } from './posting'
+import type { PostingCheckpointKind, PostingJobResult } from './posting'
 import type { RunDetails } from './runs'
 
 export const ROTATION_RUNTIME_STATUSES = [
@@ -27,6 +27,7 @@ export interface RotationAccountRuntimeState {
   accountId: number
   status: RotationAccountRuntimeStatus
   message: string | null
+  checkpointKind?: PostingCheckpointKind
 }
 
 export interface PostingJobPreview {
