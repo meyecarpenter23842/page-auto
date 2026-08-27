@@ -41,4 +41,53 @@ describe('posting checkpoint result enrichment', () => {
       checkpointKind: '282'
     })
   })
+
+  it('replaces stale valid session metadata when a checkpoint appears after session preparation', async () => {
+    const result = await finishPostingEvidence(
+      pageAt('https://www.facebook.com/checkpoint/1501092823525282/'),
+      job(),
+      {
+        status: 'needs_login',
+        code: 'verification_required',
+        message: 'Facebook yêu cầu checkpoint/xác minh thủ công sau khi mở Group.',
+        sessionValidation: {
+          phase: 'before_run',
+          state: 'valid',
+          message: 'Session Facebook đã được xác minh trước khi mở Group.'
+        }
+      },
+      false
+    )
+
+    expect(result.sessionValidation).toEqual({
+      phase: 'before_run',
+      state: 'verification_required',
+      message: 'Facebook yêu cầu checkpoint/xác minh thủ công sau khi mở Group.',
+      checkpointKind: '282'
+    })
+  })
+
+  it('replaces stale valid session metadata when Facebook asks for login again before publish', async () => {
+    const result = await finishPostingEvidence(
+      pageAt('https://www.facebook.com/login/'),
+      job(),
+      {
+        status: 'needs_login',
+        code: 'needs_login',
+        message: 'Facebook yêu cầu đăng nhập lại sau khi mở Group.',
+        sessionValidation: {
+          phase: 'before_run',
+          state: 'valid',
+          message: 'Session Facebook đã được xác minh trước khi mở Group.'
+        }
+      },
+      false
+    )
+
+    expect(result.sessionValidation).toEqual({
+      phase: 'before_run',
+      state: 'needs_login',
+      message: 'Facebook yêu cầu đăng nhập lại sau khi mở Group.'
+    })
+  })
 })
