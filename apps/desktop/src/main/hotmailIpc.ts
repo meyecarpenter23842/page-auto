@@ -2,6 +2,7 @@ import { dialog, ipcMain, shell } from 'electron'
 import type Database from 'better-sqlite3'
 import { IPC_CHANNELS } from '../ipc/channels'
 import { EMAIL_CODE_DB_RETENTION_MS, type EmailCodeProvider } from '../shared/emailCode'
+import type { HotmailComboActionPayload } from '../shared/emailCombo'
 import type {
   SaveHotmailSettingsInput,
   HotmailAccountPayload,
@@ -15,6 +16,7 @@ import { AccountRepository } from './database/accountRepository'
 import { HotmailRepository } from './database/hotmailRepository'
 import { createCanonicalEmailCodeRuntime } from './email/canonicalEmailCodeProvider'
 import { emailBrowserExecutableCandidates } from './email/emailBrowserExecutable'
+import { HotmailComboService } from './email/hotmailComboService'
 import { testEmailBrowserExecutable } from './email/emailProxyTester'
 import { ElectronEmailSecretCipher } from './email/emailSecretStore'
 import { HotmailService } from './email/hotmailService'
@@ -97,6 +99,7 @@ export function registerHotmailIpcHandlers(database: Database.Database): Hotmail
     cipher,
     resolveBrowserExecutable
   )
+  const comboService = new HotmailComboService(accounts, repository, resolveBrowserExecutable)
   const codeRuntime = createCanonicalEmailCodeRuntime(accounts, repository, cipher)
   setEmailCodeProvider(codeRuntime.provider)
 
@@ -167,7 +170,7 @@ export function registerHotmailIpcHandlers(database: Database.Database): Hotmail
       return result
     }
 
-    if (pendingRecoveryPayload || pendingPasswordPayload) {
+    if (pendingRecoveryPayload || pendingPasswordPayload || comboService.hasActiveFlow()) {
       throw new Error('Đang có một flow bảo mật Email chờ xác nhận. Hoàn tất flow đó trước khi mở thao tác mới.')
     }
 
@@ -208,7 +211,7 @@ export function registerHotmailIpcHandlers(database: Database.Database): Hotmail
       return result
     }
 
-    if (pendingRecoveryPayload || pendingPasswordPayload) {
+    if (pendingRecoveryPayload || pendingPasswordPayload || comboService.hasActiveFlow()) {
       throw new Error('Đang có một flow bảo mật Email chờ xác nhận. Hoàn tất flow đó trước khi mở thao tác mới.')
     }
 
@@ -225,6 +228,13 @@ export function registerHotmailIpcHandlers(database: Database.Database): Hotmail
     return result
   })
 
+  ipcMain.handle(IPC_CHANNELS.hotmailComboAction, async (_event, payload: HotmailComboActionPayload) => {
+    if (pendingRecoveryPayload || pendingPasswordPayload) {
+      throw new Error('Đang có một flow bảo mật Email đơn lẻ chờ xác nhận. Hoàn tất flow đó trước khi chạy Combo Email.')
+    }
+    return await comboService.run(payload)
+  })
+
   ipcMain.handle(IPC_CHANNELS.hotmailProxyStatus, () => service.getProxyStatus())
   ipcMain.handle(IPC_CHANNELS.hotmailProxyRotate, () => service.rotateProxy())
   ipcMain.handle(IPC_CHANNELS.hotmailProxyTest, () => service.testProxy())
@@ -233,6 +243,7 @@ export function registerHotmailIpcHandlers(database: Database.Database): Hotmail
     dispose: () => {
       pendingRecoveryPayload = null
       pendingPasswordPayload = null
+      comboService.dispose()
       clearEmailCodeProvider(codeRuntime.provider)
       codeRuntime.dispose()
       service.dispose()

@@ -18,6 +18,7 @@ import type {
 } from '../shared/browserWindowLayout'
 import type { CaptchaSettingsView, SaveCaptchaSettingsInput } from '../shared/captchaSettings'
 import type { ConfigBackupExportResult, ConfigBackupRestoreResult } from '../shared/configBackup'
+import type { HotmailComboActionPayload, HotmailComboBatchResult } from '../shared/emailCombo'
 import type {
   ExecutionLogFilters,
   ExecutionLogRecord,
@@ -80,6 +81,7 @@ export const IPC_CHANNELS = {
   hotmailOpen: 'hotmail:open',
   hotmailRecoveryAction: 'hotmail:recovery:action',
   hotmailPasswordAction: 'hotmail:password:action',
+  hotmailComboAction: 'hotmail:combo:action',
   hotmailProxyStatus: 'hotmail:proxy:status',
   hotmailProxyRotate: 'hotmail:proxy:rotate',
   hotmailProxyTest: 'hotmail:proxy:test',
@@ -161,6 +163,7 @@ export interface PageAutoIpcContract {
   openHotmail: (payload: HotmailAccountPayload) => Promise<HotmailBrowserOpenResult>
   updateHotmailRecovery: (payload: HotmailRecoveryActionPayload) => Promise<HotmailRecoveryBatchResult>
   updateHotmailPassword: (payload: HotmailPasswordActionPayload) => Promise<HotmailPasswordBatchResult>
+  runHotmailCombo: (payload: HotmailComboActionPayload) => Promise<HotmailComboBatchResult>
   getHotmailProxyStatus: () => Promise<HotmailProxyStatus>
   rotateHotmailProxy: () => Promise<HotmailProxyStatus>
   testHotmailProxy: () => Promise<HotmailProxyTestResult>
