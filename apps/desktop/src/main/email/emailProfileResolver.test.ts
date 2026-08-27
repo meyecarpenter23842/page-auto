@@ -3,7 +3,12 @@ import { mkdtemp, mkdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { inspectEmailProfile, resolveEmailProfileDirectory, validateEmailProfileRoot } from './emailProfileResolver'
+import {
+  ensureEmailProfileDirectory,
+  inspectEmailProfile,
+  resolveEmailProfileDirectory,
+  validateEmailProfileRoot
+} from './emailProfileResolver'
 
 const created: string[] = []
 const servers: Server[] = []
@@ -30,13 +35,27 @@ async function startCdpProbeServer(): Promise<number> {
 }
 
 describe('email profile resolver', () => {
-  it('resolves exactly root/UID and never creates a missing profile during inspection', async () => {
+  it('resolves exactly root/UID and keeps inspection read-only for a missing profile', async () => {
     const root = await mkdtemp(join(tmpdir(), 'page-auto-hotmail-'))
     created.push(root)
     expect(resolveEmailProfileDirectory(root, '10001')).toBe(join(root, '10001'))
     expect(resolveEmailProfileDirectory(root, '../escape')).toBeNull()
     expect((await inspectEmailProfile(root, '10001')).status).toBe('missing')
     await expect(stat(join(root, '10001'))).rejects.toThrow()
+  })
+
+  it('creates exactly root/UID on demand and reuses an existing profile directory', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'page-auto-hotmail-create-'))
+    created.push(root)
+    const expected = join(root, '10004')
+
+    expect(await ensureEmailProfileDirectory(root, '10004')).toBe(expected)
+    expect((await stat(expected)).isDirectory()).toBe(true)
+    await writeFile(join(expected, 'marker.txt'), 'keep')
+
+    expect(await ensureEmailProfileDirectory(root, '10004')).toBe(expected)
+    expect((await stat(join(expected, 'marker.txt'))).isFile()).toBe(true)
+    await expect(ensureEmailProfileDirectory(root, '../escape')).rejects.toThrow(/UID không hợp lệ/)
   })
 
   it('requires an existing absolute Email Profile Root', async () => {

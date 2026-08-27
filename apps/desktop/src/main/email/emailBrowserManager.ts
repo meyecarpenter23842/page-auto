@@ -8,7 +8,7 @@ import type {
   HotmailRecoveryOperation
 } from '../../shared/hotmail'
 import { shouldKeepEmailBrowserWorker } from './emailBrowserLifecycle'
-import { inspectEmailProfile } from './emailProfileResolver'
+import { ensureEmailProfileDirectory, inspectEmailProfile } from './emailProfileResolver'
 import type { EmailProxyCandidate } from './emailProxyPool'
 
 interface WorkerOpenResult {
@@ -266,15 +266,27 @@ export class EmailBrowserManager {
   }
 
   private async prepareWorker(account: AccountRecord, profileRoot: string, actionOnly: boolean): Promise<PreparedWorker | MissingWorker> {
-    const inspection = await inspectEmailProfile(profileRoot, account.uid)
+    let inspection = await inspectEmailProfile(profileRoot, account.uid)
     if (inspection.status === 'not_configured') {
       return { status: 'missing_profile', profileDirectory: null, message: 'Chưa cấu hình Email Profile Root.' }
     }
-    if (inspection.status === 'missing' || !inspection.profileDirectory) {
+    if (inspection.status === 'missing') {
+      try {
+        const profileDirectory = await ensureEmailProfileDirectory(profileRoot, account.uid)
+        inspection = { status: 'available', profileDirectory, cdpEndpoint: null }
+      } catch (error) {
+        return {
+          status: 'missing_profile',
+          profileDirectory: inspection.profileDirectory,
+          message: error instanceof Error ? error.message : `Không thể tạo Email profile cho UID ${account.uid}.`
+        }
+      }
+    }
+    if (!inspection.profileDirectory) {
       return {
         status: 'missing_profile',
-        profileDirectory: inspection.profileDirectory,
-        message: `Không tìm thấy profile Email có sẵn cho UID ${account.uid}. PAGE-AUTO không tự tạo hoặc clone profile.`
+        profileDirectory: null,
+        message: `Không resolve được Email profile cho UID ${account.uid}.`
       }
     }
 

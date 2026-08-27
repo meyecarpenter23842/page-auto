@@ -216,7 +216,7 @@ export class HotmailService {
     this.runtimeStatus.set(accountId, 'opening')
     try {
       const inspection = await inspectEmailProfile(settings.profileRoot, account.uid)
-      if (inspection.status === 'not_configured' || inspection.status === 'missing') {
+      if (inspection.status === 'not_configured') {
         this.profileInUseUntil.delete(accountId)
         const result = await this.browser.open(account, settings.profileRoot, settings.browserExecutable, null)
         this.runtimeStatus.set(accountId, 'error')
@@ -297,7 +297,7 @@ export class HotmailService {
       try {
         const settings = this.repository.getProfileSettings()
         const inspection = await inspectEmailProfile(settings.profileRoot, account.uid)
-        if (inspection.status === 'not_configured' || inspection.status === 'missing') {
+        if (inspection.status === 'not_configured') {
           const missing = await this.browser.runRecoveryAction(
             account,
             settings.profileRoot,
@@ -396,7 +396,7 @@ export class HotmailService {
       try {
         const settings = this.repository.getProfileSettings()
         const inspection = await inspectEmailProfile(settings.profileRoot, account.uid)
-        if (inspection.status === 'not_configured' || inspection.status === 'missing') {
+        if (inspection.status === 'not_configured') {
           const missing = await this.browser.runPasswordAction(
             account,
             settings.profileRoot,
@@ -518,6 +518,7 @@ export class HotmailService {
           refreshTokenCiphertext,
           oauthStatus: 'valid',
           oauthUpdatedAt: Date.now(),
+          lastTokenCheckAt: Date.now(),
           lastError: null
         })
       }
