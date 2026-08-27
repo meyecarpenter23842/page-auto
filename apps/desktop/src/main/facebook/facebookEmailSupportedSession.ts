@@ -3,7 +3,8 @@ import type { FacebookLocale } from '../../shared/appSettings'
 import {
   bootstrapFacebookSession,
   type FacebookSessionAccount,
-  type FacebookSessionResult
+  type FacebookSessionResult,
+  type FacebookSessionTiming
 } from '../browser/facebookSession'
 import { settleFacebookSessionAfterTwoFactor } from '../browser/facebookPostTwoFactorContinuation'
 import { getEmailCodeProvider } from '../services/emailCodeProviderRegistry'
@@ -22,10 +23,12 @@ export async function bootstrapFacebookSessionWithEmailSupport(
   context: BrowserContext,
   page: Page,
   account: FacebookSessionAccount,
-  locale: FacebookLocale = 'auto'
+  locale: FacebookLocale = 'auto',
+  timing?: FacebookSessionTiming
 ): Promise<FacebookEmailSupportedBootstrapResult> {
-  let session = await bootstrapFacebookSession(context, page, account, locale)
-  session = await settleFacebookSessionAfterTwoFactor(context, page, account, session)
+  const settleOptions = timing ? { timeoutMs: timing.networkTimeoutMs } : {}
+  let session = await bootstrapFacebookSession(context, page, account, locale, timing)
+  session = await settleFacebookSessionAfterTwoFactor(context, page, account, session, settleOptions)
   if (session.status === 'valid' || session.reason !== 'checkpoint') {
     return { status: 'session', session }
   }
@@ -42,7 +45,7 @@ export async function bootstrapFacebookSessionWithEmailSupport(
 
   // Re-enter the existing Common session state machine after the Email challenge.
   // It remains responsible for TOTP, identity review and final c_user validation.
-  session = await bootstrapFacebookSession(context, page, account, locale)
-  session = await settleFacebookSessionAfterTwoFactor(context, page, account, session)
+  session = await bootstrapFacebookSession(context, page, account, locale, timing)
+  session = await settleFacebookSessionAfterTwoFactor(context, page, account, session, settleOptions)
   return { status: 'session', session }
 }
