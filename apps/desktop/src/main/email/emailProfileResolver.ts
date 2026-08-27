@@ -1,4 +1,4 @@
-import { readFile, stat } from 'node:fs/promises'
+import { mkdir, readFile, stat } from 'node:fs/promises'
 import { request } from 'node:http'
 import { isAbsolute, relative, resolve } from 'node:path'
 import type { HotmailProfileInspection } from '../../shared/hotmail'
@@ -16,6 +16,12 @@ function safeProfileDirectory(root: string, uid: string): string | null {
   return candidate
 }
 
+function fsErrorCode(error: unknown): string | null {
+  return error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
+    ? error.code
+    : null
+}
+
 export async function validateEmailProfileRoot(root: string): Promise<string> {
   const normalizedRoot = root.trim()
   if (!normalizedRoot) throw new Error('Chưa cấu hình Email Profile Root.')
@@ -30,6 +36,32 @@ export async function validateEmailProfileRoot(root: string): Promise<string> {
   }
   if (!info.isDirectory()) throw new Error('Email Profile Root không phải thư mục.')
   return resolvedRoot
+}
+
+export async function ensureEmailProfileDirectory(root: string, uid: string): Promise<string> {
+  const resolvedRoot = await validateEmailProfileRoot(root)
+  const profileDirectory = safeProfileDirectory(resolvedRoot, uid)
+  if (!profileDirectory) throw new Error('UID không hợp lệ để tạo Email profile.')
+
+  try {
+    const info = await stat(profileDirectory)
+    if (!info.isDirectory()) throw new Error(`Email profile UID ${uid} không phải thư mục.`)
+    return profileDirectory
+  } catch (error) {
+    if (fsErrorCode(error) !== 'ENOENT') throw error
+  }
+
+  try {
+    await mkdir(profileDirectory)
+  } catch (error) {
+    if (fsErrorCode(error) !== 'EEXIST') {
+      throw new Error(`Không thể tạo Email profile mới cho UID ${uid} trong Email Profile Root.`)
+    }
+  }
+
+  const info = await stat(profileDirectory)
+  if (!info.isDirectory()) throw new Error(`Email profile UID ${uid} không phải thư mục.`)
+  return profileDirectory
 }
 
 async function readCdpEndpoint(profileDirectory: string): Promise<string | null> {

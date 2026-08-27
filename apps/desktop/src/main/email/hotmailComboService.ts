@@ -141,10 +141,8 @@ export class HotmailComboService {
 
     const settings = this.repository.getProfileSettings()
     const inspection = await inspectEmailProfile(settings.profileRoot, account.uid)
-    if (inspection.status === 'not_configured' || inspection.status === 'missing') {
-      return this.simpleError(accountId, inspection.status === 'not_configured'
-        ? 'Chưa cấu hình Email Profile Root.'
-        : `Không tìm thấy profile Email có sẵn cho UID ${account.uid}.`, account.backupEmail, 'missing_profile')
+    if (inspection.status === 'not_configured') {
+      return this.simpleError(accountId, 'Chưa cấu hình Email Profile Root.', account.backupEmail, 'missing_profile')
     }
 
     const manager = new EmailBrowserManager((id) => this.proxyPool.release(id))
