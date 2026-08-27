@@ -24,6 +24,7 @@ import type { ConfigBackupRestoreResult } from '../shared/configBackup'
 import type { ExecutionLogFilters, RetryRunItemPayload } from '../shared/executionLogs'
 import type { CreatePageTabInput, PageTabIdPayload, UpdatePageTabPayload } from '../shared/pageTabs'
 import type { PageWallRunNowPayload } from '../shared/pageWall'
+import type { PageWallJobIdPayload, PageWallSchedulePayload } from '../shared/pageWallJobs'
 import type { ExecuteSinglePostingJobPayload } from '../shared/posting'
 import type { RotationPageTabPayload } from '../shared/rotation'
 import type { CreateRunPayload, RunIdPayload } from '../shared/runs'
@@ -36,12 +37,14 @@ import { BrowserWindowLayoutRepository } from './database/browserWindowLayoutRep
 import { CaptchaSettingsRepository } from './database/captchaSettingsRepository'
 import { ExecutionLogRepository } from './database/executionLogRepository'
 import { PageTabRepository } from './database/pageTabRepository'
+import { PageWallJobRepository } from './database/pageWallJobRepository'
 import { RunRepository } from './database/runRepository'
 import { AccountExecutionCoordinator } from './services/accountExecutionCoordinator'
 import { ConfigBackupService } from './services/configBackupService'
 import { LogMaintenanceService } from './services/logMaintenanceService'
 import { PageTabWorkerManager } from './services/pageTabWorkerManager'
 import { PageWallRunNowService } from './services/pageWallRunNowService'
+import { PageWallSchedulerService } from './services/pageWallSchedulerService'
 import { PostingService } from './services/postingService'
 import { ResilientPostingService } from './services/resilientPostingService'
 import { RotationService, type RotationPostingExecutor } from './services/rotationService'
@@ -63,6 +66,7 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
   const browserWindowLayoutSettings = new BrowserWindowLayoutRepository(options.database)
   const captchaSettings = new CaptchaSettingsRepository(options.database)
   const pageTabs = new PageTabRepository(options.database)
+  const pageWallJobs = new PageWallJobRepository(options.database)
   const runs = new RunRepository(options.database)
   const executionLogs = new ExecutionLogRepository(options.database)
   const recovery = new RuntimeRecoveryService(options.database, executionLogs)
@@ -107,12 +111,17 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
     () => appSettings.get().logging
   )
   const accountExecution = new AccountExecutionCoordinator()
-  const pageWallRunNowService = new PageWallRunNowService(pageTabs, {
-    executePageWallPostNow: (input) => accountExecution.run(
-      input.accountId,
-      () => corePosting.executePageWallPostNow(input)
-    )
-  })
+  const executePageWallPostNow = (input: Parameters<PostingService['executePageWallPostNow']>[0]) => accountExecution.run(
+    input.accountId,
+    () => corePosting.executePageWallPostNow(input)
+  )
+  const pageWallRunNowService = new PageWallRunNowService(pageTabs, { executePageWallPostNow })
+  const pageWallScheduler = new PageWallSchedulerService(
+    pageWallJobs,
+    pageWallRunNowService,
+    { executePageWallPostNow },
+    () => appSettings.get().runtime.maxActivePageTabs
+  )
   const coordinatedPosting: RotationPostingExecutor = {
     executeSingle: (payload) => {
       const accountId = payload.accountId
@@ -201,6 +210,9 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
     return result.canceled ? [] : result.filePaths
   })
   ipcMain.handle(IPC_CHANNELS.pageWallRunNow, (_event, payload: PageWallRunNowPayload) => pageWallRunNowService.execute(payload))
+  ipcMain.handle(IPC_CHANNELS.pageWallSchedule, (_event, payload: PageWallSchedulePayload) => pageWallScheduler.create(payload))
+  ipcMain.handle(IPC_CHANNELS.pageWallJobsList, () => pageWallScheduler.list())
+  ipcMain.handle(IPC_CHANNELS.pageWallJobCancel, (_event, payload: PageWallJobIdPayload) => pageWallScheduler.cancel(payload))
 
   ipcMain.handle(IPC_CHANNELS.runsLatestForPageTab, (_event, payload: CreateRunPayload) => runs.getLatestForPageTab(payload.pageTabId))
   ipcMain.handle(IPC_CHANNELS.runsCreate, (_event, payload: CreateRunPayload) => runs.createForPageTab(payload.pageTabId))
@@ -295,6 +307,7 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
 
   return {
     dispose: () => {
+      pageWallScheduler.dispose()
       rotation.dispose()
       corePosting.closeAll()
       browserProfiles.closeAll()

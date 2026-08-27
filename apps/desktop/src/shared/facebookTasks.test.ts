@@ -40,6 +40,7 @@ describe('Facebook task contracts', () => {
     const legacy = legacyGroupJob()
     const taskJob = groupPostTaskFromLegacy(legacy)
 
+    expect(taskJob.executionMode).toBe('rotation')
     expect(taskJob.task).toEqual({
       type: 'group_post',
       target: { kind: 'group', groupUid: '80001' }
@@ -48,10 +49,11 @@ describe('Facebook task contracts', () => {
     expect(legacyPostingJobFromGroupTask(taskJob)).toEqual(legacy)
   })
 
-  it('represents page_wall_post without a Group UID', () => {
+  it('represents page_wall_post as an explicit one-shot without a Group UID', () => {
     const { groupUid: _groupUid, ...base } = legacyGroupJob()
     const taskJob = pageWallPostTaskFromBase(base)
 
+    expect(taskJob.executionMode).toBe('one_shot')
     expect(taskJob.task).toEqual({
       type: 'page_wall_post',
       target: { kind: 'page_wall', pageUid: '90001' }

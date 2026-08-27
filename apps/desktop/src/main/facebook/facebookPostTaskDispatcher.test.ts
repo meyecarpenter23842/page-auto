@@ -69,6 +69,7 @@ describe('executeFacebookPostTaskJob', () => {
   it('rejects a mismatched Page Wall target before either production executor runs', async () => {
     const task: PageWallPostTaskJobRequest = {
       ...commonBase(),
+      executionMode: 'one_shot',
       task: {
         type: 'page_wall_post',
         target: { kind: 'page_wall', pageUid: 'different-page' }

@@ -65,9 +65,10 @@ describe('initializeDatabase', () => {
       { version: 6, name: 'page_tab_post_library' },
       { version: 7, name: 'page_tab_account_order_mode' },
       { version: 8, name: 'hotmail_auto_subsystem' },
-      { version: 9, name: 'hotmail_account_oauth_binding' }
+      { version: 9, name: 'hotmail_account_oauth_binding' },
+      { version: 10, name: 'page_wall_scheduled_jobs' }
     ])
-    expect(schemaVersion?.value).toBe('9')
+    expect(schemaVersion?.value).toBe('10')
     expect(executionLogsTable?.name).toBe('execution_logs')
     expect(postLibraryTable?.name).toBe('page_tab_posts')
     expect(pageTabColumns.some((column) => column.name === 'account_order_mode')).toBe(true)
@@ -92,7 +93,7 @@ describe('initializeDatabase', () => {
       .prepare('SELECT COUNT(*) AS count FROM __page_auto_migrations')
       .get() as { count: number }
 
-    expect(count.count).toBe(9)
+    expect(count.count).toBe(10)
     reopened.close()
   })
 
