@@ -86,8 +86,8 @@ async function pollPage<T>(page: Page, timeoutMs: number, probe: () => Promise<T
   })
 }
 
-async function settleAction(page: Page): Promise<void> {
-  await page.waitForTimeout(ACTION_SETTLE_MS)
+async function settleAction(page: Page, delayMs: number): Promise<void> {
+  if (delayMs > 0) await page.waitForTimeout(delayMs)
 }
 
 async function settlePage(page: Page, settings: BrowserSettings): Promise<void> {
@@ -145,10 +145,14 @@ export type ComposerHandle = RobustComposerHandle
 export class ComposerDetector extends RobustComposerDetector {}
 
 export class PostComposer {
-  constructor(private readonly page: Page) {}
+  constructor(
+    private readonly page: Page,
+    private readonly networkTimeoutMs = CONTENT_READY_TIMEOUT_MS,
+    private readonly pageSettleDelayMs = ACTION_SETTLE_MS
+  ) {}
 
   private waitForContent(textbox: Locator, content: string): Promise<boolean | null> {
-    return pollPage(this.page, CONTENT_READY_TIMEOUT_MS, async () => (
+    return pollPage(this.page, this.networkTimeoutMs, async () => (
       await composerContainsText(textbox, content) ? true : null
     ))
   }
@@ -158,18 +162,18 @@ export class PostComposer {
     if (!normalized) return failure('no_content', 'Content Set không có nội dung hợp lệ cho job này.')
 
     try {
-      await textbox.fill(normalized, { timeout: 8_000 }).catch(() => undefined)
+      await textbox.fill(normalized, { timeout: this.networkTimeoutMs }).catch(() => undefined)
       if (await this.waitForContent(textbox, normalized)) {
-        await settleAction(this.page)
+        await settleAction(this.page, this.pageSettleDelayMs)
         return { status: 'success', message: 'Đã điền và xác nhận nội dung trong composer.' }
       }
 
-      await textbox.click({ timeout: 10_000 })
-      await this.page.waitForTimeout(300)
+      await textbox.click({ timeout: this.networkTimeoutMs })
+      await settleAction(this.page, this.pageSettleDelayMs)
       await this.page.keyboard.press('Control+A').catch(() => undefined)
       await this.page.keyboard.press('Backspace').catch(() => undefined)
       await this.page.keyboard.insertText(normalized)
-      await settleAction(this.page)
+      await settleAction(this.page, this.pageSettleDelayMs)
 
       if (!await this.waitForContent(textbox, normalized)) {
         return failure('content_failed', 'Composer đã mở nhưng nội dung chưa xuất hiện sau cả fill và keyboard fallback.')
@@ -184,7 +188,9 @@ export class PostComposer {
 export class MediaUploader {
   constructor(
     private readonly page: Page,
-    private readonly composerDetector?: RobustComposerDetector
+    private readonly composerDetector?: RobustComposerDetector,
+    private readonly networkTimeoutMs = MEDIA_READY_TIMEOUT_MS,
+    private readonly pageSettleDelayMs = ACTION_SETTLE_MS
   ) {}
 
   private async currentContainer(fallback: Locator): Promise<Locator> {
@@ -197,13 +203,13 @@ export class MediaUploader {
     const current = await this.currentContainer(container)
     const localInput = current.locator('input[type="file"]').last()
     if (await localInput.count().catch(() => 0)) {
-      await localInput.setInputFiles(imagePaths, { timeout: 30_000 })
+      await localInput.setInputFiles(imagePaths, { timeout: this.networkTimeoutMs })
       return true
     }
 
     const pageInput = this.page.locator('input[type="file"]').last()
     if (await pageInput.count().catch(() => 0)) {
-      await pageInput.setInputFiles(imagePaths, { timeout: 30_000 })
+      await pageInput.setInputFiles(imagePaths, { timeout: this.networkTimeoutMs })
       return true
     }
     return false
@@ -227,13 +233,31 @@ export class MediaUploader {
     expectedCount: number,
     baseline: MediaReadinessSnapshot
   ): Promise<boolean> {
-    const ready = await pollPage(this.page, MEDIA_READY_TIMEOUT_MS, async () => {
+    const ready = await pollPage(this.page, this.networkTimeoutMs, async () => {
       const current = await this.mediaSnapshot(container)
       return isMediaAttachmentReady(baseline, current, expectedCount) ? true : null
     })
     if (!ready) return false
-    await settleAction(this.page)
+    await settleAction(this.page, this.pageSettleDelayMs)
     return true
+  }
+
+  private async waitForMediaButton(container: Locator): Promise<Locator | null> {
+    return pollPage(this.page, this.networkTimeoutMs, async () => {
+      const current = await this.currentContainer(container)
+      return firstVisibleMatch([
+        current.getByRole('button', { name: /photo\s*\/?\s*video|photo|video|ảnh/i }),
+        current.getByLabel(/photo\s*\/?\s*video|photo|video|ảnh/i),
+        current.getByText(/photo\s*\/?\s*video|ảnh\s*\/?\s*video/i)
+      ])
+    })
+  }
+
+  private async waitForInputAndSet(container: Locator, imagePaths: string[]): Promise<boolean> {
+    const ready = await pollPage(this.page, this.networkTimeoutMs, async () => (
+      await this.setInputFiles(container, imagePaths) ? true : null
+    ))
+    return Boolean(ready)
   }
 
   async upload(container: Locator, imagePaths: string[]): Promise<PostingJobResult> {
@@ -248,18 +272,18 @@ export class MediaUploader {
         return { status: 'success', message: `Đã chọn và xác nhận ${imagePaths.length} ảnh sẵn sàng.` }
       }
 
-      const current = await this.currentContainer(container)
-      const mediaButton = await firstVisibleMatch([
-        current.getByRole('button', { name: /photo\s*\/?\s*video|photo|video|ảnh/i }),
-        current.getByLabel(/photo\s*\/?\s*video|photo|video|ảnh/i),
-        current.getByText(/photo\s*\/?\s*video|ảnh\s*\/?\s*video/i)
-      ])
+      const mediaButton = await this.waitForMediaButton(container)
       if (!mediaButton) return failure('media_failed', 'Không tìm thấy control Photo/Video trong composer.')
 
-      const chooserPromise = this.page.waitForEvent('filechooser', { timeout: 5_000 }).catch(() => null)
-      await mediaButton.click({ timeout: 10_000 })
-      await settleAction(this.page)
-      const chooser = await chooserPromise
+      const chooserPromise = this.page.waitForEvent('filechooser', { timeout: this.networkTimeoutMs }).catch(() => null)
+      await mediaButton.click({ timeout: this.networkTimeoutMs })
+      await settleAction(this.page, this.pageSettleDelayMs)
+
+      const inputReady = this.waitForInputAndSet(container, imagePaths)
+      const chooser = await Promise.race([
+        chooserPromise,
+        inputReady.then((ready) => ready ? null : chooserPromise)
+      ])
       if (chooser) {
         await chooser.setFiles(imagePaths)
         if (!await this.waitForMediaReady(container, imagePaths.length, baseline)) {
@@ -268,7 +292,7 @@ export class MediaUploader {
         return { status: 'success', message: `Đã chọn và xác nhận ${imagePaths.length} ảnh qua file chooser.` }
       }
 
-      if (!await this.setInputFiles(container, imagePaths)) {
+      if (!await inputReady) {
         return failure('media_failed', 'Đã mở Photo/Video nhưng không tìm thấy file chooser hoặc file input.')
       }
       if (!await this.waitForMediaReady(container, imagePaths.length, baseline)) {
@@ -284,7 +308,9 @@ export class MediaUploader {
 export class PublishAction {
   constructor(
     private readonly page: Page,
-    private readonly composerDetector?: RobustComposerDetector
+    private readonly composerDetector?: RobustComposerDetector,
+    private readonly networkTimeoutMs = PUBLISH_READY_TIMEOUT_MS,
+    private readonly pageSettleDelayMs = ACTION_SETTLE_MS
   ) {}
 
   private async fallbackCandidate(container: Locator): Promise<Locator | null> {
@@ -298,7 +324,7 @@ export class PublishAction {
     try {
       let sawVisibleButton = false
       let lastDiagnostics = 'strategy=legacy-fallback'
-      const button = await pollPage(this.page, PUBLISH_READY_TIMEOUT_MS, async () => {
+      const button = await pollPage(this.page, this.networkTimeoutMs, async () => {
         if (this.composerDetector) {
           const resolution = await this.composerDetector.publishCandidates()
           lastDiagnostics = formatPublishCandidateDiagnostics(resolution)
@@ -325,12 +351,12 @@ export class PublishAction {
         )
       }
 
-      await settleAction(this.page)
+      await settleAction(this.page, this.pageSettleDelayMs)
       if (!await button.isEnabled().catch(() => false)) {
         return failure('publish_action_failed', `Nút Đăng/Post vừa chuyển về trạng thái chưa sẵn sàng trước khi click. ${lastDiagnostics}`)
       }
-      await button.click({ timeout: 15_000 })
-      await settleAction(this.page)
+      await button.click({ timeout: this.networkTimeoutMs })
+      await settleAction(this.page, this.pageSettleDelayMs)
       return { status: 'success', message: 'Đã gửi hành động publish; đang chờ xác minh kết quả.' }
     } catch (error) {
       return failure('publish_action_failed', error instanceof Error ? error.message : String(error))
@@ -346,7 +372,8 @@ export class PublishResultDetector {
   constructor(
     private readonly page: Page,
     private readonly browser: BrowserSettings,
-    private readonly groupUid: string
+    private readonly groupUid: string,
+    private readonly networkTimeoutMs = browser.navigationTimeoutMs
   ) {
     this.verificationUrl = groupMyPostedContentUrl(groupUid)
   }
@@ -355,6 +382,7 @@ export class PublishResultDetector {
     let verificationPage: Page | null = null
     try {
       verificationPage = await this.page.context().newPage()
+      verificationPage.setDefaultTimeout(this.networkTimeoutMs)
       verificationPage.setDefaultNavigationTimeout(this.browser.navigationTimeoutMs)
       await verificationPage.goto(this.verificationUrl, {
         waitUntil: 'domcontentloaded',
@@ -455,6 +483,10 @@ export async function executePostingJob(job: PostingJobRequest): Promise<Posting
     page = runtime.page
     traceStarted = await startPostingTrace(runtime.context, job)
     engineDiagnostic(job, compactRuntimeDiagnostics(job))
+    engineDiagnostic(
+      job,
+      `timing networkTimeoutMs=${job.network.networkTimeoutMs} navigationTimeoutMs=${runtime.browser.navigationTimeoutMs} pageSettleDelayMs=${runtime.browser.pageSettleDelayMs}`
+    )
 
     const prepared = await runtime.prepareForPage()
     if (prepared.status !== 'success') return finish(commonResult(prepared))
@@ -466,11 +498,20 @@ export async function executePostingJob(job: PostingJobRequest): Promise<Posting
 
     await runtime.pace('group-to-composer')
     engineDiagnostic(job, `material ready contentLength=${job.content.trim().length} imageCount=${job.imagePaths.length}`)
-    const resultDetector = new PublishResultDetector(page, runtime.browser, job.groupUid)
+    const resultDetector = new PublishResultDetector(
+      page,
+      runtime.browser,
+      job.groupUid,
+      job.network.networkTimeoutMs
+    )
     const publishBaseline = await resultDetector.captureBaseline()
     engineDiagnostic(job, `verification baseline captured=${publishBaseline.captured} posts=${publishBaseline.postKeys.size}`)
 
-    const composerDetector = new RobustComposerDetector(page)
+    const composerDetector = new RobustComposerDetector(
+      page,
+      job.network.networkTimeoutMs,
+      runtime.browser.pageSettleDelayMs
+    )
     const composer = await composerDetector.open()
     if (!composer) {
       const diagnostics = await composerDetector.diagnostics()
@@ -479,18 +520,32 @@ export async function executePostingJob(job: PostingJobRequest): Promise<Posting
     }
     engineDiagnostic(job, `state=editor_ready ${await composerDetector.selectionDiagnostics(composer)}`)
 
-    const contentResult = await new PostComposer(page).fill(composer.textbox, job.content)
+    const contentResult = await new PostComposer(
+      page,
+      job.network.networkTimeoutMs,
+      runtime.browser.pageSettleDelayMs
+    ).fill(composer.textbox, job.content)
     if (contentResult.status !== 'success') return finish(contentResult)
     engineDiagnostic(job, `state=content_ready length=${job.content.trim().length}`)
     engineDiagnostic(job, `publish candidates before media ${await composerDetector.publishDiagnostics()}`)
 
-    const mediaResult = await new MediaUploader(page, composerDetector).upload(composer.container, job.imagePaths)
+    const mediaResult = await new MediaUploader(
+      page,
+      composerDetector,
+      job.network.networkTimeoutMs,
+      runtime.browser.pageSettleDelayMs
+    ).upload(composer.container, job.imagePaths)
     if (mediaResult.status !== 'success') return finish(mediaResult)
     engineDiagnostic(job, `state=media_ready count=${job.imagePaths.length}`)
     engineDiagnostic(job, `publish candidates after media ${await composerDetector.publishDiagnostics()}`)
 
     await runtime.pace('media-to-publish')
-    const publishResult = await new PublishAction(page, composerDetector).click(composer.container)
+    const publishResult = await new PublishAction(
+      page,
+      composerDetector,
+      job.network.networkTimeoutMs,
+      runtime.browser.pageSettleDelayMs
+    ).click(composer.container)
     if (publishResult.status !== 'success') return finish(publishResult)
     engineDiagnostic(job, 'state=publish_click sent; sweeping posted>pending>declined>removed>posted')
 
