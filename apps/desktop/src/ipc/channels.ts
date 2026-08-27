@@ -54,6 +54,7 @@ import type {
   UpdatePageTabPayload
 } from '../shared/pageTabs'
 import type { PageWallRunNowPayload, PageWallRunNowResult } from '../shared/pageWall'
+import type { PageWallJobIdPayload, PageWallJobRecord, PageWallSchedulePayload } from '../shared/pageWallJobs'
 import type { ExecuteSinglePostingJobPayload, ExecuteSinglePostingJobResult } from '../shared/posting'
 import type { RotationPageTabPayload, RotationRuntimeSnapshot } from '../shared/rotation'
 import type { CreateRunPayload, RunDetails, RunIdPayload } from '../shared/runs'
@@ -99,6 +100,9 @@ export const IPC_CHANNELS = {
   pageTabsPickTextFile: 'page-tabs:pick-text-file',
   pageWallPickImages: 'page-wall:pick-images',
   pageWallRunNow: 'page-wall:run-now',
+  pageWallSchedule: 'page-wall:schedule',
+  pageWallJobsList: 'page-wall:jobs:list',
+  pageWallJobCancel: 'page-wall:jobs:cancel',
   runsLatestForPageTab: 'runs:latest-for-page-tab',
   runsCreate: 'runs:create',
   runsPause: 'runs:pause',
@@ -183,6 +187,9 @@ export interface PageAutoIpcContract {
   pickPageTabTextFile: () => Promise<PickTextFileResult | null>
   pickPageWallImages: () => Promise<string[]>
   runPageWallNow: (payload: PageWallRunNowPayload) => Promise<PageWallRunNowResult>
+  schedulePageWall: (payload: PageWallSchedulePayload) => Promise<PageWallJobRecord>
+  listPageWallJobs: () => Promise<PageWallJobRecord[]>
+  cancelPageWallJob: (payload: PageWallJobIdPayload) => Promise<PageWallJobRecord>
   getLatestRunForPageTab: (payload: CreateRunPayload) => Promise<RunDetails | null>
   createRun: (payload: CreateRunPayload) => Promise<RunDetails>
   pauseRun: (payload: RunIdPayload) => Promise<RunDetails>

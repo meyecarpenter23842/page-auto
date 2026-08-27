@@ -199,3 +199,29 @@ export const executionLogs = sqliteTable('execution_logs', {
   attemptCount: integer('attempt_count').notNull().default(0),
   retryDisposition: text('retry_disposition').notNull().default('not_applicable')
 })
+
+export const pageWallJobs = sqliteTable('page_wall_jobs', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  status: text('status').notNull().default('pending'),
+  scheduledAt: integer('scheduled_at').notNull(),
+  pageTabId: integer('page_tab_id').notNull(),
+  pageTabName: text('page_tab_name').notNull(),
+  pageUid: text('page_uid').notNull(),
+  accountId: integer('account_id').notNull(),
+  accountUid: text('account_uid').notNull(),
+  accountName: text('account_name'),
+  content: text('content').notNull().default(''),
+  imagePathsJson: text('image_paths_json').notNull().default('[]'),
+  resultStatus: text('result_status'),
+  resultCode: text('result_code'),
+  resultMessage: text('result_message'),
+  publishedUrl: text('published_url'),
+  screenshotPath: text('screenshot_path'),
+  tracePath: text('trace_path'),
+  sessionValidationJson: text('session_validation_json'),
+  logsJson: text('logs_json').notNull().default('[]'),
+  createdAt: integer('created_at').notNull(),
+  startedAt: integer('started_at'),
+  finishedAt: integer('finished_at'),
+  updatedAt: integer('updated_at').notNull()
+})

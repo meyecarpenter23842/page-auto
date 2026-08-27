@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PageTabConfig, PageTabSummary } from '../../../shared/pageTabs'
 import type { PageWallRunNowResult } from '../../../shared/pageWall'
+import type { PageWallJobRecord, PageWallJobStatus } from '../../../shared/pageWallJobs'
 import './pageWallWorkspace.css'
 
 interface WallLogEntry {
@@ -22,11 +23,39 @@ function statusLabel(status: PageWallRunNowResult['status']): string {
   return 'Thất bại'
 }
 
+function jobStatusLabel(status: PageWallJobStatus): string {
+  if (status === 'pending') return 'Chờ chạy'
+  if (status === 'running') return 'Đang chạy'
+  if (status === 'success') return 'Thành công'
+  if (status === 'cancelled') return 'Đã hủy'
+  return 'Thất bại'
+}
+
 function logTone(result: PageWallRunNowResult): WallLogEntry['tone'] {
   if (result.status === 'success') return 'success'
   if (result.status === 'needs_login' || result.code === 'publish_unconfirmed') return 'attention'
   if (result.status === 'failed') return 'error'
   return 'info'
+}
+
+function localDateTimeInput(timestamp: number): string {
+  const date = new Date(timestamp)
+  const shifted = new Date(timestamp - (date.getTimezoneOffset() * 60_000))
+  return shifted.toISOString().slice(0, 16)
+}
+
+function formatDateTime(timestamp: number | null): string {
+  if (!timestamp) return '—'
+  return new Date(timestamp).toLocaleString('vi-VN', {
+    day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', second: '2-digit'
+  })
+}
+
+function contentPreview(job: PageWallJobRecord): string {
+  const normalized = job.content.trim().replace(/\s+/g, ' ')
+  if (!normalized) return `[Chỉ ảnh · ${job.imagePaths.length} file]`
+  return normalized.length > 150 ? `${normalized.slice(0, 150)}…` : normalized
 }
 
 export function PageWallWorkspace() {
@@ -36,8 +65,13 @@ export function PageWallWorkspace() {
   const [accountId, setAccountId] = useState<number | null>(null)
   const [content, setContent] = useState('')
   const [imagePaths, setImagePaths] = useState<string[]>([])
+  const [scheduleAt, setScheduleAt] = useState(() => localDateTimeInput(Date.now() + (10 * 60_000)))
+  const [jobs, setJobs] = useState<PageWallJobRecord[]>([])
   const [busy, setBusy] = useState(false)
+  const [scheduling, setScheduling] = useState(false)
+  const [cancellingJobId, setCancellingJobId] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
+  const [jobsLoading, setJobsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<PageWallRunNowResult | null>(null)
   const [logs, setLogs] = useState<WallLogEntry[]>([])
@@ -53,6 +87,18 @@ export function PageWallWorkspace() {
       message
     }, ...entries].slice(0, 20))
   }
+
+  const refreshJobs = useCallback(async (silent = false) => {
+    try {
+      const next = await window.pageAuto.listPageWallJobs()
+      setJobs(next)
+      if (!silent) setError(null)
+    } catch (cause) {
+      if (!silent) setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      if (!silent) setJobsLoading(false)
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -73,6 +119,12 @@ export function PageWallWorkspace() {
       })
     return () => { cancelled = true }
   }, [])
+
+  useEffect(() => {
+    void refreshJobs()
+    const timer = setInterval(() => void refreshJobs(true), 3_000)
+    return () => clearInterval(timer)
+  }, [refreshJobs])
 
   useEffect(() => {
     if (pageTabId === null) {
@@ -116,12 +168,18 @@ export function PageWallWorkspace() {
     [config]
   )
   const selectedAccount = runnableAccounts.find((account) => account.accountId === accountId) ?? null
-  const canRun = !busy
-    && !loading
+  const materialReady = !loading
     && pageTabId !== null
     && accountId !== null
     && Boolean(config?.pageUid.trim())
     && (content.trim().length > 0 || imagePaths.length > 0)
+  const canRun = materialReady && !busy && !scheduling
+  const scheduledTimestamp = scheduleAt ? new Date(scheduleAt).getTime() : Number.NaN
+  const canSchedule = materialReady
+    && !busy
+    && !scheduling
+    && Number.isFinite(scheduledTimestamp)
+    && scheduledTimestamp > Date.now()
 
   const pickImages = async () => {
     try {
@@ -165,6 +223,46 @@ export function PageWallWorkspace() {
     }
   }
 
+  const schedulePost = async () => {
+    if (!canSchedule || pageTabId === null || accountId === null) return
+    setScheduling(true)
+    setError(null)
+    try {
+      const job = await window.pageAuto.schedulePageWall({
+        pageTabId,
+        accountId,
+        content,
+        imagePaths,
+        scheduledAt: scheduledTimestamp
+      })
+      addLog('success', `Đã hẹn job #${job.id} lúc ${formatDateTime(job.scheduledAt)} · Page ${job.pageUid} · account ${job.accountUid}.`)
+      await refreshJobs(true)
+      setScheduleAt(localDateTimeInput(Math.max(Date.now(), job.scheduledAt) + (10 * 60_000)))
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause)
+      setError(message)
+      addLog('error', `Hẹn đăng lỗi: ${message}`)
+    } finally {
+      setScheduling(false)
+    }
+  }
+
+  const cancelJob = async (jobId: number) => {
+    setCancellingJobId(jobId)
+    setError(null)
+    try {
+      const cancelled = await window.pageAuto.cancelPageWallJob({ jobId })
+      addLog('info', `Đã hủy job #${cancelled.id} trước khi chạy.`)
+      await refreshJobs(true)
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause)
+      setError(message)
+      addLog('error', `Hủy job #${jobId} lỗi: ${message}`)
+    } finally {
+      setCancellingJobId(null)
+    }
+  }
+
   if (loading && tabs.length === 0) {
     return <section className="page-wall-workspace page-wall-empty"><strong>Đang tải Đăng Tường…</strong></section>
   }
@@ -184,9 +282,9 @@ export function PageWallWorkspace() {
         <div>
           <p className="eyebrow">Đăng Tường</p>
           <h2>Đăng Tường Page</h2>
-          <p>Đăng trực tiếp bằng production runtime 5C. Login/2FA/checkpoint/Page switch vẫn đi qua Facebook Common.</p>
+          <p>Đăng ngay hoặc hẹn giờ bằng cùng production runtime. Login/2FA/checkpoint/Page switch vẫn đi qua Facebook Common.</p>
         </div>
-        <span className="page-wall-live-badge">Đăng ngay đã nối</span>
+        <span className="page-wall-live-badge">Đăng ngay + Hẹn giờ</span>
       </header>
 
       {error ? <div className="page-tab-error page-wall-error">{error}</div> : null}
@@ -196,13 +294,13 @@ export function PageWallWorkspace() {
           <div className="page-wall-card-head"><strong>Page + tài khoản</strong><small>Dùng chung dữ liệu Page Tab</small></div>
           <label className="page-wall-field">
             <span>Page</span>
-            <select value={pageTabId ?? ''} disabled={busy} onChange={(event) => setPageTabId(Number(event.target.value))}>
+            <select value={pageTabId ?? ''} disabled={busy || scheduling} onChange={(event) => setPageTabId(Number(event.target.value))}>
               {tabs.map((tab) => <option key={tab.id} value={tab.id}>{tab.name} · {tab.pageUid}</option>)}
             </select>
           </label>
           <label className="page-wall-field">
             <span>Tài khoản chạy</span>
-            <select value={accountId ?? ''} disabled={busy || loading || runnableAccounts.length === 0} onChange={(event) => setAccountId(Number(event.target.value))}>
+            <select value={accountId ?? ''} disabled={busy || scheduling || loading || runnableAccounts.length === 0} onChange={(event) => setAccountId(Number(event.target.value))}>
               {runnableAccounts.length === 0 ? <option value="">Không có tài khoản bật</option> : null}
               {runnableAccounts.map((account) => (
                 <option key={account.accountId} value={account.accountId}>
@@ -224,7 +322,7 @@ export function PageWallWorkspace() {
           <textarea
             className="page-wall-content"
             value={content}
-            disabled={busy}
+            disabled={busy || scheduling}
             onChange={(event) => setContent(event.target.value)}
             placeholder="Nhập nội dung cần đăng lên Tường Page…"
           />
@@ -233,8 +331,8 @@ export function PageWallWorkspace() {
         <section className="page-wall-card page-wall-media-card">
           <div className="page-wall-card-head"><strong>Ảnh</strong><small>{imagePaths.length} file</small></div>
           <div className="page-wall-media-actions">
-            <button className="pt-button secondary" type="button" disabled={busy} onClick={() => void pickImages()}>Chọn ảnh</button>
-            <button className="pt-button secondary" type="button" disabled={busy || imagePaths.length === 0} onClick={() => setImagePaths([])}>Bỏ ảnh</button>
+            <button className="pt-button secondary" type="button" disabled={busy || scheduling} onClick={() => void pickImages()}>Chọn ảnh</button>
+            <button className="pt-button secondary" type="button" disabled={busy || scheduling || imagePaths.length === 0} onClick={() => setImagePaths([])}>Bỏ ảnh</button>
           </div>
           <div className="page-wall-media-list">
             {imagePaths.map((path, index) => (
@@ -245,19 +343,41 @@ export function PageWallWorkspace() {
         </section>
       </div>
 
-      <div className="page-wall-runbar">
-        <div>
-          <strong>Đăng ngay</strong>
-          <span>One-shot bằng 1 account. Không tự retry nếu Facebook đã nhận click nhưng chưa xác minh được bài.</span>
+      <div className="page-wall-action-grid">
+        <div className="page-wall-runbar">
+          <div>
+            <strong>Đăng ngay</strong>
+            <span>One-shot bằng 1 account. Không tự retry khi publish chưa xác minh để tránh bài trùng.</span>
+          </div>
+          <button className="pt-button primary page-wall-run-button" type="button" disabled={!canRun} onClick={() => void runNow()}>
+            {busy ? 'Đang chạy…' : loading ? 'Đang tải Page…' : '▶ Đăng ngay'}
+          </button>
         </div>
-        <button className="pt-button primary page-wall-run-button" type="button" disabled={!canRun} onClick={() => void runNow()}>
-          {busy ? 'Đang chạy…' : loading ? 'Đang tải Page…' : '▶ Đăng ngay'}
-        </button>
+
+        <div className="page-wall-runbar page-wall-schedulebar">
+          <div>
+            <strong>Hẹn đăng</strong>
+            <span>Persist SQLite; Electron Main tự nhận job đến hạn và chạy cùng Page Wall production runtime.</span>
+          </div>
+          <div className="page-wall-schedule-controls">
+            <input
+              type="datetime-local"
+              value={scheduleAt}
+              min={localDateTimeInput(Date.now() + 60_000)}
+              disabled={busy || scheduling}
+              onChange={(event) => setScheduleAt(event.target.value)}
+              aria-label="Ngày giờ hẹn đăng"
+            />
+            <button className="pt-button primary page-wall-run-button" type="button" disabled={!canSchedule} onClick={() => void schedulePost()}>
+              {scheduling ? 'Đang lưu…' : '⏱ Hẹn đăng'}
+            </button>
+          </div>
+        </div>
       </div>
 
       <div className="page-wall-bottom-grid">
         <section className="page-wall-card page-wall-result-card">
-          <div className="page-wall-card-head"><strong>Kết quả gần nhất</strong><small>{result ? statusLabel(result.status) : 'Chưa chạy'}</small></div>
+          <div className="page-wall-card-head"><strong>Kết quả Đăng ngay gần nhất</strong><small>{result ? statusLabel(result.status) : 'Chưa chạy'}</small></div>
           {!result ? <p className="page-wall-muted">Kết quả publish, session và evidence sẽ hiện ở đây.</p> : (
             <div className={`page-wall-result result-${result.status}`}>
               <div><span>{statusLabel(result.status)}</span>{result.code ? <code>{result.code}</code> : null}</div>
@@ -274,7 +394,7 @@ export function PageWallWorkspace() {
         </section>
 
         <section className="page-wall-card page-wall-log-card">
-          <div className="page-wall-card-head"><strong>Log phiên Đăng ngay</strong><small>{logs.length}/20</small></div>
+          <div className="page-wall-card-head"><strong>Log thao tác</strong><small>{logs.length}/20</small></div>
           <div className="page-wall-log">
             {logs.map((entry) => <div key={entry.id} className={`log-${entry.tone}`}><time>{entry.at}</time><span>{entry.message}</span></div>)}
             {logs.length === 0 ? <p className="page-wall-muted">Chưa có thao tác.</p> : null}
@@ -282,9 +402,62 @@ export function PageWallWorkspace() {
         </section>
       </div>
 
+      <section className="page-wall-card page-wall-jobs-card">
+        <div className="page-wall-card-head">
+          <strong>Danh sách bài đã hẹn</strong>
+          <div className="page-wall-jobs-head-actions">
+            <small>{jobsLoading ? 'Đang tải…' : `${jobs.length} job`}</small>
+            <button className="pt-button secondary" type="button" disabled={jobsLoading} onClick={() => void refreshJobs()}>Làm mới</button>
+          </div>
+        </div>
+        <div className="page-wall-jobs-list">
+          {jobs.map((job) => (
+            <article key={job.id} className={`page-wall-job job-${job.status}`}>
+              <div className="page-wall-job-main">
+                <div className="page-wall-job-title">
+                  <span className={`page-wall-job-status status-${job.status}`}>{jobStatusLabel(job.status)}</span>
+                  <b>#{job.id}</b>
+                  <time>{formatDateTime(job.scheduledAt)}</time>
+                </div>
+                <p>{contentPreview(job)}</p>
+                <div className="page-wall-job-meta">
+                  <span>Page <b>{job.pageTabName}</b> · {job.pageUid}</span>
+                  <span>Account <b>{job.accountUid}</b>{job.accountName ? ` · ${job.accountName}` : ''}</span>
+                  <span>Ảnh <b>{job.imagePaths.length}</b></span>
+                </div>
+              </div>
+              <div className="page-wall-job-result">
+                {job.resultMessage ? <span className="job-result-message">{job.resultMessage}</span> : <span className="page-wall-muted">Chưa có result.</span>}
+                {job.resultCode ? <code>{job.resultCode}</code> : null}
+                {job.publishedUrl ? <small>Published: {job.publishedUrl}</small> : null}
+                {job.screenshotPath ? <small>Screenshot: {job.screenshotPath}</small> : null}
+                {job.tracePath ? <small>Trace: {job.tracePath}</small> : null}
+                {job.sessionValidation ? <small>Session: {job.sessionValidation.state} · {job.sessionValidation.phase}</small> : null}
+                <details>
+                  <summary>Log job ({job.logs.length})</summary>
+                  <div className="page-wall-job-logs">
+                    {job.logs.slice(-5).reverse().map((entry) => (
+                      <div key={`${entry.at}-${entry.message}`}><time>{formatDateTime(entry.at)}</time><span>{entry.message}</span></div>
+                    ))}
+                  </div>
+                </details>
+              </div>
+              <div className="page-wall-job-actions">
+                {job.status === 'pending' ? (
+                  <button className="pt-button secondary" type="button" disabled={cancellingJobId === job.id} onClick={() => void cancelJob(job.id)}>
+                    {cancellingJobId === job.id ? 'Đang hủy…' : 'Hủy job'}
+                  </button>
+                ) : <small>{job.finishedAt ? `Kết thúc ${formatDateTime(job.finishedAt)}` : job.startedAt ? `Bắt đầu ${formatDateTime(job.startedAt)}` : '—'}</small>}
+              </div>
+            </article>
+          ))}
+          {!jobsLoading && jobs.length === 0 ? <p className="page-wall-muted">Chưa có bài hẹn. Chọn ngày/giờ rồi bấm Hẹn đăng.</p> : null}
+        </div>
+      </section>
+
       <footer className="page-wall-scope-note">
-        <strong>Phạm vi hiện tại</strong>
-        <span>Đăng ngay đã chạy thật qua Main → utility worker → Facebook Common → Page Wall. Hẹn giờ, danh sách bài đã hẹn và rotation nhiều account sẽ nối ở lô tiếp theo.</span>
+        <strong>Lifecycle</strong>
+        <span>Đăng ngay và Hẹn giờ đều là one-shot rõ ràng; Chrome đóng sau kết quả bình thường. Login/checkpoint cần thao tác tay vẫn giữ browser. Group rotation giữ nguyên lifecycle riêng.</span>
       </footer>
     </section>
   )

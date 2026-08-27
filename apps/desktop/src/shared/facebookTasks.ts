@@ -3,6 +3,9 @@ import type { PostingJobRequest } from './posting'
 export const FACEBOOK_TASK_TYPES = ['group_post', 'page_wall_post', 'page_edit', 'comment'] as const
 export type FacebookTaskType = (typeof FACEBOOK_TASK_TYPES)[number]
 
+export const FACEBOOK_EXECUTION_MODES = ['rotation', 'one_shot'] as const
+export type FacebookExecutionMode = (typeof FACEBOOK_EXECUTION_MODES)[number]
+
 export interface GroupPostTaskDescriptor {
   type: 'group_post'
   target: {
@@ -42,18 +45,25 @@ export type FacebookTaskDescriptor =
   | CommentTaskDescriptor
 
 /**
- * Transitional multi-business job base.
+ * Transitional multi-business job seed.
  *
- * Group still exposes `PostingJobRequest` to its existing orchestration, while the
- * worker boundary can now carry explicit business tasks without inheriting a Group UID.
+ * Existing Main call sites can omit executionMode while adapters normalize every
+ * worker-bound job to an explicit lifecycle. Group legacy orchestration is always
+ * `rotation`; Page Wall run-now/scheduled execution is `one_shot`.
  */
-export type FacebookTaskJobBase = Omit<PostingJobRequest, 'groupUid'>
+export type FacebookTaskJobBase = Omit<PostingJobRequest, 'groupUid'> & {
+  executionMode?: FacebookExecutionMode
+}
 
-export type GroupPostTaskJobRequest = FacebookTaskJobBase & {
+type NormalizedFacebookTaskJobBase = Omit<FacebookTaskJobBase, 'executionMode'> & {
+  executionMode: FacebookExecutionMode
+}
+
+export type GroupPostTaskJobRequest = NormalizedFacebookTaskJobBase & {
   task: GroupPostTaskDescriptor
 }
 
-export type PageWallPostTaskJobRequest = FacebookTaskJobBase & {
+export type PageWallPostTaskJobRequest = NormalizedFacebookTaskJobBase & {
   task: PageWallPostTaskDescriptor
 }
 
@@ -68,6 +78,7 @@ export function groupPostTaskFromLegacy(job: PostingJobRequest): GroupPostTaskJo
   const { groupUid, ...base } = job
   return {
     ...base,
+    executionMode: 'rotation',
     task: {
       type: 'group_post',
       target: { kind: 'group', groupUid }
@@ -76,7 +87,7 @@ export function groupPostTaskFromLegacy(job: PostingJobRequest): GroupPostTaskJo
 }
 
 export function legacyPostingJobFromGroupTask(job: GroupPostTaskJobRequest): PostingJobRequest {
-  const { task, ...base } = job
+  const { task, executionMode: _executionMode, ...base } = job
   return {
     ...base,
     groupUid: task.target.groupUid
@@ -86,6 +97,7 @@ export function legacyPostingJobFromGroupTask(job: GroupPostTaskJobRequest): Pos
 export function pageWallPostTaskFromBase(base: FacebookTaskJobBase): PageWallPostTaskJobRequest {
   return {
     ...base,
+    executionMode: 'one_shot',
     task: {
       type: 'page_wall_post',
       target: { kind: 'page_wall', pageUid: base.pageUid }

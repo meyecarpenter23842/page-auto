@@ -54,25 +54,19 @@ describe('shouldRetainPostingBrowserForManualSession', () => {
 })
 
 describe('shouldAutoReleasePostingBrowserForOneShot', () => {
-  const wallJob = (runId: number): FacebookPostTaskJobRequest => ({
+  const wallJob = (executionMode: 'one_shot' | 'rotation', runId: number): FacebookPostTaskJobRequest => ({
     runId,
+    executionMode,
     task: {
       type: 'page_wall_post',
       target: { kind: 'page_wall', pageUid: '90001' }
     }
   } as FacebookPostTaskJobRequest)
 
-  it('auto-releases only manual Page Wall run-now jobs', () => {
-    expect(shouldAutoReleasePostingBrowserForOneShot(wallJob(0))).toBe(true)
-    expect(shouldAutoReleasePostingBrowserForOneShot(wallJob(42))).toBe(false)
-
-    const groupJob = {
-      runId: 0,
-      task: {
-        type: 'group_post',
-        target: { kind: 'group', groupUid: '123' }
-      }
-    } as FacebookPostTaskJobRequest
-    expect(shouldAutoReleasePostingBrowserForOneShot(groupJob)).toBe(false)
+  it('uses the explicit lifecycle contract instead of runId=0', () => {
+    expect(shouldAutoReleasePostingBrowserForOneShot(wallJob('one_shot', 0))).toBe(true)
+    expect(shouldAutoReleasePostingBrowserForOneShot(wallJob('one_shot', 42))).toBe(true)
+    expect(shouldAutoReleasePostingBrowserForOneShot(wallJob('rotation', 0))).toBe(false)
+    expect(shouldAutoReleasePostingBrowserForOneShot(wallJob('rotation', 42))).toBe(false)
   })
 })
