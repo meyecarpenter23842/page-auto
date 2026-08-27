@@ -12,9 +12,6 @@ const MANAGED_PAGES_URL = 'https://www.facebook.com/pages/?category=your_pages&r
 const SWITCH_ACTION_PATTERN = /switch now|switch into(?: this page)?|switch to(?: this page)?|chuyển ngay|chuyển sang(?: trang này)?|beralih sekarang|beralih ke(?: halaman ini)?|ganti sekarang|ganti ke(?: halaman ini)?/i
 const MORE_ACTIONS_PATTERN = /more|options|actions|menu|lainnya|opsi|selengkapnya|khác|thêm/i
 const POLL_MS = 200
-const FIND_UID_TIMEOUT_MS = 6_000
-const MENU_TIMEOUT_MS = 4_000
-const IDENTITY_TIMEOUT_MS = 12_000
 
 type PostingCode = NonNullable<PostingJobResult['code']>
 
@@ -74,11 +71,10 @@ async function blocked(page: Page): Promise<PostingJobResult | null> {
 async function identityMatches(
   page: Page,
   context: BrowserContext,
-  browser: BrowserSettings,
   pageUid: string,
-  timeoutMs = IDENTITY_TIMEOUT_MS
+  timeoutMs: number
 ): Promise<boolean> {
-  const deadline = Date.now() + Math.max(500, Math.min(timeoutMs, browser.navigationTimeoutMs))
+  const deadline = Date.now() + Math.max(500, timeoutMs)
   while (Date.now() < deadline) {
     if ((await activeFacebookProfileId(context).catch(() => null))?.trim() === pageUid.trim()) return true
     if (await detectFacebookAccessBlock(page)) return false
@@ -156,17 +152,16 @@ function actionOverlayRoots(page: Page): Locator {
   return page.locator('[role="menu"]:visible, [role="dialog"]:visible, [aria-modal="true"]:visible')
 }
 
-async function openManagedPageMenu(page: Page, card: Locator, browser: BrowserSettings): Promise<Locator | null> {
+async function openManagedPageMenu(page: Page, card: Locator, networkTimeoutMs: number): Promise<Locator | null> {
   const rootsBefore = await actionOverlayRoots(page).count().catch(() => 0)
-  const timeout = Math.min(browser.navigationTimeoutMs, 5_000)
   const semanticItem = await firstVisible(card.getByRole('button', { name: MORE_ACTIONS_PATTERN }))
   const structuralItem = await firstVisible(card.getByRole('button').last())
   const candidates = [semanticItem, structuralItem].filter((item): item is Locator => item !== null)
 
   for (const candidate of candidates) {
-    if (!await clickWithDomFallback(candidate, timeout)) continue
+    if (!await clickWithDomFallback(candidate, networkTimeoutMs)) continue
 
-    const deadline = Date.now() + MENU_TIMEOUT_MS
+    const deadline = Date.now() + networkTimeoutMs
     while (Date.now() < deadline) {
       const roots = actionOverlayRoots(page)
       const count = await roots.count().catch(() => 0)
@@ -202,7 +197,8 @@ export async function tryManagedPagesSwitch(
   page: Page,
   context: BrowserContext,
   browser: BrowserSettings,
-  pageUid: string
+  pageUid: string,
+  networkTimeoutMs = browser.navigationTimeoutMs
 ): Promise<ManagedPagesSwitchAttempt> {
   const uid = pageUid.trim()
   try {
@@ -218,30 +214,30 @@ export async function tryManagedPagesSwitch(
   const accessBlock = await blocked(page)
   if (accessBlock) return { result: accessBlock, diagnostic: 'blocked' }
 
-  if (await identityMatches(page, context, browser, uid, 500)) {
+  if (await identityMatches(page, context, uid, 500)) {
     return {
       result: { status: 'success', message: 'Page identity đã active và khớp i_user trên Pages you manage.' },
       diagnostic: 'already-active'
     }
   }
 
-  const targetLink = await findManagedPageLink(page, uid, Math.min(FIND_UID_TIMEOUT_MS, browser.navigationTimeoutMs))
+  const targetLink = await findManagedPageLink(page, uid, networkTimeoutMs)
   if (!targetLink) return { result: null, diagnostic: 'uid-link-missing' }
 
   const card = await findManagedPageCard(targetLink)
   if (!card) return { result: null, diagnostic: 'uid-card-missing' }
 
-  const actionRoot = await openManagedPageMenu(page, card, browser)
+  const actionRoot = await openManagedPageMenu(page, card, networkTimeoutMs)
   if (!actionRoot) return { result: null, diagnostic: 'uid-card-menu-not-opened' }
 
   const switchAction = await findSwitchAction(actionRoot)
   if (!switchAction) return { result: null, diagnostic: 'switch-action-missing' }
 
-  if (!await clickWithDomFallback(switchAction, Math.min(browser.navigationTimeoutMs, 5_000))) {
+  if (!await clickWithDomFallback(switchAction, networkTimeoutMs)) {
     return { result: null, diagnostic: 'switch-action-click-failed' }
   }
 
-  if (await identityMatches(page, context, browser, uid)) {
+  if (await identityMatches(page, context, uid, networkTimeoutMs)) {
     return {
       result: { status: 'success', message: 'Đã switch đúng Page từ Pages you manage và xác minh i_user đúng Page UID.' },
       diagnostic: 'success'
