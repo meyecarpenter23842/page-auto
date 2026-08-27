@@ -3,11 +3,13 @@ import { pollForReady, readinessAttempts } from '../../browser/posting/postingRe
 import {
   capturePublishBaseline,
   findNewPublishedPost,
+  type NewPublishedPost,
   type PublishBaseline
 } from '../../browser/posting/publishVerification'
 import type { PreparedPageWallRuntime } from './pageWallTask'
 
 const WALL_VERIFY_POLL_MS = 500
+const WALL_CONTENT_FINGERPRINT_MIN = 12
 
 function publishUnconfirmed(message: string): PostingJobResult {
   return { status: 'failed', code: 'publish_unconfirmed', message }
@@ -45,7 +47,8 @@ export class PageWallPublishVerifier {
         content,
         baseline,
         allowKeyOnly,
-        1
+        WALL_CONTENT_FINGERPRINT_MIN,
+        !allowKeyOnly
       ),
       {
         attempts: readinessAttempts(timeoutMs, WALL_VERIFY_POLL_MS),
@@ -53,6 +56,20 @@ export class PageWallPublishVerifier {
         sleep: (milliseconds) => this.runtime.page.waitForTimeout(milliseconds)
       }
     )
+  }
+
+  private async confirmedResult(
+    evidence: NewPublishedPost,
+    message: string,
+    accessContext: string
+  ): Promise<PostingJobResult> {
+    const access = await this.runtime.checkAccessBlock(accessContext)
+    if (access.status !== 'success') return commonAfterPublish(access)
+    return {
+      status: 'success',
+      message,
+      publishedUrl: evidence.publishedUrl
+    }
   }
 
   async verify(content: string, baseline: PublishBaseline): Promise<PostingJobResult> {
@@ -63,11 +80,11 @@ export class PageWallPublishVerifier {
     const currentDomBudget = Math.max(1_000, Math.floor(this.networkTimeoutMs / 2))
     const current = await this.waitForEvidence(content, baseline, currentDomBudget)
     if (current) {
-      return {
-        status: 'success',
-        message: 'Đã xác minh bài mới xuất hiện trên Tường Page sau publish.',
-        publishedUrl: current.publishedUrl
-      }
+      return this.confirmedResult(
+        current,
+        'Đã xác minh bài mới xuất hiện trên Tường Page sau publish.',
+        'sau khi phát hiện bài mới trên Tường Page'
+      )
     }
 
     try {
@@ -89,11 +106,11 @@ export class PageWallPublishVerifier {
 
     const reloaded = await this.waitForEvidence(content, baseline, this.networkTimeoutMs)
     if (reloaded) {
-      return {
-        status: 'success',
-        message: 'Đã xác minh bài mới trên Tường Page sau khi tải lại surface.',
-        publishedUrl: reloaded.publishedUrl
-      }
+      return this.confirmedResult(
+        reloaded,
+        'Đã xác minh bài mới trên Tường Page sau khi tải lại surface.',
+        'sau khi xác minh bài mới trên Tường Page'
+      )
     }
 
     return publishUnconfirmed(

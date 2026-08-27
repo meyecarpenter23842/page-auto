@@ -33,8 +33,8 @@ function runtime(
 
 const baseline = { captured: true, postKeys: new Set(['post:1']) }
 const published = {
-  postKey: 'post:2',
-  publishedUrl: 'https://www.facebook.com/90001/posts/2'
+  postKey: 'post:pfbidNewPagePost',
+  publishedUrl: 'https://www.facebook.com/ExamplePage/posts/pfbidNewPagePost'
 }
 
 describe('PageWallPublishVerifier', () => {
@@ -56,7 +56,7 @@ describe('PageWallPublishVerifier', () => {
     expect(mocks.capturePublishBaseline).toHaveBeenCalledWith(prepared.value.page)
   })
 
-  it('accepts strong new-post evidence from the current DOM without reloading', async () => {
+  it('accepts current-DOM evidence only after the common access gate remains clear', async () => {
     mocks.findNewPublishedPost.mockResolvedValueOnce(published)
     const prepared = runtime()
     const verifier = new PageWallPublishVerifier(
@@ -70,12 +70,14 @@ describe('PageWallPublishVerifier', () => {
       publishedUrl: published.publishedUrl
     })
     expect(prepared.goto).not.toHaveBeenCalled()
+    expect(prepared.checkAccessBlock).toHaveBeenCalledWith('sau khi phát hiện bài mới trên Tường Page')
     expect(mocks.findNewPublishedPost).toHaveBeenCalledWith(
       prepared.value.page,
       'short',
       baseline,
       false,
-      1
+      12,
+      true
     )
   })
 
@@ -98,10 +100,11 @@ describe('PageWallPublishVerifier', () => {
       { waitUntil: 'domcontentloaded', timeout: 45_000 }
     )
     expect(prepared.checkAccessBlock).toHaveBeenCalledWith('khi xác minh bài mới trên Tường Page')
+    expect(prepared.checkAccessBlock).toHaveBeenCalledWith('sau khi xác minh bài mới trên Tường Page')
     expect(result).toMatchObject({ status: 'success', publishedUrl: published.publishedUrl })
   })
 
-  it('uses new post-key evidence for image-only posts', async () => {
+  it('uses new post-key evidence for image-only posts without weakening text verification', async () => {
     mocks.findNewPublishedPost.mockResolvedValueOnce(published)
     const prepared = runtime()
     const verifier = new PageWallPublishVerifier(
@@ -117,7 +120,8 @@ describe('PageWallPublishVerifier', () => {
       '',
       baseline,
       true,
-      1
+      12,
+      false
     )
   })
 
@@ -135,7 +139,29 @@ describe('PageWallPublishVerifier', () => {
     })
   })
 
-  it('preserves common checkpoint state after publish and warns against blind retry', async () => {
+  it('does not return success when a checkpoint overlay appears after immediate post evidence', async () => {
+    mocks.findNewPublishedPost.mockResolvedValueOnce(published)
+    const checkAccessBlock: PreparedPageWallRuntime['checkAccessBlock'] = vi.fn(async () => ({
+      status: 'needs_login' as const,
+      code: 'verification_required' as const,
+      message: 'checkpoint'
+    }))
+    const prepared = runtime(checkAccessBlock)
+    const verifier = new PageWallPublishVerifier(
+      prepared.value,
+      'https://www.facebook.com/profile.php?id=90001',
+      1_000
+    )
+
+    const result = await verifier.verify('hello wall', baseline)
+
+    expect(prepared.goto).not.toHaveBeenCalled()
+    expect(result.status).toBe('needs_login')
+    expect(result.code).toBe('verification_required')
+    expect(result.message).toContain('review Tường Page trước khi retry')
+  })
+
+  it('preserves common checkpoint state after reload and warns against blind retry', async () => {
     const checkAccessBlock: PreparedPageWallRuntime['checkAccessBlock'] = vi.fn(async () => ({
       status: 'needs_login' as const,
       code: 'verification_required' as const,

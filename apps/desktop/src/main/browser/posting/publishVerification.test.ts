@@ -11,17 +11,23 @@ import {
 } from './publishVerification'
 
 describe('strong publish verification helpers', () => {
-  it('extracts stable post IDs from supported Facebook permalink shapes', () => {
+  it('extracts stable post IDs from numeric and Page pfbid permalink shapes', () => {
     expect(facebookPostKey('/groups/111/posts/222/?__cft__=abc')).toBe('post:222')
     expect(facebookPostKey('https://www.facebook.com/permalink.php?story_fbid=333&id=444')).toBe('post:333')
+    expect(facebookPostKey('/MyPage/posts/pfbid02AbCdEf123_/')).toBe('post:pfbid02AbCdEf123_')
+    expect(facebookPostKey('https://www.facebook.com/MyPage/permalink/pfbid0ZXcvbnM456-')).toBe('post:pfbid0ZXcvbnM456-')
+    expect(facebookPostKey('https://www.facebook.com/permalink.php?story_fbid=pfbid0Story123&id=444')).toBe('post:pfbid0Story123')
     expect(facebookPostKey('/groups/111')).toBeNull()
+    expect(facebookPostKey('/Page/posts/a')).toBeNull()
     expect(facebookPostKey('https://example.com/posts/222')).toBeNull()
   })
 
   it('requires a post key that was not present before clicking publish', () => {
-    const baseline: PublishBaseline = { captured: true, postKeys: new Set(['post:222']) }
+    const baseline: PublishBaseline = { captured: true, postKeys: new Set(['post:222', 'post:pfbidOld']) }
     expect(isNewFacebookPostHref('/groups/111/posts/222/', baseline)).toBe(false)
+    expect(isNewFacebookPostHref('/MyPage/posts/pfbidOld/', baseline)).toBe(false)
     expect(isNewFacebookPostHref('/groups/111/posts/333/', baseline)).toBe(true)
+    expect(isNewFacebookPostHref('/MyPage/posts/pfbidNew/', baseline)).toBe(true)
     expect(isNewFacebookPostHref('/profile.php?id=123', baseline)).toBe(false)
   })
 
@@ -38,7 +44,7 @@ describe('strong publish verification helpers', () => {
     expect(absoluteFacebookPostUrl('/groups/111/posts/333/')).toBe('https://www.facebook.com/groups/111/posts/333/')
   })
 
-  it('keeps the Group default at 12 characters but allows a stronger new-key caller to match short Wall content', () => {
+  it('keeps the Group default at 12 characters instead of allowing one-character substring matches', () => {
     expect(publishContentMatches('prefix short suffix', 'short')).toBe(false)
     expect(publishContentMatchesAtLeast('prefix short suffix', 'short', 1)).toBe(true)
     expect(publishContentMatchesAtLeast('different text', 'short', 1)).toBe(false)
