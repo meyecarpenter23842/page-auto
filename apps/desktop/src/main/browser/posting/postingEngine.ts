@@ -413,6 +413,7 @@ export async function executePostingJob(job: PostingJobRequest): Promise<Posting
   let runtime: FacebookCommonRuntime | null = null
   let page: Page | null = null
   let traceStarted = false
+  let pendingFinish: Promise<PostingJobResult> | null = null
 
   const finish = async (result: PostingJobResult): Promise<PostingJobResult> => {
     let enriched = result
@@ -429,7 +430,11 @@ export async function executePostingJob(job: PostingJobRequest): Promise<Posting
     }
     if (metadata?.accountName && !enriched.accountName) enriched = { ...enriched, accountName: metadata.accountName }
     if (metadata?.sessionCookie && !enriched.sessionCookie) enriched = { ...enriched, sessionCookie: metadata.sessionCookie }
-    return page ? finishPostingEvidence(page, job, enriched, traceStarted) : enriched
+    const completion = page
+      ? finishPostingEvidence(page, job, enriched, traceStarted)
+      : Promise.resolve(enriched)
+    pendingFinish = completion
+    return completion
   }
 
   try {
@@ -501,6 +506,7 @@ export async function executePostingJob(job: PostingJobRequest): Promise<Posting
   } catch (error) {
     return finish(failure('unexpected_error', error instanceof Error ? error.message : String(error)))
   } finally {
+    await Promise.resolve(pendingFinish).catch(() => undefined)
     await runtime?.close()
   }
 }
