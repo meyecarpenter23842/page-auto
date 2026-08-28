@@ -315,6 +315,14 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
     setAssetSelections((current) => ({ ...current, [accountId]: asset }))
   }
 
+  const sourceAssignedToAnotherAccount = (accountId: number, path: string): boolean => (
+    Object.entries(assetSelections).some(([candidateAccountId, asset]) => (
+      Number(candidateAccountId) !== accountId
+      && asset?.origin === 'source'
+      && asset.path === path
+    ))
+  )
+
   const invoke = async (row: Checkpoint282Row, action: FacebookCheckpoint282Action): Promise<FacebookCheckpoint282Result> => {
     try {
       return await window.pageAuto.runFacebookCheckpoint282({
@@ -510,9 +518,6 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
     )
   }
 
-  const selectedCandidatePaths = selectedPreflight
-    ? [...selectedPreflight.image.canonicalCandidates, ...selectedPreflight.image.sourceCandidates]
-    : []
   const selectedIsDuplicateCandidate = Boolean(
     selectedAsset
     && selectedPreflight?.image.state === 'duplicate'
@@ -572,12 +577,13 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
               </label>
 
               <label className="checkpoint282-field checkpoint282-field-spaced">
-                <span>Folder ảnh nguồn · chỉ dùng khi UID chưa có canonical hoặc chọn Replace</span>
+                <span>Folder ảnh nguồn · dùng để chọn đúng ảnh riêng cho từng UID</span>
                 <div className="checkpoint282-folder-row">
                   <input value={sourceImageFolder} readOnly placeholder="Chưa chọn folder ảnh nguồn" title={sourceImageFolder} />
                   <button className="button secondary" type="button" disabled={started} onClick={() => void pickSourceFolder()}>Chọn</button>
                 </div>
               </label>
+              <p className="checkpoint282-caption">Chọn ảnh ngay tại cột Ảnh 282 của từng account. Một ảnh nguồn đã gán cho account khác trong batch sẽ bị khóa để tránh gán nhầm.</p>
 
               <div className="checkpoint282-preset-actions">
                 <button className="button secondary" type="button" disabled={started || preflightLoading} onClick={() => void runPreflight()}>Preflight lại</button>
@@ -664,9 +670,6 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
                     const asset = assetSelections[row.accountId]
                     const selected = selectedIndex === index
                     const retryable = canRecheckCheckpoint282(row.state)
-                    const imageText = asset
-                      ? `${asset.origin === 'canonical' ? 'Canonical' : asset.replaceCanonical ? 'Replace' : 'Source'} · ${fileName(asset.path)}`
-                      : imageStateLabel(readiness)
                     return (
                       <tr
                         key={row.accountId}
@@ -676,7 +679,37 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
                         <td className="checkpoint282-index">{index + 1}</td>
                         <td><div className="checkpoint282-account-cell"><strong>{row.uid}</strong>{account?.name ? <span>{account.name}</span> : null}</div></td>
                         <td><span className={`checkpoint282-preflight preflight-${readiness?.level ?? 'unknown'}`}>{preflightLevelLabel(readiness)}</span></td>
-                        <td><span className={`checkpoint282-image-state image-${readiness?.image.state ?? 'unknown'}`} title={asset?.path}>{imageText}</span></td>
+                        <td>
+                          {readiness ? (
+                            <select
+                              value={asset?.path ?? ''}
+                              disabled={running || stopping}
+                              title={asset?.path ?? imageStateLabel(readiness)}
+                              onClick={(event) => event.stopPropagation()}
+                              onChange={(event) => {
+                                setSelectedIndex(index)
+                                setAssetForAccount(
+                                  row.accountId,
+                                  event.target.value ? candidateSelection(readiness, event.target.value) : undefined
+                                )
+                              }}
+                            >
+                              <option value="">— Chọn ảnh —</option>
+                              {readiness.image.canonicalCandidates.map((path) => (
+                                <option key={`row-canonical-${row.accountId}-${path}`} value={path}>Canonical · {fileName(path)}</option>
+                              ))}
+                              {readiness.image.sourceCandidates.map((path) => (
+                                <option
+                                  key={`row-source-${row.accountId}-${path}`}
+                                  value={path}
+                                  disabled={sourceAssignedToAnotherAccount(row.accountId, path)}
+                                >
+                                  {readiness.image.canonicalCandidateCount > 0 ? 'Replace' : 'Source'} · {fileName(path)}
+                                </option>
+                              ))}
+                            </select>
+                          ) : <span className="checkpoint282-image-state image-unknown">Chưa kiểm tra</span>}
+                        </td>
                         <td>
                           <div className="checkpoint282-email-readiness" title={readiness?.verification.email.message}>
                             <span className={`checkpoint282-email-state email-${readiness?.verification.email.state ?? 'unknown'}`}>{emailReadinessLabel(readiness)}</span>
@@ -719,7 +752,13 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
                             <option key={`canonical-${path}`} value={path}>Canonical · {fileName(path)}</option>
                           ))}
                           {selectedPreflight.image.sourceCandidates.map((path) => (
-                            <option key={`source-${path}`} value={path}>{selectedPreflight.image.canonicalCandidateCount > 0 ? 'Replace' : 'Source'} · {fileName(path)}</option>
+                            <option
+                              key={`source-${path}`}
+                              value={path}
+                              disabled={sourceAssignedToAnotherAccount(selectedRow.accountId, path)}
+                            >
+                              {selectedPreflight.image.canonicalCandidateCount > 0 ? 'Replace' : 'Source'} · {fileName(path)}
+                            </option>
                           ))}
                         </select>
                       </label>
@@ -834,7 +873,7 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
                       : started
                         ? 'Lượt CP282 đã dừng/kết thúc'
                         : 'Sẵn sàng sau preflight'}</strong>
-              <span>{started ? `${resolvedCount}/${rows.length} account đã xác minh` : 'Folder282 ưu tiên; Email/OAuth chỉ đọc canonical theo accountId'}</span>
+              <span>{started ? `${resolvedCount}/${rows.length} account đã xác minh` : 'Folder282 ưu tiên; mỗi ảnh nguồn chỉ gán cho một account trong batch'}</span>
             </div>
           </div>
           <div className="checkpoint282-footer-actions">
