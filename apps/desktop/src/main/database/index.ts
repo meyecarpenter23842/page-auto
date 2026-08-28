@@ -6,6 +6,7 @@ import { appSettings } from './schema'
 import { HOTMAIL_SCHEMA_VERSION, applyHotmailMigration } from './hotmailMigration'
 import { latestSchemaVersion, migrations } from './migrations'
 import { PAGE_WALL_SCHEMA_VERSION, applyPageWallMigration } from './pageWallMigration'
+import { SCENARIO_SCHEMA_VERSION, applyScenarioMigration } from './scenarioMigration'
 
 export interface DatabaseRuntime {
   client: Database.Database
@@ -55,8 +56,14 @@ export function initializeDatabase(databaseFile: string): DatabaseRuntime {
   applyPendingMigrations()
   applyHotmailMigration(client)
   applyPageWallMigration(client)
+  applyScenarioMigration(client)
 
-  const schemaVersion = Math.max(latestSchemaVersion, HOTMAIL_SCHEMA_VERSION, PAGE_WALL_SCHEMA_VERSION)
+  const schemaVersion = Math.max(
+    latestSchemaVersion,
+    HOTMAIL_SCHEMA_VERSION,
+    PAGE_WALL_SCHEMA_VERSION,
+    SCENARIO_SCHEMA_VERSION
+  )
   const orm = drizzle(client)
   orm
     .insert(appSettings)

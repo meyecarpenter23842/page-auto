@@ -36,7 +36,7 @@ describe('PageWallJobRepository', () => {
   it('applies schema v10 and persists the full secret-free schedule snapshot', () => {
     const { runtime, jobs } = setup()
     const schemaVersion = runtime.client.prepare("SELECT value FROM app_settings WHERE key = 'schema_version'").get() as { value: string }
-    expect(schemaVersion.value).toBe('10')
+    expect(Number(schemaVersion.value)).toBeGreaterThanOrEqual(10)
 
     const job = createJob(jobs)
     expect(job).toMatchObject({
