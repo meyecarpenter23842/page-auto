@@ -24,9 +24,15 @@ import type { BrowserDisplayInfo, BrowserRetileResult, BrowserWindowLayoutSettin
 import type { CaptchaSettingsView, SaveCaptchaSettingsInput } from '../shared/captchaSettings'
 import {
   CHECKPOINT282_WORKBENCH_IPC,
+  type FacebookCheckpoint282AssetPreview,
+  type FacebookCheckpoint282AssetPreviewRequest,
+  type FacebookCheckpoint282HistoryEntry,
+  type FacebookCheckpoint282HistoryRequest,
   type FacebookCheckpoint282PreflightRequest,
   type FacebookCheckpoint282PreflightResult,
-  type FacebookCheckpoint282Preset
+  type FacebookCheckpoint282Preset,
+  type FacebookCheckpoint282ResolveDuplicateRequest,
+  type FacebookCheckpoint282ResolveDuplicateResult
 } from '../shared/checkpoint282Workbench'
 import type { ConfigBackupExportResult, ConfigBackupRestoreResult } from '../shared/configBackup'
 import type { HotmailComboActionPayload, HotmailComboBatchResult } from '../shared/emailCombo'
@@ -74,6 +80,10 @@ const api = {
   saveFacebookCheckpoint282Preset: (input: FacebookCheckpoint282Preset): Promise<FacebookCheckpoint282Preset> => ipcRenderer.invoke(CHECKPOINT282_WORKBENCH_IPC.savePreset, input) as Promise<FacebookCheckpoint282Preset>,
   pickFacebookCheckpoint282SourceFolder: (): Promise<string | null> => ipcRenderer.invoke(CHECKPOINT282_WORKBENCH_IPC.pickSourceFolder) as Promise<string | null>,
   preflightFacebookCheckpoint282: (input: FacebookCheckpoint282PreflightRequest): Promise<FacebookCheckpoint282PreflightResult> => ipcRenderer.invoke(CHECKPOINT282_WORKBENCH_IPC.preflight, input) as Promise<FacebookCheckpoint282PreflightResult>,
+  previewFacebookCheckpoint282Asset: (input: FacebookCheckpoint282AssetPreviewRequest): Promise<FacebookCheckpoint282AssetPreview> => ipcRenderer.invoke(CHECKPOINT282_WORKBENCH_IPC.previewAsset, input) as Promise<FacebookCheckpoint282AssetPreview>,
+  resolveFacebookCheckpoint282Duplicate: (input: FacebookCheckpoint282ResolveDuplicateRequest): Promise<FacebookCheckpoint282ResolveDuplicateResult> => ipcRenderer.invoke(CHECKPOINT282_WORKBENCH_IPC.resolveDuplicate, input) as Promise<FacebookCheckpoint282ResolveDuplicateResult>,
+  getFacebookCheckpoint282History: (input: FacebookCheckpoint282HistoryRequest): Promise<FacebookCheckpoint282HistoryEntry[]> => ipcRenderer.invoke(CHECKPOINT282_WORKBENCH_IPC.history, input) as Promise<FacebookCheckpoint282HistoryEntry[]>,
+  revealFacebookCheckpoint282Path: (path: string): Promise<boolean> => ipcRenderer.invoke(CHECKPOINT282_WORKBENCH_IPC.revealPath, path) as Promise<boolean>,
   pickFacebookCheckpointEvidenceFolder: (): Promise<string | null> => ipcRenderer.invoke(IPC_CHANNELS.facebookCheckpointEvidenceFolderPick) as Promise<string | null>,
   listHotmailDashboard: (): Promise<HotmailDashboardRow[]> => ipcRenderer.invoke(IPC_CHANNELS.hotmailDashboardList) as Promise<HotmailDashboardRow[]>,
   getHotmailSettings: (): Promise<HotmailSettingsView> => ipcRenderer.invoke(IPC_CHANNELS.hotmailSettingsGet) as Promise<HotmailSettingsView>,

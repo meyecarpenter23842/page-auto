@@ -1,4 +1,10 @@
-import type { FacebookCheckpointSurface } from './facebookCheckpoint'
+import type {
+  FacebookCheckpoint282Action,
+  FacebookCheckpoint282AssetOrigin,
+  FacebookCheckpoint282AssetPromotionState,
+  FacebookCheckpoint282State,
+  FacebookCheckpointSurface
+} from './facebookCheckpoint'
 
 export const FACEBOOK_CHECKPOINT282_PRESET_STORAGE_KEY = 'facebook.checkpoint282.preset'
 export const FACEBOOK_CHECKPOINT282_LOCALES = ['auto', 'vi-VN', 'en-US'] as const
@@ -8,7 +14,11 @@ export const CHECKPOINT282_WORKBENCH_IPC = {
   getPreset: 'facebook:checkpoint-282:preset:get',
   savePreset: 'facebook:checkpoint-282:preset:save',
   pickSourceFolder: 'facebook:checkpoint-282:source-folder:pick',
-  preflight: 'facebook:checkpoint-282:preflight'
+  preflight: 'facebook:checkpoint-282:preflight',
+  previewAsset: 'facebook:checkpoint-282:asset:preview',
+  resolveDuplicate: 'facebook:checkpoint-282:asset:resolve-duplicate',
+  history: 'facebook:checkpoint-282:history',
+  revealPath: 'facebook:checkpoint-282:path:reveal'
 } as const
 
 export interface FacebookCheckpoint282Preset {
@@ -37,8 +47,10 @@ export interface FacebookCheckpoint282ImagePreflight {
   canonicalFolder: string
   canonicalPath: string | null
   canonicalCandidateCount: number
+  canonicalCandidates: string[]
   sourceFolder: string | null
   sourceCandidateCount: number
+  sourceCandidates: string[]
 }
 
 export interface FacebookCheckpoint282AccountPreflight {
@@ -67,6 +79,57 @@ export interface FacebookCheckpoint282PreflightResult {
     warning: number
     blocked: number
   }
+}
+
+export interface FacebookCheckpoint282AssetPreviewRequest {
+  accountId: number
+  path: string
+  preset?: FacebookCheckpoint282Preset
+}
+
+export interface FacebookCheckpoint282AssetPreview {
+  path: string
+  fileName: string
+  mimeType: 'image/jpeg' | 'image/png'
+  dataUrl: string
+  bytes: number
+}
+
+export interface FacebookCheckpoint282ResolveDuplicateRequest {
+  accountId: number
+  keepPath: string
+}
+
+export interface FacebookCheckpoint282ResolveDuplicateResult {
+  accountId: number
+  uid: string
+  canonicalPath: string
+  archivedPaths: string[]
+  message: string
+}
+
+export interface FacebookCheckpoint282HistoryRequest {
+  accountId: number
+  limit?: number
+}
+
+export type FacebookCheckpoint282HistoryState = FacebookCheckpoint282State | 'asset_conflict_resolved'
+export type FacebookCheckpoint282HistoryAction = FacebookCheckpoint282Action | 'resolve_duplicate'
+
+export interface FacebookCheckpoint282HistoryEntry {
+  id: string
+  at: number
+  accountId: number
+  uid: string
+  action: FacebookCheckpoint282HistoryAction
+  state: FacebookCheckpoint282HistoryState
+  message: string
+  assetPath?: string | null
+  assetOrigin?: FacebookCheckpoint282AssetOrigin | null
+  assetConfirmedUsed?: boolean
+  promotionState?: FacebookCheckpoint282AssetPromotionState | null
+  canonicalPath?: string | null
+  evidencePath?: string | null
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
