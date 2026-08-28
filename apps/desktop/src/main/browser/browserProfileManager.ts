@@ -183,7 +183,7 @@ export class BrowserProfileManager {
         if (entry.checkpoint282Pending) {
           clearTimeout(entry.checkpoint282Pending.timer)
           entry.checkpoint282Pending.resolve({
-            accountId,
+            accountId: account.id,
             uid: entry.checkpoint282Pending.uid,
             state: 'error',
             surface: entry.checkpoint282Pending.surface,
