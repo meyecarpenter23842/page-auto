@@ -45,6 +45,30 @@ describe('Facebook common runtime', () => {
     })
   })
 
+  it('preserves checkpoint 282 as typed Common state without treating it as a generic login error', () => {
+    const session = {
+      accountId: 12,
+      status: 'needs_login',
+      reason: 'checkpoint',
+      cookie: null,
+      cookieStatus: 'needs_login',
+      lastCookieCheck: 1,
+      message: 'Facebook yêu cầu checkpoint 282.'
+    } as Parameters<typeof beforeRunFacebookSessionFailure>[0]
+
+    expect(beforeRunFacebookSessionFailure(session, '282')).toEqual({
+      status: 'needs_login',
+      code: 'verification_required',
+      message: 'Facebook yêu cầu checkpoint 282.',
+      sessionValidation: {
+        phase: 'before_run',
+        state: 'verification_required',
+        message: 'Facebook yêu cầu checkpoint 282.',
+        checkpointKind: '282'
+      }
+    })
+  })
+
   it('keeps Email Support failures typed instead of converting them to a generic checkpoint', () => {
     expect(beforeRunFacebookEmailSupportFailure('email_auth_expired', 'OAuth cần kết nối lại.')).toEqual({
       status: 'needs_login',
@@ -80,6 +104,7 @@ describe('Facebook common runtime', () => {
     expect(postingEngine).toContain('GroupNavigator')
     expect(postingEngine).toContain('PublishResultDetector')
     expect(commonRuntime).toContain('bootstrapFacebookSessionWithEmailSupport')
+    expect(commonRuntime).toContain('detectFacebookCheckpointKind')
     expect(commonRuntime).not.toContain('groupUid')
     expect(commonRuntime).not.toContain('my_posted_content')
   })
