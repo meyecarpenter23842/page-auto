@@ -77,7 +77,7 @@ describe('checkpoint282 assets', () => {
     expect(result.state).toBe('source')
     expect(result.canonicalPath).toBeNull()
     expect(result.sourceCandidateCount).toBe(2)
-    expect(result.sourceCandidates.map(basename)).toEqual(['photo-a.jpg', 'photo-b.jpeg'])
+    expect(result.sourceCandidates.map((path) => basename(path))).toEqual(['photo-a.jpg', 'photo-b.jpeg'])
   })
 
   it('blocks duplicate canonical UID images instead of choosing randomly', () => {
