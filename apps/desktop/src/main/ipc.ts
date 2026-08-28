@@ -42,6 +42,7 @@ import { PageWallJobRepository } from './database/pageWallJobRepository'
 import { RunRepository } from './database/runRepository'
 import { AccountExecutionCoordinator } from './services/accountExecutionCoordinator'
 import { Checkpoint282RunLifecycle } from './services/checkpoint282RunLifecycle'
+import { Checkpoint282RuntimeController } from './services/checkpoint282RuntimeController'
 import { ConfigBackupService } from './services/configBackupService'
 import { LogMaintenanceService } from './services/logMaintenanceService'
 import { PageTabWorkerManager } from './services/pageTabWorkerManager'
@@ -114,6 +115,11 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
     () => appSettings.get().logging
   )
   const accountExecution = new AccountExecutionCoordinator()
+  const checkpoint282Runtime = new Checkpoint282RuntimeController(
+    accountExecution,
+    checkpoint282RunLifecycle,
+    browserProfiles
+  )
   const executePageWallPostNow = (input: Parameters<PostingService['executePageWallPostNow']>[0]) => accountExecution.run(
     input.accountId,
     () => corePosting.executePageWallPostNow(input)
@@ -178,11 +184,7 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
         message: 'Account không tồn tại.'
       }
     }
-    return checkpoint282RunLifecycle.execute(
-      account,
-      payload,
-      (runPayload) => browserProfiles.runCheckpoint282(account, runPayload)
-    )
+    return checkpoint282Runtime.run(account, payload)
   })
   ipcMain.handle(IPC_CHANNELS.facebookCheckpointEvidenceFolderPick, async () => {
     const result = await dialog.showOpenDialog({

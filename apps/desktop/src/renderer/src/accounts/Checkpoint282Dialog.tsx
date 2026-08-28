@@ -187,6 +187,7 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
   const [historyLoading, setHistoryLoading] = useState(false)
   const [duplicateResolving, setDuplicateResolving] = useState(false)
   const [running, setRunning] = useState(false)
+  const [stopping, setStopping] = useState(false)
   const [started, setStarted] = useState(false)
   const [selectedIndex, setSelectedIndex] = useState(accounts.length > 0 ? 0 : -1)
 
@@ -194,6 +195,9 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
   const resolvedCount = useMemo(() => rows.filter((row) => row.state === 'resolved').length, [rows])
   const retryIndex = rows.findIndex((row) => canRecheckCheckpoint282(row.state))
   const retryRow = retryIndex >= 0 ? rows[retryIndex] : null
+  const runningIndex = rows.findIndex((row) => row.state === 'running')
+  const stopIndex = runningIndex >= 0 ? runningIndex : retryIndex >= 0 ? retryIndex : selectedIndex
+  const stopRow = stopIndex >= 0 ? rows[stopIndex] ?? null : null
   const selectedRow = selectedIndex >= 0 ? rows[selectedIndex] ?? null : null
   const selectedAccount = selectedRow
     ? accounts.find((account) => account.id === selectedRow.accountId)
@@ -332,7 +336,7 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
   }
 
   const runSequence = async (startIndex: number, firstAction: FacebookCheckpoint282Action) => {
-    if (running || startIndex < 0 || startIndex >= rows.length) return
+    if (running || stopping || startIndex < 0 || startIndex >= rows.length) return
     setStarted(true)
     setRunning(true)
     try {
@@ -423,9 +427,47 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
     if (path) await window.pageAuto.revealFacebookCheckpoint282Path(path)
   }
 
+  const stopCheckpoint282 = async (): Promise<boolean> => {
+    if (stopping || !stopRow || stopIndex < 0) return !stopping
+    setStopping(true)
+    try {
+      const result = await window.pageAuto.runFacebookCheckpoint282({
+        accountId: stopRow.accountId,
+        surface,
+        action: 'stop',
+        evidenceFolder: evidenceFolder.trim() || null,
+        asset: null
+      })
+      updateRow(stopIndex, {
+        state: result.state === 'stopped' ? 'stopped' : result.state,
+        message: result.message,
+        evidencePath: result.evidencePath ?? null
+      })
+      await refreshHistory(stopRow.accountId)
+      return result.state === 'stopped'
+    } catch (cause) {
+      updateRow(stopIndex, {
+        state: 'error',
+        message: `Không thể dừng CP282 an toàn: ${cause instanceof Error ? cause.message : String(cause)}`
+      })
+      return false
+    } finally {
+      setStopping(false)
+    }
+  }
+
+  const requestClose = async () => {
+    if (stopping) return
+    if (running || retryRow) {
+      const stopped = await stopCheckpoint282()
+      if (!stopped) return
+    }
+    onClose()
+  }
+
   const footerPrimary = () => {
     if (!started) {
-      const disabled = running || preflightLoading || rows.length === 0 || !preflight || blockedCount > 0 || sourceUnassignedCount > 0
+      const disabled = running || stopping || preflightLoading || rows.length === 0 || !preflight || blockedCount > 0 || sourceUnassignedCount > 0
       return (
         <button
           className="button primary checkpoint282-primary-action"
@@ -448,20 +490,22 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
         <button
           className="button primary checkpoint282-primary-action"
           type="button"
-          disabled={running || retryNeedsAssetConfirmation}
+          disabled={running || stopping || retryNeedsAssetConfirmation}
           onClick={() => void runSequence(retryIndex, 'recheck')}
         >
           {running
             ? 'Đang kiểm tra…'
-            : retryNeedsAssetConfirmation
-              ? 'Xác nhận ảnh đã dùng trước'
-              : `Kiểm tra lại ${retryRow.uid}`}
+            : stopping
+              ? 'Đang dừng…'
+              : retryNeedsAssetConfirmation
+                ? 'Xác nhận ảnh đã dùng trước'
+                : `Kiểm tra lại ${retryRow.uid}`}
         </button>
       )
     }
     return (
       <button className="button primary checkpoint282-primary-action" type="button" disabled>
-        {running ? 'Đang chạy…' : 'Đã chạy xong lượt'}
+        {running ? 'Đang chạy…' : stopping ? 'Đang dừng…' : 'Đã chạy xong lượt'}
       </button>
     )
   }
@@ -476,7 +520,11 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
   )
 
   return (
-    <div className="modal-backdrop checkpoint282-backdrop" role="presentation" onMouseDown={() => { if (!running) onClose() }}>
+    <div
+      className="modal-backdrop checkpoint282-backdrop"
+      role="presentation"
+      onMouseDown={() => { if (!running && !retryRow && !stopping) onClose() }}
+    >
       <div className="modal checkpoint282-dialog" role="dialog" aria-modal="true" aria-labelledby="checkpoint282-title" onMouseDown={(event) => event.stopPropagation()}>
         <header className="checkpoint282-header">
           <div className="checkpoint282-title-block">
@@ -493,7 +541,7 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
               <div className={(preflight?.summary.warning ?? 0) > 0 ? 'is-warning' : ''}><strong>{preflight?.summary.warning ?? 0}</strong><span>Cảnh báo</span></div>
               <div className={(preflight?.summary.blocked ?? 0) > 0 ? 'is-danger' : ''}><strong>{preflight?.summary.blocked ?? 0}</strong><span>Bị chặn</span></div>
             </div>
-            <button className="icon-button checkpoint282-close" type="button" disabled={running} onClick={onClose} aria-label="Đóng">×</button>
+            <button className="icon-button checkpoint282-close" type="button" disabled={stopping} onClick={() => void requestClose()} aria-label="Đóng">×</button>
           </div>
         </header>
 
@@ -502,7 +550,7 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
             <section className="checkpoint282-panel-section">
               <div className="checkpoint282-section-heading">
                 <div><span className="checkpoint282-kicker">Preset CP282</span><h3>Browser & nguồn ảnh</h3></div>
-                <span className="checkpoint282-tag">U4</span>
+                <span className="checkpoint282-tag">U5</span>
               </div>
 
               <label className="checkpoint282-field">
@@ -570,10 +618,16 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
               </dl>
               {retryRow ? (
                 <div className="checkpoint282-attention">
-                  <strong>{retryRow.state === 'waiting_manual' ? `Đang giữ browser của ${retryRow.uid}` : `Cần thử lại ${retryRow.uid}`}</strong>
+                  <strong>{retryRow.state === 'waiting_manual'
+                    ? `Đang giữ browser của ${retryRow.uid}`
+                    : retryRow.state === 'needs_login'
+                      ? `Cần hoàn tất đăng nhập ${retryRow.uid}`
+                      : `Cần thử lại ${retryRow.uid}`}</strong>
                   <span>{retryRow.state === 'waiting_manual'
                     ? 'Hoàn tất bước Facebook yêu cầu trực tiếp trên browser. Nếu dùng ảnh nguồn, xác nhận đúng ảnh preview trước khi Recheck.'
-                    : retryRow.message}</span>
+                    : retryRow.state === 'needs_login'
+                      ? 'Browser/profile vẫn được giữ cho account này. Hoàn tất Login Common hoặc thao tác đăng nhập hợp lệ rồi bấm Kiểm tra lại.'
+                      : retryRow.message}</span>
                 </div>
               ) : <div className="checkpoint282-neutral-note">Preflight chỉ kiểm readiness. Runtime vẫn xác minh session/account thật khi Start.</div>}
             </section>
@@ -657,7 +711,7 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
                         <span>Ảnh track cho account này</span>
                         <select
                           value={selectedAsset?.path ?? ''}
-                          disabled={running}
+                          disabled={running || stopping}
                           onChange={(event) => selectAssetPath(event.target.value)}
                         >
                           <option value="">— Chọn ảnh cụ thể —</option>
@@ -671,11 +725,11 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
                       </label>
                       <div className="checkpoint282-inline-actions">
                         {selectedIsDuplicateCandidate ? (
-                          <button className="button secondary" type="button" disabled={running || duplicateResolving} onClick={() => void resolveDuplicate()}>
+                          <button className="button secondary" type="button" disabled={running || stopping || duplicateResolving} onClick={() => void resolveDuplicate()}>
                             {duplicateResolving ? 'Đang xử lý…' : 'Giữ ảnh này'}
                           </button>
                         ) : null}
-                        {selectedAsset ? <button className="button secondary" type="button" onClick={() => void revealPath(selectedAsset.path)}>Mở vị trí ảnh</button> : null}
+                        {selectedAsset ? <button className="button secondary" type="button" disabled={stopping} onClick={() => void revealPath(selectedAsset.path)}>Mở vị trí ảnh</button> : null}
                       </div>
                     </div>
 
@@ -723,7 +777,7 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
                         <input
                           type="checkbox"
                           checked={selectedAsset.confirmedUsed}
-                          disabled={running}
+                          disabled={running || stopping}
                           onChange={(event) => confirmSelectedSourceUsed(event.target.checked)}
                         />
                         <span><strong>Đã dùng đúng ảnh đang preview trên Facebook</strong><small>Chỉ xác nhận sau khi anh thực sự dùng file này cho bước CP282. Recheck mới có quyền promote nếu UID số được verify.</small></span>
@@ -784,7 +838,12 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
             </div>
           </div>
           <div className="checkpoint282-footer-actions">
-            <button className="button secondary" type="button" disabled={running} onClick={onClose}>Đóng</button>
+            {(running || retryRow) ? (
+              <button className="button secondary" type="button" disabled={stopping} onClick={() => void stopCheckpoint282()}>
+                {stopping ? 'Đang dừng…' : 'Dừng & đóng browser'}
+              </button>
+            ) : null}
+            <button className="button secondary" type="button" disabled={stopping} onClick={() => void requestClose()}>Đóng</button>
             {footerPrimary()}
           </div>
         </footer>

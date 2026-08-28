@@ -2,8 +2,37 @@ function diagnostic(accountId: number, message: string): void {
   console.info(`[PAGE-AUTO scheduler] account=${accountId} ${message}`)
 }
 
+export interface AccountExecutionLease {
+  accountId: number
+  release: () => void
+}
+
 export class AccountExecutionCoordinator {
   private readonly tails = new Map<number, Promise<void>>()
+
+  tryAcquireLease(accountId: number): AccountExecutionLease | null {
+    if (this.tails.has(accountId)) {
+      diagnostic(accountId, 'lease rejected because account operation is active')
+      return null
+    }
+
+    let releaseGate!: () => void
+    const gate = new Promise<void>((resolve) => { releaseGate = resolve })
+    this.tails.set(accountId, gate)
+    diagnostic(accountId, 'lease acquired')
+
+    let released = false
+    return {
+      accountId,
+      release: () => {
+        if (released) return
+        released = true
+        releaseGate()
+        if (this.tails.get(accountId) === gate) this.tails.delete(accountId)
+        diagnostic(accountId, 'lease released')
+      }
+    }
+  }
 
   async run<T>(accountId: number, task: () => Promise<T>): Promise<T> {
     const queuedBehindExisting = this.tails.has(accountId)

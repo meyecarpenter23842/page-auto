@@ -29,6 +29,21 @@ describe('portable paths', () => {
     expect(development).toBe(join('dev', 'user-data', 'data'))
   })
 
+  it('keeps Folder282 beside a packaged executable even when the portable root is not C:', () => {
+    const executablePath = join('F:\\Page-Auto-Portable', 'PageAuto.exe')
+    const dataDirectory = resolveDataDirectory({
+      isPackaged: true,
+      execPath: executablePath,
+      userDataPath: join('C:\\Users\\ignored', 'AppData', 'Roaming', 'PageAuto')
+    })
+
+    expect(dataDirectory).toBe(join(dirname(executablePath), 'data'))
+    expect(dataDirectory.toLowerCase()).not.toContain('c:\\users\\ignored')
+    expect(join(dataDirectory, 'checkpoint-assets', '282')).toBe(
+      join(dirname(executablePath), 'data', 'checkpoint-assets', '282')
+    )
+  })
+
   it('honors PAGE_AUTO_DATA_DIR override and creates the portable data layout', () => {
     const root = mkdtempSync(join(tmpdir(), 'page-auto-portable-'))
     tempDirectories.push(root)
