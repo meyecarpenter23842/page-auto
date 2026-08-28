@@ -5,6 +5,14 @@ import {
   type ActionConfigFieldDefinition,
   type ActionDefinition
 } from '../../../shared/actionRegistry'
+import {
+  applyK41ActionOverrides,
+  getK41FieldUiMeta,
+  getK41ValidationErrors
+} from '../../../shared/k41ActionOverrides'
+import './k41ActionConfig.css'
+
+applyK41ActionOverrides()
 
 export interface ActionEditorValue {
   id: number | null
@@ -22,16 +30,19 @@ interface ActionConfigModalProps {
   onSave: (value: ActionEditorValue, normalizedConfig?: ActionConfig) => void
 }
 
-function ConfigField({ field, value, onChange }: {
+function ConfigField({ actionType, field, value, onChange }: {
+  actionType: string
   field: ActionConfigFieldDefinition
   value: ActionConfig[string] | undefined
   onChange: (value: ActionConfig[string] | undefined) => void
 }) {
+  const ui = getK41FieldUiMeta(actionType, field.key)
   if (field.kind === 'boolean') {
     return (
       <label className="scenario-check action-config-check">
         <input type="checkbox" checked={Boolean(value)} onChange={(event) => onChange(event.target.checked)} />
         <span>{field.label}</span>
+        {field.help ? <small className="action-config-help inline-help">{field.help}</small> : null}
       </label>
     )
   }
@@ -49,6 +60,22 @@ function ConfigField({ field, value, onChange }: {
     )
   }
 
+  if (field.kind === 'text' && ui?.multiline) {
+    return (
+      <label className="scenario-field action-config-textarea">
+        <span>{field.label}{field.required ? ' *' : ''}</span>
+        <textarea
+          rows={ui.rows ?? 3}
+          maxLength={field.maxLength}
+          placeholder={field.placeholder}
+          value={typeof value === 'string' ? value : ''}
+          onChange={(event) => onChange(event.target.value)}
+        />
+        {field.help ? <small className="action-config-help">{field.help}</small> : null}
+      </label>
+    )
+  }
+
   return (
     <label className="scenario-field">
       <span>{field.label}{field.required ? ' *' : ''}</span>
@@ -60,11 +87,8 @@ function ConfigField({ field, value, onChange }: {
         placeholder={field.placeholder}
         value={value === undefined ? '' : String(value)}
         onChange={(event) => {
-          if (field.kind === 'number') {
-            onChange(event.target.value === '' ? undefined : Number(event.target.value))
-          } else {
-            onChange(event.target.value)
-          }
+          if (field.kind === 'number') onChange(event.target.value === '' ? undefined : Number(event.target.value))
+          else onChange(event.target.value)
         }}
       />
       {field.help ? <small className="action-config-help">{field.help}</small> : null}
@@ -77,10 +101,25 @@ export function ActionConfigModal({ value, onClose, onSave }: ActionConfigModalP
   const [enabled, setEnabled] = useState(value.enabled)
   const [config, setConfig] = useState<ActionConfig>(value.config)
   const definition = value.definition
-  const validation = useMemo(
+  const baseValidation = useMemo(
     () => definition ? validateActionConfig(definition.id, config) : { valid: true as const, value: config, errors: [] as [] },
     [config, definition]
   )
+  const extraErrors = useMemo(() => definition ? getK41ValidationErrors(definition.id, baseValidation.value) : [], [baseValidation.value, definition])
+  const valid = baseValidation.valid && extraErrors.length === 0
+
+  const visibleSections = useMemo(() => {
+    const sections = new Map<string, ActionConfigFieldDefinition[]>()
+    for (const field of definition?.configSchema.fields ?? []) {
+      const ui = getK41FieldUiMeta(definition?.id ?? '', field.key)
+      if (ui?.visibleWhen && config[ui.visibleWhen.key] !== ui.visibleWhen.equals) continue
+      const section = ui?.section ?? 'Cấu hình'
+      const current = sections.get(section) ?? []
+      current.push(field)
+      sections.set(section, current)
+    }
+    return [...sections.entries()]
+  }, [config, definition])
 
   const setField = (key: string, nextValue: ActionConfig[string] | undefined) => {
     setConfig((current) => {
@@ -92,15 +131,17 @@ export function ActionConfigModal({ value, onClose, onSave }: ActionConfigModalP
   }
 
   const submit = () => {
-    if (!label.trim() || !validation.valid) return
-    onSave({ ...value, label: label.trim(), enabled, config }, validation.value)
+    if (!label.trim() || !valid) return
+    onSave({ ...value, label: label.trim(), enabled, config }, baseValidation.value)
   }
+
+  const runtimeReady = definition?.runtimeStatus === 'ready'
 
   return (
     <div className="scenario-modal-backdrop" role="presentation" onMouseDown={onClose}>
-      <section className="scenario-modal action-config-modal" role="dialog" aria-modal="true" aria-label="Cấu hình hành động" onMouseDown={(event) => event.stopPropagation()}>
+      <section className="scenario-modal action-config-modal k41-action-config-modal" role="dialog" aria-modal="true" aria-label="Cấu hình hành động" onMouseDown={(event) => event.stopPropagation()}>
         <div className="scenario-modal-head">
-          <div><p className="scenario-kicker">CẤU HÌNH ACTION · K2</p><h3>{value.id === null ? 'Thêm hành động' : 'Sửa hành động'}</h3></div>
+          <div><p className="scenario-kicker">CẤU HÌNH ACTION</p><h3>{value.id === null ? 'Thêm hành động' : 'Sửa hành động'}</h3></div>
           <button type="button" onClick={onClose}>×</button>
         </div>
 
@@ -109,30 +150,39 @@ export function ActionConfigModal({ value, onClose, onSave }: ActionConfigModalP
           <div className="action-config-badges">
             <span>{value.categoryLabel}</span>
             <span>{definition?.capabilities.actors.length === 2 ? 'Profile + Page' : 'Profile'}</span>
-            <span className="placeholder">Chưa chạy thật</span>
+            <span className={runtimeReady ? 'ready' : 'placeholder'}>{runtimeReady ? 'Executor K4.1' : 'Chưa chạy thật'}</span>
           </div>
         </div>
 
         <div className="action-config-form">
-          <label className="scenario-field wide"><span>Tên hiển thị</span><input autoFocus value={label} maxLength={120} onChange={(event) => setLabel(event.target.value)} /></label>
-          <label className="scenario-check modal-check"><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} /><span>Bật action trong kịch bản</span></label>
+          <div className="k41-action-header-row">
+            <label className="scenario-field wide"><span>Tên hiển thị</span><input autoFocus value={label} maxLength={120} onChange={(event) => setLabel(event.target.value)} /></label>
+            <label className="scenario-check modal-check"><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} /><span>Bật action</span></label>
+          </div>
 
-          {definition?.configSchema.fields.length ? (
-            <div className="action-config-fields">
-              {definition.configSchema.fields.map((field) => <ConfigField key={field.key} field={field} value={config[field.key]} onChange={(next) => setField(field.key, next)} />)}
+          {visibleSections.length ? (
+            <div className="k41-action-sections">
+              {visibleSections.map(([section, fields]) => (
+                <section className="k41-action-section" key={section}>
+                  <div className="k41-action-section-title">{section}</div>
+                  <div className="action-config-fields k41-action-grid">
+                    {fields.map((field) => <ConfigField key={field.key} actionType={value.actionType} field={field} value={config[field.key]} onChange={(next) => setField(field.key, next)} />)}
+                  </div>
+                </section>
+              ))}
             </div>
-          ) : (
-            <div className="scenario-placeholder-note">Action này chưa có trường cấu hình nghiệp vụ ở K2. Schema rỗng vẫn được version hóa để K3 bổ sung mà không đổi UI quản lý kịch bản.</div>
-          )}
+          ) : <div className="scenario-placeholder-note">Action này chưa có trường cấu hình nghiệp vụ.</div>}
 
-          {!definition ? <div className="scenario-placeholder-note warning">Action cũ không có trong registry K2. Có thể đổi tên/bật tắt, nhưng không chỉnh config cho tới khi được map vào registry.</div> : null}
-          {!validation.valid ? <div className="action-config-errors">{validation.errors.map((item) => <span key={item}>{item}</span>)}</div> : null}
+          {!definition ? <div className="scenario-placeholder-note warning">Action cũ không có trong registry. Có thể đổi tên/bật tắt, nhưng chưa chỉnh được config.</div> : null}
+          {!baseValidation.valid || extraErrors.length ? (
+            <div className="action-config-errors">{[...baseValidation.errors, ...extraErrors].map((item) => <span key={item}>{item}</span>)}</div>
+          ) : null}
         </div>
 
         <div className="scenario-modal-actions">
-          <span className="scenario-toolbar-note">Không lưu password, cookie, 2FA hoặc token trong config.</span>
+          <span className="scenario-toolbar-note">Config không lưu password, cookie, 2FA hoặc token.</span>
           <button className="scenario-button" type="button" onClick={onClose}>Hủy</button>
-          <button className="scenario-button primary" type="button" disabled={!label.trim() || !validation.valid} onClick={submit}>{value.id === null ? 'Thêm hành động' : 'Lưu thay đổi'}</button>
+          <button className="scenario-button primary" type="button" disabled={!label.trim() || !valid} onClick={submit}>{value.id === null ? 'Thêm hành động' : 'Lưu thay đổi'}</button>
         </div>
       </section>
     </div>
