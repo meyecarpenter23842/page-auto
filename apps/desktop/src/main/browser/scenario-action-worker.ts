@@ -7,11 +7,13 @@ import type {
   ScenarioActionWorkerResult
 } from '../../shared/scenarioActionWorker'
 import { inspectFacebookAccountIdentity } from './facebookAccountIdentity'
+import { ensureFacebookProfileIdentity } from './facebookProfileIdentity'
 import { bootstrapFacebookSession } from './facebookSession'
 import { FacebookCommonActionHost } from './actionRuntime/facebookCommonActionHost'
 import { createK4ActionExecutorRegistry } from './actionRuntime/actions'
 import { ActionRunner } from '../services/actionRunner'
 import { FacebookCommonRuntime } from '../facebook/facebookCommonRuntime'
+import { detectFacebookCheckpointKind, withFacebookCheckpointKind } from './posting/facebookCheckpoint'
 import {
   closeManagedPostingBrowser,
   installManagedBrowserReuse,
@@ -51,6 +53,10 @@ async function ensureProfileSession(job: ScenarioActionWorkerJob, runtime: Faceb
     job.sessionAccount,
     job.session.facebookLocale
   )
+  if (session.reason === 'checkpoint') {
+    const kind = await detectFacebookCheckpointKind(runtime.page).catch(() => null)
+    return { ...session, message: withFacebookCheckpointKind(session.message, kind) }
+  }
   if (session.status !== 'valid') return session
   const identity = await inspectFacebookAccountIdentity(runtime.context, job.sessionAccount.uid)
   if (identity.state === 'mismatch' || identity.state === 'missing') {
@@ -151,6 +157,22 @@ async function execute(job: ScenarioActionWorkerJob): Promise<ScenarioActionWork
       latestSession = await ensureProfileSession(job, runtime)
       return latestSession
     },
+    ensureProfile: async () => {
+      let result = await ensureFacebookProfileIdentity(
+        runtime.context,
+        runtime.page,
+        runtime.browser,
+        job.sessionAccount.uid
+      )
+      if (result.code === 'verification_required') {
+        const kind = await detectFacebookCheckpointKind(runtime.page).catch(() => null)
+        result = { ...result, message: withFacebookCheckpointKind(result.message, kind) }
+      }
+      if (result.status === 'success' && result.sessionCookie && latestSession?.status === 'valid') {
+        latestSession = { ...latestSession, cookie: result.sessionCookie }
+      }
+      return result
+    },
     switchPage: async () => unsupportedPageSwitch()
   })
   const runner = new ActionRunner(host, createK4ActionExecutorRegistry(actionDependencies(runtime, job)), (event) => {
@@ -169,7 +191,7 @@ async function execute(job: ScenarioActionWorkerJob): Promise<ScenarioActionWork
           result: {
             status: 'needs_attention',
             code: after.sessionValidation.state === 'verification_required' ? 'checkpoint_required' : 'session_needs_login',
-            message: after.sessionValidation.message
+            message: withFacebookCheckpointKind(after.sessionValidation.message, after.sessionValidation.checkpointKind)
           },
           finishedAt: Date.now()
         }

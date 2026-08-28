@@ -1,4 +1,4 @@
-export type BrowserWindowOwner = 'profile' | 'posting'
+export type BrowserWindowOwner = 'profile' | 'posting' | 'scenario'
 
 interface BrowserSlotEntry {
   slotIndex: number
@@ -31,7 +31,7 @@ export interface BrowserSlotSnapshotEntry {
 /**
  * Main-process allocator for Compact Chrome slots.
  *
- * One account owns exactly one slot even when both the profile and posting lifecycles
+ * One account owns exactly one slot even when profile, posting and scenario lifecycles
  * reference the same persistent Chrome. Released slots are reused from the lowest index
  * without moving any other active account. Dense re-numbering is explicit via compact()
  * and is reserved for the operator-triggered re-tile action.

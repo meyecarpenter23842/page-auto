@@ -10,6 +10,7 @@ export const ACTION_RUNTIME_ERROR_CODES = [
   'checkpoint_required',
   'page_switch_failed',
   'page_identity_unconfirmed',
+  'profile_identity_unconfirmed',
   'navigation_failed',
   'network_timeout',
   'browser_unavailable',

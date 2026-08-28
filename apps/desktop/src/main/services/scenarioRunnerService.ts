@@ -11,9 +11,11 @@ import type {
 } from '../../shared/scenarioRunnerRuntime'
 import type { ScenarioActionRecord, ScenarioDetails } from '../../shared/scenarios'
 import { accountProfileDirectory } from '../browser/browserProfileManager'
+import { BrowserWindowLayoutManager } from '../browser/browserWindowLayoutManager'
 import { resolveAccountProxyState } from '../browser/proxyConfig'
 import { ScenarioActionWorkerManager } from '../browser/scenarioActionWorkerManager'
 import { AccountRepository } from '../database/accountRepository'
+import { BrowserWindowLayoutRepository } from '../database/browserWindowLayoutRepository'
 import { ScenarioRepository } from '../database/scenarioRepository'
 import { AccountExecutionCoordinator } from './accountExecutionCoordinator'
 import { redactExecutionText } from './executionLogSanitizer'
@@ -80,6 +82,8 @@ function isNeedsAttention(result: ScenarioActionWorkerResult): boolean {
 export class ScenarioRunnerService {
   private readonly accounts: AccountRepository
   private readonly scenarios: ScenarioRepository
+  private readonly browserWindowLayout = new BrowserWindowLayoutManager()
+  private readonly browserWindowLayoutSettings: BrowserWindowLayoutRepository
   private active: ActiveScenarioRun | null = null
   private logSequence = 0
 
@@ -92,6 +96,7 @@ export class ScenarioRunnerService {
   ) {
     this.accounts = new AccountRepository(database)
     this.scenarios = new ScenarioRepository(database)
+    this.browserWindowLayoutSettings = new BrowserWindowLayoutRepository(database)
   }
 
   start(payload: ScenarioRunnerStartPayload): ScenarioRunnerSnapshot {
@@ -337,7 +342,6 @@ export class ScenarioRunnerService {
               needsAttention = true
               runtime.state = 'needs_attention'
               runtime.message = result.summary.result.message ?? 'Cần đăng nhập/xác minh thủ công.'
-              this.log(active, 'warning', runtime.message, account.id, scenario.id, action.actionType)
               break runLoop
             }
             if (result.summary.result.status === 'stopped') {
@@ -387,8 +391,17 @@ export class ScenarioRunnerService {
         runtime.state = hadFailure ? 'failed' : 'completed'
         runtime.message = hadFailure ? 'Hoàn tất với lỗi action.' : 'Hoàn tất.'
       }
-      if (!needsAttention) await this.workers.closeAccount(account.id).catch(() => undefined)
-      this.log(active, runtime.state === 'failed' ? 'warning' : 'info', `Account ${account.uid}: ${runtime.message ?? runtime.state}`, account.id)
+
+      // Managed browser close is the lifecycle boundary. Always wait for it before
+      // account orchestration can advance, including checkpoint/needs_attention.
+      await this.workers.closeAccount(account.id).catch(() => undefined)
+      this.browserWindowLayout.release(account.id, 'scenario')
+
+      const summaryMessage = needsAttention ? 'Cần xác minh thủ công.' : (runtime.message ?? runtime.state)
+      const level: ScenarioRunnerLogEntry['level'] = runtime.state === 'failed' || runtime.state === 'needs_attention'
+        ? 'warning'
+        : 'info'
+      this.log(active, level, `Account ${account.uid}: ${summaryMessage}`, account.id)
     }
   }
 
@@ -397,6 +410,14 @@ export class ScenarioRunnerService {
     const proxyResolution = resolveAccountProxyState(account)
     if (proxyResolution.status === 'invalid') throw new Error(proxyResolution.message)
     const proxy = proxyResolution.status === 'valid' ? proxyResolution.proxy : undefined
+
+    this.browserWindowLayout.claim(account.id, 'scenario')
+    const browserPlacement = this.browserWindowLayout.placementFor(
+      account.id,
+      this.browserWindowLayoutSettings.get(),
+      settings.browser
+    )
+
     return {
       accountId: account.id,
       profileDirectory: accountProfileDirectory(this.dataDirectory, account.id),
@@ -413,6 +434,7 @@ export class ScenarioRunnerService {
         name: account.name
       },
       request,
+      ...(browserPlacement ? { browserPlacement } : {}),
       ...(account.userAgent ? { userAgent: account.userAgent } : {}),
       ...(proxy ? { proxy } : {})
     }

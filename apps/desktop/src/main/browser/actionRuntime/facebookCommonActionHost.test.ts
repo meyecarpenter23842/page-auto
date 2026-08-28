@@ -36,11 +36,20 @@ function preparationContext(actor: ActionRunRequest['actor']): ActionPreparation
   }
 }
 
+function profileReady(): Promise<PostingJobResult> {
+  return Promise.resolve({ status: 'success', message: 'profile ready' })
+}
+
 describe('FacebookCommonActionHost', () => {
-  it('uses session common only for profile actor', async () => {
+  it('verifies profile identity after session is valid', async () => {
+    let profileCalls = 0
     let switchCalls = 0
     const host = new FacebookCommonActionHost({
       ensureSession: async () => session(),
+      ensureProfile: async () => {
+        profileCalls += 1
+        return { status: 'success', message: 'profile ready' }
+      },
       switchPage: async (): Promise<PostingJobResult> => {
         switchCalls += 1
         return { status: 'success', message: 'switched' }
@@ -50,13 +59,34 @@ describe('FacebookCommonActionHost', () => {
     const result = await host.prepare(preparationContext({ kind: 'profile', accountId: 7, accountUid: '10007' }))
 
     expect(result).toEqual({ status: 'ready' })
+    expect(profileCalls).toBe(1)
     expect(switchCalls).toBe(0)
+  })
+
+  it('blocks profile action when the active actor cannot be restored from Page', async () => {
+    const host = new FacebookCommonActionHost({
+      ensureSession: async () => session(),
+      ensureProfile: async (): Promise<PostingJobResult> => ({
+        status: 'failed',
+        code: 'profile_identity_unconfirmed',
+        message: 'i_user still active'
+      }),
+      switchPage: async () => ({ status: 'success', message: 'unused' })
+    })
+
+    const result = await host.prepare(preparationContext({ kind: 'profile', accountId: 7, accountUid: '10007' }))
+
+    expect(result).toMatchObject({
+      status: 'blocked',
+      result: { status: 'failed', code: 'profile_identity_unconfirmed' }
+    })
   })
 
   it('switches and verifies Page only after session is valid', async () => {
     let switchUid = ''
     const host = new FacebookCommonActionHost({
       ensureSession: async () => session(),
+      ensureProfile: profileReady,
       switchPage: async (_context, pageUid): Promise<PostingJobResult> => {
         switchUid = pageUid
         return { status: 'success', message: 'switched' }
@@ -73,6 +103,7 @@ describe('FacebookCommonActionHost', () => {
     let switchCalls = 0
     const host = new FacebookCommonActionHost({
       ensureSession: async () => session('checkpoint'),
+      ensureProfile: profileReady,
       switchPage: async (): Promise<PostingJobResult> => {
         switchCalls += 1
         return { status: 'success', message: 'unexpected' }
@@ -88,6 +119,7 @@ describe('FacebookCommonActionHost', () => {
   it('maps Page identity verification failure to typed action failure', async () => {
     const host = new FacebookCommonActionHost({
       ensureSession: async () => session(),
+      ensureProfile: profileReady,
       switchPage: async (): Promise<PostingJobResult> => ({
         status: 'failed',
         code: 'page_identity_unconfirmed',
