@@ -41,7 +41,7 @@ describe('portable paths', () => {
     ensureDataDirectoryLayout(dataDirectory)
 
     expect(dirname(dataDirectory)).toBe(root)
-    for (const child of ['', 'browser-profiles', 'logs', 'screenshots', 'backups']) {
+    for (const child of ['', 'browser-profiles', 'logs', 'screenshots', 'backups', 'checkpoint-assets', join('checkpoint-assets', '282')]) {
       expect(existsSync(child ? join(dataDirectory, child) : dataDirectory)).toBe(true)
     }
   })

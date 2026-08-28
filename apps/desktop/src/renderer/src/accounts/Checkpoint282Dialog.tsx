@@ -1,10 +1,16 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { AccountRecord } from '../../../shared/accounts'
 import type {
   FacebookCheckpoint282Action,
   FacebookCheckpoint282Result,
   FacebookCheckpointSurface
 } from '../../../shared/facebookCheckpoint'
+import type {
+  FacebookCheckpoint282AccountPreflight,
+  FacebookCheckpoint282Locale,
+  FacebookCheckpoint282PreflightResult,
+  FacebookCheckpoint282Preset
+} from '../../../shared/checkpoint282Workbench'
 import {
   canRecheckCheckpoint282,
   checkpoint282StateLabel,
@@ -12,6 +18,7 @@ import {
   type Checkpoint282UiState
 } from './checkpoint282Ui'
 import './checkpoint282.css'
+import './checkpoint282U2.css'
 
 interface Checkpoint282DialogProps {
   accounts: AccountRecord[]
@@ -30,6 +37,12 @@ const surfaceLabels: Record<FacebookCheckpointSurface, string> = {
   mbasic: 'mbasic.facebook.com',
   mobile: 'm.facebook.com',
   desktop: 'www.facebook.com'
+}
+
+const localeLabels: Record<FacebookCheckpoint282Locale, string> = {
+  auto: 'Auto',
+  'vi-VN': 'Tiếng Việt',
+  'en-US': 'English (US)'
 }
 
 function initialRows(accounts: AccountRecord[]): Checkpoint282Row[] {
@@ -57,26 +70,93 @@ function shortPath(path: string): string {
   return `…/${parts.slice(-2).join('/')}`
 }
 
+function imageStateLabel(row: FacebookCheckpoint282AccountPreflight | undefined): string {
+  if (!row) return 'Chưa kiểm tra'
+  switch (row.image.state) {
+    case 'canonical': return 'Folder282'
+    case 'source': return `Ảnh nguồn (${row.image.sourceCandidateCount})`
+    case 'missing': return 'Thiếu ảnh'
+    case 'duplicate': return `Trùng (${row.image.canonicalCandidateCount})`
+  }
+}
+
+function preflightLevelLabel(row: FacebookCheckpoint282AccountPreflight | undefined): string {
+  if (!row) return 'Chưa kiểm tra'
+  if (row.level === 'ok') return 'OK'
+  if (row.level === 'warning') return 'Cảnh báo'
+  return 'Bị chặn'
+}
+
 export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogProps) {
   const [surface, setSurface] = useState<FacebookCheckpointSurface>('mbasic')
+  const [locale, setLocale] = useState<FacebookCheckpoint282Locale>('auto')
+  const [sourceImageFolder, setSourceImageFolder] = useState('')
   const [evidenceFolder, setEvidenceFolder] = useState('')
+  const [canonicalFolder, setCanonicalFolder] = useState('')
+  const [preflight, setPreflight] = useState<FacebookCheckpoint282PreflightResult | null>(null)
+  const [preflightLoading, setPreflightLoading] = useState(true)
+  const [presetSaving, setPresetSaving] = useState(false)
   const [rows, setRows] = useState<Checkpoint282Row[]>(() => initialRows(accounts))
   const [running, setRunning] = useState(false)
   const [started, setStarted] = useState(false)
   const [selectedIndex, setSelectedIndex] = useState(accounts.length > 0 ? 0 : -1)
 
+  const accountIds = useMemo(() => accounts.map((account) => account.id), [accounts])
   const resolvedCount = useMemo(() => rows.filter((row) => row.state === 'resolved').length, [rows])
-  const waitingIndex = rows.findIndex((row) => canRecheckCheckpoint282(row.state))
-  const waitingRow = waitingIndex >= 0 ? rows[waitingIndex] : null
+  const retryIndex = rows.findIndex((row) => canRecheckCheckpoint282(row.state))
+  const retryRow = retryIndex >= 0 ? rows[retryIndex] : null
   const selectedRow = selectedIndex >= 0 ? rows[selectedIndex] ?? null : null
   const selectedAccount = selectedRow
     ? accounts.find((account) => account.id === selectedRow.accountId)
     : undefined
-  const activeRow = waitingRow ?? selectedRow
+  const activeRow = retryRow ?? selectedRow
   const activeAccount = activeRow
     ? accounts.find((account) => account.id === activeRow.accountId)
     : undefined
   const pendingCount = rows.filter((row) => row.state === 'pending').length
+  const preflightByAccount = useMemo(
+    () => new Map((preflight?.rows ?? []).map((row) => [row.accountId, row])),
+    [preflight]
+  )
+  const selectedPreflight = selectedRow ? preflightByAccount.get(selectedRow.accountId) : undefined
+  const blockedCount = preflight?.summary.blocked ?? 0
+
+  const currentPreset = (): FacebookCheckpoint282Preset => ({
+    surface,
+    locale,
+    sourceImageFolder: sourceImageFolder.trim() || null
+  })
+
+  const runPreflight = async (preset: FacebookCheckpoint282Preset = currentPreset()) => {
+    setPreflightLoading(true)
+    try {
+      const result = await window.pageAuto.preflightFacebookCheckpoint282({ accountIds, preset })
+      setPreflight(result)
+      setCanonicalFolder(result.canonicalFolder)
+    } finally {
+      setPreflightLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const preset = await window.pageAuto.getFacebookCheckpoint282Preset()
+        if (cancelled) return
+        setSurface(preset.surface)
+        setLocale(preset.locale)
+        setSourceImageFolder(preset.sourceImageFolder ?? '')
+        const result = await window.pageAuto.preflightFacebookCheckpoint282({ accountIds, preset })
+        if (cancelled) return
+        setPreflight(result)
+        setCanonicalFolder(result.canonicalFolder)
+      } finally {
+        if (!cancelled) setPreflightLoading(false)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [accountIds])
 
   const updateRow = (index: number, patch: Partial<Checkpoint282Row>) => {
     setRows((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, ...patch } : row))
@@ -134,9 +214,29 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
     }
   }
 
+  const pickSourceFolder = async () => {
+    const picked = await window.pageAuto.pickFacebookCheckpoint282SourceFolder()
+    if (!picked) return
+    setSourceImageFolder(picked)
+    await runPreflight({ surface, locale, sourceImageFolder: picked })
+  }
+
   const pickEvidenceFolder = async () => {
     const picked = await window.pageAuto.pickFacebookCheckpointEvidenceFolder()
     if (picked) setEvidenceFolder(picked)
+  }
+
+  const savePreset = async () => {
+    setPresetSaving(true)
+    try {
+      const saved = await window.pageAuto.saveFacebookCheckpoint282Preset(currentPreset())
+      setSurface(saved.surface)
+      setLocale(saved.locale)
+      setSourceImageFolder(saved.sourceImageFolder ?? '')
+      await runPreflight(saved)
+    } finally {
+      setPresetSaving(false)
+    }
   }
 
   const footerPrimary = () => {
@@ -145,26 +245,22 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
         <button
           className="button primary checkpoint282-primary-action"
           type="button"
-          disabled={running || rows.length === 0}
+          disabled={running || preflightLoading || rows.length === 0 || !preflight || blockedCount > 0}
           onClick={() => void runSequence(0, 'start')}
         >
-          Bắt đầu CP282
+          {preflightLoading ? 'Đang preflight…' : blockedCount > 0 ? `Còn ${blockedCount} account bị chặn` : 'Bắt đầu CP282'}
         </button>
       )
     }
-    if (waitingRow && waitingIndex >= 0 && canRecheckCheckpoint282(waitingRow.state)) {
-      const retryAction: FacebookCheckpoint282Action = waitingRow.state === 'waiting_manual' ? 'recheck' : 'start'
-      const retryLabel = waitingRow.state === 'waiting_manual'
-        ? `Kiểm tra lại ${waitingRow.uid}`
-        : `Thử lại ${waitingRow.uid}`
+    if (retryRow && retryIndex >= 0 && canRecheckCheckpoint282(retryRow.state)) {
       return (
         <button
           className="button primary checkpoint282-primary-action"
           type="button"
           disabled={running}
-          onClick={() => void runSequence(waitingIndex, retryAction)}
+          onClick={() => void runSequence(retryIndex, 'recheck')}
         >
-          {running ? 'Đang kiểm tra…' : retryLabel}
+          {running ? 'Đang kiểm tra…' : `Kiểm tra lại ${retryRow.uid}`}
         </button>
       )
     }
@@ -184,14 +280,14 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
             <div>
               <p className="eyebrow">Facebook Common · Operator Workbench</p>
               <h2 id="checkpoint282-title">Checkpoint 282</h2>
-              <p className="checkpoint282-subtitle">Giữ đúng browser account · chạy tuần tự · xác minh lại session trước khi tiếp tục</p>
+              <p className="checkpoint282-subtitle">Folder282 ưu tiên theo UID · thiếu mới dùng ảnh nguồn · chạy tuần tự</p>
             </div>
           </div>
           <div className="checkpoint282-header-right">
-            <div className="checkpoint282-metrics" aria-label="Tổng quan lượt chạy">
-              <div><strong>{accounts.length}</strong><span>Tài khoản</span></div>
-              <div><strong>{resolvedCount}</strong><span>Đã xác minh</span></div>
-              <div className={waitingRow ? 'is-warning' : ''}><strong>{waitingRow ? 1 : 0}</strong><span>Đang chờ</span></div>
+            <div className="checkpoint282-metrics" aria-label="Tổng quan preflight">
+              <div><strong>{preflight?.summary.ok ?? 0}</strong><span>OK</span></div>
+              <div className={(preflight?.summary.warning ?? 0) > 0 ? 'is-warning' : ''}><strong>{preflight?.summary.warning ?? 0}</strong><span>Cảnh báo</span></div>
+              <div className={(preflight?.summary.blocked ?? 0) > 0 ? 'is-danger' : ''}><strong>{preflight?.summary.blocked ?? 0}</strong><span>Bị chặn</span></div>
             </div>
             <button className="icon-button checkpoint282-close" type="button" disabled={running} onClick={onClose} aria-label="Đóng">×</button>
           </div>
@@ -201,11 +297,8 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
           <aside className="checkpoint282-settings-panel">
             <section className="checkpoint282-panel-section">
               <div className="checkpoint282-section-heading">
-                <div>
-                  <span className="checkpoint282-kicker">Thiết lập</span>
-                  <h3>Browser & phiên chạy</h3>
-                </div>
-                <span className="checkpoint282-tag">CP282</span>
+                <div><span className="checkpoint282-kicker">Preset CP282</span><h3>Browser & nguồn ảnh</h3></div>
+                <span className="checkpoint282-tag">U2</span>
               </div>
 
               <label className="checkpoint282-field">
@@ -217,40 +310,53 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
                 </select>
               </label>
 
-              <div className="checkpoint282-inline-hint">
-                <span className="checkpoint282-dot is-ok" />
-                Login dùng Facebook Common: cookie/session trước, password và 2FA chỉ khi cần.
+              <label className="checkpoint282-field checkpoint282-field-spaced">
+                <span>Locale preset</span>
+                <select value={locale} disabled={started} onChange={(event) => setLocale(event.target.value as FacebookCheckpoint282Locale)}>
+                  <option value="auto">{localeLabels.auto}</option>
+                  <option value="vi-VN">{localeLabels['vi-VN']}</option>
+                  <option value="en-US">{localeLabels['en-US']}</option>
+                </select>
+              </label>
+
+              <label className="checkpoint282-field checkpoint282-field-spaced">
+                <span>Folder ảnh nguồn · chỉ dùng khi UID chưa có trong Folder282</span>
+                <div className="checkpoint282-folder-row">
+                  <input value={sourceImageFolder} readOnly placeholder="Chưa chọn folder ảnh nguồn" title={sourceImageFolder} />
+                  <button className="button secondary" type="button" disabled={started} onClick={() => void pickSourceFolder()}>Chọn</button>
+                </div>
+              </label>
+
+              <div className="checkpoint282-preset-actions">
+                <button className="button secondary" type="button" disabled={started || preflightLoading} onClick={() => void runPreflight()}>Preflight lại</button>
+                <button className="button secondary" type="button" disabled={started || presetSaving} onClick={() => void savePreset()}>{presetSaving ? 'Đang lưu…' : 'Lưu preset'}</button>
               </div>
             </section>
 
             <section className="checkpoint282-panel-section">
               <div className="checkpoint282-section-heading compact">
-                <div>
-                  <span className="checkpoint282-kicker">Evidence</span>
-                  <h3>Ảnh kết quả</h3>
-                </div>
+                <div><span className="checkpoint282-kicker">Folder282</span><h3>Kho ảnh canonical</h3></div>
+              </div>
+              <div className="checkpoint282-readonly-path" title={canonicalFolder}>{canonicalFolder ? shortPath(canonicalFolder) : 'Đang xác định…'}</div>
+              <p className="checkpoint282-caption">App tự quản lý folder này theo data root portable. Không hard-code ổ C và không import cả folder ảnh nguồn.</p>
+            </section>
+
+            <section className="checkpoint282-panel-section">
+              <div className="checkpoint282-section-heading compact">
+                <div><span className="checkpoint282-kicker">Evidence</span><h3>Bằng chứng runtime</h3></div>
               </div>
               <label className="checkpoint282-field">
-                <span>Thư mục lưu ảnh thành công</span>
+                <span>Folder screenshot/log · tách khỏi ảnh CP282</span>
                 <div className="checkpoint282-folder-row">
-                  <input
-                    value={evidenceFolder}
-                    disabled={started}
-                    onChange={(event) => setEvidenceFolder(event.target.value)}
-                    placeholder="Tùy chọn · để trống nếu không lưu"
-                  />
+                  <input value={evidenceFolder} disabled={started} onChange={(event) => setEvidenceFolder(event.target.value)} placeholder="Tùy chọn" />
                   <button className="button secondary" type="button" disabled={started} onClick={() => void pickEvidenceFolder()}>Chọn</button>
                 </div>
               </label>
-              <p className="checkpoint282-caption">Sau khi kiểm tra lại thành công, ảnh được lưu theo UID/Tên đăng nhập của account.</p>
             </section>
 
             <section className="checkpoint282-panel-section checkpoint282-run-card">
               <div className="checkpoint282-section-heading compact">
-                <div>
-                  <span className="checkpoint282-kicker">Lượt hiện tại</span>
-                  <h3>{activeRow?.uid ?? 'Chưa chọn account'}</h3>
-                </div>
+                <div><span className="checkpoint282-kicker">Lượt hiện tại</span><h3>{activeRow?.uid ?? 'Chưa chọn account'}</h3></div>
                 {activeRow ? <span className={`checkpoint282-state state-${activeRow.state}`}>{checkpoint282StateLabel(activeRow.state)}</span> : null}
               </div>
               <dl className="checkpoint282-run-facts">
@@ -258,71 +364,57 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
                 <div><dt>Surface</dt><dd>{surfaceLabels[surface]}</dd></div>
                 <div><dt>Còn chờ</dt><dd>{pendingCount}</dd></div>
               </dl>
-              {waitingRow ? (
+              {retryRow ? (
                 <div className="checkpoint282-attention">
-                  <strong>{waitingRow.state === 'waiting_manual' ? `Đang giữ browser của ${waitingRow.uid}` : `Đã dừng tại ${waitingRow.uid}`}</strong>
-                  <span>
-                    {waitingRow.state === 'waiting_manual'
-                      ? 'Hoàn tất bước Facebook yêu cầu trên browser, sau đó dùng nút Kiểm tra lại bên dưới.'
-                      : 'Flow không tự bỏ qua lỗi này. Nếu browser/session đang bận, chờ hoàn tất rồi dùng nút Thử lại bên dưới.'}
-                  </span>
+                  <strong>{retryRow.state === 'waiting_manual' ? `Đang giữ browser của ${retryRow.uid}` : `Cần thử lại ${retryRow.uid}`}</strong>
+                  <span>{retryRow.state === 'waiting_manual' ? 'Hoàn tất bước Facebook yêu cầu trên browser, sau đó bấm Kiểm tra lại.' : retryRow.message}</span>
                 </div>
-              ) : (
-                <div className="checkpoint282-neutral-note">Chọn một dòng bên phải để xem chi tiết account và kết quả.</div>
-              )}
+              ) : <div className="checkpoint282-neutral-note">Preflight chỉ kiểm readiness. Runtime vẫn xác minh session/account thật khi Start.</div>}
             </section>
           </aside>
 
           <main className="checkpoint282-main-panel">
             <div className="checkpoint282-list-header">
-              <div>
-                <span className="checkpoint282-kicker">Danh sách xử lý</span>
-                <h3>Tài khoản đã chọn</h3>
-              </div>
+              <div><span className="checkpoint282-kicker">Preflight & runtime</span><h3>Tài khoản đã chọn</h3></div>
               <div className="checkpoint282-list-legend">
-                <span><i className="legend-dot is-ok" /> Đã xong {resolvedCount}</span>
-                <span><i className="legend-dot" /> Chờ {pendingCount}</span>
+                <span><i className="legend-dot is-ok" /> OK {preflight?.summary.ok ?? 0}</span>
+                <span><i className="legend-dot is-warning" /> Cảnh báo {preflight?.summary.warning ?? 0}</span>
+                <span><i className="legend-dot is-danger" /> Chặn {preflight?.summary.blocked ?? 0}</span>
               </div>
             </div>
 
             <div className="checkpoint282-grid-wrap">
-              <table className="checkpoint282-table">
+              <table className="checkpoint282-table checkpoint282-table-u2">
                 <thead>
                   <tr>
                     <th>#</th>
                     <th>UID / Tên đăng nhập</th>
+                    <th>Preflight</th>
+                    <th>Ảnh 282</th>
                     <th>Session</th>
                     <th>CP State</th>
                     <th>Kết quả</th>
-                    <th>Evidence</th>
                   </tr>
                 </thead>
                 <tbody>
                   {rows.map((row, index) => {
                     const account = accounts.find((item) => item.id === row.accountId)
+                    const readiness = preflightByAccount.get(row.accountId)
                     const selected = selectedIndex === index
-                    const waiting = canRecheckCheckpoint282(row.state)
+                    const retryable = canRecheckCheckpoint282(row.state)
                     return (
                       <tr
                         key={row.accountId}
-                        className={`${selected ? 'is-selected' : ''} ${waiting ? 'is-waiting' : ''}`.trim()}
+                        className={`${selected ? 'is-selected' : ''} ${retryable ? 'is-waiting' : ''}`.trim()}
                         onClick={() => setSelectedIndex(index)}
                       >
                         <td className="checkpoint282-index">{index + 1}</td>
-                        <td>
-                          <div className="checkpoint282-account-cell">
-                            <strong>{row.uid}</strong>
-                            {account?.name ? <span>{account.name}</span> : null}
-                          </div>
-                        </td>
+                        <td><div className="checkpoint282-account-cell"><strong>{row.uid}</strong>{account?.name ? <span>{account.name}</span> : null}</div></td>
+                        <td><span className={`checkpoint282-preflight preflight-${readiness?.level ?? 'unknown'}`}>{preflightLevelLabel(readiness)}</span></td>
+                        <td><span className={`checkpoint282-image-state image-${readiness?.image.state ?? 'unknown'}`}>{imageStateLabel(readiness)}</span></td>
                         <td><span className={`checkpoint282-master-status master-${account?.status ?? 'unknown'}`}>{masterStatusLabel(account)}</span></td>
                         <td><span className={`checkpoint282-state state-${row.state}`}>{checkpoint282StateLabel(row.state)}</span></td>
                         <td><div className="checkpoint282-message" title={row.message}>{row.message}</div></td>
-                        <td>
-                          {row.evidencePath
-                            ? <span className="checkpoint282-evidence" title={row.evidencePath}>{shortPath(row.evidencePath)}</span>
-                            : <span className="checkpoint282-empty">—</span>}
-                        </td>
                       </tr>
                     )
                   })}
@@ -333,26 +425,14 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
 
             <section className="checkpoint282-detail-panel">
               <div className="checkpoint282-detail-header">
-                <div>
-                  <span className="checkpoint282-kicker">Chi tiết account</span>
-                  <h3>{selectedRow?.uid ?? 'Chưa chọn'}</h3>
-                </div>
-                {selectedRow ? <span className={`checkpoint282-state state-${selectedRow.state}`}>{checkpoint282StateLabel(selectedRow.state)}</span> : null}
+                <div><span className="checkpoint282-kicker">Chi tiết account</span><h3>{selectedRow?.uid ?? 'Chưa chọn'}</h3></div>
+                {selectedPreflight ? <span className={`checkpoint282-preflight preflight-${selectedPreflight.level}`}>{preflightLevelLabel(selectedPreflight)}</span> : null}
               </div>
               {selectedRow ? (
-                <div className="checkpoint282-detail-grid">
-                  <div>
-                    <span>Trạng thái</span>
-                    <strong>{selectedRow.message}</strong>
-                  </div>
-                  <div>
-                    <span>Account</span>
-                    <strong>{selectedAccount?.name || selectedRow.uid}</strong>
-                  </div>
-                  <div>
-                    <span>Evidence</span>
-                    <strong title={selectedRow.evidencePath ?? undefined}>{selectedRow.evidencePath ? shortPath(selectedRow.evidencePath) : 'Chưa có'}</strong>
-                  </div>
+                <div className="checkpoint282-detail-grid checkpoint282-detail-grid-u2">
+                  <div><span>Ảnh 282</span><strong>{imageStateLabel(selectedPreflight)}</strong></div>
+                  <div><span>Session readiness</span><strong>{selectedPreflight ? `${selectedPreflight.session.profileExists ? 'Profile' : 'No profile'} · ${selectedPreflight.session.hasCookie ? 'Cookie' : 'No cookie'} · ${selectedPreflight.session.hasPasswordFallback ? 'Password fallback' : 'No password'}` : 'Chưa preflight'}</strong></div>
+                  <div><span>Chi tiết</span><strong title={selectedPreflight?.messages.join(' · ') || selectedRow.message}>{selectedPreflight?.messages.join(' · ') || selectedRow.message}</strong></div>
                 </div>
               ) : <div className="checkpoint282-detail-empty">Chọn account để xem trạng thái chi tiết.</div>}
             </section>
@@ -361,18 +441,10 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
 
         <footer className="checkpoint282-footer">
           <div className="checkpoint282-footer-status">
-            <span className={`checkpoint282-footer-indicator ${waitingRow ? 'is-warning' : running ? 'is-running' : resolvedCount === rows.length && rows.length > 0 ? 'is-ok' : ''}`} />
+            <span className={`checkpoint282-footer-indicator ${retryRow ? 'is-warning' : running ? 'is-running' : blockedCount > 0 ? 'is-danger' : resolvedCount === rows.length && rows.length > 0 ? 'is-ok' : ''}`} />
             <div>
-              <strong>{waitingRow
-                ? waitingRow.state === 'waiting_manual'
-                  ? `Chờ thao tác trên ${waitingRow.uid}`
-                  : `Dừng để thử lại ${waitingRow.uid}`
-                : running
-                  ? 'Đang xử lý account…'
-                  : started
-                    ? 'Lượt CP282 đã dừng/kết thúc'
-                    : 'Sẵn sàng bắt đầu'}</strong>
-              <span>{resolvedCount}/{rows.length} account đã xác minh</span>
+              <strong>{retryRow ? `Đang dừng tại ${retryRow.uid}` : running ? 'Đang xử lý account…' : blockedCount > 0 && !started ? `Preflight còn ${blockedCount} account bị chặn` : started ? 'Lượt CP282 đã dừng/kết thúc' : 'Sẵn sàng sau preflight'}</strong>
+              <span>{started ? `${resolvedCount}/${rows.length} account đã xác minh` : 'Folder282 được ưu tiên trước Folder ảnh nguồn'}</span>
             </div>
           </div>
           <div className="checkpoint282-footer-actions">

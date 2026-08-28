@@ -1,0 +1,101 @@
+.checkpoint282-metrics .is-danger strong,
+.checkpoint282-metrics .is-danger span {
+  color: #b42318;
+}
+
+.checkpoint282-field-spaced {
+  margin-top: 9px;
+}
+
+.checkpoint282-preset-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 9px;
+  padding-top: 8px;
+  border-top: 1px solid #edf1f5;
+}
+
+.checkpoint282-readonly-path {
+  overflow: hidden;
+  padding: 7px 8px;
+  color: #344054;
+  background: #f8fafc;
+  border: 1px solid #dce3eb;
+  border-radius: 4px;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 8.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.legend-dot.is-warning,
+.checkpoint282-footer-indicator.is-warning {
+  background: #f79009;
+}
+
+.legend-dot.is-danger,
+.checkpoint282-footer-indicator.is-danger {
+  background: #d92d20;
+}
+
+.checkpoint282-preflight,
+.checkpoint282-image-state {
+  display: inline-flex;
+  max-width: 100%;
+  min-height: 20px;
+  align-items: center;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 8.5px;
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.checkpoint282-preflight.preflight-ok,
+.checkpoint282-image-state.image-canonical {
+  color: #027a48;
+  background: #ecfdf3;
+}
+
+.checkpoint282-preflight.preflight-warning,
+.checkpoint282-image-state.image-source {
+  color: #b54708;
+  background: #fffaeb;
+}
+
+.checkpoint282-preflight.preflight-blocked,
+.checkpoint282-image-state.image-missing,
+.checkpoint282-image-state.image-duplicate {
+  color: #b42318;
+  background: #fef3f2;
+}
+
+.checkpoint282-preflight.preflight-unknown,
+.checkpoint282-image-state.image-unknown {
+  color: #475467;
+  background: #f2f4f7;
+}
+
+.checkpoint282-table-u2 {
+  min-width: 900px;
+}
+
+.checkpoint282-table-u2 th:nth-child(1) { width: 42px; }
+.checkpoint282-table-u2 th:nth-child(2) { width: 158px; }
+.checkpoint282-table-u2 th:nth-child(3) { width: 92px; }
+.checkpoint282-table-u2 th:nth-child(4) { width: 118px; }
+.checkpoint282-table-u2 th:nth-child(5) { width: 90px; }
+.checkpoint282-table-u2 th:nth-child(6) { width: 110px; }
+.checkpoint282-table-u2 th:nth-child(7) { width: auto; }
+
+.checkpoint282-detail-grid-u2 {
+  grid-template-columns: minmax(120px, 0.7fr) minmax(220px, 1.2fr) minmax(0, 1.7fr);
+}
+
+@media (max-width: 900px) {
+  .checkpoint282-detail-grid-u2 {
+    grid-template-columns: 1fr;
+  }
+}
