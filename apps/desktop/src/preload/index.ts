@@ -61,6 +61,18 @@ import type { PageWallJobIdPayload, PageWallJobRecord, PageWallSchedulePayload }
 import type { ExecuteSinglePostingJobPayload, ExecuteSinglePostingJobResult } from '../shared/posting'
 import type { RotationPageTabPayload, RotationRuntimeSnapshot } from '../shared/rotation'
 import type { CreateRunPayload, RunDetails, RunIdPayload } from '../shared/runs'
+import {
+  SCENARIO_IPC,
+  type CreateScenarioActionInput,
+  type CreateScenarioInput,
+  type MoveScenarioActionPayload,
+  type ScenarioActionIdPayload,
+  type ScenarioDetails,
+  type ScenarioIdPayload,
+  type ScenarioSummary,
+  type UpdateScenarioActionPayload,
+  type UpdateScenarioPayload
+} from '../shared/scenarios'
 
 const api = {
   getAppInfo: (): Promise<AppInfo> => ipcRenderer.invoke(IPC_CHANNELS.appInfo) as Promise<AppInfo>,
@@ -111,6 +123,15 @@ const api = {
   pickPageTabImageFolder: (): Promise<string | null> => ipcRenderer.invoke(IPC_CHANNELS.pageTabsPickImageFolder) as Promise<string | null>,
   inspectPageTabImageFolder: (folderPath: string): Promise<ImageFolderInspection> => ipcRenderer.invoke(IPC_CHANNELS.pageTabsInspectImageFolder, folderPath) as Promise<ImageFolderInspection>,
   pickPageTabTextFile: (): Promise<PickTextFileResult | null> => ipcRenderer.invoke(IPC_CHANNELS.pageTabsPickTextFile) as Promise<PickTextFileResult | null>,
+  listScenarios: (): Promise<ScenarioSummary[]> => ipcRenderer.invoke(SCENARIO_IPC.list) as Promise<ScenarioSummary[]>,
+  getScenario: (payload: ScenarioIdPayload): Promise<ScenarioDetails | null> => ipcRenderer.invoke(SCENARIO_IPC.get, payload) as Promise<ScenarioDetails | null>,
+  createScenario: (input: CreateScenarioInput): Promise<ScenarioDetails> => ipcRenderer.invoke(SCENARIO_IPC.create, input) as Promise<ScenarioDetails>,
+  updateScenario: (payload: UpdateScenarioPayload): Promise<ScenarioDetails> => ipcRenderer.invoke(SCENARIO_IPC.update, payload) as Promise<ScenarioDetails>,
+  deleteScenario: (payload: ScenarioIdPayload): Promise<boolean> => ipcRenderer.invoke(SCENARIO_IPC.delete, payload) as Promise<boolean>,
+  createScenarioAction: (input: CreateScenarioActionInput): Promise<ScenarioDetails> => ipcRenderer.invoke(SCENARIO_IPC.actionCreate, input) as Promise<ScenarioDetails>,
+  updateScenarioAction: (payload: UpdateScenarioActionPayload): Promise<ScenarioDetails> => ipcRenderer.invoke(SCENARIO_IPC.actionUpdate, payload) as Promise<ScenarioDetails>,
+  deleteScenarioAction: (payload: ScenarioActionIdPayload): Promise<ScenarioDetails> => ipcRenderer.invoke(SCENARIO_IPC.actionDelete, payload) as Promise<ScenarioDetails>,
+  moveScenarioAction: (payload: MoveScenarioActionPayload): Promise<ScenarioDetails> => ipcRenderer.invoke(SCENARIO_IPC.actionMove, payload) as Promise<ScenarioDetails>,
   pickPageWallImages: (): Promise<string[]> => ipcRenderer.invoke(IPC_CHANNELS.pageWallPickImages) as Promise<string[]>,
   runPageWallNow: (payload: PageWallRunNowPayload): Promise<PageWallRunNowResult> => ipcRenderer.invoke(IPC_CHANNELS.pageWallRunNow, payload) as Promise<PageWallRunNowResult>,
   schedulePageWall: (payload: PageWallSchedulePayload): Promise<PageWallJobRecord> => ipcRenderer.invoke(IPC_CHANNELS.pageWallSchedule, payload) as Promise<PageWallJobRecord>,

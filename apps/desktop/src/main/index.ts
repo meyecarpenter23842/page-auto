@@ -6,6 +6,7 @@ import { registerHotmailIpcHandlers, type HotmailIpcRuntime } from './hotmailIpc
 import { registerIpcHandlers, type IpcRuntime } from './ipc'
 import { createLogger } from './logger'
 import { registerPostLibraryIpcHandlers, type PostLibraryIpcRuntime } from './postLibraryIpc'
+import { registerScenarioIpcHandlers, type ScenarioIpcRuntime } from './scenarioIpc'
 import { ensureDataDirectoryLayout, resolveDataDirectory } from './services/portablePaths'
 
 let mainWindow: BrowserWindow | null = null
@@ -14,6 +15,7 @@ let ipcRuntime: IpcRuntime | null = null
 let checkpoint282WorkbenchIpcRuntime: Checkpoint282WorkbenchIpcRuntime | null = null
 let hotmailIpcRuntime: HotmailIpcRuntime | null = null
 let postLibraryIpcRuntime: PostLibraryIpcRuntime | null = null
+let scenarioIpcRuntime: ScenarioIpcRuntime | null = null
 
 function resolveWindowIcon(): string {
   return app.isPackaged
@@ -67,6 +69,7 @@ app.whenReady().then(() => {
     checkpoint282WorkbenchIpcRuntime = registerCheckpoint282WorkbenchIpcHandlers({ database: databaseRuntime.client, dataDirectory })
     hotmailIpcRuntime = registerHotmailIpcHandlers(databaseRuntime.client)
     postLibraryIpcRuntime = registerPostLibraryIpcHandlers(databaseRuntime.client)
+    scenarioIpcRuntime = registerScenarioIpcHandlers(databaseRuntime.client)
     logger.info('Application initialized', { databaseFile, dataDirectory, packaged: app.isPackaged, version: app.getVersion() })
 
     if (process.env.PAGE_AUTO_SMOKE_TEST === '1') {
@@ -77,6 +80,8 @@ app.whenReady().then(() => {
     mainWindow = createMainWindow()
   } catch (error) {
     logger.error('Application initialization failed', { error: error instanceof Error ? error.message : String(error) })
+    scenarioIpcRuntime?.dispose()
+    scenarioIpcRuntime = null
     checkpoint282WorkbenchIpcRuntime?.dispose()
     checkpoint282WorkbenchIpcRuntime = null
     hotmailIpcRuntime?.dispose()
@@ -96,6 +101,8 @@ app.whenReady().then(() => {
 })
 
 app.on('before-quit', () => {
+  scenarioIpcRuntime?.dispose()
+  scenarioIpcRuntime = null
   checkpoint282WorkbenchIpcRuntime?.dispose()
   checkpoint282WorkbenchIpcRuntime = null
   hotmailIpcRuntime?.dispose()
