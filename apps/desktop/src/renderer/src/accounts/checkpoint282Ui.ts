@@ -3,11 +3,11 @@ import type { FacebookCheckpoint282State } from '../../../shared/facebookCheckpo
 export type Checkpoint282UiState = 'pending' | 'running' | FacebookCheckpoint282State
 
 export function shouldPauseCheckpoint282Sequence(state: FacebookCheckpoint282State): boolean {
-  return state === 'waiting_manual'
+  return state === 'waiting_manual' || state === 'error'
 }
 
 export function canRecheckCheckpoint282(state: Checkpoint282UiState): boolean {
-  return state === 'waiting_manual'
+  return state === 'waiting_manual' || state === 'error'
 }
 
 export function checkpoint282StateLabel(state: Checkpoint282UiState): string {
@@ -18,6 +18,6 @@ export function checkpoint282StateLabel(state: Checkpoint282UiState): string {
     case 'waiting_manual': return 'Chờ thao tác'
     case 'different_checkpoint': return 'CP khác'
     case 'needs_login': return 'Cần đăng nhập'
-    case 'error': return 'Lỗi'
+    case 'error': return 'Lỗi · thử lại'
   }
 }

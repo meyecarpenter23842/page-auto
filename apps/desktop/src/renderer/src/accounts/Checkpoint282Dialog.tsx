@@ -66,7 +66,7 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
   const [selectedIndex, setSelectedIndex] = useState(accounts.length > 0 ? 0 : -1)
 
   const resolvedCount = useMemo(() => rows.filter((row) => row.state === 'resolved').length, [rows])
-  const waitingIndex = rows.findIndex((row) => row.state === 'waiting_manual')
+  const waitingIndex = rows.findIndex((row) => canRecheckCheckpoint282(row.state))
   const waitingRow = waitingIndex >= 0 ? rows[waitingIndex] : null
   const selectedRow = selectedIndex >= 0 ? rows[selectedIndex] ?? null : null
   const selectedAccount = selectedRow
@@ -153,14 +153,18 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
       )
     }
     if (waitingRow && waitingIndex >= 0 && canRecheckCheckpoint282(waitingRow.state)) {
+      const retryAction: FacebookCheckpoint282Action = waitingRow.state === 'waiting_manual' ? 'recheck' : 'start'
+      const retryLabel = waitingRow.state === 'waiting_manual'
+        ? `Kiểm tra lại ${waitingRow.uid}`
+        : `Thử lại ${waitingRow.uid}`
       return (
         <button
           className="button primary checkpoint282-primary-action"
           type="button"
           disabled={running}
-          onClick={() => void runSequence(waitingIndex, 'recheck')}
+          onClick={() => void runSequence(waitingIndex, retryAction)}
         >
-          {running ? 'Đang kiểm tra…' : `Kiểm tra lại ${waitingRow.uid}`}
+          {running ? 'Đang kiểm tra…' : retryLabel}
         </button>
       )
     }
@@ -256,8 +260,12 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
               </dl>
               {waitingRow ? (
                 <div className="checkpoint282-attention">
-                  <strong>Đang giữ browser của {waitingRow.uid}</strong>
-                  <span>Hoàn tất bước Facebook yêu cầu trên browser, sau đó dùng nút Kiểm tra lại bên dưới.</span>
+                  <strong>{waitingRow.state === 'waiting_manual' ? `Đang giữ browser của ${waitingRow.uid}` : `Đã dừng tại ${waitingRow.uid}`}</strong>
+                  <span>
+                    {waitingRow.state === 'waiting_manual'
+                      ? 'Hoàn tất bước Facebook yêu cầu trên browser, sau đó dùng nút Kiểm tra lại bên dưới.'
+                      : 'Flow không tự bỏ qua lỗi này. Nếu browser/session đang bận, chờ hoàn tất rồi dùng nút Thử lại bên dưới.'}
+                  </span>
                 </div>
               ) : (
                 <div className="checkpoint282-neutral-note">Chọn một dòng bên phải để xem chi tiết account và kết quả.</div>
@@ -293,7 +301,7 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
                   {rows.map((row, index) => {
                     const account = accounts.find((item) => item.id === row.accountId)
                     const selected = selectedIndex === index
-                    const waiting = row.state === 'waiting_manual'
+                    const waiting = canRecheckCheckpoint282(row.state)
                     return (
                       <tr
                         key={row.accountId}
@@ -355,7 +363,15 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
           <div className="checkpoint282-footer-status">
             <span className={`checkpoint282-footer-indicator ${waitingRow ? 'is-warning' : running ? 'is-running' : resolvedCount === rows.length && rows.length > 0 ? 'is-ok' : ''}`} />
             <div>
-              <strong>{waitingRow ? `Chờ thao tác trên ${waitingRow.uid}` : running ? 'Đang xử lý account…' : started ? 'Lượt CP282 đã dừng/kết thúc' : 'Sẵn sàng bắt đầu'}</strong>
+              <strong>{waitingRow
+                ? waitingRow.state === 'waiting_manual'
+                  ? `Chờ thao tác trên ${waitingRow.uid}`
+                  : `Dừng để thử lại ${waitingRow.uid}`
+                : running
+                  ? 'Đang xử lý account…'
+                  : started
+                    ? 'Lượt CP282 đã dừng/kết thúc'
+                    : 'Sẵn sàng bắt đầu'}</strong>
               <span>{resolvedCount}/{rows.length} account đã xác minh</span>
             </div>
           </div>
