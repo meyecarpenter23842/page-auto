@@ -3,10 +3,13 @@ import type { AccountRecord } from '../../../shared/accounts'
 import type {
   FacebookCheckpoint282Action,
   FacebookCheckpoint282Result,
+  FacebookCheckpoint282RunAsset,
   FacebookCheckpointSurface
 } from '../../../shared/facebookCheckpoint'
 import type {
   FacebookCheckpoint282AccountPreflight,
+  FacebookCheckpoint282AssetPreview,
+  FacebookCheckpoint282HistoryEntry,
   FacebookCheckpoint282Locale,
   FacebookCheckpoint282PreflightResult,
   FacebookCheckpoint282Preset
@@ -19,6 +22,7 @@ import {
 } from './checkpoint282Ui'
 import './checkpoint282.css'
 import './checkpoint282U2.css'
+import './checkpoint282U3.css'
 
 interface Checkpoint282DialogProps {
   accounts: AccountRecord[]
@@ -32,6 +36,8 @@ interface Checkpoint282Row {
   message: string
   evidencePath: string | null
 }
+
+type AssetSelectionMap = Record<number, FacebookCheckpoint282RunAsset | undefined>
 
 const surfaceLabels: Record<FacebookCheckpointSurface, string> = {
   mbasic: 'mbasic.facebook.com',
@@ -70,6 +76,11 @@ function shortPath(path: string): string {
   return `…/${parts.slice(-2).join('/')}`
 }
 
+function fileName(path: string): string {
+  const normalized = path.replace(/\\/g, '/')
+  return normalized.split('/').filter(Boolean).at(-1) ?? path
+}
+
 function imageStateLabel(row: FacebookCheckpoint282AccountPreflight | undefined): string {
   if (!row) return 'Chưa kiểm tra'
   switch (row.image.state) {
@@ -87,6 +98,58 @@ function preflightLevelLabel(row: FacebookCheckpoint282AccountPreflight | undefi
   return 'Bị chặn'
 }
 
+function promotionLabel(result: FacebookCheckpoint282Result): string {
+  if (!result.assetPromotion) return result.message
+  return `${result.message} · ${result.assetPromotion.message}`
+}
+
+function historyStateLabel(entry: FacebookCheckpoint282HistoryEntry): string {
+  if (entry.state === 'asset_conflict_resolved') return 'Đã xử lý trùng'
+  return checkpoint282StateLabel(entry.state)
+}
+
+function candidateSelection(
+  readiness: FacebookCheckpoint282AccountPreflight,
+  path: string
+): FacebookCheckpoint282RunAsset | undefined {
+  if (readiness.image.canonicalCandidates.includes(path)) {
+    return { path, origin: 'canonical', replaceCanonical: false, confirmedUsed: false }
+  }
+  if (readiness.image.sourceCandidates.includes(path)) {
+    return {
+      path,
+      origin: 'source',
+      replaceCanonical: readiness.image.canonicalCandidateCount > 0,
+      confirmedUsed: false
+    }
+  }
+  return undefined
+}
+
+function reconcileAssetSelections(
+  result: FacebookCheckpoint282PreflightResult,
+  current: AssetSelectionMap
+): AssetSelectionMap {
+  const next: AssetSelectionMap = {}
+  for (const row of result.rows) {
+    const selected = current[row.accountId]
+    const candidatePaths = [...row.image.canonicalCandidates, ...row.image.sourceCandidates]
+    if (selected && candidatePaths.includes(selected.path)) {
+      next[row.accountId] = selected
+      continue
+    }
+    if (row.image.state === 'canonical' && row.image.canonicalPath) {
+      next[row.accountId] = {
+        path: row.image.canonicalPath,
+        origin: 'canonical',
+        replaceCanonical: false,
+        confirmedUsed: false
+      }
+    }
+  }
+  return next
+}
+
 export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogProps) {
   const [surface, setSurface] = useState<FacebookCheckpointSurface>('mbasic')
   const [locale, setLocale] = useState<FacebookCheckpoint282Locale>('auto')
@@ -97,6 +160,12 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
   const [preflightLoading, setPreflightLoading] = useState(true)
   const [presetSaving, setPresetSaving] = useState(false)
   const [rows, setRows] = useState<Checkpoint282Row[]>(() => initialRows(accounts))
+  const [assetSelections, setAssetSelections] = useState<AssetSelectionMap>({})
+  const [preview, setPreview] = useState<FacebookCheckpoint282AssetPreview | null>(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
+  const [history, setHistory] = useState<FacebookCheckpoint282HistoryEntry[]>([])
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [duplicateResolving, setDuplicateResolving] = useState(false)
   const [running, setRunning] = useState(false)
   const [started, setStarted] = useState(false)
   const [selectedIndex, setSelectedIndex] = useState(accounts.length > 0 ? 0 : -1)
@@ -119,7 +188,18 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
     [preflight]
   )
   const selectedPreflight = selectedRow ? preflightByAccount.get(selectedRow.accountId) : undefined
+  const selectedAsset = selectedRow ? assetSelections[selectedRow.accountId] : undefined
   const blockedCount = preflight?.summary.blocked ?? 0
+  const sourceUnassignedCount = useMemo(
+    () => (preflight?.rows ?? []).filter((row) => row.image.state === 'source' && assetSelections[row.accountId]?.origin !== 'source').length,
+    [preflight, assetSelections]
+  )
+  const retryAsset = retryRow ? assetSelections[retryRow.accountId] : undefined
+  const retryNeedsAssetConfirmation = Boolean(
+    retryRow?.state === 'waiting_manual'
+    && retryAsset?.origin === 'source'
+    && !retryAsset.confirmedUsed
+  )
 
   const currentPreset = (): FacebookCheckpoint282Preset => ({
     surface,
@@ -127,14 +207,29 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
     sourceImageFolder: sourceImageFolder.trim() || null
   })
 
+  const applyPreflight = (result: FacebookCheckpoint282PreflightResult) => {
+    setPreflight(result)
+    setCanonicalFolder(result.canonicalFolder)
+    setAssetSelections((current) => reconcileAssetSelections(result, current))
+  }
+
   const runPreflight = async (preset: FacebookCheckpoint282Preset = currentPreset()) => {
     setPreflightLoading(true)
     try {
       const result = await window.pageAuto.preflightFacebookCheckpoint282({ accountIds, preset })
-      setPreflight(result)
-      setCanonicalFolder(result.canonicalFolder)
+      applyPreflight(result)
+      return result
     } finally {
       setPreflightLoading(false)
+    }
+  }
+
+  const refreshHistory = async (accountId: number) => {
+    setHistoryLoading(true)
+    try {
+      setHistory(await window.pageAuto.getFacebookCheckpoint282History({ accountId, limit: 50 }))
+    } finally {
+      setHistoryLoading(false)
     }
   }
 
@@ -149,8 +244,7 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
         setSourceImageFolder(preset.sourceImageFolder ?? '')
         const result = await window.pageAuto.preflightFacebookCheckpoint282({ accountIds, preset })
         if (cancelled) return
-        setPreflight(result)
-        setCanonicalFolder(result.canonicalFolder)
+        applyPreflight(result)
       } finally {
         if (!cancelled) setPreflightLoading(false)
       }
@@ -158,8 +252,43 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
     return () => { cancelled = true }
   }, [accountIds])
 
+  useEffect(() => {
+    if (!selectedRow) {
+      setHistory([])
+      return
+    }
+    let cancelled = false
+    setHistoryLoading(true)
+    void window.pageAuto.getFacebookCheckpoint282History({ accountId: selectedRow.accountId, limit: 50 })
+      .then((items) => { if (!cancelled) setHistory(items) })
+      .finally(() => { if (!cancelled) setHistoryLoading(false) })
+    return () => { cancelled = true }
+  }, [selectedRow?.accountId])
+
+  useEffect(() => {
+    if (!selectedRow || !selectedAsset?.path) {
+      setPreview(null)
+      return
+    }
+    let cancelled = false
+    setPreviewLoading(true)
+    void window.pageAuto.previewFacebookCheckpoint282Asset({
+      accountId: selectedRow.accountId,
+      path: selectedAsset.path,
+      preset: currentPreset()
+    })
+      .then((result) => { if (!cancelled) setPreview(result) })
+      .catch(() => { if (!cancelled) setPreview(null) })
+      .finally(() => { if (!cancelled) setPreviewLoading(false) })
+    return () => { cancelled = true }
+  }, [selectedRow?.accountId, selectedAsset?.path, sourceImageFolder, surface, locale])
+
   const updateRow = (index: number, patch: Partial<Checkpoint282Row>) => {
     setRows((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, ...patch } : row))
+  }
+
+  const setAssetForAccount = (accountId: number, asset: FacebookCheckpoint282RunAsset | undefined) => {
+    setAssetSelections((current) => ({ ...current, [accountId]: asset }))
   }
 
   const invoke = async (row: Checkpoint282Row, action: FacebookCheckpoint282Action): Promise<FacebookCheckpoint282Result> => {
@@ -168,7 +297,8 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
         accountId: row.accountId,
         surface,
         action,
-        evidenceFolder: evidenceFolder.trim() || null
+        evidenceFolder: evidenceFolder.trim() || null,
+        asset: assetSelections[row.accountId] ?? null
       })
     } catch (cause) {
       return {
@@ -194,16 +324,20 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
         updateRow(index, {
           state: 'running',
           message: action === 'recheck'
-            ? 'Đang kiểm tra lại session và account identity…'
+            ? 'Đang kiểm tra lại session, account identity và asset đã track…'
             : 'Đang mở session và kiểm tra CP282…',
           evidencePath: null
         })
         const result = await invoke(row, action)
         updateRow(index, {
           state: result.state,
-          message: result.message,
+          message: promotionLabel(result),
           evidencePath: result.evidencePath ?? null
         })
+        await refreshHistory(row.accountId)
+        if (result.assetPromotion?.state === 'promoted' || result.assetPromotion?.state === 'replaced') {
+          await runPreflight()
+        }
         if (shouldPauseCheckpoint282Sequence(result.state)) {
           setSelectedIndex(index)
           break
@@ -239,16 +373,53 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
     }
   }
 
+  const selectAssetPath = (path: string) => {
+    if (!selectedRow || !selectedPreflight) return
+    setAssetForAccount(selectedRow.accountId, path ? candidateSelection(selectedPreflight, path) : undefined)
+  }
+
+  const confirmSelectedSourceUsed = (confirmedUsed: boolean) => {
+    if (!selectedRow || !selectedAsset || selectedAsset.origin !== 'source') return
+    setAssetForAccount(selectedRow.accountId, { ...selectedAsset, confirmedUsed })
+  }
+
+  const resolveDuplicate = async () => {
+    if (!selectedRow || !selectedPreflight || !selectedAsset) return
+    if (!selectedPreflight.image.canonicalCandidates.includes(selectedAsset.path)) return
+    setDuplicateResolving(true)
+    try {
+      await window.pageAuto.resolveFacebookCheckpoint282Duplicate({
+        accountId: selectedRow.accountId,
+        keepPath: selectedAsset.path
+      })
+      await runPreflight()
+      await refreshHistory(selectedRow.accountId)
+    } finally {
+      setDuplicateResolving(false)
+    }
+  }
+
+  const revealPath = async (path: string | null | undefined) => {
+    if (path) await window.pageAuto.revealFacebookCheckpoint282Path(path)
+  }
+
   const footerPrimary = () => {
     if (!started) {
+      const disabled = running || preflightLoading || rows.length === 0 || !preflight || blockedCount > 0 || sourceUnassignedCount > 0
       return (
         <button
           className="button primary checkpoint282-primary-action"
           type="button"
-          disabled={running || preflightLoading || rows.length === 0 || !preflight || blockedCount > 0}
+          disabled={disabled}
           onClick={() => void runSequence(0, 'start')}
         >
-          {preflightLoading ? 'Đang preflight…' : blockedCount > 0 ? `Còn ${blockedCount} account bị chặn` : 'Bắt đầu CP282'}
+          {preflightLoading
+            ? 'Đang preflight…'
+            : blockedCount > 0
+              ? `Còn ${blockedCount} account bị chặn`
+              : sourceUnassignedCount > 0
+                ? `Còn ${sourceUnassignedCount} account chưa chọn ảnh`
+                : 'Bắt đầu CP282'}
         </button>
       )
     }
@@ -257,10 +428,14 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
         <button
           className="button primary checkpoint282-primary-action"
           type="button"
-          disabled={running}
+          disabled={running || retryNeedsAssetConfirmation}
           onClick={() => void runSequence(retryIndex, 'recheck')}
         >
-          {running ? 'Đang kiểm tra…' : `Kiểm tra lại ${retryRow.uid}`}
+          {running
+            ? 'Đang kiểm tra…'
+            : retryNeedsAssetConfirmation
+              ? 'Xác nhận ảnh đã dùng trước'
+              : `Kiểm tra lại ${retryRow.uid}`}
         </button>
       )
     }
@@ -271,6 +446,15 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
     )
   }
 
+  const selectedCandidatePaths = selectedPreflight
+    ? [...selectedPreflight.image.canonicalCandidates, ...selectedPreflight.image.sourceCandidates]
+    : []
+  const selectedIsDuplicateCandidate = Boolean(
+    selectedAsset
+    && selectedPreflight?.image.state === 'duplicate'
+    && selectedPreflight.image.canonicalCandidates.includes(selectedAsset.path)
+  )
+
   return (
     <div className="modal-backdrop checkpoint282-backdrop" role="presentation" onMouseDown={() => { if (!running) onClose() }}>
       <div className="modal checkpoint282-dialog" role="dialog" aria-modal="true" aria-labelledby="checkpoint282-title" onMouseDown={(event) => event.stopPropagation()}>
@@ -280,7 +464,7 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
             <div>
               <p className="eyebrow">Facebook Common · Operator Workbench</p>
               <h2 id="checkpoint282-title">Checkpoint 282</h2>
-              <p className="checkpoint282-subtitle">Folder282 ưu tiên theo UID · thiếu mới dùng ảnh nguồn · chạy tuần tự</p>
+              <p className="checkpoint282-subtitle">Track đúng ảnh/account · resolved + verify UID mới promote Folder282 · không bypass checkpoint</p>
             </div>
           </div>
           <div className="checkpoint282-header-right">
@@ -298,7 +482,7 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
             <section className="checkpoint282-panel-section">
               <div className="checkpoint282-section-heading">
                 <div><span className="checkpoint282-kicker">Preset CP282</span><h3>Browser & nguồn ảnh</h3></div>
-                <span className="checkpoint282-tag">U2</span>
+                <span className="checkpoint282-tag">U3</span>
               </div>
 
               <label className="checkpoint282-field">
@@ -320,7 +504,7 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
               </label>
 
               <label className="checkpoint282-field checkpoint282-field-spaced">
-                <span>Folder ảnh nguồn · chỉ dùng khi UID chưa có trong Folder282</span>
+                <span>Folder ảnh nguồn · chỉ dùng khi UID chưa có canonical hoặc chọn Replace</span>
                 <div className="checkpoint282-folder-row">
                   <input value={sourceImageFolder} readOnly placeholder="Chưa chọn folder ảnh nguồn" title={sourceImageFolder} />
                   <button className="button secondary" type="button" disabled={started} onClick={() => void pickSourceFolder()}>Chọn</button>
@@ -338,7 +522,7 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
                 <div><span className="checkpoint282-kicker">Folder282</span><h3>Kho ảnh canonical</h3></div>
               </div>
               <div className="checkpoint282-readonly-path" title={canonicalFolder}>{canonicalFolder ? shortPath(canonicalFolder) : 'Đang xác định…'}</div>
-              <p className="checkpoint282-caption">App tự quản lý folder này theo data root portable. Không hard-code ổ C và không import cả folder ảnh nguồn.</p>
+              <p className="checkpoint282-caption">Chỉ ảnh nguồn được xác nhận đã dùng + CP282 resolved + c_user khớp UID số mới được promote. Replace luôn archive ảnh cũ.</p>
             </section>
 
             <section className="checkpoint282-panel-section">
@@ -367,7 +551,9 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
               {retryRow ? (
                 <div className="checkpoint282-attention">
                   <strong>{retryRow.state === 'waiting_manual' ? `Đang giữ browser của ${retryRow.uid}` : `Cần thử lại ${retryRow.uid}`}</strong>
-                  <span>{retryRow.state === 'waiting_manual' ? 'Hoàn tất bước Facebook yêu cầu trên browser, sau đó bấm Kiểm tra lại.' : retryRow.message}</span>
+                  <span>{retryRow.state === 'waiting_manual'
+                    ? 'Hoàn tất bước Facebook yêu cầu trực tiếp trên browser. Nếu dùng ảnh nguồn, xác nhận đúng ảnh preview trước khi Recheck.'
+                    : retryRow.message}</span>
                 </div>
               ) : <div className="checkpoint282-neutral-note">Preflight chỉ kiểm readiness. Runtime vẫn xác minh session/account thật khi Start.</div>}
             </section>
@@ -400,8 +586,12 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
                   {rows.map((row, index) => {
                     const account = accounts.find((item) => item.id === row.accountId)
                     const readiness = preflightByAccount.get(row.accountId)
+                    const asset = assetSelections[row.accountId]
                     const selected = selectedIndex === index
                     const retryable = canRecheckCheckpoint282(row.state)
+                    const imageText = asset
+                      ? `${asset.origin === 'canonical' ? 'Canonical' : asset.replaceCanonical ? 'Replace' : 'Source'} · ${fileName(asset.path)}`
+                      : imageStateLabel(readiness)
                     return (
                       <tr
                         key={row.accountId}
@@ -411,7 +601,7 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
                         <td className="checkpoint282-index">{index + 1}</td>
                         <td><div className="checkpoint282-account-cell"><strong>{row.uid}</strong>{account?.name ? <span>{account.name}</span> : null}</div></td>
                         <td><span className={`checkpoint282-preflight preflight-${readiness?.level ?? 'unknown'}`}>{preflightLevelLabel(readiness)}</span></td>
-                        <td><span className={`checkpoint282-image-state image-${readiness?.image.state ?? 'unknown'}`}>{imageStateLabel(readiness)}</span></td>
+                        <td><span className={`checkpoint282-image-state image-${readiness?.image.state ?? 'unknown'}`} title={asset?.path}>{imageText}</span></td>
                         <td><span className={`checkpoint282-master-status master-${account?.status ?? 'unknown'}`}>{masterStatusLabel(account)}</span></td>
                         <td><span className={`checkpoint282-state state-${row.state}`}>{checkpoint282StateLabel(row.state)}</span></td>
                         <td><div className="checkpoint282-message" title={row.message}>{row.message}</div></td>
@@ -423,18 +613,102 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
               {rows.length === 0 ? <div className="checkpoint282-empty-list">Không có tài khoản trong selection.</div> : null}
             </div>
 
-            <section className="checkpoint282-detail-panel">
+            <section className="checkpoint282-detail-panel checkpoint282-detail-panel-u3">
               <div className="checkpoint282-detail-header">
-                <div><span className="checkpoint282-kicker">Chi tiết account</span><h3>{selectedRow?.uid ?? 'Chưa chọn'}</h3></div>
-                {selectedPreflight ? <span className={`checkpoint282-preflight preflight-${selectedPreflight.level}`}>{preflightLevelLabel(selectedPreflight)}</span> : null}
-              </div>
-              {selectedRow ? (
-                <div className="checkpoint282-detail-grid checkpoint282-detail-grid-u2">
-                  <div><span>Ảnh 282</span><strong>{imageStateLabel(selectedPreflight)}</strong></div>
-                  <div><span>Session readiness</span><strong>{selectedPreflight ? `${selectedPreflight.session.profileExists ? 'Profile' : 'No profile'} · ${selectedPreflight.session.hasCookie ? 'Cookie' : 'No cookie'} · ${selectedPreflight.session.hasPasswordFallback ? 'Password fallback' : 'No password'}` : 'Chưa preflight'}</strong></div>
-                  <div><span>Chi tiết</span><strong title={selectedPreflight?.messages.join(' · ') || selectedRow.message}>{selectedPreflight?.messages.join(' · ') || selectedRow.message}</strong></div>
+                <div><span className="checkpoint282-kicker">Ảnh thực tế & lịch sử</span><h3>{selectedRow?.uid ?? 'Chưa chọn'}</h3></div>
+                <div className="checkpoint282-detail-header-actions">
+                  {selectedRow?.evidencePath ? <button className="button secondary" type="button" onClick={() => void revealPath(selectedRow.evidencePath)}>Mở Evidence</button> : null}
+                  {selectedPreflight ? <span className={`checkpoint282-preflight preflight-${selectedPreflight.level}`}>{preflightLevelLabel(selectedPreflight)}</span> : null}
                 </div>
-              ) : <div className="checkpoint282-detail-empty">Chọn account để xem trạng thái chi tiết.</div>}
+              </div>
+
+              {selectedRow && selectedPreflight ? (
+                <div className="checkpoint282-u3-layout">
+                  <div className="checkpoint282-asset-editor">
+                    <div className="checkpoint282-asset-toolbar">
+                      <label className="checkpoint282-field checkpoint282-asset-select">
+                        <span>Ảnh track cho account này</span>
+                        <select
+                          value={selectedAsset?.path ?? ''}
+                          disabled={running}
+                          onChange={(event) => selectAssetPath(event.target.value)}
+                        >
+                          <option value="">— Chọn ảnh cụ thể —</option>
+                          {selectedPreflight.image.canonicalCandidates.map((path) => (
+                            <option key={`canonical-${path}`} value={path}>Canonical · {fileName(path)}</option>
+                          ))}
+                          {selectedPreflight.image.sourceCandidates.map((path) => (
+                            <option key={`source-${path}`} value={path}>{selectedPreflight.image.canonicalCandidateCount > 0 ? 'Replace' : 'Source'} · {fileName(path)}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <div className="checkpoint282-inline-actions">
+                        {selectedIsDuplicateCandidate ? (
+                          <button className="button secondary" type="button" disabled={running || duplicateResolving} onClick={() => void resolveDuplicate()}>
+                            {duplicateResolving ? 'Đang xử lý…' : 'Giữ ảnh này'}
+                          </button>
+                        ) : null}
+                        {selectedAsset ? <button className="button secondary" type="button" onClick={() => void revealPath(selectedAsset.path)}>Mở vị trí ảnh</button> : null}
+                      </div>
+                    </div>
+
+                    <div className="checkpoint282-preview">
+                      {previewLoading ? <span>Đang tải preview…</span> : preview ? <img src={preview.dataUrl} alt={`Ảnh CP282 ${selectedRow.uid}`} /> : <span>Chọn ảnh để preview.</span>}
+                    </div>
+
+                    <div className="checkpoint282-asset-facts">
+                      <div><span>Readiness</span><strong>{imageStateLabel(selectedPreflight)}</strong></div>
+                      <div><span>File đang track</span><strong title={selectedAsset?.path}>{selectedAsset ? fileName(selectedAsset.path) : 'Chưa chọn'}</strong></div>
+                      <div><span>Chế độ</span><strong>{selectedAsset?.origin === 'canonical' ? 'Dùng canonical' : selectedAsset?.replaceCanonical ? 'Replace canonical' : selectedAsset?.origin === 'source' ? 'Source mới' : '—'}</strong></div>
+                    </div>
+
+                    {selectedPreflight.image.state === 'duplicate' ? (
+                      <div className="checkpoint282-asset-warning">Có nhiều canonical cùng UID. Chọn đúng một ảnh canonical ở trên rồi bấm <strong>Giữ ảnh này</strong>; các ảnh còn lại được chuyển vào archive, không xóa mất.</div>
+                    ) : null}
+
+                    {selectedAsset?.origin === 'source' && selectedRow.state === 'waiting_manual' ? (
+                      <label className="checkpoint282-confirm-used">
+                        <input
+                          type="checkbox"
+                          checked={selectedAsset.confirmedUsed}
+                          disabled={running}
+                          onChange={(event) => confirmSelectedSourceUsed(event.target.checked)}
+                        />
+                        <span><strong>Đã dùng đúng ảnh đang preview trên Facebook</strong><small>Chỉ xác nhận sau khi anh thực sự dùng file này cho bước CP282. Recheck mới có quyền promote nếu UID số được verify.</small></span>
+                      </label>
+                    ) : null}
+
+                    {selectedAsset?.origin === 'source' && selectedRow.state !== 'waiting_manual' ? (
+                      <div className="checkpoint282-asset-note">Ảnh nguồn chỉ đang được track, chưa được coi là đã dùng. Nếu CP282 yêu cầu thao tác thủ công, xác nhận file sau khi dùng rồi mới Recheck.</div>
+                    ) : null}
+                  </div>
+
+                  <div className="checkpoint282-history-panel">
+                    <div className="checkpoint282-history-heading">
+                      <div><span className="checkpoint282-kicker">History</span><h4>CP282 của account</h4></div>
+                      <span>{historyLoading ? 'Đang tải…' : `${history.length} mục`}</span>
+                    </div>
+                    <div className="checkpoint282-history-list">
+                      {history.map((entry) => (
+                        <div className="checkpoint282-history-item" key={entry.id}>
+                          <div className="checkpoint282-history-item-head">
+                            <strong>{historyStateLabel(entry)}</strong>
+                            <time>{new Date(entry.at).toLocaleString()}</time>
+                          </div>
+                          <p>{entry.message}</p>
+                          <div className="checkpoint282-history-meta">
+                            {entry.assetPath ? <button type="button" onClick={() => void revealPath(entry.assetPath ?? null)}>{entry.assetOrigin === 'source' ? 'Ảnh source' : 'Ảnh canonical'}</button> : null}
+                            {entry.canonicalPath ? <button type="button" onClick={() => void revealPath(entry.canonicalPath ?? null)}>Folder282</button> : null}
+                            {entry.evidencePath ? <button type="button" onClick={() => void revealPath(entry.evidencePath ?? null)}>Evidence</button> : null}
+                            {entry.promotionState ? <span>Asset: {entry.promotionState}</span> : null}
+                          </div>
+                        </div>
+                      ))}
+                      {!historyLoading && history.length === 0 ? <div className="checkpoint282-history-empty">Chưa có history CP282 cho account này.</div> : null}
+                    </div>
+                  </div>
+                </div>
+              ) : <div className="checkpoint282-detail-empty">Chọn account để xem ảnh, preview và history.</div>}
             </section>
           </main>
         </div>
@@ -443,8 +717,18 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
           <div className="checkpoint282-footer-status">
             <span className={`checkpoint282-footer-indicator ${retryRow ? 'is-warning' : running ? 'is-running' : blockedCount > 0 ? 'is-danger' : resolvedCount === rows.length && rows.length > 0 ? 'is-ok' : ''}`} />
             <div>
-              <strong>{retryRow ? `Đang dừng tại ${retryRow.uid}` : running ? 'Đang xử lý account…' : blockedCount > 0 && !started ? `Preflight còn ${blockedCount} account bị chặn` : started ? 'Lượt CP282 đã dừng/kết thúc' : 'Sẵn sàng sau preflight'}</strong>
-              <span>{started ? `${resolvedCount}/${rows.length} account đã xác minh` : 'Folder282 được ưu tiên trước Folder ảnh nguồn'}</span>
+              <strong>{retryRow
+                ? `Đang dừng tại ${retryRow.uid}`
+                : running
+                  ? 'Đang xử lý account…'
+                  : blockedCount > 0 && !started
+                    ? `Preflight còn ${blockedCount} account bị chặn`
+                    : sourceUnassignedCount > 0 && !started
+                      ? `Còn ${sourceUnassignedCount} account cần chọn ảnh cụ thể`
+                      : started
+                        ? 'Lượt CP282 đã dừng/kết thúc'
+                        : 'Sẵn sàng sau preflight'}</strong>
+              <span>{started ? `${resolvedCount}/${rows.length} account đã xác minh` : 'Folder282 ưu tiên; source không được chọn ngẫu nhiên'}</span>
             </div>
           </div>
           <div className="checkpoint282-footer-actions">

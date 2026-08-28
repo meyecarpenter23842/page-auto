@@ -1,16 +1,30 @@
 import { existsSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import type Database from 'better-sqlite3'
 import type { AccountRecord } from '../../shared/accounts'
 import {
   assertValidFacebookCheckpoint282Preset,
   type FacebookCheckpoint282AccountPreflight,
+  type FacebookCheckpoint282AssetPreview,
+  type FacebookCheckpoint282AssetPreviewRequest,
+  type FacebookCheckpoint282HistoryEntry,
+  type FacebookCheckpoint282HistoryRequest,
   type FacebookCheckpoint282PreflightLevel,
   type FacebookCheckpoint282PreflightRequest,
   type FacebookCheckpoint282PreflightResult,
-  type FacebookCheckpoint282Preset
+  type FacebookCheckpoint282Preset,
+  type FacebookCheckpoint282ResolveDuplicateRequest,
+  type FacebookCheckpoint282ResolveDuplicateResult
 } from '../../shared/checkpoint282Workbench'
 import { accountProfileDirectory } from '../browser/browserProfileManager'
-import { checkpoint282CanonicalFolder, inspectCheckpoint282ImageReadiness } from '../browser/checkpoint282Assets'
+import {
+  appendCheckpoint282History,
+  checkpoint282CanonicalFolder,
+  inspectCheckpoint282ImageReadiness,
+  readCheckpoint282AssetPreview,
+  readCheckpoint282History,
+  resolveCheckpoint282CanonicalConflict
+} from '../browser/checkpoint282Assets'
 import { resolveAccountProxyState } from '../browser/proxyConfig'
 import { AccountRepository } from '../database/accountRepository'
 import { Checkpoint282PresetRepository } from '../database/checkpoint282PresetRepository'
@@ -65,13 +79,13 @@ function accountRow(
   let imageLevel: FacebookCheckpoint282PreflightLevel = 'ok'
   if (image.state === 'source') {
     imageLevel = 'warning'
-    messages.push(`Chưa có ảnh canonical theo UID; có ${image.sourceCandidateCount} ảnh nguồn khả dụng.`)
+    messages.push(`Chưa có ảnh canonical theo UID; có ${image.sourceCandidateCount} ảnh nguồn. U3 yêu cầu chọn đúng ảnh cho account trước khi Start.`)
   } else if (image.state === 'missing') {
     imageLevel = 'blocked'
     messages.push('Chưa có ảnh canonical và Folder ảnh nguồn không có ảnh hợp lệ.')
   } else if (image.state === 'duplicate') {
     imageLevel = 'blocked'
-    messages.push(`Có ${image.canonicalCandidateCount} ảnh canonical trùng UID; cần xử lý trước khi chạy.`)
+    messages.push(`Có ${image.canonicalCandidateCount} ảnh canonical trùng UID; cần chọn ảnh giữ lại trước khi chạy.`)
   }
 
   return {
@@ -83,6 +97,12 @@ function accountRow(
     image,
     messages
   }
+}
+
+function assertAccount(accounts: AccountRepository, accountId: number): AccountRecord {
+  const account = accounts.getById(accountId)
+  if (!account) throw new Error('Account không tồn tại.')
+  return account
 }
 
 export class Checkpoint282WorkbenchService {
@@ -127,8 +147,10 @@ export class Checkpoint282WorkbenchService {
             canonicalFolder: checkpoint282CanonicalFolder(this.dataDirectory),
             canonicalPath: null,
             canonicalCandidateCount: 0,
+            canonicalCandidates: [],
             sourceFolder: preset.sourceImageFolder,
-            sourceCandidateCount: 0
+            sourceCandidateCount: 0,
+            sourceCandidates: []
           },
           messages: ['Account không tồn tại.']
         })
@@ -147,5 +169,57 @@ export class Checkpoint282WorkbenchService {
         blocked: rows.filter((row) => row.level === 'blocked').length
       }
     }
+  }
+
+  previewAsset(input: FacebookCheckpoint282AssetPreviewRequest): FacebookCheckpoint282AssetPreview {
+    const account = assertAccount(this.accounts, input.accountId)
+    const preset = input.preset ?? this.presets.get()
+    assertValidFacebookCheckpoint282Preset(preset)
+    const image = inspectCheckpoint282ImageReadiness({
+      dataDirectory: this.dataDirectory,
+      uid: account.uid,
+      sourceImageFolder: preset.sourceImageFolder
+    })
+    const allowed = [...image.canonicalCandidates, ...image.sourceCandidates]
+    if (!allowed.includes(input.path)) throw new Error('Ảnh preview không còn thuộc Folder282/Folder ảnh nguồn của account hiện tại.')
+    return readCheckpoint282AssetPreview(input.path)
+  }
+
+  resolveDuplicate(input: FacebookCheckpoint282ResolveDuplicateRequest): FacebookCheckpoint282ResolveDuplicateResult {
+    const account = assertAccount(this.accounts, input.accountId)
+    const resolved = resolveCheckpoint282CanonicalConflict({
+      dataDirectory: this.dataDirectory,
+      uid: account.uid,
+      keepPath: input.keepPath
+    })
+    const message = `Đã giữ ${resolved.canonicalPath} và lưu ${resolved.archivedPaths.length} ảnh trùng vào archive.`
+    appendCheckpoint282History(this.dataDirectory, {
+      id: randomUUID(),
+      at: Date.now(),
+      accountId: account.id,
+      uid: account.uid,
+      action: 'resolve_duplicate',
+      state: 'asset_conflict_resolved',
+      message,
+      assetPath: resolved.canonicalPath,
+      assetOrigin: 'canonical',
+      assetConfirmedUsed: false,
+      promotionState: null,
+      canonicalPath: resolved.canonicalPath,
+      evidencePath: null
+    })
+    return {
+      accountId: account.id,
+      uid: account.uid,
+      canonicalPath: resolved.canonicalPath,
+      archivedPaths: resolved.archivedPaths,
+      message
+    }
+  }
+
+  history(input: FacebookCheckpoint282HistoryRequest): FacebookCheckpoint282HistoryEntry[] {
+    const account = assertAccount(this.accounts, input.accountId)
+    return readCheckpoint282History(this.dataDirectory, account.uid, input.limit ?? 50)
+      .filter((entry) => entry.accountId === account.id)
   }
 }

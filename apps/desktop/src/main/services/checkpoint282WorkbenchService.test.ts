@@ -28,7 +28,7 @@ function setup() {
 }
 
 describe('Checkpoint282WorkbenchService', () => {
-  it('persists a non-secret preset and reports source fallback as warning', () => {
+  it('persists a non-secret preset and reports source fallback as warning with explicit candidates', () => {
     const { root, accounts, service } = setup()
     const source = join(root, 'source')
     mkdirSync(source, { recursive: true })
@@ -40,6 +40,7 @@ describe('Checkpoint282WorkbenchService', () => {
 
     expect(result.preset).toEqual({ surface: 'mbasic', locale: 'vi-VN', sourceImageFolder: source })
     expect(result.rows[0]?.image.state).toBe('source')
+    expect(result.rows[0]?.image.sourceCandidates).toEqual([join(source, 'fresh.jpg')])
     expect(result.rows[0]?.level).toBe('warning')
     expect(result.summary).toEqual({ ok: 0, warning: 1, blocked: 0 })
   })
@@ -69,5 +70,38 @@ describe('Checkpoint282WorkbenchService', () => {
     const result = service.preflight({ accountIds: [missing.id, duplicate.id] })
     expect(result.rows.map((row) => row.image.state)).toEqual(['missing', 'duplicate'])
     expect(result.summary.blocked).toBe(2)
+  })
+
+  it('previews only assets that belong to the current canonical/source candidate set', () => {
+    const { root, accounts, service } = setup()
+    const source = join(root, 'source')
+    mkdirSync(source, { recursive: true })
+    const allowed = join(source, 'fresh.png')
+    const outside = join(root, 'outside.png')
+    writeFileSync(allowed, 'allowed')
+    writeFileSync(outside, 'outside')
+    const account = accounts.create({ uid: '10005', password: 'password' })
+    const preset = { surface: 'mbasic' as const, locale: 'auto' as const, sourceImageFolder: source }
+
+    expect(service.previewAsset({ accountId: account.id, path: allowed, preset }).fileName).toBe('fresh.png')
+    expect(() => service.previewAsset({ accountId: account.id, path: outside, preset })).toThrow(/không còn thuộc/i)
+  })
+
+  it('resolves duplicate canonical assets without deleting the non-selected file permanently and records history', () => {
+    const { root, accounts, service } = setup()
+    const canonical = checkpoint282CanonicalFolder(root)
+    mkdirSync(canonical, { recursive: true })
+    const keep = join(canonical, '10006.jpg')
+    writeFileSync(keep, 'keep')
+    writeFileSync(join(canonical, '10006.png'), 'archive')
+    const account = accounts.create({ uid: '10006', cookie: 'c_user=10006; xs=test' })
+
+    const resolved = service.resolveDuplicate({ accountId: account.id, keepPath: keep })
+    expect(resolved.canonicalPath).toBe(keep)
+    expect(resolved.archivedPaths).toHaveLength(1)
+    expect(service.preflight({ accountIds: [account.id] }).rows[0]?.image.state).toBe('canonical')
+    expect(service.history({ accountId: account.id })).toEqual([
+      expect.objectContaining({ state: 'asset_conflict_resolved', canonicalPath: keep })
+    ])
   })
 })
