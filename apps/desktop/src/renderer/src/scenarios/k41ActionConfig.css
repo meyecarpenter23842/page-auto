@@ -1,0 +1,16 @@
+.k41-action-config-modal { width: min(760px, 96vw); max-height: min(780px, 92vh); }
+.k41-action-header-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: end; }
+.k41-action-sections { margin-top: 10px; display: grid; gap: 8px; }
+.k41-action-section { padding: 8px 9px 9px; border: 1px solid #e7ecf2; border-radius: 9px; background: #fbfcfe; }
+.k41-action-section-title { margin-bottom: 7px; color: #5f6e82; font-size: 8.5px; font-weight: 800; letter-spacing: .055em; text-transform: uppercase; }
+.action-config-fields.k41-action-grid { margin: 0; padding: 0; border: 0; gap: 7px 9px; }
+.action-config-textarea { grid-column: 1 / -1; }
+.action-config-textarea textarea { width: 100%; min-height: 48px; resize: vertical; padding: 7px 8px; border: 1px solid #dbe3ed; border-radius: 7px; outline: 0; background: #fff; color: #334259; font: inherit; font-size: 9.5px; line-height: 1.4; }
+.action-config-textarea textarea:focus { border-color: #8eb5e9; box-shadow: 0 0 0 2px rgba(47, 120, 231, .06); }
+.action-config-check .inline-help { margin-left: 4px; font-weight: 400; }
+.action-config-badges .ready { background: #e9f7ef; color: #2f845e; }
+.action-picker-item small.ready { background: #eaf7ef; color: #2f845e; }
+.action-placeholder-card.ready-card { border-color: #cfe7da; background: #f4fbf7; }
+.action-placeholder-card.ready-card strong { color: #317a5a; }
+.action-placeholder-card.ready-card p { color: #668173; }
+@media (max-width: 780px) { .k41-action-header-row { grid-template-columns: 1fr; } }
