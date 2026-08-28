@@ -1,32 +1,35 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  SCENARIO_ACTION_CATEGORIES,
+  ACTION_CATEGORIES,
+  ACTION_REGISTRY,
+  createDefaultActionConfig,
+  getActionDefinition,
+  validateActionConfig,
+  type ActionConfig,
+  type ActionDefinition
+} from '../../../shared/actionRegistry'
+import {
   scenarioCategoryLabels,
-  type ScenarioActionCategory,
   type ScenarioActionRecord,
   type ScenarioDetails,
   type ScenarioSummary
 } from '../../../shared/scenarios'
+import { ActionConfigModal, type ActionEditorValue } from './ActionConfigModal'
+import { ActionPickerModal } from './ActionPickerModal'
 import './scenarioManager.css'
-
-type ActionDraft = {
-  id: number | null
-  label: string
-  actionType: string
-  category: ScenarioActionCategory
-  enabled: boolean
-}
-
-const emptyActionDraft: ActionDraft = {
-  id: null,
-  label: '',
-  actionType: '',
-  category: 'other',
-  enabled: true
-}
+import './actionRegistry.css'
 
 function formatTime(value: number): string {
   return new Intl.DateTimeFormat('vi-VN', { dateStyle: 'short', timeStyle: 'short' }).format(value)
+}
+
+function parseConfig(definition: ActionDefinition, configJson: string): ActionConfig {
+  try {
+    const validation = validateActionConfig(definition.id, JSON.parse(configJson))
+    return validation.valid ? validation.value : createDefaultActionConfig(definition)
+  } catch {
+    return createDefaultActionConfig(definition)
+  }
 }
 
 export function ScenarioManager() {
@@ -37,7 +40,8 @@ export function ScenarioManager() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [scenarioDialog, setScenarioDialog] = useState<{ id: number | null; name: string } | null>(null)
-  const [actionDialog, setActionDialog] = useState<ActionDraft | null>(null)
+  const [actionPickerOpen, setActionPickerOpen] = useState(false)
+  const [actionEditor, setActionEditor] = useState<ActionEditorValue | null>(null)
   const [randomOrder, setRandomOrder] = useState(false)
   const [runtimeLimit, setRuntimeLimit] = useState('')
 
@@ -50,8 +54,7 @@ export function ScenarioManager() {
       setDetails(null)
       return
     }
-    const selected = await window.pageAuto.getScenario({ id: targetId })
-    setDetails(selected)
+    setDetails(await window.pageAuto.getScenario({ id: targetId }))
   }, [selectedId])
 
   const selectScenario = useCallback(async (id: number) => {
@@ -117,46 +120,62 @@ export function ScenarioManager() {
     const parsedLimit = runtimeLimit.trim() ? Number(runtimeLimit) : null
     await mutate(() => window.pageAuto.updateScenario({
       id: details.id,
-      patch: {
-        randomActionOrder: randomOrder,
-        runtimeLimitMinutes: parsedLimit
-      }
+      patch: { randomActionOrder: randomOrder, runtimeLimitMinutes: parsedLimit }
     }), details.id)
   }
 
-  const openEditAction = (action: ScenarioActionRecord) => {
-    setActionDialog({
-      id: action.id,
-      label: action.label,
-      actionType: action.actionType,
-      category: action.category,
-      enabled: action.enabled
+  const chooseAction = (definition: ActionDefinition) => {
+    setActionPickerOpen(false)
+    setActionEditor({
+      id: null,
+      definition,
+      actionType: definition.id,
+      categoryLabel: scenarioCategoryLabels[definition.category],
+      label: definition.label,
+      enabled: true,
+      config: createDefaultActionConfig(definition)
     })
   }
 
-  const saveActionDialog = async () => {
-    if (!details || !actionDialog) return
-    const draft = actionDialog
-    if (!draft.label.trim() || !draft.actionType.trim()) return setError('Tên hành động và mã action không được để trống.')
-    setActionDialog(null)
-    await mutate(() => draft.id === null
-      ? window.pageAuto.createScenarioAction({
-          scenarioId: details.id,
-          label: draft.label,
-          actionType: draft.actionType,
-          category: draft.category,
-          enabled: draft.enabled,
-          configJson: '{}'
-        })
-      : window.pageAuto.updateScenarioAction({
-          id: draft.id,
-          patch: {
-            label: draft.label,
-            actionType: draft.actionType,
-            category: draft.category,
-            enabled: draft.enabled
-          }
-        }), details.id)
+  const openEditAction = (action: ScenarioActionRecord) => {
+    const definition = getActionDefinition(action.actionType)
+    setActionEditor({
+      id: action.id,
+      definition,
+      actionType: action.actionType,
+      categoryLabel: definition ? scenarioCategoryLabels[definition.category] : scenarioCategoryLabels[action.category],
+      label: action.label,
+      enabled: action.enabled,
+      config: definition ? parseConfig(definition, action.configJson) : {}
+    })
+  }
+
+  const saveActionEditor = async (draft: ActionEditorValue, normalizedConfig?: ActionConfig) => {
+    if (!details) return
+    if (!draft.label.trim()) return setError('Tên hành động không được để trống.')
+    setActionEditor(null)
+
+    if (draft.id === null) {
+      if (!draft.definition || !normalizedConfig) return setError('Action chưa có trong registry K2.')
+      await mutate(() => window.pageAuto.createScenarioAction({
+        scenarioId: details.id,
+        actionType: draft.definition!.id,
+        label: draft.label,
+        category: draft.definition!.category,
+        enabled: draft.enabled,
+        configJson: JSON.stringify(normalizedConfig)
+      }), details.id)
+      return
+    }
+
+    await mutate(() => window.pageAuto.updateScenarioAction({
+      id: draft.id!,
+      patch: {
+        label: draft.label,
+        enabled: draft.enabled,
+        ...(draft.definition && normalizedConfig ? { configJson: JSON.stringify(normalizedConfig) } : {})
+      }
+    }), details.id)
   }
 
   const deleteAction = async (action: ScenarioActionRecord) => {
@@ -185,12 +204,7 @@ export function ScenarioManager() {
           </div>
           <div className="scenario-list" role="listbox" aria-label="Danh sách kịch bản">
             {filtered.map((item, index) => (
-              <button
-                className={item.id === selectedId ? 'scenario-list-row active' : 'scenario-list-row'}
-                key={item.id}
-                type="button"
-                onClick={() => void selectScenario(item.id)}
-              >
+              <button className={item.id === selectedId ? 'scenario-list-row active' : 'scenario-list-row'} key={item.id} type="button" onClick={() => void selectScenario(item.id)}>
                 <span className="scenario-index">{String(index + 1).padStart(2, '0')}</span>
                 <span className="scenario-list-copy"><strong>{item.name}</strong><small>{item.actionCount} hành động</small></span>
               </button>
@@ -208,32 +222,41 @@ export function ScenarioManager() {
         <section className="scenario-panel scenario-actions-panel">
           <div className="scenario-panel-heading">
             <div><p className="scenario-kicker">KỊCH BẢN ĐANG CHỌN</p><h2>{details?.name ?? 'Chưa chọn kịch bản'}</h2></div>
-            {details ? <span className="scenario-status-chip">Chưa gắn runtime</span> : null}
+            {details ? <span className="scenario-status-chip">Registry K2</span> : null}
           </div>
 
           <div className="scenario-toolbar">
-            <button className="scenario-button primary" type="button" disabled={!details || busy} onClick={() => setActionDialog({ ...emptyActionDraft })}>+ Thêm hành động</button>
-            <span className="scenario-toolbar-note">K1 lưu action dạng khung; executor sẽ làm ở K2/K3.</span>
+            <button className="scenario-button primary" type="button" disabled={!details || busy} onClick={() => setActionPickerOpen(true)}>+ Thêm hành động</button>
+            <span className="scenario-toolbar-note">{ACTION_REGISTRY.length} action · {ACTION_CATEGORIES.length} nhóm · chưa gắn Page/Tài khoản · chưa có executor.</span>
           </div>
 
           <div className="scenario-table-wrap">
             <table className="scenario-table">
               <thead><tr><th>STT</th><th>Hành động</th><th>Nhóm</th><th>Trạng thái</th><th aria-label="Thao tác" /></tr></thead>
               <tbody>
-                {details?.actions.map((action, index) => (
-                  <tr key={action.id}>
-                    <td className="scenario-order">{index + 1}</td>
-                    <td><button className="scenario-action-name" type="button" onClick={() => openEditAction(action)}><strong>{action.label}</strong><small>{action.actionType}</small></button></td>
-                    <td><span className={`scenario-category category-${action.category}`}>{scenarioCategoryLabels[action.category]}</span></td>
-                    <td><span className={action.enabled ? 'scenario-enabled' : 'scenario-disabled'}><i />{action.enabled ? 'Bật' : 'Tắt'}</span></td>
-                    <td className="scenario-row-actions">
-                      <button type="button" title="Lên" disabled={busy || index === 0} onClick={() => void moveAction(action, 'up')}>↑</button>
-                      <button type="button" title="Xuống" disabled={busy || index === details.actions.length - 1} onClick={() => void moveAction(action, 'down')}>↓</button>
-                      <button type="button" title="Sửa" disabled={busy} onClick={() => openEditAction(action)}>✎</button>
-                      <button className="row-danger" type="button" title="Xóa" disabled={busy} onClick={() => void deleteAction(action)}>×</button>
-                    </td>
-                  </tr>
-                ))}
+                {details?.actions.map((action, index) => {
+                  const definition = getActionDefinition(action.actionType)
+                  const runtimeReady = definition?.runtimeStatus === 'ready'
+                  return (
+                    <tr key={action.id}>
+                      <td className="scenario-order">{index + 1}</td>
+                      <td><button className="scenario-action-name" type="button" onClick={() => openEditAction(action)}><strong>{action.label}</strong><small>{action.actionType}</small></button></td>
+                      <td><span className={`scenario-category category-${action.category}`}>{scenarioCategoryLabels[action.category]}</span></td>
+                      <td>
+                        <div className="scenario-status-stack">
+                          <span className={action.enabled ? 'scenario-enabled' : 'scenario-disabled'}><i />{action.enabled ? 'Bật' : 'Tắt'}</span>
+                          <small className={runtimeReady ? 'scenario-runtime-ready' : 'scenario-runtime-placeholder'}>{runtimeReady ? 'Sẵn sàng' : definition ? 'Chưa chạy' : 'Ngoài registry'}</small>
+                        </div>
+                      </td>
+                      <td className="scenario-row-actions">
+                        <button type="button" title="Lên" disabled={busy || index === 0} onClick={() => void moveAction(action, 'up')}>↑</button>
+                        <button type="button" title="Xuống" disabled={busy || index === details.actions.length - 1} onClick={() => void moveAction(action, 'down')}>↓</button>
+                        <button type="button" title="Cấu hình" disabled={busy} onClick={() => openEditAction(action)}>✎</button>
+                        <button className="row-danger" type="button" title="Xóa" disabled={busy} onClick={() => void deleteAction(action)}>×</button>
+                      </td>
+                    </tr>
+                  )
+                })}
                 {details && details.actions.length === 0 ? <tr><td colSpan={5}><div className="scenario-empty table-empty">Kịch bản chưa có hành động.</div></td></tr> : null}
               </tbody>
             </table>
@@ -255,12 +278,13 @@ export function ScenarioManager() {
               <div className="scenario-inspector-name"><strong>{details.name}</strong><span>ID #{details.id}</span></div>
               <dl>
                 <div><dt>Số hành động</dt><dd>{details.actionCount}</dd></div>
+                <div><dt>Catalog</dt><dd>{ACTION_CATEGORIES.length} nhóm / {ACTION_REGISTRY.length} action</dd></div>
                 <div><dt>Thứ tự</dt><dd>{details.randomActionOrder ? 'Random' : 'Tuần tự'}</dd></div>
                 <div><dt>Giới hạn</dt><dd>{details.runtimeLimitMinutes ? `${details.runtimeLimitMinutes} phút` : 'Không'}</dd></div>
                 <div><dt>Cập nhật</dt><dd>{formatTime(details.updatedAt)}</dd></div>
               </dl>
-              <div className="scenario-info-card"><strong>Module dùng chung</strong><p>K1 chỉ quản lý kịch bản và action khung. Chưa gắn vào Page hoặc Tài khoản.</p></div>
-              <div className="scenario-safe-note"><span>✓</span><p>Config kịch bản không nhận password, cookie, 2FA hay token.</p></div>
+              <div className="scenario-info-card"><strong>Common Action Modules</strong><p>K2 quản lý registry + schema cấu hình dùng chung. Page/Tài khoản chỉ là actor context ở lô sau.</p></div>
+              <div className="scenario-safe-note"><span>✓</span><p>Login/session/2FA/checkpoint/Page switch không nằm trong từng action.</p></div>
             </div>
           ) : <div className="scenario-empty inspector-empty">Chọn hoặc tạo một kịch bản để bắt đầu.</div>}
         </aside>
@@ -276,21 +300,8 @@ export function ScenarioManager() {
         </div>
       ) : null}
 
-      {actionDialog ? (
-        <div className="scenario-modal-backdrop" role="presentation" onMouseDown={() => setActionDialog(null)}>
-          <form className="scenario-modal action-modal" onSubmit={(event) => { event.preventDefault(); void saveActionDialog() }} onMouseDown={(event) => event.stopPropagation()}>
-            <div className="scenario-modal-head"><div><p className="scenario-kicker">ACTION KHUNG · K1</p><h3>{actionDialog.id === null ? 'Thêm hành động' : 'Sửa hành động'}</h3></div><button type="button" onClick={() => setActionDialog(null)}>×</button></div>
-            <div className="scenario-form-grid">
-              <label className="scenario-field wide"><span>Tên hiển thị</span><input autoFocus value={actionDialog.label} maxLength={120} onChange={(event) => setActionDialog({ ...actionDialog, label: event.target.value })} placeholder="Ví dụ: View newsfeed" /></label>
-              <label className="scenario-field"><span>Mã action</span><input value={actionDialog.actionType} maxLength={80} onChange={(event) => setActionDialog({ ...actionDialog, actionType: event.target.value })} placeholder="view_newsfeed" /></label>
-              <label className="scenario-field"><span>Nhóm</span><select value={actionDialog.category} onChange={(event) => setActionDialog({ ...actionDialog, category: event.target.value as ScenarioActionCategory })}>{SCENARIO_ACTION_CATEGORIES.map((category) => <option key={category} value={category}>{scenarioCategoryLabels[category]}</option>)}</select></label>
-            </div>
-            <label className="scenario-check modal-check"><input type="checkbox" checked={actionDialog.enabled} onChange={(event) => setActionDialog({ ...actionDialog, enabled: event.target.checked })} /><span>Bật action trong kịch bản</span></label>
-            <div className="scenario-placeholder-note">K1 chỉ lưu metadata + thứ tự. Cấu hình nghiệp vụ và executor riêng của từng action sẽ được nối ở K2/K3.</div>
-            <div className="scenario-modal-actions"><button className="scenario-button" type="button" onClick={() => setActionDialog(null)}>Hủy</button><button className="scenario-button primary" type="submit">{actionDialog.id === null ? 'Thêm hành động' : 'Lưu thay đổi'}</button></div>
-          </form>
-        </div>
-      ) : null}
+      {actionPickerOpen ? <ActionPickerModal onClose={() => setActionPickerOpen(false)} onSelect={chooseAction} /> : null}
+      {actionEditor ? <ActionConfigModal key={`${actionEditor.id ?? 'new'}-${actionEditor.actionType}`} value={actionEditor} onClose={() => setActionEditor(null)} onSave={(value, config) => void saveActionEditor(value, config)} /> : null}
     </section>
   )
 }
