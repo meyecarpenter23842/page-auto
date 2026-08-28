@@ -5,6 +5,7 @@ import {
   type NetworkSettings,
   type SessionSettings
 } from '../../shared/appSettings'
+import type { PostingCheckpointKind } from '../../shared/posting'
 import { applyBrowserContextSettings, buildBrowserLaunchOptions, waitForBrowserStartupDelay } from '../browser/browserRuntime'
 import { inspectFacebookAccountIdentity } from '../browser/facebookAccountIdentity'
 import { readFacebookDisplayName } from '../browser/facebookProfileInfo'
@@ -15,6 +16,7 @@ import {
   type FacebookSessionResult,
   type FacebookSessionTiming
 } from '../browser/facebookSession'
+import { detectFacebookCheckpointKind } from '../browser/posting/facebookCheckpoint'
 import { classifyPageIdentityUid, PageIdentitySwitcher } from '../browser/posting/pageIdentitySwitcher'
 import { activeFacebookProfileId, detectFacebookAccessBlock } from '../browser/posting/pageState'
 import { effectiveNavigationTimeoutMs, probeFacebookThroughProxy } from '../browser/proxyPreflight'
@@ -44,6 +46,7 @@ export interface FacebookCommonSessionValidation {
   phase: 'before_run' | 'after_run'
   state: FacebookCommonSessionState
   message: string
+  checkpointKind?: PostingCheckpointKind
 }
 
 export interface FacebookCommonStepResult {
@@ -101,7 +104,10 @@ export function classifyFacebookBrowserLaunchFailure(message: string): FacebookC
   }
 }
 
-export function beforeRunFacebookSessionFailure(session: FacebookSessionResult): FacebookCommonStepResult {
+export function beforeRunFacebookSessionFailure(
+  session: FacebookSessionResult,
+  checkpointKind?: PostingCheckpointKind
+): FacebookCommonStepResult {
   const verificationRequired = session.reason === 'checkpoint'
   return {
     status: 'needs_login',
@@ -110,7 +116,8 @@ export function beforeRunFacebookSessionFailure(session: FacebookSessionResult):
     sessionValidation: {
       phase: 'before_run',
       state: verificationRequired ? 'verification_required' : 'needs_login',
-      message: session.message
+      message: session.message,
+      ...(verificationRequired && checkpointKind ? { checkpointKind } : {})
     }
   }
 }
@@ -269,6 +276,13 @@ export class FacebookCommonRuntime {
     await this.page.waitForTimeout(delayMs)
   }
 
+  private async checkpointKind(): Promise<PostingCheckpointKind | undefined> {
+    const kind = await detectFacebookCheckpointKind(this.page).catch(() => null)
+    if (!kind) return undefined
+    this.request.diagnostic?.(`state=checkpoint kind=${kind}`)
+    return kind
+  }
+
   private async ensurePageIdentity(): Promise<FacebookCommonStepResult> {
     const activePageUid = await activeFacebookProfileId(this.context).catch(() => null)
     if (classifyPageIdentityUid(this.request.pageUid, activePageUid) === 'match') {
@@ -311,7 +325,10 @@ export class FacebookCommonRuntime {
       return beforeRunFacebookEmailSupportFailure(bootstrap.code, bootstrap.message)
     }
     const session = bootstrap.session
-    if (session.status !== 'valid') return beforeRunFacebookSessionFailure(session)
+    if (session.status !== 'valid') {
+      const checkpointKind = session.reason === 'checkpoint' ? await this.checkpointKind() : undefined
+      return beforeRunFacebookSessionFailure(session, checkpointKind)
+    }
     this.sessionValidated = true
     this.sessionCookie = session.cookie
 
@@ -371,23 +388,29 @@ export class FacebookCommonRuntime {
 
       this.sessionValidated = false
       const verificationRequired = recovered.reason === 'checkpoint'
+      const checkpointKind = verificationRequired ? await this.checkpointKind() : undefined
       return {
         messageSuffix: recovered.message,
         sessionValidation: {
           phase: 'after_run',
           state: verificationRequired ? 'verification_required' : 'needs_login',
-          message: recovered.message
+          message: recovered.message,
+          ...(checkpointKind ? { checkpointKind } : {})
         }
       }
     }
 
     this.sessionValidated = false
+    const checkpointKind = afterSession.state === 'verification_required'
+      ? await this.checkpointKind()
+      : undefined
     return {
       messageSuffix: afterSession.message,
       sessionValidation: {
         phase: 'after_run',
         state: afterSession.state,
-        message: afterSession.message
+        message: afterSession.message,
+        ...(checkpointKind ? { checkpointKind } : {})
       }
     }
   }

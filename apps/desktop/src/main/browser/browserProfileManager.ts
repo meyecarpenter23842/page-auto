@@ -8,8 +8,16 @@ import {
   type BrowserWindowLayoutSettings,
   type BrowserWindowPlacement
 } from '../../shared/browserWindowLayout'
+import type {
+  FacebookCheckpoint282RunPayload,
+  FacebookCheckpoint282Result
+} from '../../shared/facebookCheckpoint'
 import type { FacebookSessionAccount, FacebookSessionResult } from './facebookSession'
 import { BrowserWindowLayoutManager } from './browserWindowLayoutManager'
+import {
+  consumeCheckpoint282StaleResult,
+  markCheckpoint282ResultStale
+} from './checkpoint282ResultGuard'
 import {
   clearAllManagedBrowserEndpoints,
   clearManagedBrowserEndpoint,
@@ -30,6 +38,10 @@ interface SessionResultMessage extends FacebookSessionResult {
   cdpEndpoint?: string
 }
 
+interface Checkpoint282ResultMessage extends FacebookCheckpoint282Result {
+  type: 'checkpoint-282-result'
+}
+
 interface BrowserClosedMessage {
   type: 'browser-closed'
 }
@@ -40,9 +52,18 @@ interface PendingBootstrap {
   openStatus: 'started' | 'already_open'
 }
 
+interface PendingCheckpoint282 {
+  resolve: (result: FacebookCheckpoint282Result) => void
+  timer: NodeJS.Timeout
+  uid: string
+  surface: FacebookCheckpoint282RunPayload['surface']
+}
+
 interface BrowserWorkerEntry {
   process: UtilityProcess
   pending: PendingBootstrap | null
+  checkpoint282Pending: PendingCheckpoint282 | null
+  checkpoint282StaleResultCount: number
   closing: boolean
   closePromise: Promise<void> | null
 }
@@ -81,6 +102,17 @@ function isSessionResultMessage(message: unknown): message is SessionResultMessa
     && typeof candidate.message === 'string'
 }
 
+function isCheckpoint282ResultMessage(message: unknown): message is Checkpoint282ResultMessage {
+  if (!message || typeof message !== 'object') return false
+  const candidate = message as Partial<Checkpoint282ResultMessage>
+  return candidate.type === 'checkpoint-282-result'
+    && typeof candidate.accountId === 'number'
+    && typeof candidate.uid === 'string'
+    && typeof candidate.state === 'string'
+    && typeof candidate.surface === 'string'
+    && typeof candidate.message === 'string'
+}
+
 function isBrowserClosedMessage(message: unknown): message is BrowserClosedMessage {
   return Boolean(message && typeof message === 'object' && (message as Partial<BrowserClosedMessage>).type === 'browser-closed')
 }
@@ -110,11 +142,11 @@ export class BrowserProfileManager {
 
     const existing = this.workers.get(account.id)
     if (existing && !existing.closing) {
-      if (existing.pending) {
+      if (existing.pending || existing.checkpoint282Pending) {
         return {
           status: 'already_open',
           profileDirectory,
-          message: 'Browser profile đang mở và Session Engine đang kiểm tra account.'
+          message: 'Browser profile đang mở và Facebook Common đang xử lý account.'
         }
       }
       return this.bootstrap(existing, account, 'already_open')
@@ -130,7 +162,14 @@ export class BrowserProfileManager {
       const worker = utilityProcess.fork(workerPath, [profileDirectory], {
         serviceName: `PAGE-AUTO account ${account.id}`
       })
-      const entry: BrowserWorkerEntry = { process: worker, pending: null, closing: false, closePromise: null }
+      const entry: BrowserWorkerEntry = {
+        process: worker,
+        pending: null,
+        checkpoint282Pending: null,
+        checkpoint282StaleResultCount: 0,
+        closing: false,
+        closePromise: null
+      }
       this.workers.set(account.id, entry)
 
       worker.on('message', (message) => this.handleMessage(account.id, entry, message))
@@ -146,6 +185,17 @@ export class BrowserProfileManager {
             message: `Browser worker đã thoát trước khi kiểm tra session (code ${code}).`
           })
           entry.pending = null
+        }
+        if (entry.checkpoint282Pending) {
+          clearTimeout(entry.checkpoint282Pending.timer)
+          entry.checkpoint282Pending.resolve({
+            accountId: account.id,
+            uid: entry.checkpoint282Pending.uid,
+            state: 'error',
+            surface: entry.checkpoint282Pending.surface,
+            message: `Browser worker đã thoát khi đang kiểm tra CP282 (code ${code}).`
+          })
+          entry.checkpoint282Pending = null
         }
         if (this.workers.get(account.id) === entry) this.workers.delete(account.id)
       })
@@ -167,6 +217,82 @@ export class BrowserProfileManager {
     }
   }
 
+  async runCheckpoint282(
+    account: AccountRecord,
+    payload: Omit<FacebookCheckpoint282RunPayload, 'accountId'>
+  ): Promise<FacebookCheckpoint282Result> {
+    const opened = await this.open(account)
+    if (opened.status === 'error') {
+      return {
+        accountId: account.id,
+        uid: account.uid,
+        state: 'error',
+        surface: payload.surface,
+        message: opened.message ?? 'Không thể mở browser account để kiểm tra CP282.'
+      }
+    }
+
+    const entry = this.workers.get(account.id)
+    if (!entry || entry.closing) {
+      return {
+        accountId: account.id,
+        uid: account.uid,
+        state: 'error',
+        surface: payload.surface,
+        message: 'Browser account đã đóng trước khi bắt đầu kiểm tra CP282.'
+      }
+    }
+    if (entry.checkpoint282Pending) {
+      return {
+        accountId: account.id,
+        uid: account.uid,
+        state: 'error',
+        surface: payload.surface,
+        message: 'Account đang có một lượt kiểm tra CP282 khác.'
+      }
+    }
+
+    const browserSettings = { ...this.getBrowserSettings() }
+    return new Promise<FacebookCheckpoint282Result>((resolve) => {
+      const timeoutMs = Math.max(15_000, browserSettings.navigationTimeoutMs + 15_000)
+      const timer = setTimeout(() => {
+        if (!entry.checkpoint282Pending || entry.checkpoint282Pending.resolve !== resolve) return
+        entry.checkpoint282Pending = null
+        entry.checkpoint282StaleResultCount = markCheckpoint282ResultStale(entry.checkpoint282StaleResultCount)
+        resolve({
+          accountId: account.id,
+          uid: account.uid,
+          state: 'error',
+          surface: payload.surface,
+          message: 'Quá thời gian kiểm tra CP282; browser vẫn được giữ mở.'
+        })
+      }, timeoutMs)
+      entry.checkpoint282Pending = { resolve, timer, uid: account.uid, surface: payload.surface }
+
+      try {
+        entry.process.postMessage({
+          type: 'checkpoint-282',
+          account: sessionAccount(account),
+          browser: browserSettings,
+          surface: payload.surface,
+          action: payload.action,
+          sessionWasValid: opened.sessionStatus === 'valid',
+          evidenceFolder: payload.evidenceFolder ?? null
+        })
+      } catch (error) {
+        clearTimeout(timer)
+        entry.checkpoint282Pending = null
+        resolve({
+          accountId: account.id,
+          uid: account.uid,
+          state: 'error',
+          surface: payload.surface,
+          message: error instanceof Error ? error.message : String(error)
+        })
+      }
+    })
+  }
+
   async closeAccount(accountId: number): Promise<void> {
     const entry = this.workers.get(accountId)
     clearManagedBrowserEndpoint(accountId)
@@ -185,6 +311,17 @@ export class BrowserProfileManager {
         message: 'Browser đang được đóng vì lượt automation của account đã kết thúc.'
       })
       entry.pending = null
+    }
+    if (entry.checkpoint282Pending) {
+      clearTimeout(entry.checkpoint282Pending.timer)
+      entry.checkpoint282Pending.resolve({
+        accountId,
+        uid: entry.checkpoint282Pending.uid,
+        state: 'error',
+        surface: entry.checkpoint282Pending.surface,
+        message: 'Browser đang được đóng khi flow CP282 chưa hoàn tất.'
+      })
+      entry.checkpoint282Pending = null
     }
 
     entry.closePromise = new Promise<void>((resolve) => {
@@ -327,12 +464,45 @@ export class BrowserProfileManager {
           message: 'Browser đã được đóng trước khi Session Engine hoàn tất.'
         })
       }
+      const checkpointPending = entry.checkpoint282Pending
+      if (checkpointPending) {
+        clearTimeout(checkpointPending.timer)
+        entry.checkpoint282Pending = null
+        checkpointPending.resolve({
+          accountId,
+          uid: checkpointPending.uid,
+          state: 'error',
+          surface: checkpointPending.surface,
+          message: 'Browser đã được đóng trước khi kiểm tra CP282 hoàn tất.'
+        })
+      }
       if (this.workers.get(accountId) === entry) this.workers.delete(accountId)
       return
     }
 
     if (isBrowserReadyMessage(message)) {
       if (message.accountId === accountId) setManagedBrowserEndpoint(accountId, message.cdpEndpoint)
+      return
+    }
+
+    if (isCheckpoint282ResultMessage(message) && message.accountId === accountId) {
+      const staleDecision = consumeCheckpoint282StaleResult(entry.checkpoint282StaleResultCount)
+      entry.checkpoint282StaleResultCount = staleDecision.remaining
+      if (staleDecision.ignore) return
+
+      const pending = entry.checkpoint282Pending
+      if (!pending) return
+      clearTimeout(pending.timer)
+      entry.checkpoint282Pending = null
+      pending.resolve({
+        accountId: message.accountId,
+        uid: message.uid,
+        state: message.state,
+        surface: message.surface,
+        message: message.message,
+        ...(message.checkpointKind ? { checkpointKind: message.checkpointKind } : {}),
+        ...(message.evidencePath ? { evidencePath: message.evidencePath } : {})
+      })
       return
     }
 

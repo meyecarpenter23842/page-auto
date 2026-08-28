@@ -25,6 +25,7 @@ import type { CaptchaSettingsView, SaveCaptchaSettingsInput } from '../shared/ca
 import type { ConfigBackupExportResult, ConfigBackupRestoreResult } from '../shared/configBackup'
 import type { HotmailComboActionPayload, HotmailComboBatchResult } from '../shared/emailCombo'
 import type { ExecutionLogFilters, ExecutionLogRecord, RetryRunItemPayload, RetryRunItemResult } from '../shared/executionLogs'
+import type { FacebookCheckpoint282RunPayload, FacebookCheckpoint282Result } from '../shared/facebookCheckpoint'
 import type {
   HotmailAccountPayload,
   HotmailBatchPayload,
@@ -62,6 +63,8 @@ const api = {
   getAccountColumnLayout: (): Promise<AccountColumnLayout | null> => ipcRenderer.invoke(IPC_CHANNELS.accountColumnLayoutGet) as Promise<AccountColumnLayout | null>,
   saveAccountColumnLayout: (payload: AccountColumnLayoutPayload): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.accountColumnLayoutSave, payload) as Promise<void>,
   openAccountProfile: (payload: AccountOpenProfilePayload): Promise<BrowserProfileResult> => ipcRenderer.invoke(IPC_CHANNELS.accountOpenProfile, payload) as Promise<BrowserProfileResult>,
+  runFacebookCheckpoint282: (payload: FacebookCheckpoint282RunPayload): Promise<FacebookCheckpoint282Result> => ipcRenderer.invoke(IPC_CHANNELS.facebookCheckpoint282Run, payload) as Promise<FacebookCheckpoint282Result>,
+  pickFacebookCheckpointEvidenceFolder: (): Promise<string | null> => ipcRenderer.invoke(IPC_CHANNELS.facebookCheckpointEvidenceFolderPick) as Promise<string | null>,
   listHotmailDashboard: (): Promise<HotmailDashboardRow[]> => ipcRenderer.invoke(IPC_CHANNELS.hotmailDashboardList) as Promise<HotmailDashboardRow[]>,
   getHotmailSettings: (): Promise<HotmailSettingsView> => ipcRenderer.invoke(IPC_CHANNELS.hotmailSettingsGet) as Promise<HotmailSettingsView>,
   saveHotmailSettings: (input: SaveHotmailSettingsInput): Promise<HotmailSettingsView> => ipcRenderer.invoke(IPC_CHANNELS.hotmailSettingsSave, input) as Promise<HotmailSettingsView>,
