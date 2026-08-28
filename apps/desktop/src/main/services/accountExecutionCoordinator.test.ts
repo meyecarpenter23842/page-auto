@@ -58,6 +58,31 @@ describe('AccountExecutionCoordinator', () => {
     lease?.release()
     await Promise.all([sameAccount, otherAccount])
     expect(sameAccountEntered).toBe(true)
-    expect(coordinator.tryAcquireLease(101)).not.toBeNull()
+    const finalLease = coordinator.tryAcquireLease(101)
+    expect(finalLease).not.toBeNull()
+    finalLease?.release()
+  })
+
+  it('serializes the same account across separate coordinator instances', async () => {
+    const firstCoordinator = new AccountExecutionCoordinator()
+    const secondCoordinator = new AccountExecutionCoordinator()
+    let releaseFirst!: () => void
+    const gate = new Promise<void>((resolve) => { releaseFirst = resolve })
+    let secondEntered = false
+
+    const first = firstCoordinator.run(303, async () => {
+      await gate
+    })
+    const second = secondCoordinator.run(303, async () => {
+      secondEntered = true
+    })
+
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(secondEntered).toBe(false)
+
+    releaseFirst()
+    await Promise.all([first, second])
+    expect(secondEntered).toBe(true)
   })
 })

@@ -73,6 +73,11 @@ import {
   type UpdateScenarioActionPayload,
   type UpdateScenarioPayload
 } from '../shared/scenarios'
+import {
+  SCENARIO_RUNNER_IPC,
+  type ScenarioRunnerSnapshot,
+  type ScenarioRunnerStartPayload
+} from '../shared/scenarioRunnerRuntime'
 
 const api = {
   getAppInfo: (): Promise<AppInfo> => ipcRenderer.invoke(IPC_CHANNELS.appInfo) as Promise<AppInfo>,
@@ -132,6 +137,9 @@ const api = {
   updateScenarioAction: (payload: UpdateScenarioActionPayload): Promise<ScenarioDetails> => ipcRenderer.invoke(SCENARIO_IPC.actionUpdate, payload) as Promise<ScenarioDetails>,
   deleteScenarioAction: (payload: ScenarioActionIdPayload): Promise<ScenarioDetails> => ipcRenderer.invoke(SCENARIO_IPC.actionDelete, payload) as Promise<ScenarioDetails>,
   moveScenarioAction: (payload: MoveScenarioActionPayload): Promise<ScenarioDetails> => ipcRenderer.invoke(SCENARIO_IPC.actionMove, payload) as Promise<ScenarioDetails>,
+  startScenarioRunner: (payload: ScenarioRunnerStartPayload): Promise<ScenarioRunnerSnapshot> => ipcRenderer.invoke(SCENARIO_RUNNER_IPC.start, payload) as Promise<ScenarioRunnerSnapshot>,
+  getScenarioRunnerStatus: (): Promise<ScenarioRunnerSnapshot | null> => ipcRenderer.invoke(SCENARIO_RUNNER_IPC.status) as Promise<ScenarioRunnerSnapshot | null>,
+  stopScenarioRunner: (): Promise<ScenarioRunnerSnapshot | null> => ipcRenderer.invoke(SCENARIO_RUNNER_IPC.stop) as Promise<ScenarioRunnerSnapshot | null>,
   pickPageWallImages: (): Promise<string[]> => ipcRenderer.invoke(IPC_CHANNELS.pageWallPickImages) as Promise<string[]>,
   runPageWallNow: (payload: PageWallRunNowPayload): Promise<PageWallRunNowResult> => ipcRenderer.invoke(IPC_CHANNELS.pageWallRunNow, payload) as Promise<PageWallRunNowResult>,
   schedulePageWall: (payload: PageWallSchedulePayload): Promise<PageWallJobRecord> => ipcRenderer.invoke(IPC_CHANNELS.pageWallSchedule, payload) as Promise<PageWallJobRecord>,
