@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { checkpoint282CanonicalFolder } from '../browser/checkpoint282Assets'
 import { AccountRepository } from '../database/accountRepository'
+import { HotmailRepository } from '../database/hotmailRepository'
 import { initializeDatabase, type DatabaseRuntime } from '../database'
 import { Checkpoint282WorkbenchService } from './checkpoint282WorkbenchService'
 
@@ -23,6 +24,7 @@ function setup() {
   return {
     root,
     accounts: new AccountRepository(runtime.client),
+    emails: new HotmailRepository(runtime.client),
     service: new Checkpoint282WorkbenchService(runtime.client, root)
   }
 }
@@ -103,5 +105,77 @@ describe('Checkpoint282WorkbenchService', () => {
     expect(service.history({ accountId: account.id })).toEqual([
       expect.objectContaining({ state: 'asset_conflict_resolved', canonicalPath: keep })
     ])
+  })
+
+  it('reads Email/OAuth readiness only from the canonical accountId mapping and never exposes the token', () => {
+    const { root, accounts, emails, service } = setup()
+    const canonical = checkpoint282CanonicalFolder(root)
+    mkdirSync(canonical, { recursive: true })
+    writeFileSync(join(canonical, '10007.jpg'), 'canonical-a')
+    writeFileSync(join(canonical, '10008.jpg'), 'canonical-b')
+    const ready = accounts.create({
+      uid: '10007',
+      cookie: 'c_user=10007; xs=test',
+      email: 'owner@example.com',
+      phone: '+84 901 234 567'
+    })
+    const sameMailboxDifferentAccount = accounts.create({
+      uid: '10008',
+      cookie: 'c_user=10008; xs=test',
+      email: 'owner@example.com'
+    })
+    emails.updateEmailState(ready.id, {
+      oauthStatus: 'valid',
+      oauthClientId: 'client-id',
+      refreshTokenCiphertext: 'cipher-secret-never-return',
+      mailStatus: 'ready'
+    })
+
+    const result = service.preflight({ accountIds: [ready.id, sameMailboxDifferentAccount.id] })
+    const readyRow = result.rows[0]
+    const otherRow = result.rows[1]
+
+    expect(readyRow?.verification.email).toEqual(expect.objectContaining({
+      state: 'ready',
+      maskedAddress: expect.stringMatching(/^ow.+@example\.com$/),
+      oauthStatus: 'valid',
+      mailStatus: 'ready',
+      hasClientId: true,
+      hasRefreshToken: true,
+      route: 'facebook_common_email_code'
+    }))
+    expect(readyRow?.verification.phone).toEqual(expect.objectContaining({
+      state: 'available',
+      route: 'classifier_required'
+    }))
+    expect(readyRow?.verification.phone.maskedNumber).not.toContain('901234567')
+    expect(otherRow?.verification.email.state).toBe('oauth_missing')
+    expect(otherRow?.verification.email.hasRefreshToken).toBe(false)
+    expect(result.summary.ok).toBe(2)
+    expect(JSON.stringify(result)).not.toContain('cipher-secret-never-return')
+  })
+
+  it('reports expired OAuth as conditional readiness instead of blocking an unrelated CP282 route', () => {
+    const { root, accounts, emails, service } = setup()
+    const canonical = checkpoint282CanonicalFolder(root)
+    mkdirSync(canonical, { recursive: true })
+    writeFileSync(join(canonical, '10009.png'), 'canonical')
+    const account = accounts.create({
+      uid: '10009',
+      cookie: 'c_user=10009; xs=test',
+      email: 'expired@example.com'
+    })
+    emails.updateEmailState(account.id, {
+      oauthStatus: 'expired',
+      oauthClientId: 'client-id',
+      refreshTokenCiphertext: 'expired-ciphertext',
+      mailStatus: 'needs_login'
+    })
+
+    const row = service.preflight({ accountIds: [account.id] }).rows[0]
+    expect(row?.verification.email.state).toBe('oauth_expired')
+    expect(row?.verification.email.message).toMatch(/Common\/coordinator #97/i)
+    expect(row?.verification.phone.state).toBe('missing')
+    expect(row?.level).toBe('ok')
   })
 })
