@@ -45,6 +45,8 @@ interface ObservedAccountTurn {
   targetSlots: number
 }
 
+type RotationCommand = 'start' | 'resume'
+
 function localDateKey(date: Date): string {
   return [
     date.getFullYear(),
@@ -68,9 +70,14 @@ function cloneWindowState(state: PersistedWindowState): PersistedWindowState {
 class RotationWindowTracker {
   private state: (PersistedWindowState & { runId: number }) | null = null
   private lastSnapshot: RotationRuntimeSnapshot | null = null
+  private lastSnapshotSequence = 0
   private lastCycle = 0
   private observedTurn: ObservedAccountTurn | null = null
+  private observedTurnSequence = 0
   private observedGroupRemaining: number | null = null
+  private observationSequence = 0
+  private command: RotationCommand | null = null
+  private resetHistoryOnNextRunCreate = false
 
   constructor(
     private readonly runs: RotationRunStore,
@@ -78,12 +85,26 @@ class RotationWindowTracker {
     private readonly now: () => Date
   ) {}
 
+  runCommand<T>(command: RotationCommand, action: () => T): T {
+    const previous = this.command
+    this.command = command
+    try {
+      return action()
+    } finally {
+      this.command = previous
+    }
+  }
+
   trackedRunStore(): RotationRunStore {
     return {
       getLatestForPageTab: (pageTabId) => this.runs.getLatestForPageTab(pageTabId),
       createForPageTab: (pageTabId) => {
+        const previous = this.runs.getLatestForPageTab(pageTabId)
+        if (this.command !== 'start' && previous && this.state?.runId !== previous.run.id) {
+          this.ensureState(previous)
+        }
         const fresh = this.runs.createForPageTab(pageTabId)
-        this.noteRunCreated(fresh)
+        this.noteRunCreated(fresh, this.command === 'start')
         return fresh
       },
       get: (runId) => this.runs.get(runId),
@@ -97,7 +118,13 @@ class RotationWindowTracker {
         this.noteResume(resumed)
         return resumed
       },
-      stop: (runId, reason) => this.runs.stop(runId, reason),
+      stop: (runId, reason) => {
+        const stopped = this.runs.stop(runId, reason)
+        if (reason === 'manual' || reason === 'daily_rollover') {
+          this.resetHistoryOnNextRunCreate = true
+        }
+        return stopped
+      },
       getRotationState: (runId) => this.runs.getRotationState?.(runId) ?? null,
       saveRotationState: (runId, state) => {
         this.runs.saveRotationState?.(runId, state)
@@ -119,9 +146,10 @@ class RotationWindowTracker {
   }
 
   decorate(snapshot: RotationRuntimeSnapshot): RotationRuntimeSnapshot {
+    this.lastSnapshot = snapshot
+    this.lastSnapshotSequence = ++this.observationSequence
     this.reconcile(snapshot)
     const windowStates = this.buildWindowStates(snapshot)
-    this.lastSnapshot = snapshot
     this.lastCycle = snapshot.cycle
     return { ...snapshot, windowStates }
   }
@@ -155,6 +183,7 @@ class RotationWindowTracker {
   private resetForDate(runId: number, dateKey: string): void {
     this.state = { runId, dateKey, activeWindowKey: null, closedWindows: [] }
     this.observedTurn = null
+    this.observedTurnSequence = 0
     this.observedGroupRemaining = null
     this.persist()
   }
@@ -168,13 +197,21 @@ class RotationWindowTracker {
     return scheduleWindowKey(this.schedulesFor(pageTabId, run), this.now())
   }
 
-  private noteRunCreated(run: RunDetails): void {
+  private noteRunCreated(run: RunDetails, forceReset: boolean): void {
     const dateKey = localDateKey(this.now())
-    const preserve = this.state?.dateKey === dateKey && this.state.activeWindowKey !== null
+    const preserve = !forceReset &&
+      !this.resetHistoryOnNextRunCreate &&
+      this.state?.dateKey === dateKey
+
+    this.resetHistoryOnNextRunCreate = false
     this.state = preserve && this.state
       ? { ...this.state, runId: run.run.id, closedWindows: this.state.closedWindows.map((entry) => ({ ...entry })) }
       : { runId: run.run.id, dateKey, activeWindowKey: null, closedWindows: [] }
-    if (!preserve) this.observedTurn = null
+
+    if (!preserve) {
+      this.observedTurn = null
+      this.observedTurnSequence = 0
+    }
     this.observedGroupRemaining = run.metrics.remaining
     this.persist()
   }
@@ -208,6 +245,7 @@ class RotationWindowTracker {
     }
     if (resultStatus === 'success') this.observedTurn.slotsCompleted += 1
     this.observedGroupRemaining = run.metrics.remaining
+    this.observedTurnSequence = ++this.observationSequence
   }
 
   private noteCoreRotationState(
@@ -234,7 +272,7 @@ class RotationWindowTracker {
     }
 
     if (state.activeWindowKey && state.activeWindowKey !== currentKey) {
-      this.closeWindow(state.activeWindowKey, 'closed_time_remaining_accounts', this.lastSnapshot ?? snapshot)
+      this.closeWindow(state.activeWindowKey, 'closed_time_remaining_accounts', snapshot)
     }
 
     const cycleAdvanced = snapshot.cycle > this.lastCycle
@@ -268,26 +306,46 @@ class RotationWindowTracker {
           this.state.activeWindowKey = null
           this.persist()
         }
-        if (status === 'closed_account_cycle') this.observedTurn = null
+        if (status === 'closed_account_cycle') {
+          this.observedTurn = null
+          this.observedTurnSequence = 0
+        }
         return
       }
     }
 
     const sourceHasAccount = source?.currentAccountId !== null && source?.currentAccountId !== undefined
+    const observedIsFresher = this.observedTurn !== null &&
+      (!sourceHasAccount || this.observedTurnSequence > this.lastSnapshotSequence)
     const closed: PersistedClosedWindow = {
       key,
       status,
       closedAt: this.now().getTime(),
-      currentAccountId: sourceHasAccount ? source.currentAccountId : this.observedTurn?.accountId ?? null,
-      slotsCompletedThisTurn: sourceHasAccount ? source.slotsCompletedThisTurn : this.observedTurn?.slotsCompleted ?? 0,
-      targetSlotsThisTurn: sourceHasAccount ? source.targetSlotsThisTurn : this.observedTurn?.targetSlots ?? 0,
+      currentAccountId: observedIsFresher
+        ? this.observedTurn!.accountId
+        : sourceHasAccount
+          ? source.currentAccountId
+          : null,
+      slotsCompletedThisTurn: observedIsFresher
+        ? this.observedTurn!.slotsCompleted
+        : sourceHasAccount
+          ? source.slotsCompletedThisTurn
+          : 0,
+      targetSlotsThisTurn: observedIsFresher
+        ? this.observedTurn!.targetSlots
+        : sourceHasAccount
+          ? source.targetSlotsThisTurn
+          : 0,
       groupRemaining: this.observedGroupRemaining ?? source?.run?.metrics.remaining ?? 0
     }
     if (existingIndex >= 0) this.state.closedWindows[existingIndex] = closed
     else this.state.closedWindows.push(closed)
     if (this.state.activeWindowKey === key) this.state.activeWindowKey = null
     this.persist()
-    if (status === 'closed_account_cycle') this.observedTurn = null
+    if (status === 'closed_account_cycle') {
+      this.observedTurn = null
+      this.observedTurnSequence = 0
+    }
   }
 
   private buildWindowStates(snapshot: RotationRuntimeSnapshot): RotationWindowRuntimeState[] {
@@ -357,7 +415,7 @@ export class RotationService {
   }
 
   start(payload: RotationPageTabPayload): RotationRuntimeSnapshot {
-    return this.tracker.decorate(this.core.start(payload))
+    return this.tracker.runCommand('start', () => this.tracker.decorate(this.core.start(payload)))
   }
 
   status(payload: RotationPageTabPayload): RotationRuntimeSnapshot {
@@ -369,7 +427,7 @@ export class RotationService {
   }
 
   resume(payload: RotationPageTabPayload): RotationRuntimeSnapshot {
-    return this.tracker.decorate(this.core.resume(payload))
+    return this.tracker.runCommand('resume', () => this.tracker.decorate(this.core.resume(payload)))
   }
 
   stop(payload: RotationPageTabPayload): RotationRuntimeSnapshot {
