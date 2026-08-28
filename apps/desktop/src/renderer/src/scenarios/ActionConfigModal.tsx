@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react'
 import {
-  ACTION_CATEGORIES,
   validateActionConfig,
   type ActionConfig,
   type ActionConfigFieldDefinition,
