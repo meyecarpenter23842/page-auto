@@ -1,17 +1,24 @@
-import { readFile, rm } from 'node:fs/promises'
+import { mkdir, readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { chromium, type BrowserContext } from 'playwright-core'
 import type { BrowserSettings, SessionSettings } from '../../shared/appSettings'
 import type { BrowserWindowPlacement } from '../../shared/browserWindowLayout'
 import { sameWholeChromeScale, wholeChromeScaleForLaunch } from '../../shared/browserWholeChromeScale'
+import type {
+  FacebookCheckpoint282Action,
+  FacebookCheckpoint282Result,
+  FacebookCheckpointSurface
+} from '../../shared/facebookCheckpoint'
 import type { PostingProxyConfig } from '../../shared/posting'
 import { inspectFacebookAccountIdentity } from './facebookAccountIdentity'
 import { readFacebookDisplayName } from './facebookProfileInfo'
+import { facebookCheckpoint282State, facebookCheckpointSurfaceUrl } from './facebookCheckpoint282'
 import {
   bootstrapFacebookSession,
   type FacebookSessionAccount,
   type FacebookSessionResult
 } from './facebookSession'
+import { detectFacebookCheckpointKind } from './posting/facebookCheckpoint'
 import {
   applyBrowserContextSettings,
   applyBrowserPlacementToContext,
@@ -36,6 +43,16 @@ interface BootstrapCommand {
   placement: BrowserWindowPlacement | null
 }
 
+interface Checkpoint282Command {
+  type: 'checkpoint-282'
+  account: FacebookSessionAccount
+  browser: BrowserSettings
+  surface: FacebookCheckpointSurface
+  action: FacebookCheckpoint282Action
+  sessionWasValid: boolean
+  evidenceFolder?: string | null
+}
+
 interface RetileCommand {
   type: 'retile'
   placement: BrowserWindowPlacement | null
@@ -56,6 +73,10 @@ interface SessionResultMessage extends FacebookSessionResult {
   cdpEndpoint?: string
 }
 
+interface Checkpoint282ResultMessage extends FacebookCheckpoint282Result {
+  type: 'checkpoint-282-result'
+}
+
 interface BrowserClosedMessage {
   type: 'browser-closed'
 }
@@ -69,6 +90,17 @@ function sessionError(accountId: number, error: unknown): SessionResultMessage {
     cookie: null,
     cookieStatus: 'error',
     lastCookieCheck: Date.now(),
+    message: error instanceof Error ? error.message : String(error)
+  }
+}
+
+function checkpointError(command: Checkpoint282Command, error: unknown): Checkpoint282ResultMessage {
+  return {
+    type: 'checkpoint-282-result',
+    accountId: command.account.id,
+    uid: command.account.uid,
+    state: 'error',
+    surface: command.surface,
     message: error instanceof Error ? error.message : String(error)
   }
 }
@@ -107,6 +139,29 @@ function commandFromMessage(event: unknown): BootstrapCommand | null {
     browser: candidate.browser,
     session: candidate.session,
     placement: candidate.placement ?? null
+  }
+}
+
+function checkpoint282CommandFromMessage(event: unknown): Checkpoint282Command | null {
+  const payload = messagePayload(event)
+  if (!payload || typeof payload !== 'object') return null
+  const candidate = payload as Partial<Checkpoint282Command>
+  if (
+    candidate.type !== 'checkpoint-282'
+    || !candidate.account
+    || !candidate.browser
+    || !candidate.surface
+    || !candidate.action
+    || typeof candidate.sessionWasValid !== 'boolean'
+  ) return null
+  return {
+    type: 'checkpoint-282',
+    account: candidate.account,
+    browser: candidate.browser,
+    surface: candidate.surface,
+    action: candidate.action,
+    sessionWasValid: candidate.sessionWasValid,
+    evidenceFolder: candidate.evidenceFolder ?? null
   }
 }
 
@@ -285,6 +340,103 @@ async function run(): Promise<void> {
     return opened
   }
 
+  const handleCheckpoint282 = async (command: Checkpoint282Command): Promise<Checkpoint282ResultMessage> => {
+    const activeContext = context
+    if (!activeContext) {
+      return {
+        type: 'checkpoint-282-result',
+        accountId: command.account.id,
+        uid: command.account.uid,
+        state: 'error',
+        surface: command.surface,
+        message: 'Browser của account chưa mở; không thể kiểm tra CP282.'
+      }
+    }
+
+    const page = activeContext.pages()[0] ?? await activeContext.newPage()
+    if (command.sessionWasValid) {
+      const identity = await inspectFacebookAccountIdentity(activeContext, command.account.uid)
+      if (identity.state !== 'match') {
+        return {
+          type: 'checkpoint-282-result',
+          accountId: command.account.id,
+          uid: command.account.uid,
+          state: 'needs_login',
+          surface: command.surface,
+          message: `Session đã rời checkpoint nhưng chưa xác nhận đúng c_user của account. ${identity.message}`
+        }
+      }
+
+      let evidencePath: string | null = null
+      if (command.action === 'recheck' && command.evidenceFolder?.trim()) {
+        const folder = command.evidenceFolder.trim()
+        const safeUid = command.account.uid.replace(/[^a-zA-Z0-9._-]/g, '_') || `account-${command.account.id}`
+        await mkdir(folder, { recursive: true })
+        evidencePath = join(folder, `${safeUid}.png`)
+        await page.screenshot({ path: evidencePath }).catch(() => {
+          evidencePath = null
+        })
+      }
+
+      return {
+        type: 'checkpoint-282-result',
+        accountId: command.account.id,
+        uid: command.account.uid,
+        state: 'resolved',
+        surface: command.surface,
+        message: 'Session hợp lệ và c_user đã khớp UID account sau CP282.',
+        ...(evidencePath ? { evidencePath } : {})
+      }
+    }
+
+    let kind = await detectFacebookCheckpointKind(page).catch(() => null)
+    if (kind === '282') {
+      const targetUrl = facebookCheckpointSurfaceUrl(page.url(), command.surface)
+      if (targetUrl && targetUrl !== page.url()) {
+        await page.goto(targetUrl, {
+          waitUntil: 'domcontentloaded',
+          timeout: command.browser.navigationTimeoutMs
+        }).catch(() => undefined)
+        if (command.browser.pageSettleDelayMs > 0) {
+          await page.waitForTimeout(command.browser.pageSettleDelayMs)
+        }
+        kind = await detectFacebookCheckpointKind(page).catch(() => kind)
+      }
+    }
+
+    const state = facebookCheckpoint282State(kind)
+    if (state === 'waiting_manual') {
+      return {
+        type: 'checkpoint-282-result',
+        accountId: command.account.id,
+        uid: command.account.uid,
+        state,
+        surface: command.surface,
+        checkpointKind: '282',
+        message: 'Đã nhận diện CP282. Browser được giữ nguyên để hoàn tất bước xác minh trực tiếp; sau đó dùng Kiểm tra lại.'
+      }
+    }
+    if (state === 'different_checkpoint') {
+      return {
+        type: 'checkpoint-282-result',
+        accountId: command.account.id,
+        uid: command.account.uid,
+        state,
+        surface: command.surface,
+        ...(kind ? { checkpointKind: kind } : {}),
+        message: `Account đang ở checkpoint ${kind ?? 'khác'}, không chạy flow CP282.`
+      }
+    }
+    return {
+      type: 'checkpoint-282-result',
+      accountId: command.account.id,
+      uid: command.account.uid,
+      state: 'needs_login',
+      surface: command.surface,
+      message: 'Chưa nhận diện CP282 và session vẫn chưa hợp lệ; browser được giữ mở để kiểm tra.'
+    }
+  }
+
   process.parentPort?.on('message', (event) => {
     if (isShutdownCommand(event)) {
       if (closing) return
@@ -311,6 +463,20 @@ async function run(): Promise<void> {
             armResizeWatch
           )
         }
+      })
+      return
+    }
+
+    const checkpointCommand = checkpoint282CommandFromMessage(event)
+    if (checkpointCommand && !closing) {
+      queue = queue.then(async () => {
+        let result: Checkpoint282ResultMessage
+        try {
+          result = await handleCheckpoint282(checkpointCommand)
+        } catch (error) {
+          result = checkpointError(checkpointCommand, error)
+        }
+        process.parentPort?.postMessage(result)
       })
       return
     }

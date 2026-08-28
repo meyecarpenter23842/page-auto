@@ -26,6 +26,10 @@ import type {
   RetryRunItemResult
 } from '../shared/executionLogs'
 import type {
+  FacebookCheckpoint282RunPayload,
+  FacebookCheckpoint282Result
+} from '../shared/facebookCheckpoint'
+import type {
   HotmailAccountPayload,
   HotmailBatchPayload,
   HotmailBatchResult,
@@ -72,6 +76,8 @@ export const IPC_CHANNELS = {
   accountColumnLayoutGet: 'accounts:columns:get',
   accountColumnLayoutSave: 'accounts:columns:save',
   accountOpenProfile: 'accounts:open-profile',
+  facebookCheckpoint282Run: 'facebook:checkpoint-282:run',
+  facebookCheckpointEvidenceFolderPick: 'facebook:checkpoint:evidence-folder:pick',
   hotmailDashboardList: 'hotmail:dashboard:list',
   hotmailSettingsGet: 'hotmail:settings:get',
   hotmailSettingsSave: 'hotmail:settings:save',
@@ -159,6 +165,8 @@ export interface PageAutoIpcContract {
   getAccountColumnLayout: () => Promise<AccountColumnLayout | null>
   saveAccountColumnLayout: (payload: AccountColumnLayoutPayload) => Promise<void>
   openAccountProfile: (payload: AccountOpenProfilePayload) => Promise<BrowserProfileResult>
+  runFacebookCheckpoint282: (payload: FacebookCheckpoint282RunPayload) => Promise<FacebookCheckpoint282Result>
+  pickFacebookCheckpointEvidenceFolder: () => Promise<string | null>
   listHotmailDashboard: () => Promise<HotmailDashboardRow[]>
   getHotmailSettings: () => Promise<HotmailSettingsView>
   saveHotmailSettings: (input: SaveHotmailSettingsInput) => Promise<HotmailSettingsView>

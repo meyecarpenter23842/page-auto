@@ -22,6 +22,7 @@ import type { BrowserRetileResult, BrowserWindowLayoutSettings } from '../shared
 import type { SaveCaptchaSettingsInput } from '../shared/captchaSettings'
 import type { ConfigBackupRestoreResult } from '../shared/configBackup'
 import type { ExecutionLogFilters, RetryRunItemPayload } from '../shared/executionLogs'
+import type { FacebookCheckpoint282RunPayload } from '../shared/facebookCheckpoint'
 import type { CreatePageTabInput, PageTabIdPayload, UpdatePageTabPayload } from '../shared/pageTabs'
 import type { PageWallRunNowPayload } from '../shared/pageWall'
 import type { PageWallJobIdPayload, PageWallSchedulePayload } from '../shared/pageWallJobs'
@@ -163,6 +164,30 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
     const account = accounts.getById(payload.accountId)
     if (!account) return { status: 'error', message: 'Account không tồn tại.' }
     return browserProfiles.open(account)
+  })
+  ipcMain.handle(IPC_CHANNELS.facebookCheckpoint282Run, (_event, payload: FacebookCheckpoint282RunPayload) => {
+    const account = accounts.getById(payload.accountId)
+    if (!account) {
+      return {
+        accountId: payload.accountId,
+        uid: '',
+        state: 'error',
+        surface: payload.surface,
+        message: 'Account không tồn tại.'
+      }
+    }
+    return browserProfiles.runCheckpoint282(account, {
+      surface: payload.surface,
+      action: payload.action,
+      evidenceFolder: payload.evidenceFolder ?? null
+    })
+  })
+  ipcMain.handle(IPC_CHANNELS.facebookCheckpointEvidenceFolderPick, async () => {
+    const result = await dialog.showOpenDialog({
+      title: 'Chọn thư mục lưu bằng chứng CP Facebook',
+      properties: ['openDirectory', 'createDirectory']
+    })
+    return result.canceled ? null : (result.filePaths[0] ?? null)
   })
 
   ipcMain.handle(IPC_CHANNELS.pageTabsList, () => pageTabs.list())
