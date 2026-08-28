@@ -2,6 +2,7 @@ import type { PostingCheckpointKind } from './posting'
 
 export const FACEBOOK_CHECKPOINT_SURFACES = ['mbasic', 'mobile', 'desktop'] as const
 export type FacebookCheckpointSurface = (typeof FACEBOOK_CHECKPOINT_SURFACES)[number]
+export type FacebookCheckpointWorkbenchKind = '282' | '956'
 
 export type FacebookCheckpoint282Action = 'start' | 'recheck' | 'stop'
 export type FacebookCheckpoint282AssetOrigin = 'canonical' | 'source'
@@ -34,6 +35,7 @@ export interface FacebookCheckpoint282RunPayload {
   accountId: number
   surface: FacebookCheckpointSurface
   action: FacebookCheckpoint282Action
+  checkpointKind?: FacebookCheckpointWorkbenchKind
   evidenceFolder?: string | null
   asset?: FacebookCheckpoint282RunAsset | null
 }
