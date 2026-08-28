@@ -1,5 +1,6 @@
 import type { FacebookCheckpointSurface } from '../../shared/facebookCheckpoint'
 import type { PostingCheckpointKind } from '../../shared/posting'
+import type { FacebookAccountIdentityState } from './facebookAccountIdentity'
 
 const checkpointSurfaceHosts: Record<FacebookCheckpointSurface, string> = {
   mbasic: 'mbasic.facebook.com',
@@ -31,4 +32,8 @@ export function facebookCheckpoint282State(
   if (kind === '282') return 'waiting_manual'
   if (kind) return 'different_checkpoint'
   return 'needs_login'
+}
+
+export function facebookCheckpoint282IdentityAccepted(state: FacebookAccountIdentityState): boolean {
+  return state === 'match' || state === 'unverifiable'
 }

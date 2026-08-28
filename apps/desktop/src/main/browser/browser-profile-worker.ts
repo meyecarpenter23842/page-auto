@@ -12,7 +12,11 @@ import type {
 import type { PostingProxyConfig } from '../../shared/posting'
 import { inspectFacebookAccountIdentity } from './facebookAccountIdentity'
 import { readFacebookDisplayName } from './facebookProfileInfo'
-import { facebookCheckpoint282State, facebookCheckpointSurfaceUrl } from './facebookCheckpoint282'
+import {
+  facebookCheckpoint282IdentityAccepted,
+  facebookCheckpoint282State,
+  facebookCheckpointSurfaceUrl
+} from './facebookCheckpoint282'
 import {
   bootstrapFacebookSession,
   type FacebookSessionAccount,
@@ -356,14 +360,14 @@ async function run(): Promise<void> {
     const page = activeContext.pages()[0] ?? await activeContext.newPage()
     if (command.sessionWasValid) {
       const identity = await inspectFacebookAccountIdentity(activeContext, command.account.uid)
-      if (identity.state !== 'match') {
+      if (!facebookCheckpoint282IdentityAccepted(identity.state)) {
         return {
           type: 'checkpoint-282-result',
           accountId: command.account.id,
           uid: command.account.uid,
           state: 'needs_login',
           surface: command.surface,
-          message: `Session đã rời checkpoint nhưng chưa xác nhận đúng c_user của account. ${identity.message}`
+          message: `Session đã rời checkpoint nhưng chưa xác nhận đúng account. ${identity.message}`
         }
       }
 
@@ -384,7 +388,9 @@ async function run(): Promise<void> {
         uid: command.account.uid,
         state: 'resolved',
         surface: command.surface,
-        message: 'Session hợp lệ và c_user đã khớp UID account sau CP282.',
+        message: identity.state === 'match'
+          ? 'Session hợp lệ và c_user đã khớp UID account sau CP282.'
+          : 'Session hợp lệ sau CP282; UID/Tên đăng nhập không phải ID số nên tiếp tục theo Session Common hiện có.',
         ...(evidencePath ? { evidencePath } : {})
       }
     }
