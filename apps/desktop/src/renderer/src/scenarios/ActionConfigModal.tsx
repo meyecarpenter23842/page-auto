@@ -10,6 +10,7 @@ import {
   getActionFieldUiMeta,
   getActionOverrideValidationErrors
 } from '../../../shared/actionOverrides'
+import { REACTION_OPTIONS, buildActionConfigLayout, getRangeLabel } from './actionConfigLayout'
 import './k41ActionConfig.css'
 
 applyActionOverrides()
@@ -28,6 +29,24 @@ interface ActionConfigModalProps {
   value: ActionEditorValue
   onClose: () => void
   onSave: (value: ActionEditorValue, normalizedConfig?: ActionConfig) => void
+}
+
+const REACTION_ICONS = Object.fromEntries(REACTION_OPTIONS.map((item) => [item.key, item])) as Readonly<Record<string, { icon: string; label: string }>>
+
+function NumberInput({ field, value, onChange }: {
+  field: ActionConfigFieldDefinition
+  value: ActionConfig[string] | undefined
+  onChange: (value: ActionConfig[string] | undefined) => void
+}) {
+  return (
+    <input
+      type="number"
+      min={field.min}
+      max={field.max}
+      value={value === undefined ? '' : String(value)}
+      onChange={(event) => onChange(event.target.value === '' ? undefined : Number(event.target.value))}
+    />
+  )
 }
 
 function ConfigField({ actionType, field, value, onChange }: {
@@ -65,7 +84,7 @@ function ConfigField({ actionType, field, value, onChange }: {
       <label className="scenario-field action-config-textarea">
         <span>{field.label}{field.required ? ' *' : ''}</span>
         <textarea
-          rows={ui.rows ?? 3}
+          rows={Math.min(ui.rows ?? 3, 3)}
           maxLength={field.maxLength}
           placeholder={field.placeholder}
           value={typeof value === 'string' ? value : ''}
@@ -96,6 +115,52 @@ function ConfigField({ actionType, field, value, onChange }: {
   )
 }
 
+function RangeField({ min, max, config, setField }: {
+  min: ActionConfigFieldDefinition
+  max: ActionConfigFieldDefinition
+  config: ActionConfig
+  setField: (key: string, value: ActionConfig[string] | undefined) => void
+}) {
+  const help = min.help === max.help ? min.help : undefined
+  return (
+    <div className="action-config-range">
+      <span className="action-config-range-label">{getRangeLabel(min.label, max.label)}</span>
+      <div className="action-config-range-controls">
+        <label><small>Từ</small><NumberInput field={min} value={config[min.key]} onChange={(next) => setField(min.key, next)} /></label>
+        <span className="action-config-range-arrow">→</span>
+        <label><small>Đến</small><NumberInput field={max} value={config[max.key]} onChange={(next) => setField(max.key, next)} /></label>
+        {help ? <small className="action-config-range-unit">{help}</small> : null}
+      </div>
+    </div>
+  )
+}
+
+function ReactionField({ fields, config, setField }: {
+  fields: ActionConfigFieldDefinition[]
+  config: ActionConfig
+  setField: (key: string, value: ActionConfig[string] | undefined) => void
+}) {
+  return (
+    <div className="action-reaction-field">
+      <span className="action-config-range-label">Loại cảm xúc</span>
+      <div className="action-reaction-options">
+        {fields.map((field) => {
+          const meta = REACTION_ICONS[field.key]
+          if (!meta) return null
+          const checked = Boolean(config[field.key])
+          return (
+            <label key={field.key} className={`action-reaction-option${checked ? ' selected' : ''}`} title={meta.label}>
+              <input type="checkbox" checked={checked} onChange={(event) => setField(field.key, event.target.checked)} />
+              <span aria-hidden="true">{meta.icon}</span>
+              <small>{meta.label}</small>
+            </label>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 export function ActionConfigModal({ value, onClose, onSave }: ActionConfigModalProps) {
   const [label, setLabel] = useState(value.label)
   const [enabled, setEnabled] = useState(value.enabled)
@@ -121,8 +186,10 @@ export function ActionConfigModal({ value, onClose, onSave }: ActionConfigModalP
       current.push(field)
       sections.set(section, current)
     }
-    return [...sections.entries()]
+    return [...sections.entries()].map(([section, fields]) => [section, buildActionConfigLayout(fields)] as const)
   }, [config, definition])
+
+  const visibleFieldCount = visibleSections.reduce((total, [, units]) => total + units.reduce((sum, unit) => sum + (unit.kind === 'range' ? 2 : unit.kind === 'reactions' ? unit.fields.length : 1), 0), 0)
 
   const setField = (key: string, nextValue: ActionConfig[string] | undefined) => {
     setConfig((current) => {
@@ -141,8 +208,8 @@ export function ActionConfigModal({ value, onClose, onSave }: ActionConfigModalP
   const runtimeReady = definition?.runtimeStatus === 'ready'
 
   return (
-    <div className="scenario-modal-backdrop" role="presentation" onMouseDown={onClose}>
-      <section className="scenario-modal action-config-modal k41-action-config-modal" role="dialog" aria-modal="true" aria-label="Cấu hình hành động" onMouseDown={(event) => event.stopPropagation()}>
+    <div className="scenario-modal-backdrop action-config-backdrop" role="presentation" onMouseDown={onClose}>
+      <section className={`scenario-modal action-config-modal k41-action-config-modal${visibleFieldCount >= 12 ? ' dense' : ''}`} role="dialog" aria-modal="true" aria-label="Cấu hình hành động" onMouseDown={(event) => event.stopPropagation()}>
         <div className="scenario-modal-head">
           <div><p className="scenario-kicker">CẤU HÌNH ACTION</p><h3>{value.id === null ? 'Thêm hành động' : 'Sửa hành động'}</h3></div>
           <button type="button" onClick={onClose}>×</button>
@@ -165,11 +232,15 @@ export function ActionConfigModal({ value, onClose, onSave }: ActionConfigModalP
 
           {visibleSections.length ? (
             <div className="k41-action-sections">
-              {visibleSections.map(([section, fields]) => (
+              {visibleSections.map(([section, units]) => (
                 <section className="k41-action-section" key={section}>
                   <div className="k41-action-section-title">{section}</div>
                   <div className="action-config-fields k41-action-grid">
-                    {fields.map((field) => <ConfigField key={field.key} actionType={value.actionType} field={field} value={config[field.key]} onChange={(next) => setField(field.key, next)} />)}
+                    {units.map((unit) => {
+                      if (unit.kind === 'range') return <RangeField key={`${unit.min.key}:${unit.max.key}`} min={unit.min} max={unit.max} config={config} setField={setField} />
+                      if (unit.kind === 'reactions') return <ReactionField key="reaction-options" fields={unit.fields} config={config} setField={setField} />
+                      return <ConfigField key={unit.field.key} actionType={value.actionType} field={unit.field} value={config[unit.field.key]} onChange={(next) => setField(unit.field.key, next)} />
+                    })}
                   </div>
                 </section>
               ))}
