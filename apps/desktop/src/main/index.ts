@@ -7,6 +7,7 @@ import { registerIpcHandlers, type IpcRuntime } from './ipc'
 import { createLogger } from './logger'
 import { registerPostLibraryIpcHandlers, type PostLibraryIpcRuntime } from './postLibraryIpc'
 import { registerScenarioIpcHandlers, type ScenarioIpcRuntime } from './scenarioIpc'
+import { registerScenarioRunnerIpcHandlers, type ScenarioRunnerIpcRuntime } from './scenarioRunnerIpc'
 import { ensureDataDirectoryLayout, resolveDataDirectory } from './services/portablePaths'
 
 let mainWindow: BrowserWindow | null = null
@@ -16,6 +17,7 @@ let checkpoint282WorkbenchIpcRuntime: Checkpoint282WorkbenchIpcRuntime | null = 
 let hotmailIpcRuntime: HotmailIpcRuntime | null = null
 let postLibraryIpcRuntime: PostLibraryIpcRuntime | null = null
 let scenarioIpcRuntime: ScenarioIpcRuntime | null = null
+let scenarioRunnerIpcRuntime: ScenarioRunnerIpcRuntime | null = null
 
 function resolveWindowIcon(): string {
   return app.isPackaged
@@ -70,6 +72,7 @@ app.whenReady().then(() => {
     hotmailIpcRuntime = registerHotmailIpcHandlers(databaseRuntime.client)
     postLibraryIpcRuntime = registerPostLibraryIpcHandlers(databaseRuntime.client)
     scenarioIpcRuntime = registerScenarioIpcHandlers(databaseRuntime.client)
+    scenarioRunnerIpcRuntime = registerScenarioRunnerIpcHandlers({ database: databaseRuntime.client, dataDirectory })
     logger.info('Application initialized', { databaseFile, dataDirectory, packaged: app.isPackaged, version: app.getVersion() })
 
     if (process.env.PAGE_AUTO_SMOKE_TEST === '1') {
@@ -80,6 +83,8 @@ app.whenReady().then(() => {
     mainWindow = createMainWindow()
   } catch (error) {
     logger.error('Application initialization failed', { error: error instanceof Error ? error.message : String(error) })
+    scenarioRunnerIpcRuntime?.dispose()
+    scenarioRunnerIpcRuntime = null
     scenarioIpcRuntime?.dispose()
     scenarioIpcRuntime = null
     checkpoint282WorkbenchIpcRuntime?.dispose()
@@ -101,6 +106,8 @@ app.whenReady().then(() => {
 })
 
 app.on('before-quit', () => {
+  scenarioRunnerIpcRuntime?.dispose()
+  scenarioRunnerIpcRuntime = null
   scenarioIpcRuntime?.dispose()
   scenarioIpcRuntime = null
   checkpoint282WorkbenchIpcRuntime?.dispose()

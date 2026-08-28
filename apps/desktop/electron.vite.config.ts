@@ -12,6 +12,7 @@ export default defineConfig({
           'browser-profile-worker': resolve('src/main/browser/browser-profile-worker.ts'),
           'browser-test-worker': resolve('src/main/browser/browser-test-worker.ts'),
           'posting-worker': resolve('src/main/browser/posting-worker.ts'),
+          'scenario-action-worker': resolve('src/main/browser/scenario-action-worker.ts'),
           'email-browser-worker': resolve('src/main/email/email-browser-worker.ts'),
           'email-proxy-test-worker': resolve('src/main/email/email-proxy-test-worker.ts')
         }

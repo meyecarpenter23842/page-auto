@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { AccountRecord, AccountStatus } from '../../../shared/accounts'
+import type {
+  ScenarioRunnerAccountRuntime,
+  ScenarioRunnerSnapshot
+} from '../../../shared/scenarioRunnerRuntime'
 import type { ScenarioSummary } from '../../../shared/scenarios'
 import {
   DEFAULT_SCENARIO_RUNNER_STATE,
@@ -35,6 +39,15 @@ function statusMeta(status: AccountStatus): StatusMeta {
   if (status === 'needs_login') return { label: 'Cần đăng nhập', tone: 'danger' }
   if (status === 'disabled') return { label: 'Đã tắt', tone: 'muted' }
   return { label: 'Chưa kiểm tra', tone: 'waiting' }
+}
+
+function runtimeStatusMeta(runtime: ScenarioRunnerAccountRuntime): StatusMeta {
+  if (runtime.state === 'running') return { label: 'Đang chạy', tone: 'ready' }
+  if (runtime.state === 'completed') return { label: 'Hoàn tất', tone: 'ready' }
+  if (runtime.state === 'needs_attention') return { label: 'Cần đăng nhập/xác minh', tone: 'danger' }
+  if (runtime.state === 'failed') return { label: 'Có lỗi', tone: 'danger' }
+  if (runtime.state === 'stopped') return { label: 'Đã dừng', tone: 'muted' }
+  return { label: 'Chờ chạy', tone: 'waiting' }
 }
 
 function NumberField({ value, min, max, disabled, onChange }: {
@@ -106,15 +119,18 @@ export function ScenarioRunnerDashboard({ onOpenManager }: ScenarioRunnerDashboa
   const [scenarioPickerQuery, setScenarioPickerQuery] = useState('')
   const [accountPickerDraft, setAccountPickerDraft] = useState<number[]>([])
   const [scenarioPickerDraft, setScenarioPickerDraft] = useState<number[]>([])
-  const [runtimeLog, setRuntimeLog] = useState<string[]>([])
+  const [runtimeSnapshot, setRuntimeSnapshot] = useState<ScenarioRunnerSnapshot | null>(null)
+  const [runtimeError, setRuntimeError] = useState<string | null>(null)
+  const [clearedLogId, setClearedLogId] = useState(0)
 
   useEffect(() => {
     let active = true
-    void Promise.all([window.pageAuto.listAccounts(), window.pageAuto.listScenarios()])
-      .then(([nextAccounts, nextScenarios]) => {
+    void Promise.all([window.pageAuto.listAccounts(), window.pageAuto.listScenarios(), window.pageAuto.getScenarioRunnerStatus()])
+      .then(([nextAccounts, nextScenarios, nextRuntime]) => {
         if (!active) return
         setAccounts(nextAccounts)
         setScenarios(nextScenarios)
+        setRuntimeSnapshot(nextRuntime)
         setInventoryLoaded(true)
       })
       .catch((cause) => {
@@ -124,6 +140,23 @@ export function ScenarioRunnerDashboard({ onOpenManager }: ScenarioRunnerDashboa
       })
     return () => { active = false }
   }, [])
+
+  const runtimeActive = runtimeSnapshot?.state === 'running' || runtimeSnapshot?.state === 'stopping'
+  useEffect(() => {
+    if (!runtimeActive) return
+    let disposed = false
+    const timer = window.setInterval(() => {
+      void window.pageAuto.getScenarioRunnerStatus().then((snapshot) => {
+        if (!disposed) setRuntimeSnapshot(snapshot)
+      }).catch((cause) => {
+        if (!disposed) setRuntimeError(cause instanceof Error ? cause.message : String(cause))
+      })
+    }, 500)
+    return () => {
+      disposed = true
+      window.clearInterval(timer)
+    }
+  }, [runtimeActive, runtimeSnapshot?.runId])
 
   useEffect(() => {
     if (!inventoryLoaded) return
@@ -157,6 +190,15 @@ export function ScenarioRunnerDashboard({ onOpenManager }: ScenarioRunnerDashboa
     const byId = new Map(scenarios.map((item) => [item.id, item] as const))
     return selectedScenarioIds.map((id) => byId.get(id)).filter((item): item is ScenarioSummary => Boolean(item))
   }, [scenarios, selectedScenarioIds])
+
+  const runtimeByAccount = useMemo(
+    () => new Map((runtimeSnapshot?.accountRuntimes ?? []).map((item) => [item.accountId, item] as const)),
+    [runtimeSnapshot]
+  )
+  const visibleRuntimeLogs = useMemo(
+    () => (runtimeSnapshot?.logs ?? []).filter((entry) => entry.id > clearedLogId),
+    [clearedLogId, runtimeSnapshot]
+  )
 
   const filteredPickerAccounts = useMemo(() => {
     const query = accountPickerQuery.trim().toLocaleLowerCase('vi')
@@ -209,6 +251,45 @@ export function ScenarioRunnerDashboard({ onOpenManager }: ScenarioRunnerDashboa
 
   const allEnabled = selectedAccountIds.length > 0 && selectedAccountIds.every((id) => enabledAccountIds.includes(id))
   const toggleAllEnabled = () => setEnabledAccountIds(allEnabled ? [] : [...selectedAccountIds])
+  const enabledRunAccounts = enabledAccountIds.filter((id) => selectedAccountIds.includes(id))
+  const unsupportedRunnerOption = settings.secondaryProfile || settings.proxyResetEnabled || settings.dcomResetEnabled
+  const canStart = inventoryLoaded && !runtimeActive && !unsupportedRunnerOption && enabledRunAccounts.length > 0 && selectedScenarioIds.length > 0
+
+  const startRuntime = async () => {
+    if (!canStart) return
+    setRuntimeError(null)
+    setClearedLogId(0)
+    try {
+      const snapshot = await window.pageAuto.startScenarioRunner({
+        accountIds: enabledRunAccounts,
+        scenarioIds: selectedScenarioIds,
+        settings: { ...settings }
+      })
+      setRuntimeSnapshot(snapshot)
+    } catch (cause) {
+      setRuntimeError(cause instanceof Error ? cause.message : String(cause))
+    }
+  }
+
+  const stopRuntime = async () => {
+    if (!runtimeActive) return
+    setRuntimeError(null)
+    try {
+      setRuntimeSnapshot(await window.pageAuto.stopScenarioRunner())
+    } catch (cause) {
+      setRuntimeError(cause instanceof Error ? cause.message : String(cause))
+    }
+  }
+
+  const startHint = unsupportedRunnerOption
+    ? 'Profile phụ / Proxy Reset / DCom chưa nối runtime trong lô này.'
+    : 'Cần ít nhất 1 tài khoản bật và 1 kịch bản.'
+
+  const runtimeNote = runtimeSnapshot?.state === 'running'
+    ? `Đang chạy · ${runtimeSnapshot.runId}`
+    : runtimeSnapshot?.state === 'stopping'
+      ? 'Đang dừng action hiện tại...'
+      : runtimeSnapshot?.message ?? 'Sẵn sàng chạy Common Action Runner.'
 
   return (
     <section className="scenario-runner-page" aria-label="Chạy Kịch Bản">
@@ -221,9 +302,9 @@ export function ScenarioRunnerDashboard({ onOpenManager }: ScenarioRunnerDashboa
             <span>{selectedAccounts.length}</span>
           </div>
           <div className="scenario-runner-toolbar">
-            <button className="scenario-runner-button" type="button" disabled={!selectedAccountIds.length} onClick={toggleAllEnabled}>{allEnabled ? 'Bỏ chọn' : 'Tất cả'}</button>
-            <button className="scenario-runner-button" type="button" onClick={openAccountPicker}>Chọn tài khoản</button>
-            <button className="scenario-runner-button subtle-danger" type="button" disabled={!selectedAccountIds.length} onClick={() => { setSelectedAccountIds([]); setEnabledAccountIds([]) }}>Clear</button>
+            <button className="scenario-runner-button" type="button" disabled={!selectedAccountIds.length || runtimeActive} onClick={toggleAllEnabled}>{allEnabled ? 'Bỏ chọn' : 'Tất cả'}</button>
+            <button className="scenario-runner-button" type="button" disabled={runtimeActive} onClick={openAccountPicker}>Chọn tài khoản</button>
+            <button className="scenario-runner-button subtle-danger" type="button" disabled={!selectedAccountIds.length || runtimeActive} onClick={() => { setSelectedAccountIds([]); setEnabledAccountIds([]) }}>Clear</button>
           </div>
 
           <div className="scenario-runner-account-table-wrap">
@@ -231,16 +312,17 @@ export function ScenarioRunnerDashboard({ onOpenManager }: ScenarioRunnerDashboa
               <thead><tr><th aria-label="Chọn" /><th>Account</th><th>Name</th><th>Total</th><th>Success</th><th>Trạng thái</th></tr></thead>
               <tbody>
                 {selectedAccounts.map((account) => {
-                  const status = statusMeta(account.status)
+                  const live = runtimeByAccount.get(account.id)
+                  const status = live ? runtimeStatusMeta(live) : statusMeta(account.status)
                   const enabled = enabledAccountIds.includes(account.id)
                   return (
                     <tr key={account.id}>
-                      <td><input type="checkbox" checked={enabled} onChange={(event) => setEnabledAccountIds((current) => event.target.checked ? [...current.filter((id) => id !== account.id), account.id] : current.filter((id) => id !== account.id))} /></td>
+                      <td><input type="checkbox" disabled={runtimeActive} checked={enabled} onChange={(event) => setEnabledAccountIds((current) => event.target.checked ? [...current.filter((id) => id !== account.id), account.id] : current.filter((id) => id !== account.id))} /></td>
                       <td><strong>{account.uid}</strong></td>
                       <td title={account.name ?? account.username ?? ''}>{account.name ?? account.username ?? '—'}</td>
-                      <td>0</td>
-                      <td>0</td>
-                      <td><span className={`scenario-runner-status ${status.tone}`}><i />{status.label}</span></td>
+                      <td>{live?.total ?? 0}</td>
+                      <td>{live?.success ?? 0}</td>
+                      <td><span className={`scenario-runner-status ${status.tone}`} title={live?.currentActionLabel ? `${live.currentScenarioName ?? 'Kịch bản'} · ${live.currentActionLabel}` : (live?.message ?? status.label)}><i />{status.label}</span></td>
                     </tr>
                   )
                 })}
@@ -250,7 +332,7 @@ export function ScenarioRunnerDashboard({ onOpenManager }: ScenarioRunnerDashboa
           </div>
 
           <div className="scenario-runner-panel-foot">
-            <span>Đã bật {enabledAccountIds.filter((id) => selectedAccountIds.includes(id)).length} / {selectedAccounts.length} tài khoản</span>
+            <span>Đã bật {enabledRunAccounts.length} / {selectedAccounts.length} tài khoản</span>
             <span>Kho: {accounts.length}</span>
           </div>
         </section>
@@ -258,21 +340,21 @@ export function ScenarioRunnerDashboard({ onOpenManager }: ScenarioRunnerDashboa
         <section className="scenario-runner-panel runner-settings-panel">
           <div className="scenario-runner-panel-head">
             <div><p>THIẾT LẬP CHẠY</p><h2>Kịch bản & nhịp chạy</h2></div>
-            <button className="scenario-runner-link-button" type="button" onClick={onOpenManager}>Quản lý</button>
+            <button className="scenario-runner-link-button" type="button" disabled={runtimeActive} onClick={onOpenManager}>Quản lý</button>
           </div>
 
           <div className="scenario-runner-settings-scroll">
             <div className="scenario-runner-section">
-              <div className="scenario-runner-section-title"><strong>Danh sách kịch bản muốn chạy</strong><button className="scenario-runner-button" type="button" onClick={openScenarioPicker}>Chọn</button></div>
+              <div className="scenario-runner-section-title"><strong>Danh sách kịch bản muốn chạy</strong><button className="scenario-runner-button" type="button" disabled={runtimeActive} onClick={openScenarioPicker}>Chọn</button></div>
               <label className="scenario-runner-inline-option">
-                <input type="checkbox" checked={settings.randomScenarios} onChange={(event) => updateSetting('randomScenarios', event.target.checked)} />
+                <input type="checkbox" disabled={runtimeActive} checked={settings.randomScenarios} onChange={(event) => updateSetting('randomScenarios', event.target.checked)} />
                 <span>Random kịch bản</span>
-                <NumberField min={1} max={Math.max(1, selectedScenarioIds.length)} disabled={!settings.randomScenarios} value={settings.randomScenarioCount} onChange={(value) => updateSetting('randomScenarioCount', Math.max(1, value || 1))} />
+                <NumberField min={1} max={Math.max(1, selectedScenarioIds.length)} disabled={runtimeActive || !settings.randomScenarios} value={settings.randomScenarioCount} onChange={(value) => updateSetting('randomScenarioCount', Math.max(1, value || 1))} />
               </label>
               <label className="scenario-runner-inline-option">
-                <input type="checkbox" checked={settings.secondaryProfile} onChange={(event) => updateSetting('secondaryProfile', event.target.checked)} />
+                <input type="checkbox" disabled={runtimeActive} checked={settings.secondaryProfile} onChange={(event) => updateSetting('secondaryProfile', event.target.checked)} />
                 <span>Chạy bằng Profile phụ (www)</span>
-                <NumberField min={1} max={1000} disabled={!settings.secondaryProfile} value={settings.secondaryProfileCount} onChange={(value) => updateSetting('secondaryProfileCount', Math.max(1, value || 1))} />
+                <NumberField min={1} max={1000} disabled={runtimeActive || !settings.secondaryProfile} value={settings.secondaryProfileCount} onChange={(value) => updateSetting('secondaryProfileCount', Math.max(1, value || 1))} />
               </label>
 
               <div className="scenario-runner-selected-scenarios">
@@ -283,9 +365,9 @@ export function ScenarioRunnerDashboard({ onOpenManager }: ScenarioRunnerDashboa
                       <span className="scenario-runner-drag">⠿</span>
                       <span className="scenario-runner-order">{index + 1}</span>
                       <span className="scenario-runner-selected-name"><strong>{scenario.name}</strong><small>{scenario.actionCount} action</small></span>
-                      <button type="button" title="Lên" disabled={index === 0} onClick={() => setSelectedScenarioIds((current) => moveId(current, scenario.id, 'up'))}>↑</button>
-                      <button type="button" title="Xuống" disabled={index === selectedScenarios.length - 1} onClick={() => setSelectedScenarioIds((current) => moveId(current, scenario.id, 'down'))}>↓</button>
-                      <button className="remove" type="button" title="Bỏ khỏi phiên" onClick={() => setSelectedScenarioIds((current) => current.filter((id) => id !== scenario.id))}>×</button>
+                      <button type="button" title="Lên" disabled={runtimeActive || index === 0} onClick={() => setSelectedScenarioIds((current) => moveId(current, scenario.id, 'up'))}>↑</button>
+                      <button type="button" title="Xuống" disabled={runtimeActive || index === selectedScenarios.length - 1} onClick={() => setSelectedScenarioIds((current) => moveId(current, scenario.id, 'down'))}>↓</button>
+                      <button className="remove" type="button" title="Bỏ khỏi phiên" disabled={runtimeActive} onClick={() => setSelectedScenarioIds((current) => current.filter((id) => id !== scenario.id))}>×</button>
                     </div>
                   ))}
                   {!selectedScenarios.length ? <div className="scenario-runner-empty compact">Chưa chọn kịch bản.</div> : null}
@@ -296,27 +378,27 @@ export function ScenarioRunnerDashboard({ onOpenManager }: ScenarioRunnerDashboa
 
             <div className="scenario-runner-section runner-parallel-row">
               <span>Số acc muốn chạy song song</span>
-              <NumberField min={1} max={100} value={settings.parallelAccounts} onChange={(value) => updateSetting('parallelAccounts', Math.max(1, value || 1))} />
+              <NumberField min={1} max={100} disabled={runtimeActive} value={settings.parallelAccounts} onChange={(value) => updateSetting('parallelAccounts', Math.max(1, value || 1))} />
             </div>
 
             <div className="scenario-runner-section scenario-runner-flow-box">
               <strong>Chạy theo kịch bản</strong>
               <div className="scenario-runner-form-row">
                 <span>Thời gian delay</span>
-                <small>từ (s)</small><NumberField min={0} max={3600} value={settings.actionDelayMinSeconds} onChange={(value) => updateSetting('actionDelayMinSeconds', Math.max(0, value || 0))} />
-                <small>đến (s)</small><NumberField min={0} max={3600} value={settings.actionDelayMaxSeconds} onChange={(value) => updateSetting('actionDelayMaxSeconds', Math.max(settings.actionDelayMinSeconds, value || 0))} />
+                <small>từ (s)</small><NumberField min={0} max={3600} disabled={runtimeActive} value={settings.actionDelayMinSeconds} onChange={(value) => updateSetting('actionDelayMinSeconds', Math.max(0, value || 0))} />
+                <small>đến (s)</small><NumberField min={0} max={3600} disabled={runtimeActive} value={settings.actionDelayMaxSeconds} onChange={(value) => updateSetting('actionDelayMaxSeconds', Math.max(settings.actionDelayMinSeconds, value || 0))} />
               </div>
               <div className="scenario-runner-form-row two-pair">
-                <span>Tạm dừng sau khi xử lí được</span><NumberField min={1} max={100000} value={settings.pauseAfterActions} onChange={(value) => updateSetting('pauseAfterActions', Math.max(1, value || 1))} />
-                <small>Thời gian tạm dừng (phút)</small><NumberField min={0} max={1440} value={settings.pauseMinutes} onChange={(value) => updateSetting('pauseMinutes', Math.max(0, value || 0))} />
+                <span>Tạm dừng sau khi xử lí được</span><NumberField min={1} max={100000} disabled={runtimeActive} value={settings.pauseAfterActions} onChange={(value) => updateSetting('pauseAfterActions', Math.max(1, value || 1))} />
+                <small>Thời gian tạm dừng (phút)</small><NumberField min={0} max={1440} disabled={runtimeActive} value={settings.pauseMinutes} onChange={(value) => updateSetting('pauseMinutes', Math.max(0, value || 0))} />
               </div>
               <div className="scenario-runner-form-row">
-                <span>Tạm dừng khi gặp lỗi (phút)</span><NumberField min={0} max={1440} value={settings.pauseOnErrorMinutes} onChange={(value) => updateSetting('pauseOnErrorMinutes', Math.max(0, value || 0))} />
+                <span>Tạm dừng khi gặp lỗi (phút)</span><NumberField min={0} max={1440} disabled={runtimeActive} value={settings.pauseOnErrorMinutes} onChange={(value) => updateSetting('pauseOnErrorMinutes', Math.max(0, value || 0))} />
               </div>
               <label className="scenario-runner-inline-option repeat-row">
-                <input type="checkbox" checked={settings.repeat} onChange={(event) => updateSetting('repeat', event.target.checked)} />
+                <input type="checkbox" disabled={runtimeActive} checked={settings.repeat} onChange={(event) => updateSetting('repeat', event.target.checked)} />
                 <span>Repeat</span>
-                <NumberField min={1} max={10000} disabled={!settings.repeat} value={settings.repeatCount} onChange={(value) => updateSetting('repeatCount', Math.max(1, value || 1))} />
+                <NumberField min={1} max={10000} disabled={runtimeActive || !settings.repeat} value={settings.repeatCount} onChange={(value) => updateSetting('repeatCount', Math.max(1, value || 1))} />
               </label>
             </div>
           </div>
@@ -325,49 +407,53 @@ export function ScenarioRunnerDashboard({ onOpenManager }: ScenarioRunnerDashboa
         <section className="scenario-runner-panel runner-log-panel">
           <div className="scenario-runner-panel-head">
             <div><p>KHU VỰC CHẠY / LOG</p><h2>Runtime</h2></div>
-            <button className="scenario-runner-button" type="button" disabled={!runtimeLog.length} onClick={() => setRuntimeLog([])}>Xóa log</button>
+            <button className="scenario-runner-button" type="button" disabled={!visibleRuntimeLogs.length && !runtimeError} onClick={() => { setClearedLogId(runtimeSnapshot?.logs.at(-1)?.id ?? 0); setRuntimeError(null) }}>Xóa log</button>
           </div>
 
           <div className="scenario-runner-log-box">
-            {runtimeLog.length ? runtimeLog.map((line, index) => <p key={`${index}-${line}`}>{line}</p>) : <span>Log runtime sẽ hiển thị tại đây khi dashboard được nối với Common Action Runner.</span>}
+            {runtimeError ? <p>[LỖI] {runtimeError}</p> : null}
+            {visibleRuntimeLogs.map((entry) => (
+              <p key={entry.id}>[{new Date(entry.at).toLocaleTimeString('vi-VN')}] {entry.accountId ? `ACC#${entry.accountId} · ` : ''}{entry.message}</p>
+            ))}
+            {!runtimeError && !visibleRuntimeLogs.length ? <span>Chọn tài khoản + kịch bản rồi bấm Bắt đầu để chạy Common Action Runner.</span> : null}
           </div>
 
           <div className="scenario-runner-runtime-controls">
             <div className="scenario-runner-control-row four">
-              <span>Tạm dừng sau khi chạy số acc</span><NumberField min={1} max={100000} value={settings.pauseAfterAccounts} onChange={(value) => updateSetting('pauseAfterAccounts', Math.max(1, value || 1))} />
-              <span>Thời gian (phút)</span><NumberField min={0} max={1440} value={settings.pauseAfterAccountsMinutes} onChange={(value) => updateSetting('pauseAfterAccountsMinutes', Math.max(0, value || 0))} />
+              <span>Tạm dừng sau khi chạy số acc</span><NumberField min={1} max={100000} disabled={runtimeActive} value={settings.pauseAfterAccounts} onChange={(value) => updateSetting('pauseAfterAccounts', Math.max(1, value || 1))} />
+              <span>Thời gian (phút)</span><NumberField min={0} max={1440} disabled={runtimeActive} value={settings.pauseAfterAccountsMinutes} onChange={(value) => updateSetting('pauseAfterAccountsMinutes', Math.max(0, value || 0))} />
             </div>
 
             <label className="scenario-runner-inline-option wide-runtime-option">
-              <input type="checkbox" checked={settings.proxyResetEnabled} onChange={(event) => updateSetting('proxyResetEnabled', event.target.checked)} />
+              <input type="checkbox" disabled={runtimeActive} checked={settings.proxyResetEnabled} onChange={(event) => updateSetting('proxyResetEnabled', event.target.checked)} />
               <span>Chạy luồng theo Proxy Reset (Số luồng / 1 proxy)</span>
-              <NumberField min={1} max={100} disabled={!settings.proxyResetEnabled} value={settings.proxyThreadsPerProxy} onChange={(value) => updateSetting('proxyThreadsPerProxy', Math.max(1, value || 1))} />
+              <NumberField min={1} max={100} disabled={runtimeActive || !settings.proxyResetEnabled} value={settings.proxyThreadsPerProxy} onChange={(value) => updateSetting('proxyThreadsPerProxy', Math.max(1, value || 1))} />
             </label>
             <textarea
               className="scenario-runner-proxy-input"
               value={proxyText}
-              disabled={!settings.proxyResetEnabled}
+              disabled={runtimeActive || !settings.proxyResetEnabled}
               onChange={(event) => setProxyText(event.target.value)}
               placeholder="Nhập proxy (mỗi dòng 1 proxy) hoặc để trống để tắt..."
             />
             <p className="scenario-runner-secret-note">Danh sách proxy chỉ giữ trong phiên UI hiện tại, không lưu localStorage.</p>
 
             <label className="scenario-runner-inline-option wide-runtime-option">
-              <input type="checkbox" checked={settings.dcomResetEnabled} onChange={(event) => updateSetting('dcomResetEnabled', event.target.checked)} />
+              <input type="checkbox" disabled={runtimeActive} checked={settings.dcomResetEnabled} onChange={(event) => updateSetting('dcomResetEnabled', event.target.checked)} />
               <span>Reset DCom khi chạy được (tài khoản)</span>
-              <NumberField min={1} max={100000} disabled={!settings.dcomResetEnabled} value={settings.dcomEveryAccounts} onChange={(value) => updateSetting('dcomEveryAccounts', Math.max(1, value || 1))} />
+              <NumberField min={1} max={100000} disabled={runtimeActive || !settings.dcomResetEnabled} value={settings.dcomEveryAccounts} onChange={(value) => updateSetting('dcomEveryAccounts', Math.max(1, value || 1))} />
             </label>
           </div>
 
           <div className="scenario-runner-actions-zone">
-            <div className="scenario-runner-runtime-note">Shell runner đã sẵn sàng · Start/Stop sẽ nối K3 runtime ở lô tiếp theo.</div>
+            <div className="scenario-runner-runtime-note">{runtimeNote}</div>
             <div className="scenario-runner-main-actions">
-              <button className="scenario-runner-start" type="button" disabled title="Chưa nối runtime">▶ Bắt đầu</button>
-              <button className="scenario-runner-stop" type="button" disabled title="Chưa nối runtime">■ Kết thúc</button>
+              <button className="scenario-runner-start" type="button" disabled={!canStart} title={canStart ? 'Chạy kịch bản đã chọn' : startHint} onClick={() => void startRuntime()}>▶ Bắt đầu</button>
+              <button className="scenario-runner-stop" type="button" disabled={!runtimeActive} title={runtimeActive ? 'Dừng phiên hiện tại' : 'Không có phiên đang chạy'} onClick={() => void stopRuntime()}>■ Kết thúc</button>
             </div>
             <div className="scenario-runner-bottom-fields">
-              <label><span>Start index</span><NumberField min={0} max={1000000} value={settings.startIndex} onChange={(value) => updateSetting('startIndex', Math.max(0, value || 0))} /></label>
-              <label><span>Limit/1 account</span><NumberField min={1} max={1000000} value={settings.limitPerAccount} onChange={(value) => updateSetting('limitPerAccount', Math.max(1, value || 1))} /></label>
+              <label><span>Start index</span><NumberField min={0} max={1000000} disabled={runtimeActive} value={settings.startIndex} onChange={(value) => updateSetting('startIndex', Math.max(0, value || 0))} /></label>
+              <label><span>Limit/1 account</span><NumberField min={1} max={1000000} disabled={runtimeActive} value={settings.limitPerAccount} onChange={(value) => updateSetting('limitPerAccount', Math.max(1, value || 1))} /></label>
             </div>
           </div>
         </section>

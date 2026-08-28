@@ -1,3 +1,5 @@
+const accountExecutionTails = new Map<number, Promise<void>>()
+
 function diagnostic(accountId: number, message: string): void {
   console.info(`[PAGE-AUTO scheduler] account=${accountId} ${message}`)
 }
@@ -7,8 +9,14 @@ export interface AccountExecutionLease {
   release: () => void
 }
 
+/**
+ * All coordinator instances in Electron Main share one account lock table.
+ * This keeps Scenario Runner, Page tasks, posting and checkpoint flows from
+ * driving the same Facebook account concurrently even when the services are
+ * registered from separate IPC modules.
+ */
 export class AccountExecutionCoordinator {
-  private readonly tails = new Map<number, Promise<void>>()
+  private readonly tails = accountExecutionTails
 
   tryAcquireLease(accountId: number): AccountExecutionLease | null {
     if (this.tails.has(accountId)) {
