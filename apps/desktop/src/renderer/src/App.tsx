@@ -4,6 +4,7 @@ import { AccountManager } from './accounts/AccountManager'
 import { HotmailAuto } from './hotmail/HotmailAuto'
 import { ExecutionLogs } from './logs/ExecutionLogs'
 import { PageBusinessWorkspace } from './page-tabs/PageBusinessWorkspace'
+import { RotationWindowStatusPanel } from './page-tabs/RotationWindowStatusPanel'
 import { SettingsPanel } from './settings/SettingsPanel'
 
 type RouteId = 'overview' | 'accounts' | 'hotmail' | 'page-tabs' | 'logs' | 'settings'
@@ -85,6 +86,8 @@ export function App() {
           <span className="sidebar-version">{appInfo ? `v${appInfo.version}` : 'Đang tải phiên bản...'}</span>
         </div>
       </aside>
+
+      {activeRoute === 'page-tabs' ? <RotationWindowStatusPanel /> : null}
 
       <main key={activeRoute} className={`${workspaceClass} workspace-transition`}>
         <header className="topbar"><div><p className="eyebrow">PAGE-AUTO / {activeRoute === 'hotmail' ? 'EMAIL' : activeRoute.toUpperCase()}</p><h1>{active.title}</h1></div><div className="version-badge">{appInfo ? `v${appInfo.version}` : 'Loading...'}</div></header>
