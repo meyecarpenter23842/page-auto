@@ -23,11 +23,34 @@ export const ROTATION_ACCOUNT_RUNTIME_STATUSES = [
 ] as const
 export type RotationAccountRuntimeStatus = (typeof ROTATION_ACCOUNT_RUNTIME_STATUSES)[number]
 
+export const ROTATION_WINDOW_RUNTIME_STATUSES = [
+  'upcoming',
+  'running',
+  'closed_account_cycle',
+  'closed_time_remaining_accounts'
+] as const
+export type RotationWindowRuntimeStatus = (typeof ROTATION_WINDOW_RUNTIME_STATUSES)[number]
+
 export interface RotationAccountRuntimeState {
   accountId: number
   status: RotationAccountRuntimeStatus
   message: string | null
   checkpointKind?: PostingCheckpointKind
+}
+
+export interface RotationWindowRuntimeState {
+  key: string
+  dateKey: string
+  dayOfWeek: number
+  startMinute: number
+  endMinute: number
+  sortOrder: number
+  status: RotationWindowRuntimeStatus
+  currentAccountId: number | null
+  slotsCompletedThisTurn: number
+  targetSlotsThisTurn: number
+  groupRemaining: number
+  closedAt: number | null
 }
 
 export interface PostingJobPreview {
@@ -60,4 +83,6 @@ export interface RotationRuntimeSnapshot {
   accountStates?: RotationAccountRuntimeState[]
   /** Current prepared Group post. Paths/secrets are intentionally excluded. */
   currentPostPreview?: PostingJobPreview | null
+  /** Persisted/live state of each configured schedule window for the current local day. */
+  windowStates?: RotationWindowRuntimeState[]
 }
