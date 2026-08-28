@@ -2,6 +2,7 @@ import type { Locator, Page } from 'playwright-core'
 import { describe, expect, it } from 'vitest'
 import {
   FACEBOOK_CHECKPOINT_CLASSIFY_TIMEOUT_MS,
+  classifyFacebookCommonChallengeSignals,
   detectFacebookCheckpointKind,
   facebookCheckpointKindFromText,
   facebookCheckpointKindFromUrl,
@@ -53,6 +54,60 @@ describe('Facebook checkpoint classifier', () => {
       .toBe('Cần xử lý thủ công. Phân loại: checkpoint 956 dạng khóa tím.')
     expect(withFacebookCheckpointKind('Cần xử lý thủ công.', 'disabled'))
       .toBe('Cần xử lý thủ công. Phân loại: tài khoản vô hiệu hóa.')
+  })
+
+  it('classifies common challenges from prompt + controls instead of relying on code 956', () => {
+    expect(classifyFacebookCommonChallengeSignals({
+      url: 'https://www.facebook.com/checkpoint/1234567890956/',
+      bodyText: 'We sent a code to your email. Enter the code to continue.',
+      codeInputVisible: true,
+      passwordInputVisible: false,
+      loginControlVisible: true
+    })).toEqual({ type: 'email_code_challenge', checkpointKind: '956' })
+
+    expect(classifyFacebookCommonChallengeSignals({
+      url: 'https://www.facebook.com/two_step_verification/two_factor/',
+      bodyText: 'Enter the code from your authentication app',
+      codeInputVisible: true,
+      passwordInputVisible: false,
+      loginControlVisible: true
+    })).toEqual({ type: 'totp_2fa_challenge' })
+  })
+
+  it('maps lock/disabled to operator-only security review and distinguishes cleared state', () => {
+    expect(classifyFacebookCommonChallengeSignals({
+      url: 'https://www.facebook.com/checkpoint/1234567890956/',
+      bodyText: 'Your account has been locked',
+      codeInputVisible: false,
+      passwordInputVisible: false,
+      loginControlVisible: false
+    })).toEqual({ type: 'security_review_required', checkpointKind: '956_purple_lock' })
+
+    expect(classifyFacebookCommonChallengeSignals({
+      url: 'https://www.facebook.com/checkpoint/disabled/',
+      bodyText: 'Your account has been disabled',
+      codeInputVisible: false,
+      passwordInputVisible: false,
+      loginControlVisible: false
+    })).toEqual({ type: 'security_review_required', checkpointKind: 'disabled' })
+
+    expect(classifyFacebookCommonChallengeSignals({
+      url: 'https://www.facebook.com/',
+      bodyText: 'Home',
+      codeInputVisible: false,
+      passwordInputVisible: false,
+      loginControlVisible: false
+    })).toEqual({ type: 'checkpoint_cleared' })
+  })
+
+  it('classifies identity review without navigating or treating it as login continuation', () => {
+    expect(classifyFacebookCommonChallengeSignals({
+      url: 'https://www.facebook.com/checkpoint/123/',
+      bodyText: 'Confirm your identity to continue',
+      codeInputVisible: false,
+      passwordInputVisible: false,
+      loginControlVisible: true
+    }).type).toBe('identity_verification_required')
   })
 
   it('classifies a known checkpoint immediately and keeps the default observation window at 10 seconds', async () => {

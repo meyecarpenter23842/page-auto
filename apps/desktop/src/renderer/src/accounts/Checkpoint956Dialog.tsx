@@ -42,7 +42,10 @@ function masterStatusLabel(account: AccountRecord | undefined): string {
 }
 
 function browserIsHeld(row: Checkpoint956Row | null): boolean {
-  return row?.state === 'waiting_manual' || row?.state === 'needs_login'
+  return row?.state === 'waiting_manual'
+    || row?.state === 'waiting'
+    || row?.state === 'needs_attention'
+    || row?.state === 'needs_login'
 }
 
 export function Checkpoint956Dialog({ accounts, onClose }: Checkpoint956DialogProps) {
@@ -55,12 +58,17 @@ export function Checkpoint956Dialog({ accounts, onClose }: Checkpoint956DialogPr
 
   const resolvedCount = useMemo(() => rows.filter((row) => row.state === 'resolved').length, [rows])
   const attentionCount = useMemo(() => rows.filter((row) => (
-    row.state === 'waiting_manual' || row.state === 'needs_login' || row.state === 'error'
+    row.state === 'waiting_manual'
+    || row.state === 'waiting'
+    || row.state === 'needs_attention'
+    || row.state === 'needs_login'
+    || row.state === 'checkpoint_timeout'
+    || row.state === 'error'
   )).length, [rows])
   const pendingCount = rows.filter((row) => row.state === 'pending').length
   const retryIndex = rows.findIndex((row) => canRecheckCheckpoint956(row.state))
   const retryRow = retryIndex >= 0 ? rows[retryIndex] ?? null : null
-  const heldIndex = retryRow && browserIsHeld(retryRow) ? retryIndex : -1
+  const heldIndex = rows.findIndex((row) => browserIsHeld(row))
   const stopIndex = activeRunIndex >= 0 ? activeRunIndex : heldIndex
   const stopRow = stopIndex >= 0 ? rows[stopIndex] ?? null : null
   const selectedRow = selectedIndex >= 0 ? rows[selectedIndex] ?? null : null
@@ -103,7 +111,8 @@ export function Checkpoint956Dialog({ accounts, onClose }: Checkpoint956DialogPr
     setStarted(true)
     setRunning(true)
     try {
-      for (let index = startIndex; index < rows.length; index += 1) {
+      const endIndex = firstAction === 'recheck' ? startIndex + 1 : rows.length
+      for (let index = startIndex; index < endIndex; index += 1) {
         const row = rows[index]
         if (!row) continue
         setSelectedIndex(index)
@@ -111,7 +120,9 @@ export function Checkpoint956Dialog({ accounts, onClose }: Checkpoint956DialogPr
         const action = index === startIndex ? firstAction : 'start'
         updateRow(index, {
           state: 'running',
-          message: action === 'recheck' ? 'Đang kiểm tra lại CP956…' : 'Đang mở account và kiểm tra CP956…'
+          message: action === 'recheck'
+            ? 'Đang inspect lại live challenge trước khi xác minh session…'
+            : 'Đang mở profile và inspect live challenge trước bootstrap…'
         })
         const result = await invoke(row, action)
         updateRow(index, { state: result.state, message: result.message })
@@ -126,26 +137,19 @@ export function Checkpoint956Dialog({ accounts, onClose }: Checkpoint956DialogPr
     }
   }
 
+  const stopRowByIndex = async (index: number): Promise<boolean> => {
+    const row = rows[index]
+    if (!row) return true
+    const result = await invoke(row, 'stop')
+    updateRow(index, { state: result.state, message: result.message })
+    return result.state === 'stopped'
+  }
+
   const stopCheckpoint956 = async (): Promise<boolean> => {
     if (stopping || !stopRow || stopIndex < 0) return !stopping && !running
     setStopping(true)
     try {
-      const result = await window.pageAuto.runFacebookCheckpoint282({
-        accountId: stopRow.accountId,
-        surface: 'desktop',
-        action: 'stop',
-        checkpointKind: '956',
-        evidenceFolder: null,
-        asset: null
-      })
-      updateRow(stopIndex, { state: result.state, message: result.message })
-      return result.state === 'stopped'
-    } catch (cause) {
-      updateRow(stopIndex, {
-        state: 'error',
-        message: `Không thể dừng CP956 an toàn: ${cause instanceof Error ? cause.message : String(cause)}`
-      })
-      return false
+      return await stopRowByIndex(stopIndex)
     } finally {
       setStopping(false)
     }
@@ -153,11 +157,20 @@ export function Checkpoint956Dialog({ accounts, onClose }: Checkpoint956DialogPr
 
   const requestClose = async () => {
     if (stopping) return
-    if (running || stopRow) {
-      const stopped = await stopCheckpoint956()
-      if (!stopped) return
+    setStopping(true)
+    try {
+      const indices = new Set<number>()
+      if (activeRunIndex >= 0) indices.add(activeRunIndex)
+      rows.forEach((row, index) => {
+        if (browserIsHeld(row)) indices.add(index)
+      })
+      for (const index of indices) {
+        if (!await stopRowByIndex(index)) return
+      }
+      onClose()
+    } finally {
+      setStopping(false)
     }
-    onClose()
   }
 
   const footerPrimary = () => {
@@ -196,7 +209,7 @@ export function Checkpoint956Dialog({ accounts, onClose }: Checkpoint956DialogPr
     <div
       className="modal-backdrop checkpoint282-backdrop"
       role="presentation"
-      onMouseDown={() => { if (!running && !stopRow && !stopping) onClose() }}
+      onMouseDown={() => { if (!running && heldIndex < 0 && !stopping) onClose() }}
     >
       <div className="modal checkpoint282-dialog" role="dialog" aria-modal="true" aria-labelledby="checkpoint956-title" onMouseDown={(event) => event.stopPropagation()}>
         <header className="checkpoint282-header">
@@ -205,7 +218,7 @@ export function Checkpoint956Dialog({ accounts, onClose }: Checkpoint956DialogPr
             <div>
               <p className="eyebrow">Facebook Common · Operator Workbench</p>
               <h2 id="checkpoint956-title">Checkpoint 956</h2>
-              <p className="checkpoint282-subtitle">Mở profile → xử lý CP956 trên browser → Kiểm tra lại → account kế tiếp</p>
+              <p className="checkpoint282-subtitle">Inspect live challenge → continuation an toàn → xác minh session → account kế tiếp</p>
             </div>
           </div>
           <div className="checkpoint282-header-right">
@@ -227,10 +240,10 @@ export function Checkpoint956Dialog({ accounts, onClose }: Checkpoint956DialogPr
               </div>
               <dl className="checkpoint282-run-facts">
                 <div><dt>Tài khoản</dt><dd>{accounts.length}</dd></div>
-                <div><dt>Thứ tự</dt><dd>Tuần tự</dd></div>
-                <div><dt>Browser</dt><dd>Giữ khi chờ thao tác</dd></div>
+                <div><dt>Thứ tự</dt><dd>Tuần tự · account chờ không chặn batch</dd></div>
+                <div><dt>Browser</dt><dd>Giữ có watchdog khi cần operator</dd></div>
               </dl>
-              <p className="checkpoint282-caption">Đúng CP956 thì giữ browser. Checkpoint khác được ghi nhận và bỏ qua account đó.</p>
+              <p className="checkpoint282-caption">Identity/security review chỉ pause account đó; PAGE-AUTO không bypass. Login/2FA/Email chỉ continuation bằng dữ liệu canonical của chính account.</p>
             </section>
 
             <section className="checkpoint282-panel-section checkpoint282-run-card">
@@ -290,7 +303,7 @@ export function Checkpoint956Dialog({ accounts, onClose }: Checkpoint956DialogPr
                 <div className="checkpoint282-detail-grid">
                   <div><span>Thông báo</span><strong title={selectedRow.message}>{selectedRow.message}</strong></div>
                   <div><span>Master</span><strong>{masterStatusLabel(selectedAccount)}</strong></div>
-                  <div><span>Browser</span><strong>{browserIsHeld(selectedRow) ? 'Đang giữ' : 'Không giữ'}</strong></div>
+                  <div><span>Browser</span><strong>{browserIsHeld(selectedRow) ? 'Đang giữ · có watchdog' : 'Không giữ'}</strong></div>
                 </div>
               ) : <div className="checkpoint282-detail-empty">Không có account.</div>}
             </section>
@@ -301,7 +314,7 @@ export function Checkpoint956Dialog({ accounts, onClose }: Checkpoint956DialogPr
           <div className="checkpoint282-footer-status">
             <i className={`checkpoint282-footer-indicator ${running ? 'is-running' : retryRow ? 'is-warning' : resolvedCount === rows.length && rows.length > 0 ? 'is-ok' : ''}`} />
             <div>
-              <strong>{running ? 'Đang chạy CP956' : retryRow ? `Đang chờ ${retryRow.uid}` : 'CP956 Workbench'}</strong>
+              <strong>{running ? 'Đang chạy CP956' : retryRow ? `Cần xử lý ${retryRow.uid}` : 'CP956 Workbench'}</strong>
               <span>{resolvedCount}/{rows.length} account đã xác minh</span>
             </div>
           </div>

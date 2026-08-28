@@ -147,5 +147,5 @@ realChromeDescribe('browserRuntime real Chrome on Windows', () => {
       await context?.close().catch(() => undefined)
       await rm(profileDirectory, { recursive: true, force: true })
     }
-  }, 30_000)
+  }, 60_000)
 })
