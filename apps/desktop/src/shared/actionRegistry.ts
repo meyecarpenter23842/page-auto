@@ -146,7 +146,6 @@ export const ACTION_REGISTRY: readonly ActionDefinition[] = [
   action('cancel_sent_friend_requests', 'friends', 'Hủy yêu cầu bạn bè đã gửi', 'Hủy các lời mời kết bạn đã gửi.', { actors: PROFILE_ONLY }),
   action('unfriend', 'friends', 'Hủy bạn bè', 'Hủy kết bạn.', { actors: PROFILE_ONLY }),
   action('friend_from_engagement', 'friends', 'Kết bạn người like comment', 'Kết bạn từ người đã like/comment.', { actors: PROFILE_ONLY }),
-  action('birthday_greeting', 'friends', 'Chúc mừng sinh nhật', 'Gửi lời chúc sinh nhật.', { actors: PROFILE_ONLY }),
 
   action('join_group', 'groups', 'Tham gia nhóm', 'Tham gia nhóm Facebook.'),
   action('invite_friends_to_group', 'groups', 'Mời bạn bè vào nhóm', 'Mời bạn bè tham gia nhóm.', { actors: PROFILE_ONLY }),
