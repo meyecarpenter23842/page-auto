@@ -221,6 +221,17 @@ export class BrowserProfileManager {
     account: AccountRecord,
     payload: Omit<FacebookCheckpoint282RunPayload, 'accountId'>
   ): Promise<FacebookCheckpoint282Result> {
+    const existing = this.workers.get(account.id)
+    if (existing?.pending) {
+      return {
+        accountId: account.id,
+        uid: account.uid,
+        state: 'error',
+        surface: payload.surface,
+        message: 'Browser account đang khởi động hoặc kiểm tra session; chờ hoàn tất rồi chạy CP282 lại.'
+      }
+    }
+
     const opened = await this.open(account)
     if (opened.status === 'error') {
       return {

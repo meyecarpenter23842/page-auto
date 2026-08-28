@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { facebookCheckpoint282State, facebookCheckpointSurfaceUrl } from './facebookCheckpoint282'
+import {
+  facebookCheckpoint282IdentityAccepted,
+  facebookCheckpoint282State,
+  facebookCheckpointSurfaceUrl
+} from './facebookCheckpoint282'
 
 describe('Facebook checkpoint 282 operator flow helpers', () => {
   it('moves only Facebook checkpoint URLs between supported surfaces while preserving the challenge path', () => {
@@ -23,5 +27,12 @@ describe('Facebook checkpoint 282 operator flow helpers', () => {
     expect(facebookCheckpoint282State('956')).toBe('different_checkpoint')
     expect(facebookCheckpoint282State('unknown')).toBe('different_checkpoint')
     expect(facebookCheckpoint282State(null)).toBe('needs_login')
+  })
+
+  it('uses the same identity acceptance policy as the normal Session Common flow', () => {
+    expect(facebookCheckpoint282IdentityAccepted('match')).toBe(true)
+    expect(facebookCheckpoint282IdentityAccepted('unverifiable')).toBe(true)
+    expect(facebookCheckpoint282IdentityAccepted('mismatch')).toBe(false)
+    expect(facebookCheckpoint282IdentityAccepted('missing')).toBe(false)
   })
 })
