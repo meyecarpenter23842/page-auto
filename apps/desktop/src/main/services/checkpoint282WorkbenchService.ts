@@ -60,7 +60,7 @@ function accountRow(
   }
 
   const proxyLevel: FacebookCheckpoint282PreflightLevel = proxy === 'invalid' ? 'blocked' : 'ok'
-  if (proxy === 'invalid') messages.push(proxyResolution.message)
+  if (proxyResolution.status === 'invalid') messages.push(proxyResolution.message)
 
   let imageLevel: FacebookCheckpoint282PreflightLevel = 'ok'
   if (image.state === 'source') {
