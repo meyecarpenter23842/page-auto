@@ -15,6 +15,10 @@ import type {
 import type { FacebookSessionAccount, FacebookSessionResult } from './facebookSession'
 import { BrowserWindowLayoutManager } from './browserWindowLayoutManager'
 import {
+  consumeCheckpoint282StaleResult,
+  markCheckpoint282ResultStale
+} from './checkpoint282ResultGuard'
+import {
   clearAllManagedBrowserEndpoints,
   clearManagedBrowserEndpoint,
   setManagedBrowserEndpoint
@@ -59,6 +63,7 @@ interface BrowserWorkerEntry {
   process: UtilityProcess
   pending: PendingBootstrap | null
   checkpoint282Pending: PendingCheckpoint282 | null
+  checkpoint282StaleResultCount: number
   closing: boolean
   closePromise: Promise<void> | null
 }
@@ -161,6 +166,7 @@ export class BrowserProfileManager {
         process: worker,
         pending: null,
         checkpoint282Pending: null,
+        checkpoint282StaleResultCount: 0,
         closing: false,
         closePromise: null
       }
@@ -252,6 +258,7 @@ export class BrowserProfileManager {
       const timer = setTimeout(() => {
         if (!entry.checkpoint282Pending || entry.checkpoint282Pending.resolve !== resolve) return
         entry.checkpoint282Pending = null
+        entry.checkpoint282StaleResultCount = markCheckpoint282ResultStale(entry.checkpoint282StaleResultCount)
         resolve({
           accountId: account.id,
           uid: account.uid,
@@ -479,6 +486,10 @@ export class BrowserProfileManager {
     }
 
     if (isCheckpoint282ResultMessage(message) && message.accountId === accountId) {
+      const staleDecision = consumeCheckpoint282StaleResult(entry.checkpoint282StaleResultCount)
+      entry.checkpoint282StaleResultCount = staleDecision.remaining
+      if (staleDecision.ignore) return
+
       const pending = entry.checkpoint282Pending
       if (!pending) return
       clearTimeout(pending.timer)
