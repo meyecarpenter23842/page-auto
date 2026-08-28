@@ -7,24 +7,24 @@ import { Checkpoint282RuntimeController, type Checkpoint282BrowserRuntime } from
 
 const account = { id: 7, uid: '123456' } as AccountRecord
 
-function probe(state: FacebookCheckpoint282Result['state'], kind?: FacebookCheckpoint282Result['checkpointKind']): FacebookCheckpoint282Result {
+function cp956(state: FacebookCheckpoint282Result['state']): FacebookCheckpoint282Result {
   return {
     accountId: account.id,
     uid: account.uid,
     state,
     surface: 'desktop',
-    message: state,
-    ...(kind ? { checkpointKind: kind } : {})
+    checkpointKind: '956',
+    challengeType: state === 'resolved' ? 'checkpoint_cleared' : 'unsupported_checkpoint',
+    message: state
   }
 }
 
 describe('CP956 workbench runtime', () => {
-  it('holds the account lease on CP956 and releases it after a successful recheck', async () => {
+  it('holds the account lease on a typed CP956 waiting state and releases it after successful recheck', async () => {
     const coordinator = new AccountExecutionCoordinator()
     const browser: Checkpoint282BrowserRuntime = {
-      runCheckpoint282: vi.fn(async (_account, payload) => payload.action === 'start'
-        ? probe('different_checkpoint', '956')
-        : probe('resolved')),
+      runCheckpoint282: vi.fn(async () => cp956('error')),
+      runCheckpoint956: vi.fn(async (_account, payload) => payload.action === 'start' ? cp956('waiting') : cp956('resolved')),
       closeAccount: vi.fn(async () => undefined)
     }
     const controller = new Checkpoint282RuntimeController(
@@ -40,7 +40,8 @@ describe('CP956 workbench runtime', () => {
       checkpointKind: '956',
       asset: null
     })
-    expect(first.state).toBe('waiting_manual')
+    expect(first.state).toBe('waiting')
+    expect(browser.runCheckpoint282).not.toHaveBeenCalled()
 
     let sameAccountEntered = false
     const queued = coordinator.run(account.id, async () => {
@@ -66,7 +67,8 @@ describe('CP956 workbench runtime', () => {
   it('stops a held CP956 browser and releases the account', async () => {
     const coordinator = new AccountExecutionCoordinator()
     const browser: Checkpoint282BrowserRuntime = {
-      runCheckpoint282: vi.fn(async () => probe('different_checkpoint', '956')),
+      runCheckpoint282: vi.fn(async () => cp956('error')),
+      runCheckpoint956: vi.fn(async () => cp956('waiting')),
       closeAccount: vi.fn(async () => undefined)
     }
     const controller = new Checkpoint282RuntimeController(

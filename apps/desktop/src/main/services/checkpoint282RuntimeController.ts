@@ -8,6 +8,8 @@ import type { BrowserProfileManager } from '../browser/browserProfileManager'
 import { AccountExecutionCoordinator, type AccountExecutionLease } from './accountExecutionCoordinator'
 import { Checkpoint282RunLifecycle } from './checkpoint282RunLifecycle'
 
+export const CHECKPOINT956_HOLD_TIMEOUT_MS = 10 * 60_000
+
 function checkpointKind(payload: FacebookCheckpoint282RunPayload): FacebookCheckpointWorkbenchKind {
   return payload.checkpointKind ?? '282'
 }
@@ -36,93 +38,68 @@ function stoppedResult(account: AccountRecord, payload: FacebookCheckpoint282Run
   }
 }
 
-export function mapCheckpoint956ProbeResult(
-  account: AccountRecord,
-  payload: FacebookCheckpoint282RunPayload,
-  probe: FacebookCheckpoint282Result
-): FacebookCheckpoint282Result {
-  if (probe.state === 'resolved') {
-    return {
-      accountId: account.id,
-      uid: account.uid,
-      state: 'resolved',
-      surface: payload.surface,
-      checkpointKind: '956',
-      message: 'CP956 đã được xử lý; Facebook Common đã xác minh lại session/account.',
-      ...(probe.evidencePath ? { evidencePath: probe.evidencePath } : {})
-    }
-  }
-
-  if (probe.state === 'different_checkpoint' && probe.checkpointKind === '956') {
-    return {
-      accountId: account.id,
-      uid: account.uid,
-      state: 'waiting_manual',
-      surface: payload.surface,
-      checkpointKind: '956',
-      message: 'Đã nhận diện CP956. Hoàn tất bước Facebook yêu cầu trên browser rồi bấm Kiểm tra lại.'
-    }
-  }
-
-  if (probe.state === 'waiting_manual') {
-    return {
-      accountId: account.id,
-      uid: account.uid,
-      state: 'different_checkpoint',
-      surface: payload.surface,
-      checkpointKind: probe.checkpointKind ?? '282',
-      message: `Account đang ở checkpoint ${probe.checkpointKind ?? '282'}, không chạy flow CP956.`
-    }
-  }
-
-  if (probe.state === 'different_checkpoint') {
-    return {
-      accountId: account.id,
-      uid: account.uid,
-      state: 'different_checkpoint',
-      surface: payload.surface,
-      ...(probe.checkpointKind ? { checkpointKind: probe.checkpointKind } : {}),
-      message: `Account đang ở checkpoint ${probe.checkpointKind ?? 'khác'}, không chạy flow CP956.`
-    }
-  }
-
-  if (probe.state === 'needs_login') {
-    return {
-      accountId: account.id,
-      uid: account.uid,
-      state: 'needs_login',
-      surface: payload.surface,
-      checkpointKind: '956',
-      message: 'Session chưa hợp lệ. Hoàn tất đăng nhập hợp lệ trên browser rồi bấm Kiểm tra lại CP956.'
-    }
-  }
-
+function timeoutResult(account: AccountRecord, payload: FacebookCheckpoint282RunPayload): FacebookCheckpoint282Result {
   return {
-    ...probe,
+    accountId: account.id,
+    uid: account.uid,
+    state: 'checkpoint_timeout',
+    surface: payload.surface,
     checkpointKind: '956',
-    message: probe.state === 'error' ? `CP956: ${probe.message}` : probe.message
+    message: 'Phiên giữ live CP956 đã hết thời gian an toàn; browser/lease đã được đóng và giải phóng. Có thể chạy lại account.'
+  }
+}
+
+function browserClosedResult(account: AccountRecord, payload: FacebookCheckpoint282RunPayload): FacebookCheckpoint282Result {
+  return {
+    accountId: account.id,
+    uid: account.uid,
+    state: 'error',
+    surface: payload.surface,
+    checkpointKind: '956',
+    message: 'Browser CP956 đã đóng/crash trong lúc chờ operator; lease đã được giải phóng. Có thể chạy lại account.'
   }
 }
 
 export interface Checkpoint282BrowserRuntime {
   runCheckpoint282: BrowserProfileManager['runCheckpoint282']
+  runCheckpoint956: BrowserProfileManager['runCheckpoint956']
   closeAccount: BrowserProfileManager['closeAccount']
+  onAccountClosed?: BrowserProfileManager['onAccountClosed']
 }
 
 export class Checkpoint282RuntimeController {
   private readonly leases = new Map<number, AccountExecutionLease>()
   private readonly activeRuns = new Set<number>()
   private readonly stopRequested = new Set<number>()
+  private readonly holdTimers = new Map<number, NodeJS.Timeout>()
+  private readonly holdExpired = new Set<number>()
+  private readonly browserClosedWhileHeld = new Set<number>()
+  private readonly expectedClose = new Set<number>()
+  private readonly removeBrowserClosedListener: (() => void) | null
 
   constructor(
     private readonly accountExecution: AccountExecutionCoordinator,
     private readonly lifecycle: Checkpoint282RunLifecycle,
-    private readonly browser: Checkpoint282BrowserRuntime
-  ) {}
+    private readonly browser: Checkpoint282BrowserRuntime,
+    private readonly checkpoint956HoldTimeoutMs = CHECKPOINT956_HOLD_TIMEOUT_MS
+  ) {
+    this.removeBrowserClosedListener = this.browser.onAccountClosed?.((accountId) => {
+      this.handleBrowserClosed(accountId)
+    }) ?? null
+  }
 
   async run(account: AccountRecord, payload: FacebookCheckpoint282RunPayload): Promise<FacebookCheckpoint282Result> {
     const target = checkpointKind(payload)
     if (payload.action === 'stop') return this.stop(account, payload)
+
+    if (target === '956' && payload.action === 'recheck') {
+      if (this.holdExpired.delete(account.id)) {
+        this.browserClosedWhileHeld.delete(account.id)
+        return timeoutResult(account, payload)
+      }
+      if (this.browserClosedWhileHeld.delete(account.id)) return browserClosedResult(account, payload)
+    }
+
     if (this.activeRuns.has(account.id)) {
       return {
         accountId: account.id,
@@ -141,19 +118,28 @@ export class Checkpoint282RuntimeController {
       this.leases.set(account.id, lease)
     }
 
+    this.clearHoldTimer(account.id)
     this.activeRuns.add(account.id)
     let result: FacebookCheckpoint282Result
     try {
       if (target === '956') {
-        const probe = await this.browser.runCheckpoint282(account, {
-          surface: payload.surface,
-          action: payload.action,
-          evidenceFolder: payload.evidenceFolder ?? null,
-          asset: null
-        })
-        result = this.stopRequested.has(account.id)
-          ? stoppedResult(account, payload)
-          : mapCheckpoint956ProbeResult(account, payload, probe)
+        try {
+          result = await this.browser.runCheckpoint956(account, {
+            surface: payload.surface,
+            action: payload.action,
+            evidenceFolder: payload.evidenceFolder ?? null
+          })
+        } catch (cause) {
+          result = {
+            accountId: account.id,
+            uid: account.uid,
+            state: 'error',
+            surface: payload.surface,
+            checkpointKind: '956',
+            message: cause instanceof Error ? cause.message : String(cause)
+          }
+        }
+        if (this.stopRequested.has(account.id)) result = stoppedResult(account, payload)
       } else {
         result = await this.lifecycle.execute(
           account,
@@ -171,12 +157,64 @@ export class Checkpoint282RuntimeController {
       this.stopRequested.delete(account.id)
     }
 
-    const keepBrowserForOperator = result.state === 'waiting_manual' || result.state === 'needs_login'
-    if (!keepBrowserForOperator) await this.releaseAccount(account.id)
+    const keepBrowserForOperator = target === '956'
+      ? result.state === 'waiting' || result.state === 'needs_attention' || result.state === 'needs_login'
+      : result.state === 'waiting_manual' || result.state === 'needs_login'
+
+    if (!keepBrowserForOperator) {
+      await this.releaseAccount(account.id)
+      return result
+    }
+
+    if (target === '956') {
+      const holdExpiresAt = Date.now() + Math.max(1_000, this.checkpoint956HoldTimeoutMs)
+      this.armHoldWatchdog(account.id)
+      return { ...result, holdExpiresAt }
+    }
     return result
   }
 
+  dispose(): void {
+    this.removeBrowserClosedListener?.()
+    for (const timer of this.holdTimers.values()) clearTimeout(timer)
+    this.holdTimers.clear()
+    for (const lease of this.leases.values()) lease.release()
+    this.leases.clear()
+  }
+
+  private armHoldWatchdog(accountId: number): void {
+    this.clearHoldTimer(accountId)
+    const timeoutMs = Math.max(1_000, this.checkpoint956HoldTimeoutMs)
+    const timer = setTimeout(() => {
+      if (!this.leases.has(accountId) || this.activeRuns.has(accountId)) return
+      this.holdTimers.delete(accountId)
+      this.holdExpired.add(accountId)
+      this.browserClosedWhileHeld.delete(accountId)
+      void this.releaseAccount(accountId)
+    }, timeoutMs)
+    this.holdTimers.set(accountId, timer)
+  }
+
+  private clearHoldTimer(accountId: number): void {
+    const timer = this.holdTimers.get(accountId)
+    if (!timer) return
+    clearTimeout(timer)
+    this.holdTimers.delete(accountId)
+  }
+
+  private handleBrowserClosed(accountId: number): void {
+    if (this.expectedClose.has(accountId) || this.activeRuns.has(accountId)) return
+    if (!this.leases.has(accountId)) return
+    this.clearHoldTimer(accountId)
+    this.browserClosedWhileHeld.add(accountId)
+    this.releaseLeaseOnly(accountId)
+  }
+
   private async stop(account: AccountRecord, payload: FacebookCheckpoint282RunPayload): Promise<FacebookCheckpoint282Result> {
+    this.clearHoldTimer(account.id)
+    this.holdExpired.delete(account.id)
+    this.browserClosedWhileHeld.delete(account.id)
+
     if (this.activeRuns.has(account.id)) {
       this.stopRequested.add(account.id)
       await this.browser.closeAccount(account.id)
@@ -191,15 +229,21 @@ export class Checkpoint282RuntimeController {
       : stoppedResult(account, payload)
   }
 
+  private releaseLeaseOnly(accountId: number): void {
+    const lease = this.leases.get(accountId)
+    if (!lease) return
+    this.leases.delete(accountId)
+    lease.release()
+  }
+
   private async releaseAccount(accountId: number): Promise<void> {
+    this.clearHoldTimer(accountId)
+    this.expectedClose.add(accountId)
     try {
       await this.browser.closeAccount(accountId)
     } finally {
-      const lease = this.leases.get(accountId)
-      if (lease) {
-        this.leases.delete(accountId)
-        lease.release()
-      }
+      this.expectedClose.delete(accountId)
+      this.releaseLeaseOnly(accountId)
     }
   }
 }

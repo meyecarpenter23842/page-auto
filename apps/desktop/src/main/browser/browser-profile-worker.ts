@@ -10,6 +10,8 @@ import type {
   FacebookCheckpointSurface
 } from '../../shared/facebookCheckpoint'
 import type { PostingProxyConfig } from '../../shared/posting'
+import { createEmailCodeWorkerRpc } from '../email/emailCodeWorkerRpc'
+import { runFacebookCommonChallengeRuntime } from '../facebook/facebookCommonChallengeRuntime'
 import { inspectFacebookAccountIdentity } from './facebookAccountIdentity'
 import { readFacebookDisplayName } from './facebookProfileInfo'
 import {
@@ -38,13 +40,16 @@ interface BrowserLaunchConfig {
   userAgent?: string
 }
 
-interface BootstrapCommand {
-  type: 'bootstrap'
+interface ContextCommand {
   account: FacebookSessionAccount
   browser: BrowserSettings
-  session: SessionSettings
   launch?: BrowserLaunchConfig
   placement: BrowserWindowPlacement | null
+}
+
+interface BootstrapCommand extends ContextCommand {
+  type: 'bootstrap'
+  session: SessionSettings
 }
 
 interface Checkpoint282Command {
@@ -54,6 +59,14 @@ interface Checkpoint282Command {
   surface: FacebookCheckpointSurface
   action: FacebookCheckpoint282Action
   sessionWasValid: boolean
+  evidenceFolder?: string | null
+}
+
+interface Checkpoint956Command extends ContextCommand {
+  type: 'checkpoint-956'
+  session: SessionSettings
+  surface: FacebookCheckpointSurface
+  action: FacebookCheckpoint282Action
   evidenceFolder?: string | null
 }
 
@@ -81,6 +94,10 @@ interface Checkpoint282ResultMessage extends FacebookCheckpoint282Result {
   type: 'checkpoint-282-result'
 }
 
+interface Checkpoint956ResultMessage extends FacebookCheckpoint282Result {
+  type: 'checkpoint-956-result'
+}
+
 interface BrowserClosedMessage {
   type: 'browser-closed'
 }
@@ -105,6 +122,18 @@ function checkpointError(command: Checkpoint282Command, error: unknown): Checkpo
     uid: command.account.uid,
     state: 'error',
     surface: command.surface,
+    message: error instanceof Error ? error.message : String(error)
+  }
+}
+
+function checkpoint956Error(command: Checkpoint956Command, error: unknown): Checkpoint956ResultMessage {
+  return {
+    type: 'checkpoint-956-result',
+    accountId: command.account.id,
+    uid: command.account.uid,
+    state: 'error',
+    surface: command.surface,
+    checkpointKind: '956',
     message: error instanceof Error ? error.message : String(error)
   }
 }
@@ -137,12 +166,12 @@ function commandFromMessage(event: unknown): BootstrapCommand | null {
   const candidate = payload as Partial<BootstrapCommand>
   if (candidate.type !== 'bootstrap' || !candidate.account || !candidate.browser || !candidate.session) return null
   return {
-    ...candidate,
     type: 'bootstrap',
     account: candidate.account,
     browser: candidate.browser,
     session: candidate.session,
-    placement: candidate.placement ?? null
+    placement: candidate.placement ?? null,
+    ...(candidate.launch ? { launch: candidate.launch } : {})
   }
 }
 
@@ -166,6 +195,31 @@ function checkpoint282CommandFromMessage(event: unknown): Checkpoint282Command |
     action: candidate.action,
     sessionWasValid: candidate.sessionWasValid,
     evidenceFolder: candidate.evidenceFolder ?? null
+  }
+}
+
+function checkpoint956CommandFromMessage(event: unknown): Checkpoint956Command | null {
+  const payload = messagePayload(event)
+  if (!payload || typeof payload !== 'object') return null
+  const candidate = payload as Partial<Checkpoint956Command>
+  if (
+    candidate.type !== 'checkpoint-956'
+    || !candidate.account
+    || !candidate.browser
+    || !candidate.session
+    || !candidate.surface
+    || !candidate.action
+  ) return null
+  return {
+    type: 'checkpoint-956',
+    account: candidate.account,
+    browser: candidate.browser,
+    session: candidate.session,
+    surface: candidate.surface,
+    action: candidate.action,
+    evidenceFolder: candidate.evidenceFolder ?? null,
+    placement: candidate.placement ?? null,
+    ...(candidate.launch ? { launch: candidate.launch } : {})
   }
 }
 
@@ -200,6 +254,9 @@ async function resolveCdpEndpoint(profileDirectory: string): Promise<string | nu
 async function run(): Promise<void> {
   const profileDirectory = process.argv[2]
   if (!profileDirectory) throw new Error('Missing browser profile directory.')
+  const parentPort = process.parentPort
+  if (!parentPort) throw new Error('Browser profile worker phải chạy dưới Electron utilityProcess.')
+  const emailCodeRpc = createEmailCodeWorkerRpc((message) => parentPort.postMessage(message))
 
   let context: BrowserContext | null = null
   let cdpEndpoint: string | null = null
@@ -241,6 +298,7 @@ async function run(): Promise<void> {
 
   const closeBrowserAndExit = async (): Promise<void> => {
     stopWatchingResize()
+    emailCodeRpc.dispose()
     if (lifetimeTimer) {
       clearTimeout(lifetimeTimer)
       lifetimeTimer = null
@@ -255,7 +313,7 @@ async function run(): Promise<void> {
     setTimeout(() => process.exit(0), 25)
   }
 
-  const ensureContext = async (command: BootstrapCommand): Promise<BrowserContext> => {
+  const ensureContext = async (command: ContextCommand): Promise<BrowserContext> => {
     if (context) {
       const activeContext = context
       if (!manualResizeDetached) {
@@ -338,10 +396,17 @@ async function run(): Promise<void> {
       if (closing) return
       closing = true
       const message: BrowserClosedMessage = { type: 'browser-closed' }
-      process.parentPort?.postMessage(message)
+      parentPort.postMessage(message)
+      emailCodeRpc.dispose()
       setTimeout(() => process.exit(0), 25)
     })
     return opened
+  }
+
+  const postReady = (accountId: number): void => {
+    if (!cdpEndpoint) return
+    const ready: BrowserReadyMessage = { type: 'browser-ready', accountId, cdpEndpoint }
+    parentPort.postMessage(ready)
   }
 
   const handleCheckpoint282 = async (command: Checkpoint282Command): Promise<Checkpoint282ResultMessage> => {
@@ -377,9 +442,7 @@ async function run(): Promise<void> {
         const safeUid = command.account.uid.replace(/[^a-zA-Z0-9._-]/g, '_') || `account-${command.account.id}`
         await mkdir(folder, { recursive: true })
         evidencePath = join(folder, `${safeUid}.png`)
-        await page.screenshot({ path: evidencePath }).catch(() => {
-          evidencePath = null
-        })
+        await page.screenshot({ path: evidencePath }).catch(() => { evidencePath = null })
       }
 
       return {
@@ -403,9 +466,7 @@ async function run(): Promise<void> {
           waitUntil: 'domcontentloaded',
           timeout: command.browser.navigationTimeoutMs
         }).catch(() => undefined)
-        if (command.browser.pageSettleDelayMs > 0) {
-          await page.waitForTimeout(command.browser.pageSettleDelayMs)
-        }
+        if (command.browser.pageSettleDelayMs > 0) await page.waitForTimeout(command.browser.pageSettleDelayMs)
         kind = await detectFacebookCheckpointKind(page).catch(() => kind)
       }
     }
@@ -443,7 +504,50 @@ async function run(): Promise<void> {
     }
   }
 
-  process.parentPort?.on('message', (event) => {
+  const handleCheckpoint956 = async (command: Checkpoint956Command): Promise<Checkpoint956ResultMessage> => {
+    const activeContext = await ensureContext(command)
+    postReady(command.account.id)
+    const page = activeContext.pages()[0] ?? await activeContext.newPage()
+    if (!manualResizeDetached) {
+      await applyBrowserWindowPlacement(activeContext, page, activePlacement).catch(() => undefined)
+    }
+
+    // Critical invariant: Common Runtime inspects this exact live page before it
+    // is allowed to call Session Common/bootstrap and navigate anywhere.
+    const common = await runFacebookCommonChallengeRuntime({
+      context: activeContext,
+      page,
+      account: command.account,
+      locale: command.session.facebookLocale,
+      emailCodeProvider: emailCodeRpc.provider
+    })
+
+    let evidencePath: string | null = null
+    if (command.action === 'recheck' && common.state === 'resolved' && command.evidenceFolder?.trim()) {
+      const folder = command.evidenceFolder.trim()
+      const safeUid = command.account.uid.replace(/[^a-zA-Z0-9._-]/g, '_') || `account-${command.account.id}`
+      await mkdir(folder, { recursive: true })
+      evidencePath = join(folder, `${safeUid}-cp956.png`)
+      await page.screenshot({ path: evidencePath }).catch(() => { evidencePath = null })
+    }
+
+    return {
+      type: 'checkpoint-956-result',
+      accountId: command.account.id,
+      uid: command.account.uid,
+      state: common.state,
+      surface: command.surface,
+      checkpointKind: common.checkpointKind ?? '956',
+      challengeType: common.challengeType,
+      message: common.message,
+      ...(evidencePath ? { evidencePath } : {})
+    }
+  }
+
+  parentPort.on('message', (event) => {
+    const payload = messagePayload(event)
+    if (emailCodeRpc.handleMessage(payload)) return
+
     if (isShutdownCommand(event)) {
       if (closing) return
       closing = true
@@ -473,6 +577,20 @@ async function run(): Promise<void> {
       return
     }
 
+    const checkpoint956Command = checkpoint956CommandFromMessage(event)
+    if (checkpoint956Command && !closing) {
+      queue = queue.then(async () => {
+        let result: Checkpoint956ResultMessage
+        try {
+          result = await handleCheckpoint956(checkpoint956Command)
+        } catch (error) {
+          result = checkpoint956Error(checkpoint956Command, error)
+        }
+        parentPort.postMessage(result)
+      })
+      return
+    }
+
     const checkpointCommand = checkpoint282CommandFromMessage(event)
     if (checkpointCommand && !closing) {
       queue = queue.then(async () => {
@@ -482,7 +600,7 @@ async function run(): Promise<void> {
         } catch (error) {
           result = checkpointError(checkpointCommand, error)
         }
-        process.parentPort?.postMessage(result)
+        parentPort.postMessage(result)
       })
       return
     }
@@ -494,14 +612,7 @@ async function run(): Promise<void> {
       let result: SessionResultMessage
       try {
         const activeContext = await ensureContext(command)
-        if (cdpEndpoint) {
-          const ready: BrowserReadyMessage = {
-            type: 'browser-ready',
-            accountId: command.account.id,
-            cdpEndpoint
-          }
-          process.parentPort?.postMessage(ready)
-        }
+        postReady(command.account.id)
 
         const page = activeContext.pages()[0] ?? await activeContext.newPage()
         if (!manualResizeDetached) {
@@ -524,10 +635,7 @@ async function run(): Promise<void> {
       } catch (error) {
         result = sessionError(command.account.id, error)
       }
-      process.parentPort?.postMessage({
-        ...result,
-        ...(cdpEndpoint ? { cdpEndpoint } : {})
-      })
+      parentPort.postMessage({ ...result, ...(cdpEndpoint ? { cdpEndpoint } : {}) })
     })
   })
 }
