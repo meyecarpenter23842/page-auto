@@ -21,6 +21,7 @@ export const POSTING_ERROR_CODES = [
   'browser_launch_failed',
   'page_navigation_failed',
   'page_identity_unconfirmed',
+  'profile_identity_unconfirmed',
   'group_navigation_failed',
   'group_unavailable',
   'composer_not_found',
@@ -40,7 +41,7 @@ export type PostingErrorCode = (typeof POSTING_ERROR_CODES)[number]
 export const POSTING_SESSION_STATES = ['valid', 'needs_login', 'verification_required'] as const
 export type PostingSessionState = (typeof POSTING_SESSION_STATES)[number]
 export type PostingSessionPhase = 'before_run' | 'after_run'
-export const POSTING_CHECKPOINT_KINDS = ['282', '956', 'unknown'] as const
+export const POSTING_CHECKPOINT_KINDS = ['282', '956', '956_purple_lock', 'disabled', 'unknown'] as const
 export type PostingCheckpointKind = (typeof POSTING_CHECKPOINT_KINDS)[number]
 
 export interface PostingSessionValidation {

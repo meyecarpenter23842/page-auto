@@ -1,4 +1,4 @@
-export type BrowserSlotRuntimeOwner = 'profile' | 'posting'
+export type BrowserSlotRuntimeOwner = 'profile' | 'posting' | 'scenario'
 
 export interface BrowserSlotRuntimeAssignment {
   accountId: number

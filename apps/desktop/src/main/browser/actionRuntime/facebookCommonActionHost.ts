@@ -9,6 +9,7 @@ import {
 
 export interface FacebookCommonActionHooks {
   ensureSession(context: ActionPreparationContext): Promise<FacebookSessionResult>
+  ensureProfile(context: ActionPreparationContext): Promise<PostingJobResult>
   switchPage(context: ActionPreparationContext, pageUid: string): Promise<PostingJobResult>
 }
 
@@ -26,7 +27,7 @@ function sessionBlock(result: FacebookSessionResult): ActionPreparationResult | 
   }
 }
 
-function pageSwitchBlock(result: PostingJobResult): ActionPreparationResult | null {
+function actorIdentityBlock(result: PostingJobResult, actor: 'profile' | 'page'): ActionPreparationResult | null {
   if (result.status === 'success') return null
   if (result.code === 'verification_required') {
     return {
@@ -40,7 +41,13 @@ function pageSwitchBlock(result: PostingJobResult): ActionPreparationResult | nu
       result: actionRuntimeResult('needs_attention', 'session_needs_login', result.message)
     }
   }
-  if (result.code === 'page_identity_unconfirmed') {
+  if (actor === 'profile' && result.code === 'profile_identity_unconfirmed') {
+    return {
+      status: 'blocked',
+      result: actionRuntimeResult('failed', 'profile_identity_unconfirmed', result.message)
+    }
+  }
+  if (actor === 'page' && result.code === 'page_identity_unconfirmed') {
     return {
       status: 'blocked',
       result: actionRuntimeResult('failed', 'page_identity_unconfirmed', result.message)
@@ -54,7 +61,7 @@ function pageSwitchBlock(result: PostingJobResult): ActionPreparationResult | nu
   }
   return {
     status: 'blocked',
-    result: actionRuntimeResult('failed', 'page_switch_failed', result.message)
+    result: actionRuntimeResult('failed', actor === 'profile' ? 'profile_identity_unconfirmed' : 'page_switch_failed', result.message)
   }
 }
 
@@ -68,7 +75,11 @@ export class FacebookCommonActionHost implements ActionPreparationHost {
     if (blockedSession) return blockedSession
 
     if (context.request.actor.kind === 'profile') {
-      context.log('info', 'Session profile hợp lệ; không cần switch Page.')
+      context.log('debug', 'Session hợp lệ; xác minh actor Profile bằng c_user/i_user.')
+      const profileResult = await this.hooks.ensureProfile(context)
+      const blockedProfile = actorIdentityBlock(profileResult, 'profile')
+      if (blockedProfile) return blockedProfile
+      context.log('info', 'Actor Profile đã được common runtime xác minh.')
       return { status: 'ready' }
     }
 
@@ -82,7 +93,7 @@ export class FacebookCommonActionHost implements ActionPreparationHost {
 
     context.log('debug', 'Session hợp lệ; chuyển sang Page bằng common Page identity runtime.')
     const switchResult = await this.hooks.switchPage(context, pageUid)
-    const blockedSwitch = pageSwitchBlock(switchResult)
+    const blockedSwitch = actorIdentityBlock(switchResult, 'page')
     if (blockedSwitch) return blockedSwitch
 
     context.log('info', 'Page identity đã được common runtime xác minh.')

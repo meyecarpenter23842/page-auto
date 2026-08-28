@@ -21,8 +21,13 @@ export interface BrowserPlacementSnapshot {
   overflowCount: number
 }
 
+// Browser placement is a global desktop concern. Different IPC/runtime services may own
+// separate BrowserWindowLayoutManager instances, but they must coordinate one slot pool
+// so Profile, Page posting and Scenario Chrome never tile on top of each other.
+const SHARED_BROWSER_SLOT_POOL = new BrowserSlotPool()
+
 export class BrowserWindowLayoutManager {
-  private readonly slots = new BrowserSlotPool()
+  private readonly slots = SHARED_BROWSER_SLOT_POOL
 
   claim(accountId: number, owner: BrowserWindowOwner): void {
     const result = this.slots.claim(accountId, owner)

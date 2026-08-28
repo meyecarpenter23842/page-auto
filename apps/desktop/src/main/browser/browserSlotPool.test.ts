@@ -2,15 +2,16 @@ import { describe, expect, it } from 'vitest'
 import { BrowserSlotPool } from './browserSlotPool'
 
 describe('BrowserSlotPool', () => {
-  it('keeps profile and posting owners on one account slot', () => {
+  it('keeps profile, posting and scenario owners on one account slot', () => {
     const pool = new BrowserSlotPool()
 
     expect(pool.claim(22, 'profile')).toMatchObject({ slotIndex: 0, status: 'allocated' })
     expect(pool.claim(22, 'posting')).toMatchObject({ slotIndex: 0, status: 'shared' })
+    expect(pool.claim(22, 'scenario')).toMatchObject({ slotIndex: 0, status: 'shared' })
     expect(pool.claim(22, 'posting')).toMatchObject({ slotIndex: 0, status: 'existing' })
     expect(pool.activeCount()).toBe(1)
     expect(pool.snapshot()).toEqual([
-      { accountId: 22, slotIndex: 0, owners: ['posting', 'profile'] }
+      { accountId: 22, slotIndex: 0, owners: ['posting', 'profile', 'scenario'] }
     ])
   })
 
@@ -18,7 +19,9 @@ describe('BrowserSlotPool', () => {
     const pool = new BrowserSlotPool()
     pool.claim(7, 'profile')
     pool.claim(7, 'posting')
+    pool.claim(7, 'scenario')
 
+    expect(pool.release(7, 'scenario')).toMatchObject({ slotIndex: 0, status: 'retained' })
     expect(pool.release(7, 'posting')).toMatchObject({ slotIndex: 0, status: 'retained' })
     expect(pool.slotFor(7)).toBe(0)
     expect(pool.release(7, 'profile')).toMatchObject({ slotIndex: 0, status: 'freed' })

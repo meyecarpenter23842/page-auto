@@ -4,7 +4,9 @@ import {
   FACEBOOK_CHECKPOINT_CLASSIFY_TIMEOUT_MS,
   detectFacebookCheckpointKind,
   facebookCheckpointKindFromText,
-  facebookCheckpointKindFromUrl
+  facebookCheckpointKindFromUrl,
+  facebookRestrictionKindFromText,
+  withFacebookCheckpointKind
 } from './facebookCheckpoint'
 
 function bodyLocator(text: string): Locator {
@@ -36,9 +38,38 @@ describe('Facebook checkpoint classifier', () => {
     expect(facebookCheckpointKindFromText('reference 282')).toBeNull()
   })
 
+  it('classifies the common 956 purple-lock surface from DOM text', () => {
+    expect(facebookRestrictionKindFromText('Your account has been locked', '956')).toBe('956_purple_lock')
+    expect(facebookRestrictionKindFromText('Tài khoản của bạn đã bị khóa', '956')).toBe('956_purple_lock')
+  })
+
+  it('classifies disabled accounts before generic checkpoint fallback', () => {
+    expect(facebookRestrictionKindFromText('Your account has been disabled', 'unknown')).toBe('disabled')
+    expect(facebookRestrictionKindFromText('Tài khoản của bạn đã bị vô hiệu hóa', null)).toBe('disabled')
+  })
+
+  it('adds a stable Vietnamese classification to runtime messages', () => {
+    expect(withFacebookCheckpointKind('Cần xử lý thủ công.', '956_purple_lock'))
+      .toBe('Cần xử lý thủ công. Phân loại: checkpoint 956 dạng khóa tím.')
+    expect(withFacebookCheckpointKind('Cần xử lý thủ công.', 'disabled'))
+      .toBe('Cần xử lý thủ công. Phân loại: tài khoản vô hiệu hóa.')
+  })
+
   it('classifies a known checkpoint immediately and keeps the default observation window at 10 seconds', async () => {
     expect(FACEBOOK_CHECKPOINT_CLASSIFY_TIMEOUT_MS).toBe(10_000)
     await expect(detectFacebookCheckpointKind(pageAt('https://www.facebook.com/checkpoint/1501092823525282/'))).resolves.toBe('282')
+  })
+
+  it('promotes a 956 checkpoint to purple-lock when the surface says the account is locked', async () => {
+    await expect(detectFacebookCheckpointKind(
+      pageAt('https://www.facebook.com/checkpoint/1234567890956/', 'Your account has been locked')
+    )).resolves.toBe('956_purple_lock')
+  })
+
+  it('recognizes a disabled surface even when the URL does not expose a numeric checkpoint', async () => {
+    await expect(detectFacebookCheckpointKind(
+      pageAt('https://www.facebook.com/checkpoint/disabled/', 'Your account has been disabled')
+    )).resolves.toBe('disabled')
   })
 
   it('returns unknown when the checkpoint is not identifiable instead of guessing from elapsed time', async () => {
