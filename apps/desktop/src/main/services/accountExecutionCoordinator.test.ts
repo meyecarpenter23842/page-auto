@@ -32,4 +32,32 @@ describe('AccountExecutionCoordinator', () => {
     await Promise.all([first, second, other])
     expect(events.indexOf('101:second:start')).toBeGreaterThan(events.indexOf('101:first:end'))
   })
+
+  it('holds a same-account lease across operator work while other accounts keep running', async () => {
+    const coordinator = new AccountExecutionCoordinator()
+    const lease = coordinator.tryAcquireLease(101)
+    expect(lease).not.toBeNull()
+    expect(coordinator.tryAcquireLease(101)).toBeNull()
+
+    let sameAccountEntered = false
+    let otherAccountEntered = false
+    const sameAccount = coordinator.run(101, async () => {
+      sameAccountEntered = true
+      return 1
+    })
+    const otherAccount = coordinator.run(202, async () => {
+      otherAccountEntered = true
+      return 2
+    })
+
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(sameAccountEntered).toBe(false)
+    expect(otherAccountEntered).toBe(true)
+
+    lease?.release()
+    await Promise.all([sameAccount, otherAccount])
+    expect(sameAccountEntered).toBe(true)
+    expect(coordinator.tryAcquireLease(101)).not.toBeNull()
+  })
 })

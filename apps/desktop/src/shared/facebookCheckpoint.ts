@@ -3,7 +3,7 @@ import type { PostingCheckpointKind } from './posting'
 export const FACEBOOK_CHECKPOINT_SURFACES = ['mbasic', 'mobile', 'desktop'] as const
 export type FacebookCheckpointSurface = (typeof FACEBOOK_CHECKPOINT_SURFACES)[number]
 
-export type FacebookCheckpoint282Action = 'start' | 'recheck'
+export type FacebookCheckpoint282Action = 'start' | 'recheck' | 'stop'
 export type FacebookCheckpoint282AssetOrigin = 'canonical' | 'source'
 export type FacebookCheckpoint282IdentityVerification = 'uid_match' | 'session_only'
 
@@ -43,6 +43,7 @@ export type FacebookCheckpoint282State =
   | 'waiting_manual'
   | 'different_checkpoint'
   | 'needs_login'
+  | 'stopped'
   | 'error'
 
 export interface FacebookCheckpoint282Result {

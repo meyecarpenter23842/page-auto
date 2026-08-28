@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto'
 import type { AccountRecord } from '../../shared/accounts'
 import type {
   FacebookCheckpoint282Result,
-  FacebookCheckpoint282RunPayload
+  FacebookCheckpoint282RunPayload,
+  FacebookCheckpointSurface
 } from '../../shared/facebookCheckpoint'
 import { expectedFacebookUserId } from '../browser/facebookAccountIdentity'
 import {
@@ -15,29 +16,35 @@ export type Checkpoint282Runner = (
   payload: Omit<FacebookCheckpoint282RunPayload, 'accountId' | 'asset'>
 ) => Promise<FacebookCheckpoint282Result>
 
+export interface Checkpoint282RunLifecycleOptions {
+  normalizeResult?: (result: FacebookCheckpoint282Result) => FacebookCheckpoint282Result
+}
+
 export class Checkpoint282RunLifecycle {
   constructor(private readonly dataDirectory: string) {}
 
   async execute(
     account: AccountRecord,
     payload: FacebookCheckpoint282RunPayload,
-    run: Checkpoint282Runner
+    run: Checkpoint282Runner,
+    options: Checkpoint282RunLifecycleOptions = {}
   ): Promise<FacebookCheckpoint282Result> {
     let asset = null
     try {
       asset = payload.asset
         ? validateCheckpoint282RunAsset({ dataDirectory: this.dataDirectory, uid: account.uid, asset: payload.asset })
         : null
-    } catch (error) {
+    } catch (cause) {
       const result: FacebookCheckpoint282Result = {
         accountId: account.id,
         uid: account.uid,
         state: 'error',
         surface: payload.surface,
-        message: error instanceof Error ? error.message : String(error)
+        message: cause instanceof Error ? cause.message : String(cause)
       }
-      this.record(account, payload, result, payload.asset ?? null)
-      return result
+      const finalResult = options.normalizeResult?.(result) ?? result
+      this.record(account, payload, finalResult, payload.asset ?? null)
+      return finalResult
     }
 
     let result: FacebookCheckpoint282Result
@@ -47,22 +54,23 @@ export class Checkpoint282RunLifecycle {
         action: payload.action,
         evidenceFolder: payload.evidenceFolder ?? null
       })
-    } catch (error) {
+    } catch (cause) {
       result = {
         accountId: account.id,
         uid: account.uid,
         state: 'error',
         surface: payload.surface,
-        message: error instanceof Error ? error.message : String(error)
+        message: cause instanceof Error ? cause.message : String(cause)
       }
     }
 
-    const verifiedResult: FacebookCheckpoint282Result = result.state === 'resolved'
+    const normalized = options.normalizeResult?.(result) ?? result
+    const verifiedResult: FacebookCheckpoint282Result = normalized.state === 'resolved'
       ? {
-          ...result,
+          ...normalized,
           identityVerification: expectedFacebookUserId(account.uid) ? 'uid_match' : 'session_only'
         }
-      : result
+      : normalized
     const assetPromotion = finalizeCheckpoint282AssetRun({
       dataDirectory: this.dataDirectory,
       uid: account.uid,
@@ -72,6 +80,28 @@ export class Checkpoint282RunLifecycle {
     const finalResult = assetPromotion ? { ...verifiedResult, assetPromotion } : verifiedResult
     this.record(account, payload, finalResult, asset)
     return finalResult
+  }
+
+  recordOperatorStop(
+    account: AccountRecord,
+    surface: FacebookCheckpointSurface,
+    message = 'Đã dừng CP282 và đóng browser của account.'
+  ): FacebookCheckpoint282Result {
+    const result: FacebookCheckpoint282Result = {
+      accountId: account.id,
+      uid: account.uid,
+      state: 'stopped',
+      surface,
+      message
+    }
+    this.record(account, {
+      accountId: account.id,
+      surface,
+      action: 'stop',
+      asset: null,
+      evidenceFolder: null
+    }, result, null)
+    return result
   }
 
   private record(
