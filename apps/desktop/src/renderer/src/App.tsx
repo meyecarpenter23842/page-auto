@@ -5,7 +5,7 @@ import { HotmailAuto } from './hotmail/HotmailAuto'
 import { ExecutionLogs } from './logs/ExecutionLogs'
 import { PageBusinessWorkspace } from './page-tabs/PageBusinessWorkspace'
 import { RotationWindowStatusPanel } from './page-tabs/RotationWindowStatusPanel'
-import { ScenarioManager } from './scenarios/ScenarioManager'
+import { ScenarioWorkspace } from './scenarios/ScenarioWorkspace'
 import { SettingsPanel } from './settings/SettingsPanel'
 
 type RouteId = 'overview' | 'accounts' | 'hotmail' | 'page-tabs' | 'scenarios' | 'logs' | 'settings'
@@ -27,7 +27,7 @@ const routeDescriptions: Record<RouteId, { title: string; description: string }>
   accounts: { title: 'Account Manager', description: 'Quản lý account theo data-grid nhiều cột, import linh hoạt và persistent browser profile riêng.' },
   hotmail: { title: 'Email', description: 'Dashboard Email theo UID từ Account Manager, Microsoft Mail.Read, external profile root trực tiếp, mail khôi phục và Proxy Email pool độc lập.' },
   'page-tabs': { title: 'Page Tabs', description: 'Mỗi Page UID là một workspace đa nghiệp vụ: Nhóm, Đăng Tường, Sửa Page và các tác vụ mở rộng dùng chung tầng Facebook.' },
-  scenarios: { title: 'Kịch Bản', description: 'Quản lý các kịch bản và action module tái sử dụng. K1 chưa gắn kịch bản vào Page hoặc Tài khoản.' },
+  scenarios: { title: 'Kịch Bản', description: 'Chọn tài khoản, chọn nhiều kịch bản và chuẩn bị cấu hình chạy; thư viện action vẫn được quản lý riêng, không gắn Page vào runner này.' },
   logs: { title: 'Runtime Logs', description: 'Execution log chi tiết, screenshot evidence, retry disposition và manual-review cho kết quả publish chưa chắc chắn.' },
   settings: { title: 'Cài đặt', description: 'Cấu hình trình duyệt, session, mạng, vận hành và chẩn đoán dùng chung cho PAGE-AUTO.' }
 }
@@ -96,7 +96,7 @@ export function App() {
       <main key={activeRoute} className={`${workspaceClass} workspace-transition`}>
         <header className="topbar"><div><p className="eyebrow">PAGE-AUTO / {activeRoute === 'hotmail' ? 'EMAIL' : activeRoute === 'scenarios' ? 'KỊCH BẢN' : activeRoute.toUpperCase()}</p><h1>{active.title}</h1></div><div className="version-badge">{appInfo ? `v${appInfo.version}` : 'Loading...'}</div></header>
 
-        {activeRoute === 'accounts' ? <AccountManager /> : activeRoute === 'hotmail' ? <HotmailAuto /> : activeRoute === 'page-tabs' ? <PageBusinessWorkspace /> : activeRoute === 'scenarios' ? <ScenarioManager /> : activeRoute === 'logs' ? <ExecutionLogs /> : activeRoute === 'settings' ? <SettingsPanel appInfo={appInfo} /> : (
+        {activeRoute === 'accounts' ? <AccountManager /> : activeRoute === 'hotmail' ? <HotmailAuto /> : activeRoute === 'page-tabs' ? <PageBusinessWorkspace /> : activeRoute === 'scenarios' ? <ScenarioWorkspace /> : activeRoute === 'logs' ? <ExecutionLogs /> : activeRoute === 'settings' ? <SettingsPanel appInfo={appInfo} /> : (
           <>
             <section className="hero-card"><div><span className="phase-badge">PHASE 9</span><h2>{active.title}</h2><p>{active.description}</p></div><div className="architecture-grid"><div><strong>Portable</strong><span>Folder + ZIP</span></div><div><strong>Executable</strong><span>PageAuto.exe</span></div><div><strong>Data</strong><span>Beside executable</span></div><div><strong>Backup</strong><span>Config · no secrets</span></div></div></section>
             <section className="content-card"><div className="section-heading"><div><p className="eyebrow">MVP packaging status</p><h2>Phase 9 hoàn thiện mô hình Windows portable</h2></div><span className="healthy-chip">Portable-ready architecture</span></div><div className="check-list"><div><span>01</span><div><strong>No installer</strong><p>Artifact mục tiêu là folder/ZIP portable, không tạo Setup/NSIS trong MVP.</p></div></div><div><span>02</span><div><strong>Stable data path</strong><p>SQLite, browser profile, logs và screenshots nằm trong data cạnh PageAuto.exe.</p></div></div><div><span>03</span><div><strong>Versioned migration</strong><p>Database cũ tiếp tục chạy migration version khi mở bằng bản app mới.</p></div></div><div><span>04</span><div><strong>Safe config backup</strong><p>Backup cấu hình không xuất password, cookie, 2FA hoặc browser profile.</p></div></div></div></section>
