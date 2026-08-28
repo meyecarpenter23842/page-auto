@@ -17,6 +17,8 @@ const ACCOUNT_RUNTIME_LABELS: Record<RotationAccountRuntimeStatus, string> = {
 const CHECKPOINT_RUNTIME_LABELS: Record<PostingCheckpointKind, string> = {
   '282': 'Checkpoint 282',
   '956': 'Checkpoint 956',
+  '956_purple_lock': 'Checkpoint 956 · khóa tím',
+  disabled: 'Tài khoản bị vô hiệu hóa',
   unknown: 'Checkpoint không xác định'
 }
 
