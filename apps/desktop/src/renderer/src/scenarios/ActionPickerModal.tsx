@@ -5,9 +5,9 @@ import {
   getActionDefinition,
   type ActionDefinition
 } from '../../../shared/actionRegistry'
-import { applyK41ActionOverrides } from '../../../shared/k41ActionOverrides'
+import { applyActionOverrides } from '../../../shared/actionOverrides'
 
-applyK41ActionOverrides()
+applyActionOverrides()
 
 interface ActionPickerModalProps {
   onClose: () => void
@@ -38,7 +38,7 @@ export function ActionPickerModal({ onClose, onSelect }: ActionPickerModalProps)
               if (!actions.length) return null
               return <section className="action-picker-group" key={category.id}>
                 <div className="action-picker-group-title"><strong>{category.label}</strong><span>{actions.length}</span></div>
-                <div className="action-picker-grid">{actions.map((definition) => <button className={visibleSelected?.id === definition.id ? 'action-picker-item selected' : 'action-picker-item'} key={definition.id} type="button" onClick={() => setSelectedId(definition.id)} onDoubleClick={() => onSelect(definition)}><strong>{definition.label}</strong><span>{definition.id}</span><small className={definition.runtimeStatus === 'ready' ? 'ready' : ''}>{definition.runtimeStatus === 'ready' ? 'K4.1 ready' : 'Chưa chạy'}</small></button>)}</div>
+                <div className="action-picker-grid">{actions.map((definition) => <button className={visibleSelected?.id === definition.id ? 'action-picker-item selected' : 'action-picker-item'} key={definition.id} type="button" onClick={() => setSelectedId(definition.id)} onDoubleClick={() => onSelect(definition)}><strong>{definition.label}</strong><span>{definition.id}</span><small className={definition.runtimeStatus === 'ready' ? 'ready' : ''}>{definition.runtimeStatus === 'ready' ? 'Executor ready' : 'Chưa chạy'}</small></button>)}</div>
               </section>
             })}
             {!filtered.length ? <div className="scenario-empty action-picker-empty">Không tìm thấy hành động.</div> : null}
@@ -51,9 +51,9 @@ export function ActionPickerModal({ onClose, onSelect }: ActionPickerModalProps)
                 <div><span>Nhóm</span><strong>{ACTION_CATEGORIES.find((item) => item.id === visibleSelected.category)?.label}</strong></div>
                 <div><span>Actor</span><strong>{visibleSelected.capabilities.actors.length === 2 ? 'Profile + Page' : 'Profile'}</strong></div>
                 <div><span>Cấu hình</span><strong>{visibleSelected.configSchema.fields.length} trường</strong></div>
-                <div><span>Runtime</span><strong>{visibleSelected.runtimeStatus === 'ready' ? 'Executor K4.1' : 'Placeholder'}</strong></div>
+                <div><span>Runtime</span><strong>{visibleSelected.runtimeStatus === 'ready' ? 'Executor sẵn sàng' : 'Placeholder'}</strong></div>
               </div>
-              <div className={visibleSelected.runtimeStatus === 'ready' ? 'action-placeholder-card ready-card' : 'action-placeholder-card'}><strong>{visibleSelected.runtimeStatus === 'ready' ? 'Module riêng đã có executor' : 'Chưa có executor'}</strong><p>{visibleSelected.runtimeStatus === 'ready' ? 'Selector/flow nằm riêng trong module action; login/session/Page switch vẫn dùng Common Runtime.' : `Hiện có ${readyCount} action K4.1 đã có executor. Action này sẽ làm ở lô sau.`}</p></div>
+              <div className={visibleSelected.runtimeStatus === 'ready' ? 'action-placeholder-card ready-card' : 'action-placeholder-card'}><strong>{visibleSelected.runtimeStatus === 'ready' ? 'Module riêng đã có executor' : 'Chưa có executor'}</strong><p>{visibleSelected.runtimeStatus === 'ready' ? 'Selector/flow nằm riêng trong module action; login/session/Page switch vẫn dùng Common Runtime.' : `Hiện có ${readyCount} action đã có executor. Action này sẽ làm ở lô sau.`}</p></div>
             </> : <div className="scenario-empty">Chọn một hành động.</div>}
           </aside>
         </div>

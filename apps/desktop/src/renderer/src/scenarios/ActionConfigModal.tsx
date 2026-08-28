@@ -6,13 +6,13 @@ import {
   type ActionDefinition
 } from '../../../shared/actionRegistry'
 import {
-  applyK41ActionOverrides,
-  getK41FieldUiMeta,
-  getK41ValidationErrors
-} from '../../../shared/k41ActionOverrides'
+  applyActionOverrides,
+  getActionFieldUiMeta,
+  getActionOverrideValidationErrors
+} from '../../../shared/actionOverrides'
 import './k41ActionConfig.css'
 
-applyK41ActionOverrides()
+applyActionOverrides()
 
 export interface ActionEditorValue {
   id: number | null
@@ -36,7 +36,7 @@ function ConfigField({ actionType, field, value, onChange }: {
   value: ActionConfig[string] | undefined
   onChange: (value: ActionConfig[string] | undefined) => void
 }) {
-  const ui = getK41FieldUiMeta(actionType, field.key)
+  const ui = getActionFieldUiMeta(actionType, field.key)
   if (field.kind === 'boolean') {
     return (
       <label className="scenario-check action-config-check">
@@ -105,13 +105,16 @@ export function ActionConfigModal({ value, onClose, onSave }: ActionConfigModalP
     () => definition ? validateActionConfig(definition.id, config) : { valid: true as const, value: config, errors: [] as [] },
     [config, definition]
   )
-  const extraErrors = useMemo(() => definition ? getK41ValidationErrors(definition.id, baseValidation.value) : [], [baseValidation.value, definition])
+  const extraErrors = useMemo(
+    () => definition ? getActionOverrideValidationErrors(definition.id, baseValidation.value) : [],
+    [baseValidation.value, definition]
+  )
   const valid = baseValidation.valid && extraErrors.length === 0
 
   const visibleSections = useMemo(() => {
     const sections = new Map<string, ActionConfigFieldDefinition[]>()
     for (const field of definition?.configSchema.fields ?? []) {
-      const ui = getK41FieldUiMeta(definition?.id ?? '', field.key)
+      const ui = getActionFieldUiMeta(definition?.id ?? '', field.key)
       if (ui?.visibleWhen && config[ui.visibleWhen.key] !== ui.visibleWhen.equals) continue
       const section = ui?.section ?? 'Cấu hình'
       const current = sections.get(section) ?? []
@@ -150,7 +153,7 @@ export function ActionConfigModal({ value, onClose, onSave }: ActionConfigModalP
           <div className="action-config-badges">
             <span>{value.categoryLabel}</span>
             <span>{definition?.capabilities.actors.length === 2 ? 'Profile + Page' : 'Profile'}</span>
-            <span className={runtimeReady ? 'ready' : 'placeholder'}>{runtimeReady ? 'Executor K4.1' : 'Chưa chạy thật'}</span>
+            <span className={runtimeReady ? 'ready' : 'placeholder'}>{runtimeReady ? 'Executor sẵn sàng' : 'Chưa chạy thật'}</span>
           </div>
         </div>
 

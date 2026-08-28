@@ -9,14 +9,15 @@ import {
 } from './actionRegistry'
 
 describe('actionRegistry', () => {
-  it('contains the complete K2 catalog in six groups with stable unique ids', () => {
+  it('contains the active catalog in six groups with stable unique ids', () => {
     expect(ACTION_CATEGORIES.map((item) => item.id)).toEqual([
       'interaction', 'friends', 'groups', 'marketplace', 'publishing', 'other'
     ])
-    expect(ACTION_REGISTRY).toHaveLength(40)
-    expect(ACTION_CATEGORIES.map((category) => ACTION_REGISTRY.filter((item) => item.category === category.id).length)).toEqual([10, 8, 5, 4, 5, 8])
+    expect(ACTION_REGISTRY).toHaveLength(39)
+    expect(ACTION_CATEGORIES.map((category) => ACTION_REGISTRY.filter((item) => item.category === category.id).length)).toEqual([10, 7, 5, 4, 5, 8])
     expect(new Set(ACTION_REGISTRY.map((item) => item.id)).size).toBe(ACTION_REGISTRY.length)
     expect(getActionDefinition('group_post')).toMatchObject({ category: 'groups', label: 'Đăng bài nhóm' })
+    expect(getActionDefinition('birthday_greeting')).toBeUndefined()
     expect(ACTION_REGISTRY.every((item) => item.runtimeStatus === 'placeholder')).toBe(true)
   })
 
