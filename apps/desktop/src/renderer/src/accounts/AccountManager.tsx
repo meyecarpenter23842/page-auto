@@ -22,6 +22,7 @@ import {
 } from '../../../shared/accounts'
 import { openAccountProfilesBatch } from './accountProfileBatch'
 import { Checkpoint282Dialog } from './Checkpoint282Dialog'
+import { Checkpoint956Dialog } from './Checkpoint956Dialog'
 import './accounts.css'
 import './accountEnhancements.css'
 
@@ -530,6 +531,7 @@ export function AccountManager() {
   const [openingProfiles, setOpeningProfiles] = useState(false)
   const [contextMenu, setContextMenu] = useState<ContextMenuState>(null)
   const [checkpoint282Accounts, setCheckpoint282Accounts] = useState<AccountRecord[] | null>(null)
+  const [checkpoint956Accounts, setCheckpoint956Accounts] = useState<AccountRecord[] | null>(null)
 
   const loadAccounts = useCallback(async (background = false) => {
     if (!background) setLoading(true)
@@ -743,7 +745,7 @@ export function AccountManager() {
     setPaintValue(null)
     setSelectedIds((current) => current.has(account.id) ? current : new Set([account.id]))
     const menuWidth = 220
-    const menuHeight = 350
+    const menuHeight = 390
     setContextMenu({
       x: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
       y: Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8))
@@ -831,6 +833,11 @@ export function AccountManager() {
             if (targets.length > 0) setCheckpoint282Accounts(targets)
             setContextMenu(null)
           }}>Checkpoint 282…</button>
+          <button type="button" disabled={selectedIds.size === 0} onClick={() => {
+            const targets = sortedAccounts.filter((account) => selectedIds.has(account.id))
+            if (targets.length > 0) setCheckpoint956Accounts(targets)
+            setContextMenu(null)
+          }}>Checkpoint 956…</button>
           <button type="button" disabled title="Kiểm tra phiên được thực hiện khi mở Chrome hoặc trước mỗi lượt đăng">Kiểm tra phiên</button>
           <button type="button" disabled={selectedIds.size === 0} onClick={() => void assignCategory()}>Gán nhóm</button>
           <button type="button" disabled={selectedIds.size === 0} onClick={() => void copySelectedUids()}>Sao chép UID</button>
@@ -843,6 +850,7 @@ export function AccountManager() {
       ) : null}
 
       {checkpoint282Accounts ? <Checkpoint282Dialog accounts={checkpoint282Accounts} onClose={() => setCheckpoint282Accounts(null)} /> : null}
+      {checkpoint956Accounts ? <Checkpoint956Dialog accounts={checkpoint956Accounts} onClose={() => setCheckpoint956Accounts(null)} /> : null}
       {editorAccount !== undefined ? <AccountEditor account={editorAccount} onClose={() => setEditorAccount(undefined)} onSaved={async () => { setEditorAccount(undefined); setNotice('Đã lưu tài khoản.'); await loadAccounts() }} /> : null}
       {importOperation ? <ImportDialog operation={importOperation} presets={presets} onClose={() => setImportOperation(null)} onImported={(result, operation) => void onImportComplete(result, operation)} onPresetSaved={(preset) => setPresets((current) => [...current.filter((item) => item.id !== preset.id), preset].sort((a, b) => a.name.localeCompare(b.name)))} /> : null}
     </section>
