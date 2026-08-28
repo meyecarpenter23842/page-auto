@@ -22,7 +22,9 @@ export function ensureDataDirectoryLayout(dataDirectory: string): void {
     join(dataDirectory, 'browser-profiles'),
     join(dataDirectory, 'logs'),
     join(dataDirectory, 'screenshots'),
-    join(dataDirectory, 'backups')
+    join(dataDirectory, 'backups'),
+    join(dataDirectory, 'checkpoint-assets'),
+    join(dataDirectory, 'checkpoint-assets', '282')
   ]
   for (const directory of directories) {
     mkdirSync(directory, { recursive: true })

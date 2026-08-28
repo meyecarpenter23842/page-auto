@@ -1,5 +1,6 @@
 import { app, BrowserWindow } from 'electron'
 import { join } from 'node:path'
+import { registerCheckpoint282WorkbenchIpcHandlers, type Checkpoint282WorkbenchIpcRuntime } from './checkpoint282WorkbenchIpc'
 import { initializeDatabase, type DatabaseRuntime } from './database'
 import { registerHotmailIpcHandlers, type HotmailIpcRuntime } from './hotmailIpc'
 import { registerIpcHandlers, type IpcRuntime } from './ipc'
@@ -10,6 +11,7 @@ import { ensureDataDirectoryLayout, resolveDataDirectory } from './services/port
 let mainWindow: BrowserWindow | null = null
 let databaseRuntime: DatabaseRuntime | null = null
 let ipcRuntime: IpcRuntime | null = null
+let checkpoint282WorkbenchIpcRuntime: Checkpoint282WorkbenchIpcRuntime | null = null
 let hotmailIpcRuntime: HotmailIpcRuntime | null = null
 let postLibraryIpcRuntime: PostLibraryIpcRuntime | null = null
 
@@ -62,6 +64,7 @@ app.whenReady().then(() => {
   try {
     databaseRuntime = initializeDatabase(databaseFile)
     ipcRuntime = registerIpcHandlers({ database: databaseRuntime.client, dataDirectory })
+    checkpoint282WorkbenchIpcRuntime = registerCheckpoint282WorkbenchIpcHandlers({ database: databaseRuntime.client, dataDirectory })
     hotmailIpcRuntime = registerHotmailIpcHandlers(databaseRuntime.client)
     postLibraryIpcRuntime = registerPostLibraryIpcHandlers(databaseRuntime.client)
     logger.info('Application initialized', { databaseFile, dataDirectory, packaged: app.isPackaged, version: app.getVersion() })
@@ -74,6 +77,8 @@ app.whenReady().then(() => {
     mainWindow = createMainWindow()
   } catch (error) {
     logger.error('Application initialization failed', { error: error instanceof Error ? error.message : String(error) })
+    checkpoint282WorkbenchIpcRuntime?.dispose()
+    checkpoint282WorkbenchIpcRuntime = null
     hotmailIpcRuntime?.dispose()
     hotmailIpcRuntime = null
     postLibraryIpcRuntime?.dispose()
@@ -91,6 +96,8 @@ app.whenReady().then(() => {
 })
 
 app.on('before-quit', () => {
+  checkpoint282WorkbenchIpcRuntime?.dispose()
+  checkpoint282WorkbenchIpcRuntime = null
   hotmailIpcRuntime?.dispose()
   hotmailIpcRuntime = null
   postLibraryIpcRuntime?.dispose()

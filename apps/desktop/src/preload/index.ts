@@ -22,6 +22,12 @@ import type { AppSettings, AppSettingsPatch } from '../shared/appSettings'
 import type { BrowserExecutableResult, BrowserTestRequest, BrowserTestResult } from '../shared/browserSettings'
 import type { BrowserDisplayInfo, BrowserRetileResult, BrowserWindowLayoutSettings } from '../shared/browserWindowLayout'
 import type { CaptchaSettingsView, SaveCaptchaSettingsInput } from '../shared/captchaSettings'
+import {
+  CHECKPOINT282_WORKBENCH_IPC,
+  type FacebookCheckpoint282PreflightRequest,
+  type FacebookCheckpoint282PreflightResult,
+  type FacebookCheckpoint282Preset
+} from '../shared/checkpoint282Workbench'
 import type { ConfigBackupExportResult, ConfigBackupRestoreResult } from '../shared/configBackup'
 import type { HotmailComboActionPayload, HotmailComboBatchResult } from '../shared/emailCombo'
 import type { ExecutionLogFilters, ExecutionLogRecord, RetryRunItemPayload, RetryRunItemResult } from '../shared/executionLogs'
@@ -64,6 +70,10 @@ const api = {
   saveAccountColumnLayout: (payload: AccountColumnLayoutPayload): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.accountColumnLayoutSave, payload) as Promise<void>,
   openAccountProfile: (payload: AccountOpenProfilePayload): Promise<BrowserProfileResult> => ipcRenderer.invoke(IPC_CHANNELS.accountOpenProfile, payload) as Promise<BrowserProfileResult>,
   runFacebookCheckpoint282: (payload: FacebookCheckpoint282RunPayload): Promise<FacebookCheckpoint282Result> => ipcRenderer.invoke(IPC_CHANNELS.facebookCheckpoint282Run, payload) as Promise<FacebookCheckpoint282Result>,
+  getFacebookCheckpoint282Preset: (): Promise<FacebookCheckpoint282Preset> => ipcRenderer.invoke(CHECKPOINT282_WORKBENCH_IPC.getPreset) as Promise<FacebookCheckpoint282Preset>,
+  saveFacebookCheckpoint282Preset: (input: FacebookCheckpoint282Preset): Promise<FacebookCheckpoint282Preset> => ipcRenderer.invoke(CHECKPOINT282_WORKBENCH_IPC.savePreset, input) as Promise<FacebookCheckpoint282Preset>,
+  pickFacebookCheckpoint282SourceFolder: (): Promise<string | null> => ipcRenderer.invoke(CHECKPOINT282_WORKBENCH_IPC.pickSourceFolder) as Promise<string | null>,
+  preflightFacebookCheckpoint282: (input: FacebookCheckpoint282PreflightRequest): Promise<FacebookCheckpoint282PreflightResult> => ipcRenderer.invoke(CHECKPOINT282_WORKBENCH_IPC.preflight, input) as Promise<FacebookCheckpoint282PreflightResult>,
   pickFacebookCheckpointEvidenceFolder: (): Promise<string | null> => ipcRenderer.invoke(IPC_CHANNELS.facebookCheckpointEvidenceFolderPick) as Promise<string | null>,
   listHotmailDashboard: (): Promise<HotmailDashboardRow[]> => ipcRenderer.invoke(IPC_CHANNELS.hotmailDashboardList) as Promise<HotmailDashboardRow[]>,
   getHotmailSettings: (): Promise<HotmailSettingsView> => ipcRenderer.invoke(IPC_CHANNELS.hotmailSettingsGet) as Promise<HotmailSettingsView>,
