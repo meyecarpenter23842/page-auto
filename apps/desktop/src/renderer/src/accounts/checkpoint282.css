@@ -1,0 +1,184 @@
+.checkpoint282-dialog {
+  width: min(900px, calc(100vw - 48px));
+  max-width: 900px;
+}
+
+.checkpoint282-note,
+.checkpoint282-footer-note {
+  padding: 9px 11px;
+  color: #344054;
+  background: #f7f9fc;
+  border: 1px solid #dce3ec;
+  border-radius: 6px;
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
+.checkpoint282-settings {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.checkpoint282-settings label {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.checkpoint282-settings label > span {
+  color: #475467;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.checkpoint282-settings input,
+.checkpoint282-settings select {
+  width: 100%;
+  min-height: 32px;
+}
+
+.checkpoint282-folder-row {
+  display: flex;
+  min-width: 0;
+  gap: 6px;
+}
+
+.checkpoint282-folder-row input {
+  min-width: 0;
+  flex: 1;
+}
+
+.checkpoint282-summary {
+  display: flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+  color: #667085;
+  font-size: 10px;
+}
+
+.checkpoint282-summary strong {
+  color: #b54708;
+  font-weight: 750;
+}
+
+.checkpoint282-table-wrap {
+  max-height: 330px;
+  overflow: auto;
+  border: 1px solid #d7dee8;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.checkpoint282-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: fixed;
+  font-size: 10px;
+}
+
+.checkpoint282-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 6px 7px;
+  color: #475467;
+  background: #eef2f6;
+  border-bottom: 1px solid #d7dee8;
+  text-align: left;
+  font-weight: 750;
+}
+
+.checkpoint282-table th:nth-child(1) { width: 42px; }
+.checkpoint282-table th:nth-child(2) { width: 150px; }
+.checkpoint282-table th:nth-child(3) { width: 120px; }
+.checkpoint282-table th:nth-child(5) { width: 112px; }
+
+.checkpoint282-table td {
+  padding: 7px;
+  border-bottom: 1px solid #edf0f4;
+  vertical-align: top;
+}
+
+.checkpoint282-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.checkpoint282-uid {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-weight: 700;
+}
+
+.checkpoint282-state {
+  display: inline-flex;
+  min-height: 22px;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #eef2f6;
+  color: #475467;
+  font-size: 9.5px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.checkpoint282-state.state-running {
+  background: #eff8ff;
+  color: #175cd3;
+}
+
+.checkpoint282-state.state-resolved {
+  background: #ecfdf3;
+  color: #027a48;
+}
+
+.checkpoint282-state.state-waiting_manual {
+  background: #fffaeb;
+  color: #b54708;
+}
+
+.checkpoint282-state.state-different_checkpoint,
+.checkpoint282-state.state-needs_login,
+.checkpoint282-state.state-error {
+  background: #fef3f2;
+  color: #b42318;
+}
+
+.checkpoint282-message {
+  overflow: hidden;
+  color: #344054;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+}
+
+.checkpoint282-evidence {
+  margin-top: 3px;
+  overflow: hidden;
+  color: #667085;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.checkpoint282-no-action {
+  color: #98a2b3;
+}
+
+.checkpoint282-footer-note {
+  margin-top: 10px;
+}
+
+@media (max-width: 760px) {
+  .checkpoint282-settings {
+    grid-template-columns: 1fr;
+  }
+}
