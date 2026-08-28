@@ -5,6 +5,7 @@ import type {
   FacebookCheckpoint282State,
   FacebookCheckpointSurface
 } from './facebookCheckpoint'
+import type { HotmailMailStatus, HotmailOAuthStatus } from './hotmail'
 
 export const FACEBOOK_CHECKPOINT282_PRESET_STORAGE_KEY = 'facebook.checkpoint282.preset'
 export const FACEBOOK_CHECKPOINT282_LOCALES = ['auto', 'vi-VN', 'en-US'] as const
@@ -36,6 +37,14 @@ export const DEFAULT_FACEBOOK_CHECKPOINT282_PRESET: Readonly<FacebookCheckpoint2
 export type FacebookCheckpoint282PreflightLevel = 'ok' | 'warning' | 'blocked'
 export type FacebookCheckpoint282ImageReadiness = 'canonical' | 'source' | 'missing' | 'duplicate'
 export type FacebookCheckpoint282ProxyReadiness = 'none' | 'valid' | 'invalid'
+export type FacebookCheckpoint282EmailReadiness =
+  | 'ready'
+  | 'missing_email'
+  | 'oauth_missing'
+  | 'oauth_pending'
+  | 'oauth_expired'
+  | 'oauth_error'
+export type FacebookCheckpoint282PhoneReadiness = 'available' | 'missing'
 
 export interface FacebookCheckpoint282PreflightRequest {
   accountIds: number[]
@@ -53,6 +62,25 @@ export interface FacebookCheckpoint282ImagePreflight {
   sourceCandidates: string[]
 }
 
+export interface FacebookCheckpoint282VerificationPreflight {
+  email: {
+    state: FacebookCheckpoint282EmailReadiness
+    maskedAddress: string | null
+    oauthStatus: HotmailOAuthStatus
+    mailStatus: HotmailMailStatus
+    hasClientId: boolean
+    hasRefreshToken: boolean
+    route: 'facebook_common_email_code'
+    message: string
+  }
+  phone: {
+    state: FacebookCheckpoint282PhoneReadiness
+    maskedNumber: string | null
+    route: 'classifier_required'
+    message: string
+  }
+}
+
 export interface FacebookCheckpoint282AccountPreflight {
   accountId: number
   uid: string
@@ -67,6 +95,7 @@ export interface FacebookCheckpoint282AccountPreflight {
     proxy: FacebookCheckpoint282ProxyReadiness
   }
   image: FacebookCheckpoint282ImagePreflight
+  verification: FacebookCheckpoint282VerificationPreflight
   messages: string[]
 }
 

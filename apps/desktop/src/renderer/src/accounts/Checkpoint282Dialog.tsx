@@ -23,6 +23,7 @@ import {
 import './checkpoint282.css'
 import './checkpoint282U2.css'
 import './checkpoint282U3.css'
+import './checkpoint282U4.css'
 
 interface Checkpoint282DialogProps {
   accounts: AccountRecord[]
@@ -89,6 +90,25 @@ function imageStateLabel(row: FacebookCheckpoint282AccountPreflight | undefined)
     case 'missing': return 'Thiếu ảnh'
     case 'duplicate': return `Trùng (${row.image.canonicalCandidateCount})`
   }
+}
+
+function emailReadinessLabel(row: FacebookCheckpoint282AccountPreflight | undefined): string {
+  if (!row) return 'Chưa kiểm tra'
+  switch (row.verification.email.state) {
+    case 'ready': return 'Email + OAuth OK'
+    case 'missing_email': return 'Thiếu Email'
+    case 'oauth_missing': return 'Thiếu OAuth'
+    case 'oauth_pending': return 'OAuth chờ'
+    case 'oauth_expired': return 'OAuth hết hạn'
+    case 'oauth_error': return 'OAuth lỗi'
+  }
+}
+
+function phoneReadinessLabel(row: FacebookCheckpoint282AccountPreflight | undefined): string {
+  if (!row) return 'Chưa kiểm tra'
+  return row.verification.phone.state === 'available'
+    ? `${row.verification.phone.maskedNumber ?? 'Có phone'} · chờ route`
+    : 'Không phone · chờ route'
 }
 
 function preflightLevelLabel(row: FacebookCheckpoint282AccountPreflight | undefined): string {
@@ -464,7 +484,7 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
             <div>
               <p className="eyebrow">Facebook Common · Operator Workbench</p>
               <h2 id="checkpoint282-title">Checkpoint 282</h2>
-              <p className="checkpoint282-subtitle">Track đúng ảnh/account · resolved + verify UID mới promote Folder282 · không bypass checkpoint</p>
+              <p className="checkpoint282-subtitle">Track đúng ảnh/account · Email/OAuth canonical theo accountId · không bypass checkpoint</p>
             </div>
           </div>
           <div className="checkpoint282-header-right">
@@ -482,7 +502,7 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
             <section className="checkpoint282-panel-section">
               <div className="checkpoint282-section-heading">
                 <div><span className="checkpoint282-kicker">Preset CP282</span><h3>Browser & nguồn ảnh</h3></div>
-                <span className="checkpoint282-tag">U3</span>
+                <span className="checkpoint282-tag">U4</span>
               </div>
 
               <label className="checkpoint282-field">
@@ -570,13 +590,14 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
             </div>
 
             <div className="checkpoint282-grid-wrap">
-              <table className="checkpoint282-table checkpoint282-table-u2">
+              <table className="checkpoint282-table checkpoint282-table-u2 checkpoint282-table-u4">
                 <thead>
                   <tr>
                     <th>#</th>
                     <th>UID / Tên đăng nhập</th>
                     <th>Preflight</th>
                     <th>Ảnh 282</th>
+                    <th>Email / OAuth</th>
                     <th>Session</th>
                     <th>CP State</th>
                     <th>Kết quả</th>
@@ -602,6 +623,12 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
                         <td><div className="checkpoint282-account-cell"><strong>{row.uid}</strong>{account?.name ? <span>{account.name}</span> : null}</div></td>
                         <td><span className={`checkpoint282-preflight preflight-${readiness?.level ?? 'unknown'}`}>{preflightLevelLabel(readiness)}</span></td>
                         <td><span className={`checkpoint282-image-state image-${readiness?.image.state ?? 'unknown'}`} title={asset?.path}>{imageText}</span></td>
+                        <td>
+                          <div className="checkpoint282-email-readiness" title={readiness?.verification.email.message}>
+                            <span className={`checkpoint282-email-state email-${readiness?.verification.email.state ?? 'unknown'}`}>{emailReadinessLabel(readiness)}</span>
+                            <small>{readiness?.verification.email.maskedAddress ?? (readiness?.verification.phone.state === 'available' ? 'Có phone canonical' : 'Không có Email canonical')}</small>
+                          </div>
+                        </td>
                         <td><span className={`checkpoint282-master-status master-${account?.status ?? 'unknown'}`}>{masterStatusLabel(account)}</span></td>
                         <td><span className={`checkpoint282-state state-${row.state}`}>{checkpoint282StateLabel(row.state)}</span></td>
                         <td><div className="checkpoint282-message" title={row.message}>{row.message}</div></td>
@@ -615,7 +642,7 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
 
             <section className="checkpoint282-detail-panel checkpoint282-detail-panel-u3">
               <div className="checkpoint282-detail-header">
-                <div><span className="checkpoint282-kicker">Ảnh thực tế & lịch sử</span><h3>{selectedRow?.uid ?? 'Chưa chọn'}</h3></div>
+                <div><span className="checkpoint282-kicker">Ảnh, readiness & lịch sử</span><h3>{selectedRow?.uid ?? 'Chưa chọn'}</h3></div>
                 <div className="checkpoint282-detail-header-actions">
                   {selectedRow?.evidencePath ? <button className="button secondary" type="button" onClick={() => void revealPath(selectedRow.evidencePath)}>Mở Evidence</button> : null}
                   {selectedPreflight ? <span className={`checkpoint282-preflight preflight-${selectedPreflight.level}`}>{preflightLevelLabel(selectedPreflight)}</span> : null}
@@ -660,6 +687,31 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
                       <div><span>Readiness</span><strong>{imageStateLabel(selectedPreflight)}</strong></div>
                       <div><span>File đang track</span><strong title={selectedAsset?.path}>{selectedAsset ? fileName(selectedAsset.path) : 'Chưa chọn'}</strong></div>
                       <div><span>Chế độ</span><strong>{selectedAsset?.origin === 'canonical' ? 'Dùng canonical' : selectedAsset?.replaceCanonical ? 'Replace canonical' : selectedAsset?.origin === 'source' ? 'Source mới' : '—'}</strong></div>
+                    </div>
+
+                    <div className="checkpoint282-verification-card">
+                      <div className="checkpoint282-verification-card-head">
+                        <strong>Email / OAuth / Phone canonical</strong>
+                        <span>read-only · theo accountId</span>
+                      </div>
+                      <div className="checkpoint282-verification-grid">
+                        <div>
+                          <span>Email</span>
+                          <strong>{selectedPreflight.verification.email.maskedAddress ?? 'Chưa có Email'}</strong>
+                          <small>{emailReadinessLabel(selectedPreflight)}</small>
+                        </div>
+                        <div>
+                          <span>OAuth</span>
+                          <strong>{selectedPreflight.verification.email.hasClientId && selectedPreflight.verification.email.hasRefreshToken ? 'Có Client ID + Refresh Token' : 'Chưa đủ canonical OAuth'}</strong>
+                          <small>{selectedPreflight.verification.email.oauthStatus} · mail {selectedPreflight.verification.email.mailStatus}</small>
+                        </div>
+                        <div>
+                          <span>Phone</span>
+                          <strong>{phoneReadinessLabel(selectedPreflight)}</strong>
+                          <small>Common classifier mới quyết định route</small>
+                        </div>
+                      </div>
+                      <p className="checkpoint282-verification-note">{selectedPreflight.verification.email.message} Phone không được coi là usable chỉ vì có số; route phải được Facebook Common xác nhận. Workbench không nhận mailbox/token tùy ý.</p>
                     </div>
 
                     {selectedPreflight.image.state === 'duplicate' ? (
@@ -708,7 +760,7 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
                     </div>
                   </div>
                 </div>
-              ) : <div className="checkpoint282-detail-empty">Chọn account để xem ảnh, preview và history.</div>}
+              ) : <div className="checkpoint282-detail-empty">Chọn account để xem ảnh, preview, Email/OAuth readiness và history.</div>}
             </section>
           </main>
         </div>
@@ -728,7 +780,7 @@ export function Checkpoint282Dialog({ accounts, onClose }: Checkpoint282DialogPr
                       : started
                         ? 'Lượt CP282 đã dừng/kết thúc'
                         : 'Sẵn sàng sau preflight'}</strong>
-              <span>{started ? `${resolvedCount}/${rows.length} account đã xác minh` : 'Folder282 ưu tiên; source không được chọn ngẫu nhiên'}</span>
+              <span>{started ? `${resolvedCount}/${rows.length} account đã xác minh` : 'Folder282 ưu tiên; Email/OAuth chỉ đọc canonical theo accountId'}</span>
             </div>
           </div>
           <div className="checkpoint282-footer-actions">
