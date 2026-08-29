@@ -27,6 +27,14 @@ interface WorkerEntry {
   shuttingDown: boolean
 }
 
+export interface ScenarioActionSpecialHandler {
+  handles(actionType: string): boolean
+  run(job: ScenarioActionWorkerJob, onLog?: (event: ActionLogEvent) => void): Promise<ScenarioActionWorkerResult>
+  stop?(accountId: number, runKey: string): void
+  closeAccount?(accountId: number): Promise<void>
+  closeAll?(): void
+}
+
 function failedWorkerResult(job: ScenarioActionWorkerJob, code: string, message: string): ScenarioActionWorkerResult {
   const now = Date.now()
   const summary: ActionExecutionSummary = { result: { status: 'failed', code, message }, normalizedConfig: null, attempts: 0, startedAt: now, finishedAt: now }
@@ -43,9 +51,24 @@ function isWorkerMessage(event: unknown): event is ScenarioActionWorkerMessage {
 export class ScenarioActionWorkerManager {
   private readonly workers = new Map<number, WorkerEntry>()
   private readonly launchGate = new BrowserLaunchGate()
-  constructor(private readonly getRuntimeSettings: () => RuntimeSettings = () => ({ ...DEFAULT_APP_SETTINGS.runtime })) {}
+  constructor(
+    private readonly getRuntimeSettings: () => RuntimeSettings = () => ({ ...DEFAULT_APP_SETTINGS.runtime }),
+    private readonly specialHandler?: ScenarioActionSpecialHandler
+  ) {}
 
   async run(job: ScenarioActionWorkerJob, onLog?: (event: ActionLogEvent) => void): Promise<ScenarioActionWorkerResult> {
+    if (this.specialHandler?.handles(job.request.actionType)) {
+      // A persistent profile cannot be driven by the normal Scenario worker and
+      // the real posting worker at the same time. Handoff ownership first.
+      await this.closeWorkerProcess(job.accountId)
+      return this.specialHandler.run(job, onLog)
+    }
+
+    // Symmetric handoff when the next action returns from real group posting to
+    // a normal Scenario action. Successful posting workers are intentionally
+    // reusable within group_post, but must release the profile before this worker opens it.
+    await this.specialHandler?.closeAccount?.(job.accountId)
+
     const runtime = { ...this.getRuntimeSettings() }
     let entry = this.workers.get(job.accountId)
 
@@ -63,7 +86,7 @@ export class ScenarioActionWorkerManager {
         )
       }
       if (profileDecision === 'replace') {
-        await this.closeAccount(job.accountId)
+        await this.closeWorkerProcess(job.accountId)
         entry = undefined
       }
     }
@@ -90,12 +113,24 @@ export class ScenarioActionWorkerManager {
   }
 
   stop(accountId: number, runKey: string): void {
+    this.specialHandler?.stop?.(accountId, runKey)
     const entry = this.workers.get(accountId)
     if (!entry || entry.shuttingDown) return
     try { entry.process.postMessage({ type: 'stop', runKey }) } catch { /* exit handler settles */ }
   }
 
   async closeAccount(accountId: number): Promise<void> {
+    await this.specialHandler?.closeAccount?.(accountId)
+    await this.closeWorkerProcess(accountId)
+  }
+
+  closeAll(): void {
+    this.specialHandler?.closeAll?.()
+    for (const entry of this.workers.values()) { entry.shuttingDown = true; entry.process.kill() }
+    this.workers.clear()
+  }
+
+  private async closeWorkerProcess(accountId: number): Promise<void> {
     const entry = this.workers.get(accountId)
     if (!entry) return
     if (entry.pending) throw new Error(`Không thể đóng action worker account #${accountId} khi action đang chạy.`)
@@ -109,11 +144,6 @@ export class ScenarioActionWorkerManager {
       entry.process.once('exit', () => clearTimeout(timer))
       try { entry.process.postMessage({ type: 'shutdown' }) } catch { entry.process.kill() }
     })
-  }
-
-  closeAll(): void {
-    for (const entry of this.workers.values()) { entry.shuttingDown = true; entry.process.kill() }
-    this.workers.clear()
   }
 
   private spawn(job: ScenarioActionWorkerJob): WorkerEntry {

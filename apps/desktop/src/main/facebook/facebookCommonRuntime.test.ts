@@ -112,4 +112,15 @@ describe('Facebook common runtime', () => {
     expect(commonRuntime).not.toContain('groupUid')
     expect(commonRuntime).not.toContain('my_posted_content')
   })
+
+  it('uses the same Common preparation for profile posting while skipping only Page identity switching', () => {
+    const here = dirname(fileURLToPath(import.meta.url))
+    const commonRuntime = readFileSync(resolve(here, 'facebookCommonRuntime.ts'), 'utf8')
+    const profileGuard = commonRuntime.indexOf("if (!this.request.pageUid.trim())")
+    const pageSwitch = commonRuntime.indexOf('return this.ensurePageIdentity()', profileGuard)
+
+    expect(profileGuard).toBeGreaterThan(0)
+    expect(commonRuntime).toContain('state=profile_identity ready page_switch=skipped')
+    expect(pageSwitch).toBeGreaterThan(profileGuard)
+  })
 })

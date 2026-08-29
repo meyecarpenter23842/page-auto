@@ -197,6 +197,19 @@ function ConfigField({ actionType, field, value, onChange }: {
             else onChange(event.target.value)
           }}
         />
+        {field.kind === 'text' && ui?.folderPickerLabel ? (
+          <button
+            className="scenario-button"
+            type="button"
+            onClick={async (event) => {
+              event.preventDefault()
+              const picked = await window.pageAuto.pickPageTabImageFolder()
+              if (picked) onChange(picked)
+            }}
+          >
+            {ui.folderPickerLabel}
+          </button>
+        ) : null}
         {field.help ? <small className="action-config-help compact-help">{field.help}</small> : null}
       </div>
     </label>
