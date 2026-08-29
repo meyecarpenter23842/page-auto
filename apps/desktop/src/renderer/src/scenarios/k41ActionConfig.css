@@ -1,40 +1,118 @@
 .scenario-modal.action-config-modal.k41-action-config-modal {
-  width: min(980px, calc(100vw - 32px));
-  max-height: calc(100vh - 28px);
-  padding: 13px 15px 11px;
+  --action-surface: #ffffff;
+  --action-surface-muted: #f7f8fa;
+  --action-border: #d0d5dd;
+  --action-border-soft: #e4e7ec;
+  --action-text: #1d2939;
+  --action-text-secondary: #344054;
+  --action-muted: #667085;
+  --action-faint: #98a2b3;
+  --action-blue: #2563eb;
+
+  width: min(1040px, calc(100vw - 34px));
+  max-height: calc(100vh - 30px);
+  padding: 0;
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  border-color: var(--action-border);
+  border-radius: 10px;
+  background: var(--action-surface);
+  box-shadow: 0 20px 54px rgba(16, 24, 40, .18);
+  color: var(--action-text);
 }
 
 .k41-action-config-modal .scenario-modal-head {
   flex: 0 0 auto;
-  margin-bottom: 8px;
+  min-height: 49px;
+  margin: 0;
+  padding: 9px 13px 8px;
+  align-items: center;
+  border-bottom: 1px solid var(--action-border-soft);
+  background: #fff;
+}
+
+.k41-action-config-modal .scenario-modal-head .scenario-kicker {
+  margin: 0 0 2px;
+  color: var(--action-muted);
+  font-size: 9.5px;
+  font-weight: 760;
+  letter-spacing: .045em;
+}
+
+.k41-action-config-modal .scenario-modal-head h3 {
+  margin: 0;
+  color: #101828;
+  font-size: 14px;
+  line-height: 1.2;
+  font-weight: 760;
 }
 
 .k41-action-config-modal .scenario-modal-head button {
-  width: 28px;
-  height: 28px;
+  width: 27px;
+  height: 27px;
+  border-radius: 6px;
+  background: #f2f4f7;
+  color: #475467;
+  transition: background-color .12s ease, color .12s ease;
+}
+
+.k41-action-config-modal .scenario-modal-head button:hover {
+  background: #e9edf2;
+  color: #1d2939;
 }
 
 .k41-action-config-modal .action-config-summary {
   flex: 0 0 auto;
-  min-height: 0;
-  padding: 8px 10px;
+  min-height: 40px;
+  margin: 0;
+  padding: 6px 13px;
   align-items: center;
+  border: 0;
+  border-bottom: 1px solid var(--action-border-soft);
+  border-radius: 0;
+  background: var(--action-surface-muted);
+}
+
+.k41-action-config-modal .action-config-summary > div:first-child {
+  gap: 1px;
 }
 
 .k41-action-config-modal .action-config-summary strong {
+  color: var(--action-text);
   font-size: 11px;
+  font-weight: 740;
 }
 
 .k41-action-config-modal .action-config-summary code {
-  font-size: 8px;
+  color: #7c8798;
+  font-size: 8.5px;
+}
+
+.k41-action-config-modal .action-config-badges {
+  gap: 4px;
 }
 
 .k41-action-config-modal .action-config-badges span {
   padding: 2px 6px;
-  font-size: 7.8px;
+  border: 1px solid #dbe5f3;
+  border-radius: 999px;
+  background: #f2f6fb;
+  color: #456487;
+  font-size: 8px;
+  font-weight: 700;
+}
+
+.k41-action-config-modal .action-config-badges .ready {
+  border-color: #cfe7da;
+  background: #eef8f2;
+  color: #287452;
+}
+
+.k41-action-config-modal .action-config-badges .placeholder {
+  border-color: #eadbbd;
+  background: #fff8eb;
+  color: #90621c;
 }
 
 .k41-action-config-modal .action-config-form {
@@ -42,15 +120,23 @@
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  scrollbar-width: none;
-  padding: 8px 2px 1px 0;
+  padding: 9px 13px 5px;
+  scrollbar-width: thin;
+  scrollbar-color: #c6ccd5 transparent;
 }
 
 .k41-action-config-modal .action-config-form::-webkit-scrollbar,
 .k41-action-config-modal textarea::-webkit-scrollbar {
-  width: 0;
-  height: 0;
-  display: none;
+  width: 8px;
+  height: 8px;
+}
+
+.k41-action-config-modal .action-config-form::-webkit-scrollbar-thumb,
+.k41-action-config-modal textarea::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: #c4cbd5;
+  background-clip: padding-box;
 }
 
 .k41-action-header-row {
@@ -58,34 +144,62 @@
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 12px;
   align-items: end;
+  padding: 0 0 9px;
+  border-bottom: 1px solid var(--action-border-soft);
 }
 
 .k41-action-header-row .scenario-field {
   gap: 4px;
 }
 
+.k41-action-header-row .scenario-field > span {
+  color: #475467;
+  font-size: 10px;
+  font-weight: 700;
+}
+
 .k41-action-header-row .scenario-field input {
   height: 31px;
+  border-color: #cfd6df;
+  border-radius: 6px;
+  color: #253246;
+  font-size: 10.5px;
+}
+
+.k41-action-header-row .scenario-field input:focus {
+  border-color: #77a6e6;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, .08);
 }
 
 .k41-action-header-row .modal-check {
-  margin: 0 3px 7px 0;
+  min-height: 31px;
+  margin: 0;
+  padding: 0 2px 1px 0;
+  color: var(--action-text-secondary);
+  font-size: 10.4px;
+  font-weight: 650;
 }
 
 .k41-action-sections {
-  margin-top: 9px;
+  margin-top: 0;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 9px;
+  column-gap: 18px;
+  row-gap: 0;
   align-items: start;
 }
 
 .k41-action-section {
   min-width: 0;
-  padding: 9px 10px 10px;
-  border: 1px solid #e2e8f0;
-  border-radius: 9px;
-  background: #fbfcfe;
+  padding: 8px 0 9px;
+  border: 0;
+  border-top: 1px solid var(--action-border-soft);
+  border-radius: 0;
+  background: transparent;
+}
+
+.k41-action-section:nth-child(-n + 2) {
+  border-top: 0;
 }
 
 .k41-action-section:has(.action-reaction-strip),
@@ -93,13 +207,21 @@
   grid-column: 1 / -1;
 }
 
+.k41-action-section:has(.action-reaction-strip),
+.k41-action-section:has(.action-config-textarea),
+.k41-action-section:has(.action-reaction-strip) + .k41-action-section,
+.k41-action-section:has(.action-config-textarea) + .k41-action-section {
+  border-top-color: #d9dee6;
+}
+
 .k41-action-section-title {
-  margin-bottom: 7px;
-  color: #5f6e82;
-  font-size: 8.5px;
-  font-weight: 800;
-  letter-spacing: .05em;
-  text-transform: uppercase;
+  margin: 0 0 6px;
+  color: #344054;
+  font-size: 10.2px;
+  line-height: 1.2;
+  font-weight: 780;
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .action-config-fields.k41-action-grid {
@@ -107,23 +229,26 @@
   padding: 0;
   border: 0;
   display: grid;
-  grid-template-columns: repeat(2, minmax(150px, 1fr));
-  gap: 8px 12px;
+  grid-template-columns: repeat(2, minmax(145px, 1fr));
+  gap: 6px 10px;
   align-items: end;
 }
 
 .action-config-field {
   min-width: 0;
-  gap: 4px;
+  gap: 3px;
+  animation: action-config-reveal .14s ease-out both;
 }
 
 .action-config-field > span,
 .action-config-range-title > span {
   min-width: 0;
+  color: #475467;
   white-space: normal;
   overflow-wrap: anywhere;
-  font-size: 9px;
-  line-height: 1.25;
+  font-size: 9.8px;
+  line-height: 1.22;
+  font-weight: 650;
 }
 
 .action-config-field input,
@@ -131,22 +256,28 @@
 .action-config-range input {
   min-width: 0;
   width: 100%;
-  height: 31px;
+  height: 30px;
   padding: 0 8px;
-  border: 1px solid #d9e2ec;
-  border-radius: 7px;
+  border: 1px solid #cfd6df;
+  border-radius: 6px;
   outline: 0;
   background: #fff;
-  color: #2d3b51;
+  color: #253246;
   font: inherit;
-  font-size: 9.8px;
+  font-size: 10.2px;
+}
+
+.action-config-field input:hover,
+.action-config-field select:hover,
+.action-config-range input:hover {
+  border-color: #b3bdca;
 }
 
 .action-config-field input:focus,
 .action-config-field select:focus,
 .action-config-range input:focus {
-  border-color: #8db7ef;
-  box-shadow: 0 0 0 2px rgba(47, 120, 231, .07);
+  border-color: #77a6e6;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, .08);
 }
 
 .action-config-input-line {
@@ -158,24 +289,35 @@
 
 .action-config-input-line > input {
   flex: 1 1 auto;
-  min-width: 90px;
+  min-width: 86px;
+}
+
+.action-config-input-line .scenario-button {
+  min-height: 28px;
+  padding: 0 8px;
+  border-radius: 6px;
+  font-size: 9.5px;
 }
 
 .action-config-help {
-  line-height: 1.2;
+  color: #7c8798;
+  font-size: 8.4px;
+  line-height: 1.25;
 }
 
 .action-config-help.compact-help {
   flex: 0 0 auto;
   min-width: 0;
-  font-size: 7.8px;
+  color: #7c8798;
+  font-size: 8.1px;
   white-space: nowrap;
 }
 
 .action-config-range {
   min-width: 0;
   display: grid;
-  gap: 4px;
+  gap: 3px;
+  animation: action-config-reveal .14s ease-out both;
 }
 
 .action-config-range-title {
@@ -183,29 +325,28 @@
   display: flex;
   align-items: baseline;
   gap: 5px;
-  color: #657287;
-  font-weight: 700;
+  color: #475467;
 }
 
 .action-config-range-title small {
   flex: 0 0 auto;
-  color: #98a3b2;
-  font-size: 7.7px;
+  color: #7c8798;
+  font-size: 8.1px;
   font-weight: 500;
 }
 
 .action-config-range-controls {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(78px, 1fr) 18px minmax(78px, 1fr);
-  gap: 5px;
+  grid-template-columns: minmax(68px, 1fr) 16px minmax(68px, 1fr);
+  gap: 4px;
   align-items: center;
 }
 
 .action-config-range-arrow {
-  color: #8090a5;
-  font-size: 11px;
-  font-weight: 800;
+  color: #667085;
+  font-size: 10px;
+  font-weight: 750;
   text-align: center;
 }
 
@@ -215,43 +356,51 @@
 
 .action-config-textarea textarea {
   width: 100%;
-  height: 58px;
-  min-height: 58px;
-  max-height: 58px;
-  resize: none;
+  height: 52px;
+  min-height: 52px;
+  max-height: 86px;
+  resize: vertical;
   overflow: auto;
-  scrollbar-width: none;
-  padding: 7px 8px;
-  border: 1px solid #dbe3ed;
-  border-radius: 7px;
+  padding: 6px 8px;
+  border: 1px solid #cfd6df;
+  border-radius: 6px;
   outline: 0;
   background: #fff;
-  color: #334259;
+  color: #344054;
   font: inherit;
-  font-size: 9.3px;
+  font-size: 9.8px;
   line-height: 1.35;
 }
 
+.action-config-textarea textarea:hover {
+  border-color: #b3bdca;
+}
+
 .action-config-textarea textarea:focus {
-  border-color: #8eb5e9;
-  box-shadow: 0 0 0 2px rgba(47, 120, 231, .06);
+  border-color: #77a6e6;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, .08);
 }
 
 .action-config-check {
   min-width: 0;
-  min-height: 31px;
+  min-height: 30px;
   margin: 0;
   gap: 6px;
   align-items: center;
+  color: #344054;
   white-space: normal;
-  font-size: 9px;
-  line-height: 1.25;
+  font-size: 10px;
+  line-height: 1.2;
+  font-weight: 580;
+  animation: action-config-reveal .14s ease-out both;
 }
 
 .action-config-check input {
   flex: 0 0 auto;
   width: 14px;
   height: 14px;
+  margin: 0;
+  accent-color: var(--action-blue);
 }
 
 .action-config-check > span {
@@ -260,28 +409,31 @@
 
 .action-config-check .inline-help {
   margin-left: 2px;
-  font-size: 7.7px;
+  color: #7c8798;
+  font-size: 8.2px;
   font-weight: 400;
 }
 
 .action-reaction-strip {
   grid-column: 1 / -1;
   min-width: 0;
+  min-height: 34px;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
-  gap: 12px;
-  padding: 7px 9px;
-  border: 1px solid #e3e9f1;
-  border-radius: 8px;
-  background: #fff;
+  gap: 10px;
+  padding: 4px 0 1px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  animation: action-config-reveal .14s ease-out both;
 }
 
 .action-reaction-title {
   flex: 0 0 auto;
-  color: #657287;
-  font-size: 8.8px;
-  font-weight: 700;
+  color: #475467;
+  font-size: 9.5px;
+  font-weight: 680;
   white-space: nowrap;
 }
 
@@ -290,33 +442,33 @@
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
 }
 
 .action-reaction-option {
   position: relative;
   flex: 0 0 auto;
-  width: 34px;
-  height: 31px;
+  width: 31px;
+  height: 29px;
   display: grid;
   place-items: center;
-  border: 1px solid #dfe6ee;
-  border-radius: 8px;
-  background: #f9fbfd;
+  border: 1px solid #d5dbe4;
+  border-radius: 6px;
+  background: #f8f9fb;
   cursor: pointer;
-  transition: border-color .12s ease, background .12s ease, box-shadow .12s ease, transform .12s ease;
+  transition: border-color .12s ease, background-color .12s ease, box-shadow .12s ease, transform .12s ease;
 }
 
 .action-reaction-option:hover {
-  border-color: #b8cbe3;
-  background: #f5f9ff;
+  border-color: #aebed4;
+  background: #f2f6fb;
   transform: translateY(-1px);
 }
 
 .action-reaction-option:has(input:checked) {
-  border-color: #77a9e9;
-  background: #eaf3ff;
-  box-shadow: 0 0 0 2px rgba(47, 120, 231, .08);
+  border-color: #6ea3e9;
+  background: #edf5ff;
+  box-shadow: 0 0 0 1px rgba(37, 99, 235, .08);
 }
 
 .action-reaction-option:has(input:checked)::after {
@@ -324,15 +476,15 @@
   position: absolute;
   top: -5px;
   right: -5px;
-  width: 14px;
-  height: 14px;
+  width: 13px;
+  height: 13px;
   display: grid;
   place-items: center;
   border: 2px solid #fff;
   border-radius: 50%;
-  background: #2f78e7;
+  background: var(--action-blue);
   color: #fff;
-  font-size: 8px;
+  font-size: 7px;
   font-weight: 900;
   line-height: 1;
 }
@@ -347,38 +499,91 @@
 
 .action-reaction-icon {
   font-family: "Segoe UI Emoji", "Apple Color Emoji", sans-serif;
-  font-size: 18px;
+  font-size: 17px;
   line-height: 1;
+}
+
+/* Group interaction is the densest action. Keep related controls on the same visual line. */
+.k41-action-config-modal[data-action-type='group_interaction'] .k41-action-sections {
+  column-gap: 20px;
+}
+
+.k41-action-config-modal[data-action-type='group_interaction'] .k41-action-section[data-section='Nguồn nhóm'],
+.k41-action-config-modal[data-action-type='group_interaction'] .k41-action-section[data-section='Cảm xúc'] {
+  grid-column: 1 / -1;
+}
+
+.k41-action-config-modal[data-action-type='group_interaction'] .k41-action-section[data-section='Nguồn nhóm'] .k41-action-grid {
+  grid-template-columns: minmax(220px, .9fr) minmax(260px, 1.1fr);
+}
+
+.k41-action-config-modal[data-action-type='group_interaction'] .k41-action-section[data-section='Xem bài'] .k41-action-grid {
+  grid-template-columns: minmax(104px, .75fr) minmax(165px, 1.2fr) minmax(132px, 1fr);
+  align-items: center;
+}
+
+.k41-action-config-modal[data-action-type='group_interaction'] .k41-action-section[data-section='Cảm xúc'] .k41-action-grid {
+  grid-template-columns: minmax(160px, .75fr) minmax(240px, 1.25fr);
+  align-items: center;
+}
+
+.k41-action-config-modal[data-action-type='group_interaction'] .k41-action-section[data-section='Bình luận']:has(.action-config-textarea) .k41-action-grid {
+  grid-template-columns: minmax(145px, .8fr) minmax(210px, 1.15fr) minmax(160px, .9fr);
+  align-items: center;
+}
+
+.k41-action-config-modal[data-action-type='group_interaction'] .k41-action-section[data-section='Chia sẻ'] .k41-action-grid {
+  grid-template-columns: minmax(160px, .85fr) minmax(220px, 1.15fr);
+  align-items: center;
+}
+
+.k41-action-config-modal[data-action-type='group_interaction'] .k41-action-section[data-section='Nhóm hạn chế'] .k41-action-grid {
+  grid-template-columns: 1fr;
+}
+
+.k41-action-config-modal[data-action-type='group_interaction'] .k41-action-section[data-section='Thiết lập'] .k41-action-grid {
+  grid-template-columns: minmax(210px, 1.25fr) minmax(130px, .75fr) minmax(130px, .75fr);
+  align-items: end;
 }
 
 .k41-action-config-modal .scenario-placeholder-note {
   margin-top: 8px;
   padding: 7px 9px;
-  font-size: 8.8px;
+  border-radius: 6px;
+  font-size: 9px;
 }
 
 .k41-action-config-modal .action-config-errors {
-  margin-top: 7px;
+  margin: 7px 0 2px;
   padding: 7px 8px;
+  border-radius: 6px;
+}
+
+.k41-action-config-modal .action-config-errors span {
+  font-size: 9px;
 }
 
 .k41-action-config-modal .scenario-modal-actions {
   flex: 0 0 auto;
-  min-height: 44px;
-  margin-top: 8px;
-  padding-top: 8px;
+  min-height: 45px;
+  margin: 0;
+  padding: 7px 12px;
   align-items: center;
+  border-top: 1px solid var(--action-border-soft);
   background: #fff;
 }
 
 .k41-action-config-modal .scenario-modal-actions .scenario-toolbar-note {
   margin-right: auto;
-  font-size: 8.5px;
+  color: #667085;
+  font-size: 8.8px;
 }
 
-.action-config-badges .ready {
-  background: #e9f7ef;
-  color: #2f845e;
+.k41-action-config-modal .scenario-modal-actions .scenario-button {
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 6px;
+  font-size: 10px;
 }
 
 .action-picker-item small.ready {
@@ -399,81 +604,103 @@
   color: #668173;
 }
 
-@media (max-width: 760px) {
+@keyframes action-config-reveal {
+  from { opacity: .4; transform: translateY(-2px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (max-width: 1060px) {
   .scenario-modal.action-config-modal.k41-action-config-modal {
-    width: calc(100vw - 16px);
-    max-height: calc(100vh - 16px);
-    padding: 10px;
+    width: calc(100vw - 18px);
+    max-height: calc(100vh - 18px);
   }
 
   .k41-action-sections {
     grid-template-columns: 1fr;
-    gap: 7px;
   }
 
-  .k41-action-section:has(.action-reaction-strip),
-  .k41-action-section:has(.action-config-textarea) {
+  .k41-action-section,
+  .k41-action-section:nth-child(-n + 2) {
     grid-column: auto;
+    border-top: 1px solid var(--action-border-soft);
   }
 
-  .action-config-fields.k41-action-grid {
+  .k41-action-section:first-child {
+    border-top: 0;
+  }
+
+  .action-config-fields.k41-action-grid,
+  .k41-action-config-modal[data-action-type='group_interaction'] .k41-action-section .k41-action-grid {
     grid-template-columns: repeat(2, minmax(130px, 1fr));
-    gap: 7px 9px;
-  }
-
-  .action-reaction-strip {
-    gap: 8px;
   }
 }
 
-@media (max-width: 560px) {
+@media (max-width: 620px) {
   .k41-action-header-row {
     grid-template-columns: 1fr;
-    gap: 6px;
+    gap: 5px;
   }
 
   .k41-action-header-row .modal-check {
-    margin: 0;
+    min-height: 26px;
   }
 
-  .action-config-fields.k41-action-grid {
+  .action-config-fields.k41-action-grid,
+  .k41-action-config-modal[data-action-type='group_interaction'] .k41-action-section .k41-action-grid {
     grid-template-columns: 1fr;
   }
 
   .action-config-range-controls {
-    grid-template-columns: minmax(72px, 1fr) 18px minmax(72px, 1fr);
+    grid-template-columns: minmax(66px, 1fr) 16px minmax(66px, 1fr);
   }
 
   .action-reaction-strip {
     grid-template-columns: 1fr;
-    gap: 6px;
+    gap: 5px;
   }
 }
 
-@media (max-height: 650px) and (min-width: 761px) {
+@media (max-height: 700px) and (min-width: 1061px) {
   .scenario-modal.action-config-modal.k41-action-config-modal {
-    max-height: calc(100vh - 14px);
-    padding-top: 9px;
-    padding-bottom: 8px;
+    max-height: calc(100vh - 16px);
   }
 
   .k41-action-config-modal .scenario-modal-head {
-    margin-bottom: 5px;
+    min-height: 45px;
+    padding-top: 7px;
+    padding-bottom: 6px;
   }
 
-  .k41-action-sections {
-    margin-top: 6px;
-    gap: 6px;
+  .k41-action-config-modal .action-config-summary {
+    min-height: 35px;
+    padding-top: 4px;
+    padding-bottom: 4px;
+  }
+
+  .k41-action-config-modal .action-config-form {
+    padding-top: 6px;
   }
 
   .k41-action-section {
-    padding-top: 7px;
+    padding-top: 6px;
     padding-bottom: 7px;
   }
 
   .action-config-textarea textarea {
     height: 44px;
     min-height: 44px;
-    max-height: 44px;
+    max-height: 64px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .action-config-field,
+  .action-config-range,
+  .action-config-check,
+  .action-reaction-strip,
+  .action-reaction-option,
+  .k41-action-config-modal .scenario-modal-head button {
+    animation: none;
+    transition-duration: .01ms;
   }
 }

@@ -277,7 +277,14 @@ export function ActionConfigModal({ value, onClose, onSave }: ActionConfigModalP
 
   return (
     <div className="scenario-modal-backdrop" role="presentation" onMouseDown={onClose}>
-      <section className="scenario-modal action-config-modal k41-action-config-modal" role="dialog" aria-modal="true" aria-label="Cấu hình hành động" onMouseDown={(event) => event.stopPropagation()}>
+      <section
+        className="scenario-modal action-config-modal k41-action-config-modal"
+        data-action-type={value.actionType}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Cấu hình hành động"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
         <div className="scenario-modal-head">
           <div><p className="scenario-kicker">CẤU HÌNH ACTION</p><h3>{value.id === null ? 'Thêm hành động' : 'Sửa hành động'}</h3></div>
           <button type="button" onClick={onClose}>×</button>
@@ -305,7 +312,7 @@ export function ActionConfigModal({ value, onClose, onSave }: ActionConfigModalP
                 const regularFields = fields.filter((field) => !isReactionField(field))
                 const renderItems = buildFieldRenderItems(regularFields)
                 return (
-                  <section className="k41-action-section" key={section}>
+                  <section className="k41-action-section" data-section={section} key={section}>
                     <div className="k41-action-section-title">{section}</div>
                     <div className="action-config-fields k41-action-grid">
                       {renderItems.map((item) => item.maxField ? (
