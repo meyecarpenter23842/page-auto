@@ -6,6 +6,8 @@ export interface ScenarioRunnerSettings {
   parallelAccounts: number
   actionDelayMinSeconds: number
   actionDelayMaxSeconds: number
+  accountSwitchDelayMinSeconds: number
+  accountSwitchDelayMaxSeconds: number
   pauseAfterActions: number
   pauseMinutes: number
   pauseOnErrorMinutes: number
@@ -36,6 +38,8 @@ export const DEFAULT_SCENARIO_RUNNER_SETTINGS: ScenarioRunnerSettings = {
   parallelAccounts: 1,
   actionDelayMinSeconds: 5,
   actionDelayMaxSeconds: 10,
+  accountSwitchDelayMinSeconds: 5,
+  accountSwitchDelayMaxSeconds: 10,
   pauseAfterActions: 100,
   pauseMinutes: 30,
   pauseOnErrorMinutes: 60,
@@ -93,6 +97,16 @@ export function normalizeScenarioRunnerSettings(value: unknown): ScenarioRunnerS
     actionDelayMinSeconds,
     clampInteger(source.actionDelayMaxSeconds, defaults.actionDelayMaxSeconds, 0, 3600)
   )
+  const accountSwitchDelayMinSeconds = clampInteger(
+    source.accountSwitchDelayMinSeconds,
+    defaults.accountSwitchDelayMinSeconds,
+    0,
+    3600
+  )
+  const accountSwitchDelayMaxSeconds = Math.max(
+    accountSwitchDelayMinSeconds,
+    clampInteger(source.accountSwitchDelayMaxSeconds, defaults.accountSwitchDelayMaxSeconds, 0, 3600)
+  )
 
   return {
     randomScenarios: bool(source.randomScenarios, defaults.randomScenarios),
@@ -102,6 +116,8 @@ export function normalizeScenarioRunnerSettings(value: unknown): ScenarioRunnerS
     parallelAccounts: clampInteger(source.parallelAccounts, defaults.parallelAccounts, 1, 100),
     actionDelayMinSeconds,
     actionDelayMaxSeconds,
+    accountSwitchDelayMinSeconds,
+    accountSwitchDelayMaxSeconds,
     pauseAfterActions: clampInteger(source.pauseAfterActions, defaults.pauseAfterActions, 1, 100000),
     pauseMinutes: clampInteger(source.pauseMinutes, defaults.pauseMinutes, 0, 1440),
     pauseOnErrorMinutes: clampInteger(source.pauseOnErrorMinutes, defaults.pauseOnErrorMinutes, 0, 1440),

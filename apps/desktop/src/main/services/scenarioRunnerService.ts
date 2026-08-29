@@ -221,10 +221,10 @@ export class ScenarioRunnerService {
     }
 
     const workerLoop = async (): Promise<void> => {
-      while (!active.stopRequested) {
-        const account = await nextAccount()
-        if (!account) return
-        await this.accountExecution.run(account.id, () => this.runAccount(active, account, scenarios, payload))
+      let account = await nextAccount()
+      while (account && !active.stopRequested) {
+        const finishedAccount = account
+        await this.accountExecution.run(finishedAccount.id, () => this.runAccount(active, finishedAccount, scenarios, payload))
         active.completedAccounts += 1
         if (
           !active.stopRequested
@@ -239,6 +239,21 @@ export class ScenarioRunnerService {
           )
           this.log(active, 'info', `Tạm dừng ${payload.settings.pauseAfterAccountsMinutes} phút sau ${active.completedAccounts} tài khoản.`)
         }
+
+        if (active.stopRequested) return
+        const reservedNext = await nextAccount()
+        if (!reservedNext) return
+
+        const switchDelayMs = randomDelayMs(
+          payload.settings.accountSwitchDelayMinSeconds,
+          payload.settings.accountSwitchDelayMaxSeconds
+        )
+        if (switchDelayMs > 0) {
+          const displaySeconds = Math.max(1, Math.round(switchDelayMs / 1000))
+          this.log(active, 'info', `Đã đóng account ${finishedAccount.uid}; chờ ${displaySeconds} giây trước khi mở tài khoản tiếp theo.`, finishedAccount.id)
+          if (!await this.sleep(active, switchDelayMs)) return
+        }
+        account = reservedNext
       }
     }
 
@@ -272,6 +287,7 @@ export class ScenarioRunnerService {
     let ordinal = 0
     let hadFailure = false
     let needsAttention = false
+    let pendingErrorPauseMs = 0
 
     try {
       const repeatCount = payload.settings.repeat ? Math.max(1, payload.settings.repeatCount) : 1
@@ -302,6 +318,21 @@ export class ScenarioRunnerService {
               continue
             }
             if (attempted >= payload.settings.limitPerAccount) break runLoop
+
+            if (pendingErrorPauseMs > 0) {
+              const pauseMs = pendingErrorPauseMs
+              pendingErrorPauseMs = 0
+              await this.workers.closeAccount(account.id).catch(() => undefined)
+              this.browserWindowLayout.release(account.id, 'scenario')
+              const pauseMinutes = Math.max(1, Math.round(pauseMs / 60_000))
+              this.log(active, 'warning', `Đã đóng browser sau lỗi; tạm dừng ${pauseMinutes} phút trước action kế tiếp.`, account.id)
+              if (!await this.sleep(active, pauseMs)) break runLoop
+              if (scenarioDeadline !== null && Date.now() >= scenarioDeadline) {
+                this.log(active, 'warning', `Kịch bản “${scenario.name}” đã đạt giới hạn thời gian trong lúc tạm dừng sau lỗi.`, account.id, scenario.id)
+                break
+              }
+            }
+
             ordinal += 1
             attempted += 1
             runtime.total += 1
@@ -355,8 +386,8 @@ export class ScenarioRunnerService {
               hadFailure = true
               runtime.message = result.summary.result.message ?? 'Action thất bại.'
               if (payload.settings.pauseOnErrorMinutes > 0) {
-                this.log(active, 'warning', `Tạm dừng ${payload.settings.pauseOnErrorMinutes} phút sau lỗi action.`, account.id, scenario.id, action.actionType)
-                if (!await this.sleep(active, payload.settings.pauseOnErrorMinutes * 60_000)) break runLoop
+                pendingErrorPauseMs = payload.settings.pauseOnErrorMinutes * 60_000
+                this.log(active, 'warning', `Action lỗi; sẽ tạm dừng ${payload.settings.pauseOnErrorMinutes} phút trước action kế tiếp nếu còn.`, account.id, scenario.id, action.actionType)
               }
             }
 

@@ -102,7 +102,9 @@ function mapOpenFailure(job: ScenarioActionWorkerJob, message: string, code?: st
 function actionDependencies(runtime: FacebookCommonRuntime, job: ScenarioActionWorkerJob) {
   const common = {
     resolvePage: async () => runtime.page,
-    navigationTimeoutMs: job.browser.navigationTimeoutMs
+    navigationTimeoutMs: job.browser.navigationTimeoutMs,
+    actionDelayMinMs: job.browser.actionDelayMinMs,
+    actionDelayMaxMs: job.browser.actionDelayMaxMs
   }
   return {
     view: { newsfeed: common, story: common, reel: common },

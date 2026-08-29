@@ -7,11 +7,28 @@ describe('scenarioRunnerState', () => {
   })
 
   it('clamps numeric settings and excludes transient proxy input from persisted settings', () => {
-    const result = normalizeScenarioRunnerState({ settings: { parallelAccounts: 0, actionDelayMinSeconds: 40, actionDelayMaxSeconds: 2, proxyText: 'transient-value' } })
+    const result = normalizeScenarioRunnerState({
+      settings: {
+        parallelAccounts: 0,
+        actionDelayMinSeconds: 40,
+        actionDelayMaxSeconds: 2,
+        accountSwitchDelayMinSeconds: 12,
+        accountSwitchDelayMaxSeconds: 3,
+        proxyText: 'transient-value'
+      }
+    })
     expect(result.settings.parallelAccounts).toBe(1)
     expect(result.settings.actionDelayMaxSeconds).toBe(40)
+    expect(result.settings.accountSwitchDelayMinSeconds).toBe(12)
+    expect(result.settings.accountSwitchDelayMaxSeconds).toBe(12)
     expect('proxyText' in result.settings).toBe(false)
     expect(result.settings.repeatCount).toBe(DEFAULT_SCENARIO_RUNNER_SETTINGS.repeatCount)
+  })
+
+  it('uses account switch pacing defaults for older persisted state', () => {
+    const result = normalizeScenarioRunnerState({ settings: {} })
+    expect(result.settings.accountSwitchDelayMinSeconds).toBe(DEFAULT_SCENARIO_RUNNER_SETTINGS.accountSwitchDelayMinSeconds)
+    expect(result.settings.accountSwitchDelayMaxSeconds).toBe(DEFAULT_SCENARIO_RUNNER_SETTINGS.accountSwitchDelayMaxSeconds)
   })
 
   it('moves selected scenarios without mutating the source list', () => {

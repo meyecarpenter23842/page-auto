@@ -423,6 +423,10 @@ export function ScenarioRunnerDashboard({ onOpenManager }: ScenarioRunnerDashboa
               <span>Tạm dừng sau khi chạy số acc</span><NumberField min={1} max={100000} disabled={runtimeActive} value={settings.pauseAfterAccounts} onChange={(value) => updateSetting('pauseAfterAccounts', Math.max(1, value || 1))} />
               <span>Thời gian (phút)</span><NumberField min={0} max={1440} disabled={runtimeActive} value={settings.pauseAfterAccountsMinutes} onChange={(value) => updateSetting('pauseAfterAccountsMinutes', Math.max(0, value || 0))} />
             </div>
+            <div className="scenario-runner-control-row four">
+              <span>Delay đổi tài khoản (giây)</span><NumberField min={0} max={3600} disabled={runtimeActive} value={settings.accountSwitchDelayMinSeconds} onChange={(value) => updateSetting('accountSwitchDelayMinSeconds', Math.max(0, value || 0))} />
+              <span>→</span><NumberField min={0} max={3600} disabled={runtimeActive} value={settings.accountSwitchDelayMaxSeconds} onChange={(value) => updateSetting('accountSwitchDelayMaxSeconds', Math.max(settings.accountSwitchDelayMinSeconds, value || 0))} />
+            </div>
 
             <label className="scenario-runner-inline-option wide-runtime-option">
               <input type="checkbox" disabled={runtimeActive} checked={settings.proxyResetEnabled} onChange={(event) => updateSetting('proxyResetEnabled', event.target.checked)} />
