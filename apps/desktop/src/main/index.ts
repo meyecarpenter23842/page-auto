@@ -1,5 +1,6 @@
 import { app, BrowserWindow } from 'electron'
 import { join } from 'node:path'
+import { registerAccountGroupIpcHandlers, type AccountGroupIpcRuntime } from './accountGroupIpc'
 import { registerCheckpoint282WorkbenchIpcHandlers, type Checkpoint282WorkbenchIpcRuntime } from './checkpoint282WorkbenchIpc'
 import { initializeDatabase, type DatabaseRuntime } from './database'
 import { registerHotmailIpcHandlers, type HotmailIpcRuntime } from './hotmailIpc'
@@ -13,6 +14,7 @@ import { ensureDataDirectoryLayout, resolveDataDirectory } from './services/port
 let mainWindow: BrowserWindow | null = null
 let databaseRuntime: DatabaseRuntime | null = null
 let ipcRuntime: IpcRuntime | null = null
+let accountGroupIpcRuntime: AccountGroupIpcRuntime | null = null
 let checkpoint282WorkbenchIpcRuntime: Checkpoint282WorkbenchIpcRuntime | null = null
 let hotmailIpcRuntime: HotmailIpcRuntime | null = null
 let postLibraryIpcRuntime: PostLibraryIpcRuntime | null = null
@@ -68,6 +70,7 @@ app.whenReady().then(() => {
   try {
     databaseRuntime = initializeDatabase(databaseFile)
     ipcRuntime = registerIpcHandlers({ database: databaseRuntime.client, dataDirectory })
+    accountGroupIpcRuntime = registerAccountGroupIpcHandlers(databaseRuntime.client)
     checkpoint282WorkbenchIpcRuntime = registerCheckpoint282WorkbenchIpcHandlers({ database: databaseRuntime.client, dataDirectory })
     hotmailIpcRuntime = registerHotmailIpcHandlers(databaseRuntime.client)
     postLibraryIpcRuntime = registerPostLibraryIpcHandlers(databaseRuntime.client)
@@ -93,6 +96,8 @@ app.whenReady().then(() => {
     hotmailIpcRuntime = null
     postLibraryIpcRuntime?.dispose()
     postLibraryIpcRuntime = null
+    accountGroupIpcRuntime?.dispose()
+    accountGroupIpcRuntime = null
     ipcRuntime?.dispose()
     ipcRuntime = null
     databaseRuntime?.close()
@@ -116,6 +121,8 @@ app.on('before-quit', () => {
   hotmailIpcRuntime = null
   postLibraryIpcRuntime?.dispose()
   postLibraryIpcRuntime = null
+  accountGroupIpcRuntime?.dispose()
+  accountGroupIpcRuntime = null
   ipcRuntime?.dispose()
   ipcRuntime = null
   databaseRuntime?.close()

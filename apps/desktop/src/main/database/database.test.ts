@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import Database from 'better-sqlite3'
 import { afterEach, describe, expect, it } from 'vitest'
+import { AccountGroupRepository } from './accountGroupRepository'
 import { AccountRepository } from './accountRepository'
 import { applyHotmailMigration } from './hotmailMigration'
 import { HotmailRepository } from './hotmailRepository'
@@ -54,6 +55,9 @@ describe('initializeDatabase', () => {
     const emailProxySettingsTable = runtime.client
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'email_proxy_settings'")
       .get() as { name: string } | undefined
+    const accountGroupsTable = runtime.client
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'account_groups'")
+      .get() as { name: string } | undefined
 
     expect(existsSync(databaseFile)).toBe(true)
     expect(migrations).toEqual([
@@ -67,9 +71,10 @@ describe('initializeDatabase', () => {
       { version: 8, name: 'hotmail_auto_subsystem' },
       { version: 9, name: 'hotmail_account_oauth_binding' },
       { version: 10, name: 'page_wall_scheduled_jobs' },
-      { version: 11, name: 'scenario_shell' }
+      { version: 11, name: 'scenario_shell' },
+      { version: 12, name: 'account_group_manager' }
     ])
-    expect(schemaVersion?.value).toBe('11')
+    expect(schemaVersion?.value).toBe('12')
     expect(executionLogsTable?.name).toBe('execution_logs')
     expect(postLibraryTable?.name).toBe('page_tab_posts')
     expect(pageTabColumns.some((column) => column.name === 'account_order_mode')).toBe(true)
@@ -81,6 +86,7 @@ describe('initializeDatabase', () => {
     ]))
     expect(emailProfileSettingsTable?.name).toBe('email_profile_settings')
     expect(emailProxySettingsTable?.name).toBe('email_proxy_settings')
+    expect(accountGroupsTable?.name).toBe('account_groups')
 
     runtime.close()
   })
@@ -94,7 +100,7 @@ describe('initializeDatabase', () => {
       .prepare('SELECT COUNT(*) AS count FROM __page_auto_migrations')
       .get() as { count: number }
 
-    expect(count.count).toBe(11)
+    expect(count.count).toBe(12)
     reopened.close()
   })
 
@@ -235,6 +241,41 @@ describe('AccountRepository', () => {
     const layout = { order: ['uid', 'name'], hidden: ['password'], widths: { uid: 180 } }
     repository.saveColumnLayout('accounts', layout)
     expect(repository.getColumnLayout('accounts')).toEqual(layout)
+
+    runtime.close()
+  })
+})
+
+describe('AccountGroupRepository', () => {
+  it('creates, assigns, renames, removes and filters one group per account', () => {
+    const { runtime } = createRuntime()
+    const accounts = new AccountRepository(runtime.client)
+    const groups = new AccountGroupRepository(runtime.client)
+    const first = accounts.create({ uid: 'group-1', category: 'Legacy Warm' })
+    const second = accounts.create({ uid: 'group-2' })
+
+    const migratedOverview = groups.overview()
+    expect(migratedOverview.groups).toEqual([
+      expect.objectContaining({ name: 'Legacy Warm', accountCount: 1 })
+    ])
+    expect(migratedOverview.totalAccounts).toBe(2)
+    expect(migratedOverview.ungroupedCount).toBe(1)
+
+    const cold = groups.create({ name: 'Cold' })
+    expect(groups.assign({ accountIds: [first.id, second.id, second.id], groupId: cold.id })).toBe(2)
+    expect(accounts.list({ category: 'Cold' })).toHaveLength(2)
+
+    const renamed = groups.rename({ id: cold.id, name: 'Ready' })
+    expect(renamed.name).toBe('Ready')
+    expect(renamed.accountCount).toBe(2)
+    expect(accounts.list({ category: 'Ready' })).toHaveLength(2)
+
+    expect(groups.assign({ accountIds: [second.id], groupId: null })).toBe(1)
+    expect(groups.overview()).toMatchObject({ totalAccounts: 2, ungroupedCount: 1 })
+
+    expect(groups.delete(cold.id)).toBe(true)
+    expect(accounts.getById(first.id)?.category).toBeNull()
+    expect(groups.overview().groups.map((group) => group.name)).toEqual(['Legacy Warm'])
 
     runtime.close()
   })

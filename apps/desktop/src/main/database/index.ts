@@ -3,6 +3,7 @@ import { dirname } from 'node:path'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { appSettings } from './schema'
+import { ACCOUNT_GROUP_SCHEMA_VERSION, applyAccountGroupMigration } from './accountGroupMigration'
 import { HOTMAIL_SCHEMA_VERSION, applyHotmailMigration } from './hotmailMigration'
 import { latestSchemaVersion, migrations } from './migrations'
 import { PAGE_WALL_SCHEMA_VERSION, applyPageWallMigration } from './pageWallMigration'
@@ -57,12 +58,14 @@ export function initializeDatabase(databaseFile: string): DatabaseRuntime {
   applyHotmailMigration(client)
   applyPageWallMigration(client)
   applyScenarioMigration(client)
+  applyAccountGroupMigration(client)
 
   const schemaVersion = Math.max(
     latestSchemaVersion,
     HOTMAIL_SCHEMA_VERSION,
     PAGE_WALL_SCHEMA_VERSION,
-    SCENARIO_SCHEMA_VERSION
+    SCENARIO_SCHEMA_VERSION,
+    ACCOUNT_GROUP_SCHEMA_VERSION
   )
   const orm = drizzle(client)
   orm

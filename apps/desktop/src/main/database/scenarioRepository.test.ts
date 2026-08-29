@@ -6,8 +6,10 @@ import { initializeDatabase } from './index'
 import { ScenarioRepository } from './scenarioRepository'
 
 const tempDirectories: string[] = []
+const runtimes: ReturnType<typeof initializeDatabase>[] = []
 
 afterEach(() => {
+  for (const runtime of runtimes.splice(0)) runtime.close()
   for (const directory of tempDirectories.splice(0)) rmSync(directory, { recursive: true, force: true })
 })
 
@@ -15,22 +17,22 @@ function setup() {
   const directory = mkdtempSync(join(tmpdir(), 'page-auto-scenarios-'))
   tempDirectories.push(directory)
   const runtime = initializeDatabase(join(directory, 'page-auto.sqlite'))
+  runtimes.push(runtime)
   return { runtime, scenarios: new ScenarioRepository(runtime.client) }
 }
 
 describe('ScenarioRepository', () => {
-  it('applies schema v11 and persists scenario settings', () => {
+  it('applies schema v12 and persists scenario settings', () => {
     const { runtime, scenarios } = setup()
     const schemaVersion = runtime.client.prepare("SELECT value FROM app_settings WHERE key = 'schema_version'").get() as { value: string }
-    expect(schemaVersion.value).toBe('11')
+    expect(schemaVersion.value).toBe('12')
 
     const created = scenarios.create({ name: 'Nuôi tài khoản', randomActionOrder: true, runtimeLimitMinutes: 30 }, 1000)
     expect(created).toMatchObject({ name: 'Nuôi tài khoản', randomActionOrder: true, runtimeLimitMinutes: 30, actionCount: 0 })
-    runtime.close()
   })
 
   it('creates, edits, reorders and deletes reusable action placeholders', () => {
-    const { runtime, scenarios } = setup()
+    const { scenarios } = setup()
     const scenario = scenarios.create({ name: 'KB A' }, 1000)
     let details = scenarios.createAction({ scenarioId: scenario.id, actionType: 'view_newsfeed', label: 'View newsfeed', category: 'interaction' }, 1100)
     details = scenarios.createAction({ scenarioId: scenario.id, actionType: 'group_post', label: 'Đăng bài nhóm', category: 'groups' }, 1200)
@@ -45,11 +47,10 @@ describe('ScenarioRepository', () => {
     details = scenarios.deleteAction(details.actions[0]!.id, 1500)
     expect(details.actions).toHaveLength(1)
     expect(details.actions[0]!.orderIndex).toBe(0)
-    runtime.close()
   })
 
   it('rejects secrets in scenario action config', () => {
-    const { runtime, scenarios } = setup()
+    const { scenarios } = setup()
     const scenario = scenarios.create({ name: 'KB secure' })
     expect(() => scenarios.createAction({
       scenarioId: scenario.id,
@@ -58,6 +59,5 @@ describe('ScenarioRepository', () => {
       category: 'other',
       configJson: JSON.stringify({ cookie: 'secret-value' })
     })).toThrow('không được lưu secret')
-    runtime.close()
   })
 })
