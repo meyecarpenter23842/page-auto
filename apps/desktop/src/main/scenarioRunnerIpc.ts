@@ -10,7 +10,7 @@ import { AppSettingsRepository } from './database/appSettingsRepository'
 import { BrowserWindowLayoutRepository } from './database/browserWindowLayoutRepository'
 import { AccountExecutionCoordinator } from './services/accountExecutionCoordinator'
 import { PostingService } from './services/postingService'
-import { ScenarioGroupPostAdapter } from './services/scenarioGroupPostAdapter'
+import { ScenarioPostActionAdapter } from './services/scenarioPostActionAdapter'
 import { ScenarioRunnerService } from './services/scenarioRunnerService'
 
 export interface ScenarioRunnerIpcRuntime { dispose: () => void }
@@ -28,7 +28,7 @@ export function registerScenarioRunnerIpcHandlers(options: ScenarioRunnerIpcOpti
   const appSettings = new AppSettingsRepository(options.database)
   const browserWindowLayoutSettings = new BrowserWindowLayoutRepository(options.database)
   const browserWindowLayout = new BrowserWindowLayoutManager()
-  const groupPosting = new PostingService(
+  const posting = new PostingService(
     options.database,
     options.dataDirectory,
     () => appSettings.get().browser,
@@ -40,8 +40,8 @@ export function registerScenarioRunnerIpcHandlers(options: ScenarioRunnerIpcOpti
     browserWindowLayout,
     () => browserWindowLayoutSettings.get()
   )
-  const groupPostAdapter = new ScenarioGroupPostAdapter(options.database, groupPosting)
-  const workers = new ScenarioActionWorkerManager(() => appSettings.get().runtime, groupPostAdapter)
+  const postAdapter = new ScenarioPostActionAdapter(options.database, posting)
+  const workers = new ScenarioActionWorkerManager(() => appSettings.get().runtime, postAdapter)
   const service = new ScenarioRunnerService(
     options.database,
     workers,
@@ -51,13 +51,16 @@ export function registerScenarioRunnerIpcHandlers(options: ScenarioRunnerIpcOpti
   )
 
   ipcMain.handle(SCENARIO_RUNNER_IPC.start, (_event, payload: ScenarioRunnerStartPayload) => {
+    // Resolve every Content Library reference before Start. The returned object is a detached
+    // content snapshot, so edits/deletes in the library cannot mutate the active Scenario run.
+    const prepared = postAdapter.prepareScenarioRun(payload.scenarioIds)
     const snapshot = service.start(payload)
-    groupPostAdapter.beginScenarioRun(snapshot.runId, payload.accountIds)
+    postAdapter.beginScenarioRun(snapshot.runId, payload.accountIds, prepared)
     return snapshot
   })
   ipcMain.handle(SCENARIO_RUNNER_IPC.status, () => {
     const snapshot = service.status()
-    if (snapshot && isTerminalScenarioState(snapshot.state)) groupPostAdapter.finishScenarioRun(snapshot.runId)
+    if (snapshot && isTerminalScenarioState(snapshot.state)) postAdapter.finishScenarioRun(snapshot.runId)
     return snapshot
   })
   ipcMain.handle(SCENARIO_RUNNER_IPC.stop, () => service.stop())

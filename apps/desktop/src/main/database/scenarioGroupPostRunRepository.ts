@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3'
 import type { PageTabImageConfig, PostSelectionMode } from '../../shared/pageTabs'
-import type { RunDetails, RunSnapshot } from '../../shared/runs'
+import type { RunDetails, RunSnapshot, RunSnapshotPost } from '../../shared/runs'
 import { RunRepository } from './runRepository'
 
 export interface CreateScenarioGroupPostRunInput {
@@ -11,6 +11,7 @@ export interface CreateScenarioGroupPostRunInput {
   variants: string[]
   postMode: PostSelectionMode
   image: PageTabImageConfig
+  posts?: RunSnapshotPost[]
   postsPerAccount: number
   postDelayMinSeconds: number
   postDelayMaxSeconds: number
@@ -39,6 +40,28 @@ function uniqueNonEmpty(values: readonly string[]): string[] {
   return result
 }
 
+function normalizePosts(input: CreateScenarioGroupPostRunInput, variants: string[]): RunSnapshotPost[] {
+  if (!input.posts?.length) {
+    return [{
+      name: 'Scenario group_post',
+      enabled: true,
+      sortOrder: 0,
+      variants: [...variants],
+      image: { ...input.image }
+    }]
+  }
+  return input.posts
+    .filter((post) => post.enabled)
+    .map((post, index) => ({
+      name: post.name.trim() || `Bài viết ${index + 1}`,
+      enabled: true,
+      sortOrder: index,
+      variants: post.variants.map((variant) => variant.trim()).filter(Boolean),
+      image: { ...post.image, folderPath: post.image.folderPath.trim() }
+    }))
+    .filter((post) => post.variants.length > 0 || post.image.folderPath.length > 0)
+}
+
 export class ScenarioGroupPostRunRepository {
   private readonly runs: RunRepository
 
@@ -50,10 +73,13 @@ export class ScenarioGroupPostRunRepository {
     const accountIds = uniquePositiveIntegers(input.accountIds)
     const groupUids = uniqueNonEmpty(input.groupUids)
     const variants = input.variants.map((value) => value.trim()).filter(Boolean)
+    const posts = normalizePosts(input, variants)
     if (!accountIds.length) throw new Error('Scenario group_post không có tài khoản hợp lệ.')
     if (!groupUids.length) throw new Error('Scenario group_post không có Group hợp lệ.')
-    if (!variants.length) throw new Error('Scenario group_post không có nội dung hợp lệ.')
+    if (!posts.length) throw new Error('Scenario group_post không có bài viết snapshot hợp lệ.')
 
+    const flattenedVariants = posts.flatMap((post) => post.variants)
+    const fallbackImage = posts[0]?.image ?? input.image
     const create = this.client.transaction(() => {
       const snapshot: RunSnapshot = {
         version: 1,
@@ -78,16 +104,14 @@ export class ScenarioGroupPostRunRepository {
         })),
         schedules: [],
         contentMode: input.postMode === 'random' ? 'random' : 'sequential',
-        contents: [...variants],
-        image: { ...input.image },
+        contents: [...flattenedVariants],
+        image: { ...fallbackImage },
         postMode: input.postMode,
-        posts: [{
-          name: 'Scenario group_post',
-          enabled: true,
-          sortOrder: 0,
-          variants: [...variants],
-          image: { ...input.image }
-        }],
+        posts: posts.map((post) => ({
+          ...post,
+          variants: [...post.variants],
+          image: { ...post.image }
+        })),
         groupSourceCount: groupUids.length
       }
 
@@ -116,7 +140,7 @@ export class ScenarioGroupPostRunRepository {
         runKey: input.runKey,
         groupCount: groupUids.length,
         accountCount: accountIds.length,
-        postCount: 1
+        postCount: posts.length
       }), now)
       return runId
     })

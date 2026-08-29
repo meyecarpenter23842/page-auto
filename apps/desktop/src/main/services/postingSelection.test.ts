@@ -103,6 +103,20 @@ describe('selectRunPost', () => {
     expect(selectRunPost(source, item(4, 99))).toEqual(selected)
   })
 
+  it('keeps media-only Content Library posts selectable', () => {
+    const source = snapshot()
+    source.posts = [{
+      name: 'Chỉ ảnh',
+      enabled: true,
+      sortOrder: 0,
+      variants: [],
+      image: { folderPath: 'D:\\media-only', mode: 'sequential', imagesPerPost: 1, missingPolicy: 'skip' }
+    }]
+    const selected = selectRunPost(source, item(0))
+    expect(selected).toMatchObject({ content: '', postIndex: 0, variantIndex: 0 })
+    expect(selected?.image.folderPath).toBe('D:\\media-only')
+  })
+
   it('falls back to legacy content/image for snapshots created by older builds', () => {
     const source = snapshot()
     delete source.posts

@@ -57,4 +57,47 @@ describe('ScenarioGroupPostRunRepository', () => {
 
     runtime.close()
   })
+
+  it('keeps a multi-post Content Library snapshot while preserving Group run_items semantics', () => {
+    const runtime = createRuntime()
+    const repository = new ScenarioGroupPostRunRepository(runtime.client)
+    const created = repository.create({
+      runKey: 'scenario-2:x20',
+      name: 'Kịch Bản · Đăng bài chung',
+      accountIds: [33],
+      groupUids: ['group-a', 'group-b'],
+      variants: [],
+      postMode: 'random',
+      image: { folderPath: '', mode: 'sequential', imagesPerPost: 1, missingPolicy: 'text_only' },
+      posts: [
+        {
+          name: 'Bài A',
+          enabled: true,
+          sortOrder: 0,
+          variants: ['A1', 'A2'],
+          image: { folderPath: '', mode: 'sequential', imagesPerPost: 1, missingPolicy: 'text_only' }
+        },
+        {
+          name: 'Bài chỉ ảnh',
+          enabled: true,
+          sortOrder: 1,
+          variants: [],
+          image: { folderPath: 'D:\\media', mode: 'random', imagesPerPost: 2, missingPolicy: 'skip' }
+        }
+      ],
+      postsPerAccount: 2,
+      postDelayMinSeconds: 5,
+      postDelayMaxSeconds: 10
+    })
+
+    expect(created.run.snapshot.postMode).toBe('random')
+    expect(created.run.snapshot.posts).toEqual([
+      expect.objectContaining({ name: 'Bài A', variants: ['A1', 'A2'] }),
+      expect.objectContaining({ name: 'Bài chỉ ảnh', variants: [], image: expect.objectContaining({ folderPath: 'D:\\media' }) })
+    ])
+    expect(created.run.snapshot.contents).toEqual(['A1', 'A2'])
+    expect(new RunRepository(runtime.client).listItems(created.run.id).map((item) => item.groupUid)).toEqual(['group-a', 'group-b'])
+
+    runtime.close()
+  })
 })
