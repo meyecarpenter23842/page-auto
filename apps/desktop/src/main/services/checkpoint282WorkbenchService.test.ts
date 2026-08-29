@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { checkpoint282CanonicalFolder } from '../browser/checkpoint282Assets'
 import { AccountRepository } from '../database/accountRepository'
+import { AppSettingsRepository } from '../database/appSettingsRepository'
 import { HotmailRepository } from '../database/hotmailRepository'
 import { initializeDatabase, type DatabaseRuntime } from '../database'
 import { Checkpoint282WorkbenchService } from './checkpoint282WorkbenchService'
@@ -21,6 +22,13 @@ function setup() {
   roots.push(root)
   const runtime = initializeDatabase(join(root, 'page-auto.sqlite'))
   runtimes.push(runtime)
+  const settings = new AppSettingsRepository(runtime.client)
+  settings.update({
+    browser: {
+      profileStorageMode: 'external',
+      externalProfileRoot: join(root, 'facebook-profiles')
+    }
+  })
   return {
     root,
     accounts: new AccountRepository(runtime.client),
