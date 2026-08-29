@@ -21,6 +21,7 @@ export const POSTING_ERROR_CODES = [
   'profile_in_use',
   'browser_launch_failed',
   'page_navigation_failed',
+  'page_access_unavailable',
   'page_identity_unconfirmed',
   'profile_identity_unconfirmed',
   'group_navigation_failed',

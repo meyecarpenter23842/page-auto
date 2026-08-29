@@ -1,7 +1,10 @@
 import type { BrowserContext, Locator, Page } from 'playwright-core'
 import type { BrowserSettings } from '../../../shared/appSettings'
 import type { PostingJobResult } from '../../../shared/posting'
-import { tryManagedPagesSwitch } from './managedPagesSwitcher'
+import {
+  tryManagedPagesSwitch,
+  type ManagedPageTargetPresence
+} from './managedPagesSwitcher'
 import { activeFacebookProfileId, detectFacebookAccessBlock } from './pageState'
 
 export type PageIdentityUidState = 'match' | 'missing' | 'other'
@@ -88,6 +91,13 @@ export function classifyPageIdentityUid(
   const active = activeProfileId?.trim() || null
   if (!active) return 'missing'
   return active === expected ? 'match' : 'other'
+}
+
+export function shouldEndPageIdentityForUnavailableAccess(
+  targetPresence: ManagedPageTargetPresence,
+  firstPassExhausted: boolean
+): boolean {
+  return firstPassExhausted && targetPresence === 'not_listed'
 }
 
 export function isAccountMenuAccessibleName(value: string): boolean {
@@ -658,6 +668,14 @@ export class PageIdentitySwitcher {
 
     if (await this.identityMatches(uid, 1_500)) {
       return { status: 'success', message: 'Page identity đã chuyển chậm nhưng đã xác minh i_user trước Home fallback.' }
+    }
+
+    if (shouldEndPageIdentityForUnavailableAccess(managedPages.targetPresence, true)) {
+      this.remember('page-access-unavailable:first-pass')
+      return failure(
+        'page_access_unavailable',
+        'Tài khoản không quản lý hoặc không còn quyền truy cập Page này; không thể switch Page.'
+      )
     }
 
     const homeFailure = await this.openHome()
