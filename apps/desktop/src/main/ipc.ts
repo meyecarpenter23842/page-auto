@@ -1,4 +1,4 @@
-import { app, dialog, ipcMain } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import type Database from 'better-sqlite3'
 import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { dirname, extname, join } from 'node:path'
@@ -19,6 +19,7 @@ import type {
 import { assertValidAppSettings, type AppSettingsPatch } from '../shared/appSettings'
 import type { BrowserTestRequest } from '../shared/browserSettings'
 import type { BrowserRetileResult, BrowserWindowLayoutSettings } from '../shared/browserWindowLayout'
+import type { BrowserDisplaySlotRuntimeExtension } from '../shared/browserSlotDiagnostics'
 import type { SaveCaptchaSettingsInput } from '../shared/captchaSettings'
 import type { ConfigBackupRestoreResult } from '../shared/configBackup'
 import type { ExecutionLogFilters, RetryRunItemPayload } from '../shared/executionLogs'
@@ -29,9 +30,11 @@ import type { PageWallJobIdPayload, PageWallSchedulePayload } from '../shared/pa
 import type { ExecuteSinglePostingJobPayload } from '../shared/posting'
 import type { RotationPageTabPayload } from '../shared/rotation'
 import type { CreateRunPayload, RunIdPayload } from '../shared/runs'
+import { AccountBrowserDockManager } from './browser/accountBrowserDockManager'
 import { BrowserEngineService } from './browser/browserEngineService'
 import { BrowserProfileManager } from './browser/browserProfileManager'
 import { BrowserWindowLayoutManager } from './browser/browserWindowLayoutManager'
+import { resolveFacebookProfileDirectory } from './browser/facebookProfileResolver'
 import { AccountRepository } from './database/accountRepository'
 import { AppSettingsRepository } from './database/appSettingsRepository'
 import { BrowserWindowLayoutRepository } from './database/browserWindowLayoutRepository'
@@ -94,6 +97,25 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
       lastUsedAt: session.status === 'valid' ? Date.now() : current.lastUsedAt
     })
   }, () => appSettings.get().browser, () => appSettings.get().session, browserWindowLayout, () => browserWindowLayoutSettings.get())
+
+  const browserDock = new AccountBrowserDockManager(() => {
+    const display = browserWindowLayout.listDisplays()[0] as (ReturnType<BrowserWindowLayoutManager['listDisplays']>[number] & BrowserDisplaySlotRuntimeExtension) | undefined
+    const accountIds = display?.slotRuntime.assignments
+      .filter((assignment) => assignment.owners.includes('profile'))
+      .map((assignment) => assignment.accountId) ?? []
+    const browserSettings = appSettings.get().browser
+    return accountIds.flatMap((accountId) => {
+      const account = accounts.getById(accountId)
+      if (!account) return []
+      try {
+        const profileDirectory = resolveFacebookProfileDirectory(options.dataDirectory, account, browserSettings).profileDirectory
+        return [{ accountId, label: account.uid, profileDirectory }]
+      } catch {
+        return []
+      }
+    })
+  })
+  const stopBrowserDockAccountClosed = browserProfiles.onAccountClosed((accountId) => browserDock.accountClosed(accountId))
 
   const corePosting = new PostingService(
     options.database,
@@ -164,10 +186,14 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
   ipcMain.handle(IPC_CHANNELS.accountPresetsDelete, (_event, id: number) => accounts.deleteImportPreset(id))
   ipcMain.handle(IPC_CHANNELS.accountColumnLayoutGet, () => accounts.getColumnLayout('accounts'))
   ipcMain.handle(IPC_CHANNELS.accountColumnLayoutSave, (_event, payload: AccountColumnLayoutPayload) => { accounts.saveColumnLayout('accounts', payload.layout) })
-  ipcMain.handle(IPC_CHANNELS.accountOpenProfile, (_event, payload: AccountOpenProfilePayload) => {
+  ipcMain.handle(IPC_CHANNELS.accountOpenProfile, async (event, payload: AccountOpenProfilePayload) => {
     const account = accounts.getById(payload.accountId)
     if (!account) return { status: 'error', message: 'Account không tồn tại.' }
-    return browserProfiles.open(account)
+    const opening = browserProfiles.open(account)
+    void browserDock.open(BrowserWindow.fromWebContents(event.sender))
+    const result = await opening
+    if (result.status !== 'error') await browserDock.sync()
+    return result
   })
   ipcMain.handle(IPC_CHANNELS.facebookCheckpoint282Run, (_event, payload: FacebookCheckpoint282RunPayload) => {
     const account = accounts.getById(payload.accountId)
@@ -319,8 +345,10 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
     dispose: () => {
       pageWallScheduler.dispose()
       rotation.dispose()
+      stopBrowserDockAccountClosed()
       corePosting.closeAll()
       browserProfiles.closeAll()
+      browserDock.dispose()
       browserEngine.closeAll()
     }
   }
