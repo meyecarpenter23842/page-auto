@@ -53,6 +53,30 @@ export class RunRepository extends CoreRunRepository {
     super(windowStateClient)
   }
 
+  override createForPageTab(pageTabId: number) {
+    const pageExists = this.windowStateClient.prepare(`
+      SELECT 1 AS found
+      FROM page_tabs
+      WHERE id = ?
+      LIMIT 1
+    `).get(pageTabId) as { found: number } | undefined
+
+    if (!pageExists) return super.createForPageTab(pageTabId)
+
+    const enabledAccount = this.windowStateClient.prepare(`
+      SELECT 1 AS found
+      FROM page_tab_accounts
+      WHERE page_tab_id = ? AND enabled = 1
+      LIMIT 1
+    `).get(pageTabId) as { found: number } | undefined
+
+    if (!enabledAccount) {
+      throw new Error('Page Tab không có tài khoản được bật để chạy.')
+    }
+
+    return super.createForPageTab(pageTabId)
+  }
+
   getRotationWindowState(runId: number): RunRotationWindowState | null {
     const row = this.windowStateClient.prepare(`
       SELECT payload_json AS payloadJson

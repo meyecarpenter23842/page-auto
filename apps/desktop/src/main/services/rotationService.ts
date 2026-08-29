@@ -95,6 +95,15 @@ class RotationWindowTracker {
     }
   }
 
+  discardInvalidCreatedRun(pageTabId: number): void {
+    const run = this.runs.getLatestForPageTab(pageTabId)
+    if (!run || run.run.status !== 'created') return
+    if (run.run.snapshot.accounts.some((account) => account.enabled)) return
+
+    this.runs.stop(run.run.id, 'manual')
+    this.resetHistoryOnNextRunCreate = true
+  }
+
   trackedRunStore(): RotationRunStore {
     return {
       getLatestForPageTab: (pageTabId) => this.runs.getLatestForPageTab(pageTabId),
@@ -415,7 +424,10 @@ export class RotationService {
   }
 
   start(payload: RotationPageTabPayload): RotationRuntimeSnapshot {
-    return this.tracker.runCommand('start', () => this.tracker.decorate(this.core.start(payload)))
+    return this.tracker.runCommand('start', () => {
+      this.tracker.discardInvalidCreatedRun(payload.pageTabId)
+      return this.tracker.decorate(this.core.start(payload))
+    })
   }
 
   status(payload: RotationPageTabPayload): RotationRuntimeSnapshot {
