@@ -1,7 +1,16 @@
+export const ACCOUNT_BROWSER_DOCK_IPC = {
+  open: 'account-browser-dock:open'
+} as const
+
 export interface AccountBrowserDockOpenResult {
-  status: 'opened' | 'focused' | 'unsupported' | 'error'
+  status: 'opened' | 'focused' | 'idle' | 'unsupported' | 'error'
   embeddedCount: number
   message: string
+}
+
+export interface AccountBrowserDockItemSize {
+  width: number
+  height: number
 }
 
 export interface AccountBrowserDockCell {
@@ -11,35 +20,56 @@ export interface AccountBrowserDockCell {
   height: number
 }
 
-export function computeAccountBrowserDockCells(
-  width: number,
-  height: number,
-  count: number,
+export interface AccountBrowserDockLayout {
+  cells: AccountBrowserDockCell[]
+  contentWidth: number
+  contentHeight: number
+}
+
+function safeInteger(value: number, fallback: number, min = 1): number {
+  if (!Number.isFinite(value)) return fallback
+  return Math.max(min, Math.floor(value))
+}
+
+/**
+ * Packs Chrome windows left-to-right without ever changing their size.
+ * When the manager viewport cannot contain every row/column, content bounds
+ * grow and the manager page supplies scrollbars instead of scaling Chrome.
+ */
+export function computeAccountBrowserDockLayout(
+  viewportWidth: number,
+  sizes: AccountBrowserDockItemSize[],
   gap = 4
-): AccountBrowserDockCell[] {
-  const safeCount = Math.max(0, Math.floor(Number.isFinite(count) ? count : 0))
-  if (safeCount === 0) return []
+): AccountBrowserDockLayout {
+  if (sizes.length === 0) return { cells: [], contentWidth: 1, contentHeight: 1 }
 
-  const safeWidth = Math.max(1, Math.floor(Number.isFinite(width) ? width : 1))
-  const safeHeight = Math.max(1, Math.floor(Number.isFinite(height) ? height : 1))
+  const safeViewportWidth = safeInteger(viewportWidth, 1)
   const safeGap = Math.max(0, Math.floor(Number.isFinite(gap) ? gap : 0))
-  const columns = Math.max(1, Math.ceil(Math.sqrt(safeCount)))
-  const rows = Math.max(1, Math.ceil(safeCount / columns))
-  const usableWidth = Math.max(columns, safeWidth - safeGap * (columns + 1))
-  const usableHeight = Math.max(rows, safeHeight - safeGap * (rows + 1))
-  const cellWidth = Math.max(1, Math.floor(usableWidth / columns))
-  const cellHeight = Math.max(1, Math.floor(usableHeight / rows))
-
   const cells: AccountBrowserDockCell[] = []
-  for (let index = 0; index < safeCount; index += 1) {
-    const column = index % columns
-    const row = Math.floor(index / columns)
-    cells.push({
-      x: safeGap + column * (cellWidth + safeGap),
-      y: safeGap + row * (cellHeight + safeGap),
-      width: cellWidth,
-      height: cellHeight
-    })
+  let x = safeGap
+  let y = safeGap
+  let rowHeight = 0
+  let maxRight = safeGap
+
+  for (const rawSize of sizes) {
+    const width = safeInteger(rawSize.width, 1)
+    const height = safeInteger(rawSize.height, 1)
+    const wouldOverflow = x > safeGap && x + width + safeGap > safeViewportWidth
+    if (wouldOverflow) {
+      x = safeGap
+      y += rowHeight + safeGap
+      rowHeight = 0
+    }
+
+    cells.push({ x, y, width, height })
+    maxRight = Math.max(maxRight, x + width)
+    rowHeight = Math.max(rowHeight, height)
+    x += width + safeGap
   }
-  return cells
+
+  return {
+    cells,
+    contentWidth: Math.max(safeViewportWidth, maxRight + safeGap),
+    contentHeight: Math.max(1, y + rowHeight + safeGap)
+  }
 }

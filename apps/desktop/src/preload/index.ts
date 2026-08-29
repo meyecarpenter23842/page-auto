@@ -19,6 +19,10 @@ import type {
   SaveImportPresetInput
 } from '../shared/accounts'
 import {
+  ACCOUNT_BROWSER_DOCK_IPC,
+  type AccountBrowserDockOpenResult
+} from '../shared/accountBrowserDock'
+import {
   ACCOUNT_GROUP_IPC,
   type AccountGroupIdPayload,
   type AccountGroupOverview,
@@ -106,6 +110,7 @@ const api = {
   deleteAccountGroup: (payload: AccountGroupIdPayload): Promise<boolean> => ipcRenderer.invoke(ACCOUNT_GROUP_IPC.delete, payload) as Promise<boolean>,
   assignAccountsToGroup: (input: AssignAccountsToGroupInput): Promise<number> => ipcRenderer.invoke(ACCOUNT_GROUP_IPC.assign, input) as Promise<number>,
   openAccountProfile: (payload: AccountOpenProfilePayload): Promise<BrowserProfileResult> => ipcRenderer.invoke(IPC_CHANNELS.accountOpenProfile, payload) as Promise<BrowserProfileResult>,
+  openAccountBrowserDock: (): Promise<AccountBrowserDockOpenResult> => ipcRenderer.invoke(ACCOUNT_BROWSER_DOCK_IPC.open) as Promise<AccountBrowserDockOpenResult>,
   runFacebookCheckpoint282: (payload: FacebookCheckpoint282RunPayload): Promise<FacebookCheckpoint282Result> => ipcRenderer.invoke(IPC_CHANNELS.facebookCheckpoint282Run, payload) as Promise<FacebookCheckpoint282Result>,
   getFacebookCheckpoint282Preset: (): Promise<FacebookCheckpoint282Preset> => ipcRenderer.invoke(CHECKPOINT282_WORKBENCH_IPC.getPreset) as Promise<FacebookCheckpoint282Preset>,
   saveFacebookCheckpoint282Preset: (input: FacebookCheckpoint282Preset): Promise<FacebookCheckpoint282Preset> => ipcRenderer.invoke(CHECKPOINT282_WORKBENCH_IPC.savePreset, input) as Promise<FacebookCheckpoint282Preset>,

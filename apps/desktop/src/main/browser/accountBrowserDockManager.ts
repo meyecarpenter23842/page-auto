@@ -1,14 +1,17 @@
-import { execFile } from 'node:child_process'
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { promisify } from 'node:util'
-import { BrowserWindow } from 'electron'
+import { BrowserWindow, ipcMain } from 'electron'
 import {
-  computeAccountBrowserDockCells,
+  ACCOUNT_BROWSER_DOCK_IPC,
+  computeAccountBrowserDockLayout,
+  type AccountBrowserDockCell,
   type AccountBrowserDockOpenResult
 } from '../../shared/accountBrowserDock'
 
 const execFileAsync = promisify(execFile)
 const DOCK_GAP_PX = 4
 const POWERSHELL_TIMEOUT_MS = 12_000
+const SCROLL_POLL_MS = 80
 
 export interface AccountBrowserDockTarget {
   accountId: number
@@ -27,6 +30,13 @@ interface EmbeddedWindow {
   y: number
   width: number
   height: number
+}
+
+interface DockViewportState {
+  width: number
+  height: number
+  scrollX: number
+  scrollY: number
 }
 
 const NATIVE_DOCK_CSHARP = String.raw`
@@ -69,7 +79,6 @@ public static class PageAutoNativeDock {
   [DllImport("user32.dll", SetLastError = true)] private static extern int SetWindowLong(IntPtr hwnd, int index, int value);
   [DllImport("user32.dll", SetLastError = true)] private static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
   [DllImport("user32.dll", SetLastError = true)] private static extern bool IsWindow(IntPtr hwnd);
-  [DllImport("user32.dll", SetLastError = true)] private static extern bool MoveWindow(IntPtr hwnd, int x, int y, int width, int height, bool repaint);
   [DllImport("user32.dll", SetLastError = true)] private static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
   [DllImport("user32.dll", SetLastError = true)] private static extern bool ShowWindow(IntPtr hwnd, int command);
 
@@ -161,13 +170,20 @@ foreach ($match in $matches) {
 ConvertTo-Json -InputObject @($result) -Compress
 `
 
-const MOVE_WINDOWS_SCRIPT = String.raw`
+const MOVE_WINDOWS_HOST_SCRIPT = String.raw`
 Add-Type -TypeDefinition @'
 ${NATIVE_DOCK_CSHARP}
 '@
-$items = @((ConvertFrom-Json $env:PAGE_AUTO_DOCK_WINDOWS))
-foreach ($item in $items) {
-  [void][PageAutoNativeDock]::Move([Int64]$item.hwnd, [int]$item.x, [int]$item.y, [int]$item.width, [int]$item.height)
+while ($true) {
+  $line = [Console]::In.ReadLine()
+  if ($null -eq $line) { break }
+  try {
+    $items = @((ConvertFrom-Json $line))
+    foreach ($item in $items) {
+      [void][PageAutoNativeDock]::Move([Int64]$item.hwnd, [int]$item.x, [int]$item.y, [int]$item.width, [int]$item.height)
+    }
+  } catch {
+  }
 }
 `
 
@@ -219,29 +235,88 @@ async function runPowerShell(script: string, env: NodeJS.ProcessEnv): Promise<st
   return stdout
 }
 
-const EMPTY_MANAGER_HTML = `<!doctype html>
+const MANAGER_HTML = `<!doctype html>
 <html><head><meta charset="utf-8"><style>
-html,body,#dock-root{margin:0;width:100%;height:100%;overflow:hidden;background:#eaf7ff;font-family:Segoe UI,Arial,sans-serif}
-#dock-empty{position:absolute;inset:0;display:grid;place-items:center;color:#52606d;font-size:14px;user-select:none}
+html,body{margin:0;width:100%;height:100%;background:#eaf7ff;font-family:Segoe UI,Arial,sans-serif}
+body{overflow:auto}
+#dock-root{position:relative;width:1px;height:1px;min-width:1px;min-height:1px}
+#dock-empty{position:fixed;inset:0;display:grid;place-items:center;color:#52606d;font-size:14px;user-select:none}
+#dock-empty[hidden]{display:none}
 </style></head><body><div id="dock-root"><div id="dock-empty">Chưa có Chrome profile đang mở.</div></div>
 <script>
-window.pageAutoSetDockEmpty = function(empty) {
+window.pageAutoSetDockMetrics = function(width, height, empty) {
   var root = document.getElementById('dock-root');
-  root.innerHTML = empty ? '<div id="dock-empty">Chưa có Chrome profile đang mở.</div>' : '';
+  var placeholder = document.getElementById('dock-empty');
+  root.style.width = Math.max(1, Math.round(width)) + 'px';
+  root.style.height = Math.max(1, Math.round(height)) + 'px';
+  placeholder.hidden = !empty;
+};
+window.pageAutoGetDockViewport = function() {
+  return {
+    width: Math.max(1, document.documentElement.clientWidth || window.innerWidth || 1),
+    height: Math.max(1, document.documentElement.clientHeight || window.innerHeight || 1),
+    scrollX: Math.max(0, Math.round(window.scrollX || 0)),
+    scrollY: Math.max(0, Math.round(window.scrollY || 0))
+  };
 };
 </script></body></html>`
 
 export class AccountBrowserDockManager {
   private window: BrowserWindow | null = null
   private readonly embedded = new Map<number, EmbeddedWindow>()
+  private readonly layoutCells = new Map<number, AccountBrowserDockCell>()
   private operation = Promise.resolve()
-  private resizeTimer: NodeJS.Timeout | null = null
+  private layoutTimer: NodeJS.Timeout | null = null
   private discoverTimer: NodeJS.Timeout | null = null
+  private scrollTimer: NodeJS.Timeout | null = null
+  private moveHost: ChildProcessWithoutNullStreams | null = null
   private closing = false
+  private scrollReadBusy = false
+  private lastScrollX = 0
+  private lastScrollY = 0
 
-  constructor(private readonly getTargets: () => AccountBrowserDockTarget[]) {}
+  constructor(private readonly getTargets: () => AccountBrowserDockTarget[]) {
+    ipcMain.handle(ACCOUNT_BROWSER_DOCK_IPC.open, (event) => this.openExplicit(BrowserWindow.fromWebContents(event.sender)))
+  }
 
-  async open(owner: BrowserWindow | null): Promise<AccountBrowserDockOpenResult> {
+  /**
+   * Compatibility entry point for the old account-open hook in ipc.ts.
+   * Opening a profile must never auto-dock it. Only the explicit IPC above may open/sync the manager.
+   */
+  async open(_owner: BrowserWindow | null): Promise<AccountBrowserDockOpenResult> {
+    return {
+      status: 'idle',
+      embeddedCount: this.embedded.size,
+      message: 'Chrome chỉ được gom khi bấm Cửa sổ Chrome.'
+    }
+  }
+
+  /** Compatibility no-op for the old post-open sync hook. */
+  async sync(): Promise<void> {}
+
+  accountClosed(accountId: number): void {
+    if (!this.embedded.delete(accountId)) return
+    this.layoutCells.delete(accountId)
+    this.scheduleLayout()
+  }
+
+  dispose(): void {
+    ipcMain.removeHandler(ACCOUNT_BROWSER_DOCK_IPC.open)
+    if (this.layoutTimer) clearTimeout(this.layoutTimer)
+    if (this.discoverTimer) clearTimeout(this.discoverTimer)
+    if (this.scrollTimer) clearInterval(this.scrollTimer)
+    this.layoutTimer = null
+    this.discoverTimer = null
+    this.scrollTimer = null
+    this.stopMoveHost()
+    this.layoutCells.clear()
+    this.embedded.clear()
+    this.closing = true
+    if (this.window && !this.window.isDestroyed()) this.window.destroy()
+    this.window = null
+  }
+
+  private async openExplicit(owner: BrowserWindow | null): Promise<AccountBrowserDockOpenResult> {
     if (process.platform !== 'win32') {
       return { status: 'unsupported', embeddedCount: 0, message: 'Quản lý cửa sổ Chrome chỉ hỗ trợ Windows.' }
     }
@@ -249,7 +324,7 @@ export class AccountBrowserDockManager {
     if (this.window && !this.window.isDestroyed()) {
       this.window.show()
       this.window.focus()
-      await this.sync()
+      await this.enqueueSync()
       return {
         status: 'focused',
         embeddedCount: this.embedded.size,
@@ -275,16 +350,21 @@ export class AccountBrowserDockManager {
     })
     this.window = manager
     this.closing = false
+    this.lastScrollX = 0
+    this.lastScrollY = 0
 
-    manager.on('resize', () => this.scheduleRetile())
+    manager.on('resize', () => this.scheduleLayout())
     manager.on('close', (event) => {
       if (this.closing || this.embedded.size === 0) return
       event.preventDefault()
       this.closing = true
+      if (this.scrollTimer) clearInterval(this.scrollTimer)
+      this.scrollTimer = null
       void this.restoreAll().then(() => {
         if (!manager.isDestroyed()) manager.destroy()
       }).catch((error) => {
         this.closing = false
+        this.startScrollWatcher()
         if (!manager.isDestroyed()) {
           manager.setTitle('Quản lý cửa sổ Chrome - lỗi tách cửa sổ')
           manager.show()
@@ -294,18 +374,24 @@ export class AccountBrowserDockManager {
       })
     })
     manager.on('closed', () => {
-      if (this.resizeTimer) clearTimeout(this.resizeTimer)
+      if (this.layoutTimer) clearTimeout(this.layoutTimer)
       if (this.discoverTimer) clearTimeout(this.discoverTimer)
-      this.resizeTimer = null
+      if (this.scrollTimer) clearInterval(this.scrollTimer)
+      this.layoutTimer = null
       this.discoverTimer = null
+      this.scrollTimer = null
+      this.stopMoveHost()
       this.window = null
+      this.layoutCells.clear()
       this.embedded.clear()
       this.closing = false
+      this.scrollReadBusy = false
     })
 
-    await manager.loadURL(`data:text/html;charset=UTF-8,${encodeURIComponent(EMPTY_MANAGER_HTML)}`)
+    await manager.loadURL(`data:text/html;charset=UTF-8,${encodeURIComponent(MANAGER_HTML)}`)
     manager.show()
-    await this.sync()
+    this.startScrollWatcher()
+    await this.enqueueSync()
     return {
       status: 'opened',
       embeddedCount: this.embedded.size,
@@ -315,27 +401,11 @@ export class AccountBrowserDockManager {
     }
   }
 
-  async sync(): Promise<void> {
+  private enqueueSync(): Promise<void> {
     this.operation = this.operation.then(() => this.syncNow()).catch((error) => {
       console.error('[PAGE-AUTO browser-dock] sync failed', error)
     })
     return this.operation
-  }
-
-  accountClosed(accountId: number): void {
-    if (!this.embedded.delete(accountId)) return
-    this.scheduleRetile()
-  }
-
-  dispose(): void {
-    if (this.resizeTimer) clearTimeout(this.resizeTimer)
-    if (this.discoverTimer) clearTimeout(this.discoverTimer)
-    this.resizeTimer = null
-    this.discoverTimer = null
-    this.embedded.clear()
-    this.closing = true
-    if (this.window && !this.window.isDestroyed()) this.window.destroy()
-    this.window = null
   }
 
   private async syncNow(): Promise<void> {
@@ -344,7 +414,10 @@ export class AccountBrowserDockManager {
 
     const targetById = new Map(this.getTargets().map((target) => [target.accountId, target]))
     for (const accountId of [...this.embedded.keys()]) {
-      if (!targetById.has(accountId)) this.embedded.delete(accountId)
+      if (!targetById.has(accountId)) {
+        this.embedded.delete(accountId)
+        this.layoutCells.delete(accountId)
+      }
     }
 
     const missing = [...targetById.values()].filter((target) => !this.embedded.has(target.accountId))
@@ -356,7 +429,7 @@ export class AccountBrowserDockManager {
       for (const item of parseEmbeddedWindows(stdout)) this.embedded.set(item.accountId, item)
     }
 
-    await this.retileNow()
+    await this.layoutNow()
     const unresolved = [...targetById.keys()].some((accountId) => !this.embedded.has(accountId))
     if (unresolved) this.scheduleDiscover()
     else if (this.discoverTimer) {
@@ -369,48 +442,168 @@ export class AccountBrowserDockManager {
     if (this.discoverTimer || this.closing) return
     this.discoverTimer = setTimeout(() => {
       this.discoverTimer = null
-      void this.sync()
+      void this.enqueueSync()
     }, 700)
   }
 
-  private scheduleRetile(): void {
-    if (this.resizeTimer) clearTimeout(this.resizeTimer)
-    this.resizeTimer = setTimeout(() => {
-      this.resizeTimer = null
-      this.operation = this.operation.then(() => this.retileNow()).catch((error) => {
-        console.error('[PAGE-AUTO browser-dock] retile failed', error)
+  private scheduleLayout(): void {
+    if (this.layoutTimer) clearTimeout(this.layoutTimer)
+    this.layoutTimer = setTimeout(() => {
+      this.layoutTimer = null
+      this.operation = this.operation.then(() => this.layoutNow()).catch((error) => {
+        console.error('[PAGE-AUTO browser-dock] layout failed', error)
       })
     }, 120)
   }
 
-  private async retileNow(): Promise<void> {
+  private startScrollWatcher(): void {
+    if (this.scrollTimer || this.closing) return
+    this.scrollTimer = setInterval(() => void this.pollScroll(), SCROLL_POLL_MS)
+  }
+
+  private async pollScroll(): Promise<void> {
+    if (this.scrollReadBusy || this.closing || this.embedded.size === 0) return
+    const manager = this.window
+    if (!manager || manager.isDestroyed()) return
+    this.scrollReadBusy = true
+    try {
+      const viewport = await this.readViewport(manager)
+      if (viewport.scrollX === this.lastScrollX && viewport.scrollY === this.lastScrollY) return
+      this.lastScrollX = viewport.scrollX
+      this.lastScrollY = viewport.scrollY
+      this.positionEmbedded(viewport.scrollX, viewport.scrollY)
+    } catch {
+      // The manager can disappear between interval ticks; the close path owns cleanup.
+    } finally {
+      this.scrollReadBusy = false
+    }
+  }
+
+  private async layoutNow(): Promise<void> {
     const manager = this.window
     if (!manager || manager.isDestroyed() || this.closing) return
     const entries = [...this.embedded.values()].sort((left, right) => left.accountId - right.accountId)
-    const bounds = manager.getContentBounds()
-    const cells = computeAccountBrowserDockCells(bounds.width, bounds.height, entries.length, DOCK_GAP_PX)
-    const moveItems = entries.map((item, index) => {
-      const cell = cells[index]
-      if (!cell) return null
-      return {
-        hwnd: item.hwnd,
-        x: cell.x,
-        y: cell.y,
-        width: cell.width,
-        height: cell.height
-      }
-    }).filter((item): item is NonNullable<typeof item> => item !== null)
 
     manager.setTitle(entries.length > 0 ? `Quản lý cửa sổ Chrome (${entries.length})` : 'Quản lý cửa sổ Chrome')
-    await manager.webContents.executeJavaScript(`window.pageAutoSetDockEmpty(${entries.length === 0})`, true).catch(() => undefined)
+    if (entries.length === 0) {
+      this.layoutCells.clear()
+      await this.setDockMetrics(manager, 1, 1, true)
+      return
+    }
+
+    let viewport = await this.readViewport(manager)
+    let layout = computeAccountBrowserDockLayout(
+      viewport.width,
+      entries.map((item) => ({ width: item.width, height: item.height })),
+      DOCK_GAP_PX
+    )
+    await this.setDockMetrics(manager, layout.contentWidth, layout.contentHeight, false)
+
+    const nextViewport = await this.readViewport(manager)
+    if (nextViewport.width !== viewport.width) {
+      viewport = nextViewport
+      layout = computeAccountBrowserDockLayout(
+        viewport.width,
+        entries.map((item) => ({ width: item.width, height: item.height })),
+        DOCK_GAP_PX
+      )
+      await this.setDockMetrics(manager, layout.contentWidth, layout.contentHeight, false)
+    } else {
+      viewport = nextViewport
+    }
+
+    this.layoutCells.clear()
+    entries.forEach((item, index) => {
+      const cell = layout.cells[index]
+      if (cell) this.layoutCells.set(item.accountId, cell)
+    })
+    this.lastScrollX = viewport.scrollX
+    this.lastScrollY = viewport.scrollY
+    this.positionEmbedded(viewport.scrollX, viewport.scrollY)
+  }
+
+  private async setDockMetrics(manager: BrowserWindow, width: number, height: number, empty: boolean): Promise<void> {
+    await manager.webContents.executeJavaScript(
+      `window.pageAutoSetDockMetrics(${Math.max(1, Math.round(width))}, ${Math.max(1, Math.round(height))}, ${empty})`,
+      true
+    )
+  }
+
+  private async readViewport(manager: BrowserWindow): Promise<DockViewportState> {
+    const raw = await manager.webContents.executeJavaScript('window.pageAutoGetDockViewport()', true) as Partial<DockViewportState>
+    return {
+      width: Math.max(1, Math.floor(Number(raw.width) || 1)),
+      height: Math.max(1, Math.floor(Number(raw.height) || 1)),
+      scrollX: Math.max(0, Math.floor(Number(raw.scrollX) || 0)),
+      scrollY: Math.max(0, Math.floor(Number(raw.scrollY) || 0))
+    }
+  }
+
+  private positionEmbedded(scrollX: number, scrollY: number): void {
+    const entries = [...this.embedded.values()].sort((left, right) => left.accountId - right.accountId)
+    const moveItems = entries.flatMap((item) => {
+      const cell = this.layoutCells.get(item.accountId)
+      if (!cell) return []
+      return [{
+        hwnd: item.hwnd,
+        x: cell.x - scrollX,
+        y: cell.y - scrollY,
+        width: cell.width,
+        height: cell.height
+      }]
+    })
     if (moveItems.length === 0) return
-    await runPowerShell(MOVE_WINDOWS_SCRIPT, { PAGE_AUTO_DOCK_WINDOWS: JSON.stringify(moveItems) })
+    this.sendMove(moveItems)
+  }
+
+  private ensureMoveHost(): ChildProcessWithoutNullStreams {
+    const current = this.moveHost
+    if (current && current.exitCode === null && !current.killed) return current
+
+    const child = spawn(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', MOVE_WINDOWS_HOST_SCRIPT],
+      { windowsHide: true }
+    )
+    child.stdout.resume()
+    child.stderr.on('data', (chunk) => {
+      const message = String(chunk).trim()
+      if (message) console.error('[PAGE-AUTO browser-dock] move host:', message)
+    })
+    child.once('error', (error) => {
+      if (this.moveHost === child) this.moveHost = null
+      console.error('[PAGE-AUTO browser-dock] move host failed', error)
+    })
+    child.once('exit', () => {
+      if (this.moveHost === child) this.moveHost = null
+    })
+    this.moveHost = child
+    return child
+  }
+
+  private sendMove(items: Array<{ hwnd: string; x: number; y: number; width: number; height: number }>): void {
+    try {
+      const child = this.ensureMoveHost()
+      if (!child.stdin.destroyed && child.stdin.writable) child.stdin.write(`${JSON.stringify(items)}\n`)
+    } catch (error) {
+      console.error('[PAGE-AUTO browser-dock] move failed', error)
+    }
+  }
+
+  private stopMoveHost(): void {
+    const child = this.moveHost
+    this.moveHost = null
+    if (!child) return
+    try { child.stdin.end() } catch {}
+    try { if (!child.killed) child.kill() } catch {}
   }
 
   private async restoreAll(): Promise<void> {
     const entries = [...this.embedded.values()]
+    this.stopMoveHost()
     if (entries.length === 0) return
     await runPowerShell(RESTORE_WINDOWS_SCRIPT, { PAGE_AUTO_DOCK_WINDOWS: JSON.stringify(entries) })
+    this.layoutCells.clear()
     this.embedded.clear()
   }
 }
