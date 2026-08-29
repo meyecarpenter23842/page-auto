@@ -7,8 +7,6 @@ export type ActionPageResolver = (request: ActionRunRequest) => Promise<Page | n
 export interface BaseViewActionDependencies {
   resolvePage: ActionPageResolver
   navigationTimeoutMs?: number
-  actionDelayMinMs?: number | undefined
-  actionDelayMaxMs?: number | undefined
 }
 
 export function configNumber(config: ActionConfig, key: string, fallback = 0): number {
@@ -70,24 +68,6 @@ export async function sleepWithControl(control: ActionRunControl, delayMs: numbe
     remaining -= chunk
   }
   return !control.isStopped()
-}
-
-export function browserActionDelayMs(dependencies: BaseViewActionDependencies): number {
-  const minValue = dependencies.actionDelayMinMs
-  const maxValue = dependencies.actionDelayMaxMs
-  const rawMin = typeof minValue === 'number' && Number.isFinite(minValue) ? minValue : 0
-  const rawMax = typeof maxValue === 'number' && Number.isFinite(maxValue) ? maxValue : rawMin
-  const low = Math.max(0, Math.min(rawMin, rawMax))
-  const high = Math.max(low, Math.max(rawMin, rawMax))
-  if (high <= low) return Math.round(low)
-  return Math.round(low + Math.random() * (high - low))
-}
-
-export async function paceBrowserAction(
-  control: ActionRunControl,
-  dependencies: BaseViewActionDependencies
-): Promise<boolean> {
-  return sleepWithControl(control, browserActionDelayMs(dependencies))
 }
 
 export async function firstVisible(page: Page | Locator, selectors: readonly string[]): Promise<Locator | null> {

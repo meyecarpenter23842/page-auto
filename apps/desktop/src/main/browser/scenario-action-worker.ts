@@ -13,6 +13,7 @@ import { FacebookCommonActionHost } from './actionRuntime/facebookCommonActionHo
 import { createK4ActionExecutorRegistry } from './actionRuntime/actions'
 import { ActionRunner } from '../services/actionRunner'
 import { FacebookCommonRuntime } from '../facebook/facebookCommonRuntime'
+import { withoutFacebookInteractionPacing } from '../facebook/facebookInteractionPacing'
 import { detectFacebookCheckpointKind, withFacebookCheckpointKind } from './posting/facebookCheckpoint'
 import {
   closeManagedPostingBrowser,
@@ -47,12 +48,14 @@ function identitySessionFailure(job: ScenarioActionWorkerJob, message: string): 
 }
 
 async function ensureProfileSession(job: ScenarioActionWorkerJob, runtime: FacebookCommonRuntime): Promise<FacebookSessionResult> {
-  const session = await bootstrapFacebookSession(
-    runtime.context,
-    runtime.page,
-    job.sessionAccount,
-    job.session.facebookLocale
-  )
+  const session = await withoutFacebookInteractionPacing(runtime.page, () => (
+    bootstrapFacebookSession(
+      runtime.context,
+      runtime.page,
+      job.sessionAccount,
+      job.session.facebookLocale
+    )
+  ))
   if (session.reason === 'checkpoint') {
     const kind = await detectFacebookCheckpointKind(runtime.page).catch(() => null)
     return { ...session, message: withFacebookCheckpointKind(session.message, kind) }
@@ -102,9 +105,7 @@ function mapOpenFailure(job: ScenarioActionWorkerJob, message: string, code?: st
 function actionDependencies(runtime: FacebookCommonRuntime, job: ScenarioActionWorkerJob) {
   const common = {
     resolvePage: async () => runtime.page,
-    navigationTimeoutMs: job.browser.navigationTimeoutMs,
-    actionDelayMinMs: job.browser.actionDelayMinMs,
-    actionDelayMaxMs: job.browser.actionDelayMaxMs
+    navigationTimeoutMs: job.browser.navigationTimeoutMs
   }
   return {
     view: { newsfeed: common, story: common, reel: common },
