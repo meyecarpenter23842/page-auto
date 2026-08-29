@@ -343,8 +343,12 @@ export class ConfigBackupService {
       for (const source of payload.contentLibraries ?? []) {
         const normalizedName = source.name.trim()
         if (!normalizedName) throw new Error('Backup có nguồn bài viết tên rỗng.')
-        const existing = this.contentLibrary.list().find((item) => item.name.localeCompare(normalizedName, 'vi', { sensitivity: 'base' }) === 0)
-        const target = existing ? this.contentLibrary.get(existing.id) : this.contentLibrary.createSet({ name: normalizedName })
+        const existing = this.client.prepare(`
+          SELECT id FROM content_sets
+          WHERE page_tab_id IS NULL AND name = ? COLLATE NOCASE
+          LIMIT 1
+        `).get(normalizedName) as { id: number } | undefined
+        const target = existing ? this.contentLibrary.get(Number(existing.id)) : this.contentLibrary.createSet({ name: normalizedName })
         if (!target) throw new Error(`Không thể restore nguồn bài viết “${normalizedName}”.`)
 
         this.client.prepare(`
