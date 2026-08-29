@@ -1,6 +1,5 @@
 import { chromium, type BrowserContext, type Page } from 'playwright-core'
 import {
-  randomBrowserActionDelayMs,
   type BrowserSettings,
   type NetworkSettings,
   type SessionSettings
@@ -24,6 +23,10 @@ import {
   bootstrapFacebookSessionWithEmailSupport,
   type FacebookEmailSupportFailureCode
 } from './facebookEmailSupportedSession'
+import {
+  createPacedFacebookPage,
+  withoutFacebookInteractionPacing
+} from './facebookInteractionPacing'
 
 export type FacebookCommonErrorCode =
   | 'needs_login'
@@ -239,9 +242,10 @@ export class FacebookCommonRuntime {
           request.network.networkTimeoutMs
         )
       }
-      const page = context.pages()[0] ?? await context.newPage()
-      page.setDefaultTimeout(request.network.networkTimeoutMs)
-      page.setDefaultNavigationTimeout(runtimeBrowser.navigationTimeoutMs)
+      const rawPage = context.pages()[0] ?? await context.newPage()
+      rawPage.setDefaultTimeout(request.network.networkTimeoutMs)
+      rawPage.setDefaultNavigationTimeout(runtimeBrowser.navigationTimeoutMs)
+      const page = createPacedFacebookPage(rawPage, runtimeBrowser, request.diagnostic)
       return {
         status: 'ready',
         runtime: new FacebookCommonRuntime(context, page, runtimeBrowser, request)
@@ -269,11 +273,9 @@ export class FacebookCommonRuntime {
     }
   }
 
+  // Compatibility boundary only. Actual operator delay is now owned once by the paced Page operations.
   async pace(boundary: string): Promise<void> {
-    const delayMs = randomBrowserActionDelayMs(this.browser)
-    if (delayMs <= 0) return
-    this.request.diagnostic?.(`pacing=${boundary} delayMs=${delayMs}`)
-    await this.page.waitForTimeout(delayMs)
+    this.request.diagnostic?.(`pacing=${boundary} source=facebook-operation-wrapper`)
   }
 
   private async checkpointKind(): Promise<PostingCheckpointKind | undefined> {
@@ -290,7 +292,6 @@ export class FacebookCommonRuntime {
       return { status: 'success', message: 'Page identity hiện tại đã đúng Page UID.' }
     }
 
-    await this.pace('login-to-page')
     const identity = await new PageIdentitySwitcher(
       this.page,
       this.context,
@@ -314,13 +315,15 @@ export class FacebookCommonRuntime {
       }
     }
 
-    const bootstrap = await bootstrapFacebookSessionWithEmailSupport(
-      this.context,
-      this.page,
-      this.request.sessionAccount,
-      this.request.session.facebookLocale,
-      this.sessionTiming()
-    )
+    const bootstrap = await withoutFacebookInteractionPacing(this.page, () => (
+      bootstrapFacebookSessionWithEmailSupport(
+        this.context,
+        this.page,
+        this.request.sessionAccount,
+        this.request.session.facebookLocale,
+        this.sessionTiming()
+      )
+    ))
     if (bootstrap.status === 'email_failure') {
       return beforeRunFacebookEmailSupportFailure(bootstrap.code, bootstrap.message)
     }
@@ -357,13 +360,15 @@ export class FacebookCommonRuntime {
     }
 
     if (afterSession.state === 'needs_login') {
-      const recovered = await bootstrapFacebookSession(
-        this.context,
-        this.page,
-        this.request.sessionAccount,
-        this.request.session.facebookLocale,
-        this.sessionTiming()
-      )
+      const recovered = await withoutFacebookInteractionPacing(this.page, () => (
+        bootstrapFacebookSession(
+          this.context,
+          this.page,
+          this.request.sessionAccount,
+          this.request.session.facebookLocale,
+          this.sessionTiming()
+        )
+      ))
       if (recovered.status === 'valid') {
         const recoveredIdentity = await inspectFacebookAccountIdentity(
           this.context,

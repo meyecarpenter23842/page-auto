@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ActionExecutorContext } from '../../../services/actionRunner'
 import { createK431JoinGroupActionExecutorRegistry } from './index'
-import { paceBrowserAction } from './actionSupport'
 import {
   canAttemptAnotherJoin,
   crossedJoinPauseThreshold,
@@ -12,6 +11,7 @@ import {
   isDirectGroupPageUrl,
   normalizeGroupUrl,
   paceJoinGroup,
+  shouldSkipApprovalRequest,
   textRequiresApproval
 } from './joinGroupActionSupport'
 
@@ -56,24 +56,10 @@ describe('K4.3.1 join group executor', () => {
     expect(crossedJoinPauseThreshold(0, 1, 0)).toBe(false)
   })
 
-  it('applies common browser pacing from Chrome settings between UI operations', async () => {
-    const sleeps: number[] = []
-    const context = {
-      control: {
-        isStopped: () => false,
-        waitIfPaused: async () => undefined,
-        sleep: async (delayMs: number) => { sleeps.push(delayMs) }
-      }
-    } as unknown as ActionExecutorContext
-
-    const paced = await paceBrowserAction(context.control, {
-      resolvePage: async () => null,
-      actionDelayMinMs: 2500,
-      actionDelayMaxMs: 2500
-    })
-
-    expect(paced).toBe(true)
-    expect(sleeps.reduce((total, value) => total + value, 0)).toBe(2500)
+  it('submits approval groups by default and lets configured answers override legacy skip=true', () => {
+    expect(shouldSkipApprovalRequest({ skipApprovalRequired: false })).toBe(false)
+    expect(shouldSkipApprovalRequest({ skipApprovalRequired: true, answerQuestions: '' })).toBe(true)
+    expect(shouldSkipApprovalRequest({ skipApprovalRequired: true, answerQuestions: 'Đồng ý\nCó' })).toBe(false)
   })
 
   it('applies configured delay between attempted joins even without a verified success', async () => {
@@ -104,13 +90,14 @@ describe('K4.3.1 join group executor', () => {
     expect(detectGroupPrivacy('Private group · 10K members')).toBe('closed')
   })
 
-  it('applies member/privacy/location and approval filters', () => {
+  it('applies member/privacy/location and explicit approval filters', () => {
     const config = {
       memberFilterEnabled: true,
       memberMin: 5000,
       privacyOpen: true,
       privacyClosed: false,
       skipApprovalRequired: true,
+      answerQuestions: '',
       locationEnabled: true,
       locationKeyword: 'Hồ Chí Minh',
       localeEnabled: false,
@@ -122,5 +109,9 @@ describe('K4.3.1 join group executor', () => {
     expect(groupTextMatchesFilters('Nhóm công khai · 8K thành viên · Hà Nội', config)).toBe(false)
     expect(textRequiresApproval('Membership requires admin approval')).toBe(true)
     expect(groupTextMatchesFilters('Public group · 8K members · Hồ Chí Minh · requires admin approval', config)).toBe(false)
+    expect(groupTextMatchesFilters(
+      'Public group · 8K members · Hồ Chí Minh · requires admin approval',
+      { ...config, answerQuestions: 'Đồng ý' }
+    )).toBe(true)
   })
 })

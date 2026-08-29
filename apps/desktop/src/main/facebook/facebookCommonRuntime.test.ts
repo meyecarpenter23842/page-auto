@@ -82,10 +82,11 @@ describe('Facebook common runtime', () => {
     })
   })
 
-  it('keeps Group posting free of shared login, identity and Page-switch implementations', () => {
+  it('keeps Group posting free of shared login, identity and pacing implementations', () => {
     const here = dirname(fileURLToPath(import.meta.url))
     const postingEngine = readFileSync(resolve(here, '../browser/posting/postingEngine.ts'), 'utf8')
     const commonRuntime = readFileSync(resolve(here, 'facebookCommonRuntime.ts'), 'utf8')
+    const interactionPacing = readFileSync(resolve(here, 'facebookInteractionPacing.ts'), 'utf8')
 
     for (const forbidden of [
       'chromium.launchPersistentContext',
@@ -93,16 +94,19 @@ describe('Facebook common runtime', () => {
       'validateFacebookSession',
       'inspectFacebookAccountIdentity',
       'PageIdentitySwitcher',
-      'activeFacebookProfileId',
-      'randomBrowserActionDelayMs'
+      'activeFacebookProfileId'
     ]) {
       expect(postingEngine).not.toContain(forbidden)
       expect(commonRuntime).toContain(forbidden)
     }
 
+    expect(postingEngine).not.toContain('randomBrowserActionDelayMs')
     expect(postingEngine).toContain('FacebookCommonRuntime.open')
     expect(postingEngine).toContain('GroupNavigator')
     expect(postingEngine).toContain('PublishResultDetector')
+    expect(commonRuntime).toContain('createPacedFacebookPage')
+    expect(commonRuntime).toContain('withoutFacebookInteractionPacing')
+    expect(interactionPacing).toContain('randomBrowserActionDelayMs')
     expect(commonRuntime).toContain('bootstrapFacebookSessionWithEmailSupport')
     expect(commonRuntime).toContain('detectFacebookCheckpointKind')
     expect(commonRuntime).not.toContain('groupUid')

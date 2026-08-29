@@ -33,15 +33,17 @@ describe('K4.3.1 join group action override', () => {
       'pauseMinutes'
     ]))
     expect(getK431FieldUiMeta('join_group', 'sourceTargets')?.textFilePickerLabel).toBe('Mở file ID')
+    expect(getK431FieldUiMeta('join_group', 'answerQuestions')?.section).toBe('Câu hỏi nhóm kín / cần duyệt')
   })
 
-  it('uses compact reference defaults and validates conditional sources/filters', () => {
+  it('submits approval groups by default and keeps compact pacing defaults', () => {
     applyK431JoinGroupActionOverrides()
     const definition = ACTION_REGISTRY.find((item) => item.id === 'join_group')
     expect(definition).toBeTruthy()
     const config = createDefaultActionConfig(definition!)
     expect(config.joinMin).toBe(100)
     expect(config.joinMax).toBe(200)
+    expect(config.skipApprovalRequired).toBe(false)
     expect(config.itemDelayMinSeconds).toBe(200)
     expect(config.itemDelayMaxSeconds).toBe(300)
     expect(config.pauseAfterCount).toBe(30)
@@ -65,7 +67,7 @@ describe('K4.3.1 join group action override', () => {
       memberMin: 5000,
       privacyOpen: true,
       privacyClosed: true,
-      skipApprovalRequired: true,
+      skipApprovalRequired: false,
       locationEnabled: false,
       locationKeyword: '',
       localeEnabled: false,

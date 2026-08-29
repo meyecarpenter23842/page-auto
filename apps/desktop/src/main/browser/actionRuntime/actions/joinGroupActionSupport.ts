@@ -6,7 +6,6 @@ import {
   configNumber,
   configString,
   firstVisible,
-  paceBrowserAction,
   pickRange,
   sleepWithControl,
   splitLines,
@@ -135,6 +134,10 @@ export function textRequiresApproval(text: string): boolean {
   return /(?:admin approval|requires? approval|membership approval|admin must approve|phải (?:được )?phê duyệt|cần phê duyệt|yêu cầu phê duyệt|quản trị viên phê duyệt)/i.test(text)
 }
 
+export function shouldSkipApprovalRequest(config: ActionConfig): boolean {
+  return configBoolean(config, 'skipApprovalRequired') && !configString(config, 'answerQuestions').trim()
+}
+
 function localeMatches(text: string, locale: string): boolean {
   const normalized = locale.trim().toLocaleLowerCase()
   if (!normalized) return true
@@ -156,7 +159,7 @@ export function groupTextMatchesFilters(text: string, config: ActionConfig): boo
   if (privacy === 'closed' && !allowClosed) return false
   if (privacy === 'unknown' && !(allowOpen && allowClosed)) return false
 
-  if (configBoolean(config, 'skipApprovalRequired') && textRequiresApproval(text)) return false
+  if (shouldSkipApprovalRequest(config) && textRequiresApproval(text)) return false
 
   if (configBoolean(config, 'locationEnabled')) {
     const location = configString(config, 'locationKeyword').trim().toLocaleLowerCase()
@@ -240,19 +243,20 @@ async function visibleJoinDialog(page: Page): Promise<Locator | null> {
 async function fillQuestionAnswers(
   dialog: Locator,
   answers: readonly string[],
-  context: ActionExecutorContext,
-  dependencies: JoinGroupActionDependencies
+  context: ActionExecutorContext
 ): Promise<number> {
   if (!answers.length) return 0
   const fields = dialog.locator('textarea, [contenteditable="true"][role="textbox"], input[type="text"]')
   const count = await fields.count().catch(() => 0)
   let filled = 0
   for (let index = 0; index < count; index += 1) {
+    if (context.control.isStopped()) return filled
+    await context.control.waitIfPaused()
+    if (context.control.isStopped()) return filled
     const field = fields.nth(index)
     if (!await field.isVisible().catch(() => false)) continue
     const answer = answers[Math.min(index, answers.length - 1)]
     if (!answer) continue
-    if (filled > 0 && !await paceBrowserAction(context.control, dependencies)) return filled
     const didFill = await field.fill(answer, { timeout: 5000 }).then(() => true).catch(() => false)
     if (didFill) filled += 1
   }
@@ -280,36 +284,31 @@ export async function submitJoinAttempt(
   page: Page,
   button: Locator,
   context: ActionExecutorContext,
-  config: ActionConfig,
-  dependencies: JoinGroupActionDependencies
+  config: ActionConfig
 ): Promise<JoinAttemptOutcome> {
   const candidateIdentity = await candidateGroupIdentity(button)
-  if (!await paceBrowserAction(context.control, dependencies)) return 'unverified'
   if (!await button.click({ timeout: 5000 }).then(() => true).catch(() => false)) return 'unverified'
 
-  // Technical settle is separate from operator-configured pacing: it only lets the dialog/state render.
+  // Technical settle only lets the dialog/state render. Facebook Common Runtime owns operator pacing.
   if (!await sleepWithControl(context.control, 700)) return 'unverified'
-  if (!await paceBrowserAction(context.control, dependencies)) return 'unverified'
 
   const dialog = await visibleJoinDialog(page)
   if (dialog) {
     const dialogText = await dialog.innerText().catch(() => '')
-    if (configBoolean(config, 'skipApprovalRequired') && textRequiresApproval(dialogText)) {
+    if (shouldSkipApprovalRequest(config) && textRequiresApproval(dialogText)) {
       const cancel = await firstVisible(dialog, CANCEL_SELECTORS)
       await cancel?.click({ timeout: 5000 }).catch(() => undefined)
       return 'skipped_approval'
     }
 
-    const filled = await fillQuestionAnswers(
+    await fillQuestionAnswers(
       dialog,
       splitLines(configString(config, 'answerQuestions')),
-      context,
-      dependencies
+      context
     )
     const submit = await firstVisible(dialog, SUBMIT_SELECTORS)
     if (submit) {
       if (context.control.isStopped()) return 'unverified'
-      if (filled > 0 && !await paceBrowserAction(context.control, dependencies)) return 'unverified'
       await submit.click({ timeout: 5000 }).catch(() => undefined)
       if (!await sleepWithControl(context.control, 700)) return 'unverified'
     }
