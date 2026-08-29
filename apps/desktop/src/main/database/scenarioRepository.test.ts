@@ -22,10 +22,10 @@ function setup() {
 }
 
 describe('ScenarioRepository', () => {
-  it('applies schema v12 and persists scenario settings', () => {
+  it('applies schema v13 and persists scenario settings', () => {
     const { runtime, scenarios } = setup()
     const schemaVersion = runtime.client.prepare("SELECT value FROM app_settings WHERE key = 'schema_version'").get() as { value: string }
-    expect(schemaVersion.value).toBe('12')
+    expect(schemaVersion.value).toBe('13')
 
     const created = scenarios.create({ name: 'Nuôi tài khoản', randomActionOrder: true, runtimeLimitMinutes: 30 }, 1000)
     expect(created).toMatchObject({ name: 'Nuôi tài khoản', randomActionOrder: true, runtimeLimitMinutes: 30, actionCount: 0 })

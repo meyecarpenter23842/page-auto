@@ -1,4 +1,5 @@
 import type { AccountColumnLayout, AccountImportMapping } from './accounts'
+import type { ContentLibraryItemDraft } from './contentLibrary'
 import type {
   ContentMode,
   PageTabImageConfig,
@@ -42,6 +43,11 @@ export interface ConfigBackupPageTab {
   postLibrary?: ConfigBackupPostLibrary
 }
 
+export interface ConfigBackupContentLibrary {
+  name: string
+  items: ContentLibraryItemDraft[]
+}
+
 export interface ConfigBackupImportPreset {
   name: string
   delimiter: string
@@ -59,6 +65,8 @@ export interface ConfigBackupPayload {
   }
   accounts: ConfigBackupAccountRef[]
   pageTabs: ConfigBackupPageTab[]
+  /** Optional to keep old v1 backup files restorable. New exports always include it. */
+  contentLibraries?: ConfigBackupContentLibrary[]
   importPresets: ConfigBackupImportPreset[]
   accountColumnLayout: AccountColumnLayout | null
 }
@@ -66,6 +74,7 @@ export interface ConfigBackupPayload {
 export interface ConfigBackupSummary {
   accounts: number
   pageTabs: number
+  contentLibraries?: number
   importPresets: number
   hasColumnLayout: boolean
 }
@@ -83,6 +92,7 @@ export interface ConfigBackupRestoreResult {
   accountsCreated: number
   pageTabsCreated: number
   pageTabsUpdated: number
+  contentLibrariesRestored?: number
   importPresetsRestored: number
   columnLayoutRestored: boolean
   message: string

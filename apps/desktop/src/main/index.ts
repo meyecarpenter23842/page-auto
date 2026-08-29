@@ -2,6 +2,7 @@ import { app, BrowserWindow } from 'electron'
 import { join } from 'node:path'
 import { registerAccountGroupIpcHandlers, type AccountGroupIpcRuntime } from './accountGroupIpc'
 import { registerCheckpoint282WorkbenchIpcHandlers, type Checkpoint282WorkbenchIpcRuntime } from './checkpoint282WorkbenchIpc'
+import { registerContentLibraryIpcHandlers, type ContentLibraryIpcRuntime } from './contentLibraryIpc'
 import { initializeDatabase, type DatabaseRuntime } from './database'
 import { registerHotmailIpcHandlers, type HotmailIpcRuntime } from './hotmailIpc'
 import { registerIpcHandlers, type IpcRuntime } from './ipc'
@@ -16,6 +17,7 @@ let databaseRuntime: DatabaseRuntime | null = null
 let ipcRuntime: IpcRuntime | null = null
 let accountGroupIpcRuntime: AccountGroupIpcRuntime | null = null
 let checkpoint282WorkbenchIpcRuntime: Checkpoint282WorkbenchIpcRuntime | null = null
+let contentLibraryIpcRuntime: ContentLibraryIpcRuntime | null = null
 let hotmailIpcRuntime: HotmailIpcRuntime | null = null
 let postLibraryIpcRuntime: PostLibraryIpcRuntime | null = null
 let scenarioIpcRuntime: ScenarioIpcRuntime | null = null
@@ -71,6 +73,7 @@ app.whenReady().then(() => {
     databaseRuntime = initializeDatabase(databaseFile)
     ipcRuntime = registerIpcHandlers({ database: databaseRuntime.client, dataDirectory })
     accountGroupIpcRuntime = registerAccountGroupIpcHandlers(databaseRuntime.client)
+    contentLibraryIpcRuntime = registerContentLibraryIpcHandlers(databaseRuntime.client)
     checkpoint282WorkbenchIpcRuntime = registerCheckpoint282WorkbenchIpcHandlers({ database: databaseRuntime.client, dataDirectory })
     hotmailIpcRuntime = registerHotmailIpcHandlers(databaseRuntime.client)
     postLibraryIpcRuntime = registerPostLibraryIpcHandlers(databaseRuntime.client)
@@ -92,6 +95,8 @@ app.whenReady().then(() => {
     scenarioIpcRuntime = null
     checkpoint282WorkbenchIpcRuntime?.dispose()
     checkpoint282WorkbenchIpcRuntime = null
+    contentLibraryIpcRuntime?.dispose()
+    contentLibraryIpcRuntime = null
     hotmailIpcRuntime?.dispose()
     hotmailIpcRuntime = null
     postLibraryIpcRuntime?.dispose()
@@ -117,6 +122,8 @@ app.on('before-quit', () => {
   scenarioIpcRuntime = null
   checkpoint282WorkbenchIpcRuntime?.dispose()
   checkpoint282WorkbenchIpcRuntime = null
+  contentLibraryIpcRuntime?.dispose()
+  contentLibraryIpcRuntime = null
   hotmailIpcRuntime?.dispose()
   hotmailIpcRuntime = null
   postLibraryIpcRuntime?.dispose()

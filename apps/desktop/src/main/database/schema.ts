@@ -103,7 +103,8 @@ export const groupSetItems = sqliteTable('group_set_items', {
 
 export const contentSets = sqliteTable('content_sets', {
   id: integer('id').primaryKey({ autoIncrement: true }),
-  pageTabId: integer('page_tab_id').notNull().unique(),
+  /** NULL = K4.5.1 global library; non-null = legacy Page Tab compatibility row. */
+  pageTabId: integer('page_tab_id').unique(),
   name: text('name').notNull(),
   mode: text('mode').notNull().default('sequential'),
   createdAt: integer('created_at').notNull(),
@@ -113,8 +114,18 @@ export const contentSets = sqliteTable('content_sets', {
 export const contentItems = sqliteTable('content_items', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   contentSetId: integer('content_set_id').notNull(),
-  content: text('content').notNull(),
-  sortOrder: integer('sort_order').notNull()
+  name: text('name').notNull().default(''),
+  enabled: integer('enabled').notNull().default(1),
+  /** Legacy fallback / first variant for older Page Tab code. */
+  content: text('content').notNull().default(''),
+  variantsJson: text('variants_json').notNull().default('[]'),
+  imageFolderPath: text('image_folder_path').notNull().default(''),
+  imageMode: text('image_mode').notNull().default('random'),
+  imagesPerPost: integer('images_per_post').notNull().default(1),
+  missingPolicy: text('missing_policy').notNull().default('text_only'),
+  sortOrder: integer('sort_order').notNull(),
+  createdAt: integer('created_at').notNull().default(0),
+  updatedAt: integer('updated_at').notNull().default(0)
 })
 
 export const imageSources = sqliteTable('image_sources', {

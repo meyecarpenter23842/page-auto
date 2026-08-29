@@ -47,6 +47,19 @@ import {
   type FacebookCheckpoint282ResolveDuplicateRequest,
   type FacebookCheckpoint282ResolveDuplicateResult
 } from '../shared/checkpoint282Workbench'
+import {
+  CONTENT_LIBRARY_IPC,
+  type ContentLibraryItemIdPayload,
+  type ContentLibrarySetDetails,
+  type ContentLibrarySetIdPayload,
+  type ContentLibrarySetSummary,
+  type ContentLibraryTextFileResult,
+  type CreateContentLibraryItemInput,
+  type CreateContentLibrarySetInput,
+  type MoveContentLibraryItemInput,
+  type RenameContentLibrarySetInput,
+  type UpdateContentLibraryItemInput
+} from '../shared/contentLibrary'
 import type { ConfigBackupExportResult, ConfigBackupRestoreResult } from '../shared/configBackup'
 import type { HotmailComboActionPayload, HotmailComboBatchResult } from '../shared/emailCombo'
 import type { ExecutionLogFilters, ExecutionLogRecord, RetryRunItemPayload, RetryRunItemResult } from '../shared/executionLogs'
@@ -109,6 +122,17 @@ const api = {
   renameAccountGroup: (input: RenameAccountGroupInput): Promise<AccountGroupRecord> => ipcRenderer.invoke(ACCOUNT_GROUP_IPC.rename, input) as Promise<AccountGroupRecord>,
   deleteAccountGroup: (payload: AccountGroupIdPayload): Promise<boolean> => ipcRenderer.invoke(ACCOUNT_GROUP_IPC.delete, payload) as Promise<boolean>,
   assignAccountsToGroup: (input: AssignAccountsToGroupInput): Promise<number> => ipcRenderer.invoke(ACCOUNT_GROUP_IPC.assign, input) as Promise<number>,
+  listContentLibraries: (): Promise<ContentLibrarySetSummary[]> => ipcRenderer.invoke(CONTENT_LIBRARY_IPC.list) as Promise<ContentLibrarySetSummary[]>,
+  getContentLibrary: (payload: ContentLibrarySetIdPayload): Promise<ContentLibrarySetDetails | null> => ipcRenderer.invoke(CONTENT_LIBRARY_IPC.get, payload) as Promise<ContentLibrarySetDetails | null>,
+  createContentLibrary: (input: CreateContentLibrarySetInput): Promise<ContentLibrarySetDetails> => ipcRenderer.invoke(CONTENT_LIBRARY_IPC.createSet, input) as Promise<ContentLibrarySetDetails>,
+  renameContentLibrary: (input: RenameContentLibrarySetInput): Promise<ContentLibrarySetDetails> => ipcRenderer.invoke(CONTENT_LIBRARY_IPC.renameSet, input) as Promise<ContentLibrarySetDetails>,
+  deleteContentLibrary: (payload: ContentLibrarySetIdPayload): Promise<boolean> => ipcRenderer.invoke(CONTENT_LIBRARY_IPC.deleteSet, payload) as Promise<boolean>,
+  createContentLibraryItem: (input: CreateContentLibraryItemInput): Promise<ContentLibrarySetDetails> => ipcRenderer.invoke(CONTENT_LIBRARY_IPC.createItem, input) as Promise<ContentLibrarySetDetails>,
+  updateContentLibraryItem: (input: UpdateContentLibraryItemInput): Promise<ContentLibrarySetDetails> => ipcRenderer.invoke(CONTENT_LIBRARY_IPC.updateItem, input) as Promise<ContentLibrarySetDetails>,
+  deleteContentLibraryItem: (payload: ContentLibraryItemIdPayload): Promise<ContentLibrarySetDetails> => ipcRenderer.invoke(CONTENT_LIBRARY_IPC.deleteItem, payload) as Promise<ContentLibrarySetDetails>,
+  moveContentLibraryItem: (input: MoveContentLibraryItemInput): Promise<ContentLibrarySetDetails> => ipcRenderer.invoke(CONTENT_LIBRARY_IPC.moveItem, input) as Promise<ContentLibrarySetDetails>,
+  pickContentLibraryImageFolder: (): Promise<string | null> => ipcRenderer.invoke(CONTENT_LIBRARY_IPC.pickImageFolder) as Promise<string | null>,
+  pickContentLibraryTextFile: (): Promise<ContentLibraryTextFileResult | null> => ipcRenderer.invoke(CONTENT_LIBRARY_IPC.pickTextFile) as Promise<ContentLibraryTextFileResult | null>,
   openAccountProfile: (payload: AccountOpenProfilePayload): Promise<BrowserProfileResult> => ipcRenderer.invoke(IPC_CHANNELS.accountOpenProfile, payload) as Promise<BrowserProfileResult>,
   openAccountBrowserDock: (): Promise<AccountBrowserDockOpenResult> => ipcRenderer.invoke(ACCOUNT_BROWSER_DOCK_IPC.open) as Promise<AccountBrowserDockOpenResult>,
   runFacebookCheckpoint282: (payload: FacebookCheckpoint282RunPayload): Promise<FacebookCheckpoint282Result> => ipcRenderer.invoke(IPC_CHANNELS.facebookCheckpoint282Run, payload) as Promise<FacebookCheckpoint282Result>,

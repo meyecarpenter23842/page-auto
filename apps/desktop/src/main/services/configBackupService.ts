@@ -3,13 +3,16 @@ import { ACCOUNT_IMPORT_FIELDS, type AccountColumnLayout, type AccountImportMapp
 import {
   CONFIG_BACKUP_FORMAT,
   CONFIG_BACKUP_VERSION,
+  type ConfigBackupContentLibrary,
   type ConfigBackupPageTab,
   type ConfigBackupPayload,
   type ConfigBackupRestoreResult,
   type ConfigBackupSummary
 } from '../../shared/configBackup'
+import type { ContentLibraryItemDraft } from '../../shared/contentLibrary'
 import { POST_SELECTION_MODES, type PageTabPostInput } from '../../shared/pageTabs'
 import { AccountRepository } from '../database/accountRepository'
+import { ContentLibraryRepository } from '../database/contentLibraryRepository'
 import { PageTabPostRepository } from '../database/pageTabPostRepository'
 import { PageTabRepository } from '../database/pageTabRepository'
 
@@ -54,6 +57,16 @@ function isPostInput(value: unknown): value is PageTabPostInput {
     && typeof value.image.missingPolicy === 'string'
 }
 
+function isContentLibraryItem(value: unknown): value is ContentLibraryItemDraft {
+  if (!isRecord(value) || typeof value.name !== 'string' || typeof value.enabled !== 'boolean') return false
+  if (!Array.isArray(value.variants) || !value.variants.every((item) => typeof item === 'string')) return false
+  if (!isRecord(value.image)) return false
+  return typeof value.image.folderPath === 'string'
+    && typeof value.image.mode === 'string'
+    && typeof value.image.imagesPerPost === 'number'
+    && typeof value.image.missingPolicy === 'string'
+}
+
 function validateOptionalPostLibrary(tab: Record<string, unknown>): void {
   if (tab.postLibrary === undefined) return
   if (!isRecord(tab.postLibrary)
@@ -62,6 +75,16 @@ function validateOptionalPostLibrary(tab: Record<string, unknown>): void {
     || !Array.isArray(tab.postLibrary.posts)
     || !tab.postLibrary.posts.every(isPostInput)) {
     throw new Error('Post Library trong backup không hợp lệ.')
+  }
+}
+
+function validateOptionalContentLibraries(value: unknown): void {
+  if (value === undefined) return
+  if (!Array.isArray(value)) throw new Error('Thư viện Bài viết trong backup không hợp lệ.')
+  for (const library of value) {
+    if (!isRecord(library) || typeof library.name !== 'string' || !Array.isArray(library.items) || !library.items.every(isContentLibraryItem)) {
+      throw new Error('Thư viện Bài viết trong backup không hợp lệ.')
+    }
   }
 }
 
@@ -82,6 +105,7 @@ function parseBackup(rawText: string): ConfigBackupPayload {
   if (parsed.accountColumnLayout !== null && !isColumnLayout(parsed.accountColumnLayout)) {
     throw new Error('Column layout trong backup không hợp lệ.')
   }
+  validateOptionalContentLibraries(parsed.contentLibraries)
 
   for (const preset of parsed.importPresets) {
     if (!isRecord(preset) || typeof preset.name !== 'string' || typeof preset.delimiter !== 'string' || !isImportMapping(preset.mapping)) {
@@ -99,6 +123,7 @@ function summary(payload: ConfigBackupPayload): ConfigBackupSummary {
   return {
     accounts: payload.accounts.length,
     pageTabs: payload.pageTabs.length,
+    contentLibraries: payload.contentLibraries?.length ?? 0,
     importPresets: payload.importPresets.length,
     hasColumnLayout: payload.accountColumnLayout !== null
   }
@@ -108,11 +133,13 @@ export class ConfigBackupService {
   private readonly accounts: AccountRepository
   private readonly pageTabs: PageTabRepository
   private readonly posts: PageTabPostRepository
+  private readonly contentLibrary: ContentLibraryRepository
 
   constructor(private readonly client: Database.Database) {
     this.accounts = new AccountRepository(client)
     this.pageTabs = new PageTabRepository(client)
     this.posts = new PageTabPostRepository(client)
+    this.contentLibrary = new ContentLibraryRepository(client)
   }
 
   createPayload(appVersion: string): ConfigBackupPayload {
@@ -160,6 +187,20 @@ export class ConfigBackupService {
       }
     })
 
+    const contentLibraries = this.contentLibrary.list().map((summaryItem): ConfigBackupContentLibrary => {
+      const details = this.contentLibrary.get(summaryItem.id)
+      if (!details) throw new Error(`Không thể đọc nguồn bài viết #${summaryItem.id} để backup.`)
+      return {
+        name: details.name,
+        items: details.items.map((item) => ({
+          name: item.name,
+          enabled: item.enabled,
+          variants: [...item.variants],
+          image: { ...item.image }
+        }))
+      }
+    })
+
     return {
       format: CONFIG_BACKUP_FORMAT,
       version: CONFIG_BACKUP_VERSION,
@@ -171,6 +212,7 @@ export class ConfigBackupService {
       },
       accounts,
       pageTabs,
+      contentLibraries,
       importPresets: this.accounts.listImportPresets().map((preset) => ({
         name: preset.name,
         delimiter: preset.delimiter,
@@ -199,6 +241,7 @@ export class ConfigBackupService {
     let accountsCreated = 0
     let pageTabsCreated = 0
     let pageTabsUpdated = 0
+    let contentLibrariesRestored = 0
     let importPresetsRestored = 0
     let columnLayoutRestored = false
 
@@ -297,6 +340,28 @@ export class ConfigBackupService {
         if (knownIndex >= 0) knownTabs[knownIndex] = { id: updated.id, name: updated.name, pageUid: updated.pageUid }
       }
 
+      for (const source of payload.contentLibraries ?? []) {
+        const normalizedName = source.name.trim()
+        if (!normalizedName) throw new Error('Backup có nguồn bài viết tên rỗng.')
+        const existing = this.client.prepare(`
+          SELECT id FROM content_sets
+          WHERE page_tab_id IS NULL AND name = ? COLLATE NOCASE
+          LIMIT 1
+        `).get(normalizedName) as { id: number } | undefined
+        const target = existing ? this.contentLibrary.get(Number(existing.id)) : this.contentLibrary.createSet({ name: normalizedName })
+        if (!target) throw new Error(`Không thể restore nguồn bài viết “${normalizedName}”.`)
+
+        this.client.prepare(`
+          DELETE FROM content_items
+          WHERE content_set_id = ?
+            AND EXISTS (SELECT 1 FROM content_sets WHERE id = ? AND page_tab_id IS NULL)
+        `).run(target.id, target.id)
+        for (const item of source.items) {
+          this.contentLibrary.createItem({ contentSetId: target.id, ...item })
+        }
+        contentLibrariesRestored += 1
+      }
+
       for (const preset of payload.importPresets) {
         this.accounts.saveImportPreset({
           name: preset.name,
@@ -320,9 +385,10 @@ export class ConfigBackupService {
       accountsCreated,
       pageTabsCreated,
       pageTabsUpdated,
+      contentLibrariesRestored,
       importPresetsRestored,
       columnLayoutRestored,
-      message: `Đã restore ${pageTabsCreated + pageTabsUpdated} Page Tab; ${accountsCreated} account shell mới. Credential và browser profile không được import.`
+      message: `Đã restore ${pageTabsCreated + pageTabsUpdated} Page Tab, ${contentLibrariesRestored} nguồn bài viết; ${accountsCreated} account shell mới. Credential và browser profile không được import.`
     }
   }
 }
