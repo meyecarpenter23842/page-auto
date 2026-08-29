@@ -151,7 +151,7 @@ export interface AppInfo {
 export interface AccountUpdatePayload { id: number; patch: Partial<AccountDraft> }
 export interface AccountDeletePayload { ids: number[] }
 export interface AccountColumnLayoutPayload { layout: AccountColumnLayout }
-export interface AccountOpenProfilePayload { accountId: number }
+export interface AccountOpenProfilePayload { accountId: number; checkLive?: boolean }
 
 export interface PageAutoIpcContract {
   getAppInfo: () => Promise<AppInfo>
