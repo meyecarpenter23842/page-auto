@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { cloneDefaultAppSettings, type BrowserSettings } from '../../shared/appSettings'
 import type { PostingJobResult } from '../../shared/posting'
 import type { RotationRuntimeSnapshot } from '../../shared/rotation'
 import { AccountRepository } from '../database/accountRepository'
@@ -16,6 +17,14 @@ const tempDirectories: string[] = []
 afterEach(() => {
   for (const directory of tempDirectories.splice(0)) rmSync(directory, { recursive: true, force: true })
 })
+
+function profileBrowserSettings(profileRoot: string): BrowserSettings {
+  return {
+    ...cloneDefaultAppSettings().browser,
+    profileStorageMode: 'external',
+    externalProfileRoot: profileRoot
+  }
+}
 
 function injectWorkerResult(service: PostingService, result: PostingJobResult): void {
   ;(service as unknown as {
@@ -58,7 +67,8 @@ describe('checkpoint status propagation', () => {
     })
     const run = runs.createForPageTab(tab.id)
 
-    const service = new PostingService(database.client, directory)
+    const profileRoot = join(directory, 'facebook-profiles')
+    const service = new PostingService(database.client, directory, () => profileBrowserSettings(profileRoot))
     injectWorkerResult(service, {
       status: 'needs_login',
       code: 'verification_required',
