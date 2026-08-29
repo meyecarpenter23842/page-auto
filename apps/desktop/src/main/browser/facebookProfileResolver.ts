@@ -76,6 +76,25 @@ export function validateFacebookExternalProfileRoot(settings: BrowserSettings): 
   }
 }
 
+function ensureProfileDirectory(profileDirectory: string, uid: string): void {
+  const state = directoryState(profileDirectory)
+  if (state === 'other') {
+    throw new FacebookProfileResolutionError(
+      'external_profile_invalid',
+      `Facebook profile cho UID ${uid} không phải thư mục hợp lệ.`
+    )
+  }
+  if (state === 'directory') return
+  try {
+    mkdirSync(profileDirectory, { recursive: true })
+  } catch {
+    throw new FacebookProfileResolutionError(
+      'profile_create_failed',
+      `Không thể tạo Facebook profile Root\\${uid} trong thư mục đã chọn.`
+    )
+  }
+}
+
 export function inspectFacebookProfileDirectory(
   _dataDirectory: string,
   account: Pick<AccountRecord, 'id' | 'uid'>,
@@ -83,14 +102,8 @@ export function inspectFacebookProfileDirectory(
 ): FacebookProfileInspection {
   validateFacebookExternalProfileRoot(settings)
   const profileDirectory = safeProfileDirectory(settings.externalProfileRoot ?? '', account.uid)
-  const state = directoryState(profileDirectory)
-  if (state === 'other') {
-    throw new FacebookProfileResolutionError(
-      'external_profile_invalid',
-      `Facebook profile cho UID ${account.uid} không phải thư mục hợp lệ.`
-    )
-  }
-  return { mode: 'external', profileDirectory, exists: state === 'directory' }
+  ensureProfileDirectory(profileDirectory, account.uid)
+  return { mode: 'external', profileDirectory, exists: true }
 }
 
 export function resolveFacebookProfileDirectory(
@@ -99,15 +112,5 @@ export function resolveFacebookProfileDirectory(
   settings: BrowserSettings
 ): FacebookProfileResolution {
   const inspected = inspectFacebookProfileDirectory(dataDirectory, account, settings)
-  if (!inspected.exists) {
-    try {
-      mkdirSync(inspected.profileDirectory, { recursive: true })
-    } catch {
-      throw new FacebookProfileResolutionError(
-        'profile_create_failed',
-        `Không thể tạo Facebook profile Root\\${account.uid} trong thư mục đã chọn.`
-      )
-    }
-  }
   return { mode: 'external', profileDirectory: inspected.profileDirectory }
 }
