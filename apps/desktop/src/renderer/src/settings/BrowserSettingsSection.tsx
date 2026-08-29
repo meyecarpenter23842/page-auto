@@ -31,7 +31,7 @@ function copyBrowser(settings: BrowserSettings): BrowserSettings { return { ...s
 function copyLayout(settings: BrowserWindowLayoutSettings): BrowserWindowLayoutSettings { return { ...settings } }
 function errorText(caught: unknown): string { return caught instanceof Error ? caught.message : String(caught) }
 
-export function BrowserSettingsSection({ appInfo }: BrowserSettingsSectionProps) {
+export function BrowserSettingsSection({ appInfo: _appInfo }: BrowserSettingsSectionProps) {
   const [saved, setSaved] = useState<BrowserSettings | null>(null)
   const [draft, setDraft] = useState<BrowserSettings | null>(null)
   const [savedLayout, setSavedLayout] = useState<BrowserWindowLayoutSettings | null>(null)
@@ -91,6 +91,11 @@ export function BrowserSettingsSection({ appInfo }: BrowserSettingsSectionProps)
     setFeedback(null)
   }
 
+  const updateProfileRoot = (value: string | null) => {
+    setDraft((current) => current ? { ...current, externalProfileRoot: value, profileStorageMode: 'external' } : current)
+    setFeedback(null)
+  }
+
   const updateLayout = <K extends keyof BrowserWindowLayoutSettings>(key: K, value: BrowserWindowLayoutSettings[K]) => {
     setLayout((current) => current ? { ...current, [key]: value } : current)
     setFeedback(null)
@@ -105,12 +110,12 @@ export function BrowserSettingsSection({ appInfo }: BrowserSettingsSectionProps)
     if (!draft || !layout) return
     setBusy('save'); setFeedback(null)
     try {
-      const next = await window.pageAuto.updateAppSettings({ browser: draft })
+      const next = await window.pageAuto.updateAppSettings({ browser: { ...draft, profileStorageMode: 'external' } })
       const nextLayout = await window.pageAuto.saveBrowserWindowLayout(layout)
       const browser = copyBrowser(next.browser)
       setSaved(browser); setDraft(copyBrowser(browser))
       setSavedLayout(copyLayout(nextLayout)); setLayout(copyLayout(nextLayout))
-      setFeedback({ kind: 'ok', text: 'Đã lưu Chrome, Facebook Profile Root và cách xếp cửa sổ.' })
+      setFeedback({ kind: 'ok', text: 'Đã lưu Chrome, thư mục Facebook Profile và cách xếp cửa sổ.' })
     } catch (caught) { setFeedback({ kind: 'bad', text: errorText(caught) }) } finally { setBusy(null) }
   }
 
@@ -138,8 +143,8 @@ export function BrowserSettingsSection({ appInfo }: BrowserSettingsSectionProps)
     try {
       const root = await window.pageAuto.pickFacebookProfileRoot()
       if (root) {
-        update('externalProfileRoot', root)
-        setFeedback({ kind: 'ok', text: `Đã chọn Facebook Profile Root. Mỗi account sẽ dùng Root\\UID hiện có.` })
+        updateProfileRoot(root)
+        setFeedback({ kind: 'ok', text: 'Đã chọn thư mục lưu Facebook Profile. Mỗi account dùng Root\\UID; thiếu thư mục UID app sẽ tự tạo.' })
       }
     } catch (caught) { setFeedback({ kind: 'bad', text: errorText(caught) }) } finally { setBusy(null) }
   }
@@ -167,17 +172,15 @@ export function BrowserSettingsSection({ appInfo }: BrowserSettingsSectionProps)
   const compactSummary = grid
     ? `${tileSize.width}×${tileSize.height}px${tileSize.autoFit ? ' · Auto Fit' : ''} · ${grid.columns} cột × ${grid.rows} hàng · ${grid.capacity} Chrome/lớp.`
     : `${tileSize.width}×${tileSize.height}px${tileSize.autoFit ? ' · Auto Fit' : ''} · sức chứa tính theo màn hình đích.`
-  const profileMode = draft.profileStorageMode ?? 'managed'
 
   return <div className="settings-section settings-section-with-actions">
     <div className="settings-section-content"><div className="browser-section">
-      <div className="browser-status-grid"><div><span>Phiên bản Chrome</span><strong>{probe?.version ?? 'Chưa đọc được'}</strong></div><div><span>Tình trạng Chrome</span><strong className={probe?.status === 'found' ? 'status-ok' : ''}>{probe?.status === 'found' ? 'Đã tìm thấy' : 'Chưa sẵn sàng'}</strong></div><div className="path-card"><span>Thư mục dữ liệu</span><strong title={appInfo?.dataDirectory ?? ''}>{appInfo?.dataDirectory ?? 'Đang đọc...'}</strong></div></div>
+      <div className="browser-status-grid"><div><span>Phiên bản Chrome</span><strong>{probe?.version ?? 'Chưa đọc được'}</strong></div><div><span>Tình trạng Chrome</span><strong className={probe?.status === 'found' ? 'status-ok' : ''}>{probe?.status === 'found' ? 'Đã tìm thấy' : 'Chưa sẵn sàng'}</strong></div><div className="path-card"><span>Facebook Profile Root</span><strong title={draft.externalProfileRoot ?? ''}>{draft.externalProfileRoot ?? 'Chưa chọn thư mục'}</strong></div></div>
       <div className="browser-form-grid">
         <label className="field span-3"><span>Đường dẫn Chrome</span><div className="path-input-row"><input value={draft.executablePath ?? ''} onChange={(event) => update('executablePath', event.target.value || null)} placeholder="Chọn chrome.exe" /><button className="settings-button" type="button" disabled={busy !== null} onClick={() => void pickChrome()}>Chọn file</button><button className="settings-button" type="button" disabled={busy !== null} onClick={() => void detectChrome()}>{busy === 'detect' ? 'Đang tìm...' : 'Tự tìm Chrome'}</button><button className="settings-button primary" type="button" disabled={busy !== null} onClick={() => void testChrome()}>{busy === 'test' ? 'Đang kiểm tra...' : 'Kiểm tra Chrome'}</button></div></label>
 
-        <label className="field"><span>Nguồn Facebook Profile</span><select value={profileMode} onChange={(event) => update('profileStorageMode', event.target.value as BrowserSettings['profileStorageMode'])}><option value="managed">PAGE-AUTO quản lý</option><option value="external">Thư mục ngoài · Root\\UID</option></select></label>
-        <div className="field span-2"><span>Facebook Profile Root</span>{profileMode === 'external' ? <div className="path-input-row"><input value={draft.externalProfileRoot ?? ''} onChange={(event) => update('externalProfileRoot', event.target.value || null)} placeholder="F:\\FacebookProfiles" /><button className="settings-button" type="button" disabled={busy !== null} onClick={() => void pickFacebookProfileRoot()}>{busy === 'profileRoot' ? 'Đang chọn...' : 'Chọn thư mục'}</button></div> : <div className="test-result ok" title={appInfo?.dataDirectory ?? ''}>App dùng data\\browser-profiles\\account-ID</div>}</div>
-        {profileMode === 'external' ? <div className="toggle-card muted span-3"><div><strong>External mode nghiêm ngặt</strong><small>Account UID 10001 chỉ dùng đúng Root\\10001 đã tồn tại. PAGE-AUTO không clone, không tạo thư mục UID và không fallback sang AppData/ổ C khi thiếu profile.</small></div><span>Root\\UID</span></div> : null}
+        <div className="field span-3"><span>Thư mục lưu Facebook Profile</span><div className="path-input-row"><input value={draft.externalProfileRoot ?? ''} onChange={(event) => updateProfileRoot(event.target.value || null)} placeholder="F:\\FacebookProfiles" /><button className="settings-button" type="button" disabled={busy !== null} onClick={() => void pickFacebookProfileRoot()}>{busy === 'profileRoot' ? 'Đang chọn...' : 'Chọn thư mục'}</button></div></div>
+        <div className="toggle-card muted span-3"><div><strong>Mỗi account dùng đúng Root\\UID</strong><small>Nếu Root\\UID đã có thì mở lại profile đó. Nếu chưa có thì PAGE-AUTO tự tạo thư mục UID mới. Facebook Profile không fallback sang data\\browser-profiles/AppData ổ C.</small></div><span>Tự tạo</span></div>
 
         <label className="field"><span>Cách mở Chrome</span><select value={draft.mode} onChange={(event) => { const mode = event.target.value as BrowserSettings['mode']; update('mode', mode); if (mode === 'minimized') updateLayout('enabled', false) }}><option value="visible">Hiện Chrome</option><option value="minimized">Ẩn xuống taskbar</option></select></label>
         <div className="field"><span>Khung automation</span><div className="test-result ok">Desktop ổn định · native bounds</div></div>
@@ -208,6 +211,6 @@ export function BrowserSettingsSection({ appInfo }: BrowserSettingsSectionProps)
         <label className="number-field"><span>Tự đóng Chrome sau</span><div><input type="number" min="1" value={draft.maxLifetimeMinutes} onChange={(event) => update('maxLifetimeMinutes', Number(event.target.value))} /><em>phút</em></div></label>
       </div>
     </div></div>
-    <div className="inline-settings-actions"><span className={`inline-settings-feedback ${feedback?.kind ?? ''}`}>{feedback?.text ?? (dirty ? 'Có thay đổi chưa lưu.' : compactSummary)}</span><div><button type="button" className="settings-button" disabled={busy !== null} onClick={() => { setDraft(copyBrowser(DEFAULT_APP_SETTINGS.browser)); setLayout(copyLayout(DEFAULT_BROWSER_WINDOW_LAYOUT)) }}>Mặc định</button><button type="button" className="settings-button" disabled={!dirty || busy !== null} onClick={() => { if (saved) setDraft(copyBrowser(saved)); if (savedLayout) setLayout(copyLayout(savedLayout)) }}>Hủy</button><button type="button" className="settings-button primary" disabled={!dirty || busy !== null} onClick={() => void save()}>{busy === 'save' ? 'Đang lưu...' : 'Lưu cài đặt'}</button></div></div>
+    <div className="inline-settings-actions"><span className={`inline-settings-feedback ${feedback?.kind ?? ''}`}>{feedback?.text ?? (dirty ? 'Có thay đổi chưa lưu.' : compactSummary)}</span><div><button type="button" className="settings-button" disabled={busy !== null} onClick={() => { setDraft((current) => current ? { ...DEFAULT_APP_SETTINGS.browser, profileStorageMode: 'external', externalProfileRoot: current.externalProfileRoot ?? null } : current); setLayout(copyLayout(DEFAULT_BROWSER_WINDOW_LAYOUT)) }}>Mặc định</button><button type="button" className="settings-button" disabled={!dirty || busy !== null} onClick={() => { if (saved) setDraft(copyBrowser(saved)); if (savedLayout) setLayout(copyLayout(savedLayout)) }}>Hủy</button><button type="button" className="settings-button primary" disabled={!dirty || busy !== null} onClick={() => void save()}>{busy === 'save' ? 'Đang lưu...' : 'Lưu cài đặt'}</button></div></div>
   </div>
 }

@@ -7,6 +7,7 @@ export const FACEBOOK_PROFILE_ERROR_CODES = [
   'external_profile_missing',
   'external_profile_invalid',
   'account_uid_invalid',
-  'managed_profile_create_failed'
+  'managed_profile_create_failed',
+  'profile_create_failed'
 ] as const
 export type FacebookProfileErrorCode = (typeof FACEBOOK_PROFILE_ERROR_CODES)[number]
