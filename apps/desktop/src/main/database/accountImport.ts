@@ -27,6 +27,7 @@ export function resolveImportOperation(request: AccountImportRequest): 'insert' 
 export function parseAccountImport(request: AccountImportRequest): ParsedAccountImport {
   const delimiter = request.delimiter || '|'
   const operation = resolveImportOperation(request)
+  const targetGroupName = operation === 'insert' ? request.targetGroupName?.trim() ?? '' : ''
   const errors: AccountImportIssue[] = []
   const accounts: AccountDraft[] = []
   const seenUids = new Set<string>()
@@ -93,6 +94,8 @@ export function parseAccountImport(request: AccountImportRequest): ParsedAccount
       errors.push({ line: lineNumber, message: `UID/UserName bị trùng trong dữ liệu import: ${uid}` })
       continue
     }
+
+    if (targetGroupName) draft.category = targetGroupName
 
     seenUids.add(uid)
     accounts.push({ ...draft, uid } as AccountDraft)

@@ -76,6 +76,8 @@ export interface AccountImportRequest {
   rawText: string
   delimiter: string
   mapping: AccountImportMapping
+  /** Existing group selected in the Import UI. For new accounts this overrides mapped Category/Folder. */
+  targetGroupName?: string
   /** @deprecated Kept for backward-compatible callers/tests. Prefer operation. */
   duplicatePolicy?: DuplicatePolicy
   operation?: AccountImportOperation

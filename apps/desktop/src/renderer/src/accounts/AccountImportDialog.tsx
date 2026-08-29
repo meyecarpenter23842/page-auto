@@ -8,6 +8,7 @@ import {
   type AccountImportResult,
   type ImportPreset
 } from '../../../shared/accounts'
+import type { AccountGroupRecord } from '../../../shared/accountGroups'
 import {
   DEFAULT_CUSTOM_MAPPING,
   MIN_CUSTOM_MAPPING_COLUMNS,
@@ -29,6 +30,8 @@ export function ImportDialog({ operation, presets, onClose, onImported, onPreset
   const [rawText, setRawText] = useState('')
   const [delimiter, setDelimiter] = useState('|')
   const [mapping, setMapping] = useState<AccountImportMapping>(() => [...DEFAULT_CUSTOM_MAPPING])
+  const [groups, setGroups] = useState<AccountGroupRecord[]>([])
+  const [selectedGroupId, setSelectedGroupId] = useState('')
   const [presetName, setPresetName] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -44,6 +47,21 @@ export function ImportDialog({ operation, presets, onClose, onImported, onPreset
   useEffect(() => {
     setMapping((current) => normalizeCustomMapping(current, Math.max(maxDataColumns, MIN_CUSTOM_MAPPING_COLUMNS)))
   }, [maxDataColumns])
+
+  useEffect(() => {
+    if (operation !== 'insert') return
+    let active = true
+    void window.pageAuto.getAccountGroupOverview()
+      .then((overview) => {
+        if (active) setGroups(overview.groups)
+      })
+      .catch(() => {
+        if (active) setGroups([])
+      })
+    return () => {
+      active = false
+    }
+  }, [operation])
 
   const applyPreset = (nextDelimiter: string, nextMapping: AccountImportMapping) => {
     setDelimiter(nextDelimiter)
@@ -68,7 +86,21 @@ export function ImportDialog({ operation, presets, onClose, onImported, onPreset
     setError(null)
     setSaving(true)
     try {
-      const result = await window.pageAuto.importAccounts({ rawText, delimiter, mapping, operation })
+      let targetGroupName: string | undefined
+      if (operation === 'insert' && selectedGroupId) {
+        const overview = await window.pageAuto.getAccountGroupOverview()
+        const targetGroup = overview.groups.find((group) => group.id === Number(selectedGroupId))
+        if (!targetGroup) throw new Error('Nhóm được chọn không còn tồn tại.')
+        targetGroupName = targetGroup.name
+      }
+
+      const result = await window.pageAuto.importAccounts({
+        rawText,
+        delimiter,
+        mapping,
+        operation,
+        ...(targetGroupName ? { targetGroupName } : {})
+      })
       onImported(result, operation)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
@@ -110,6 +142,15 @@ export function ImportDialog({ operation, presets, onClose, onImported, onPreset
 
         <div className="import-toolbar-row">
           <label><span>Dấu phân cách</span><input className="delimiter-input" value={delimiter} maxLength={8} onChange={(e) => setDelimiter(e.target.value)} /></label>
+          {operation === 'insert' ? (
+            <label className="import-group-field">
+              <span>Nhóm</span>
+              <select value={selectedGroupId} onChange={(e) => setSelectedGroupId(e.target.value)}>
+                <option value="">Không chọn nhóm</option>
+                {groups.map((group) => <option key={group.id} value={String(group.id)}>{group.name}</option>)}
+              </select>
+            </label>
+          ) : null}
           <span className="mapping-format-hint">Mặc định: UID | Mật khẩu | 2FA | Cookie | Email | Mật khẩu email | Proxy | User-Agent | Ghi chú</span>
         </div>
 
@@ -125,10 +166,10 @@ export function ImportDialog({ operation, presets, onClose, onImported, onPreset
         </div>
 
         <div className="mapping-panel">
-          <div className="mapping-header">
-            <div>
-              <strong>Ánh xạ thứ tự cột</strong>
-              <span>{maxDataColumns ? `${maxDataColumns} cột dữ liệu · ` : ''}{mapping.length} ô ánh xạ</span>
+          <div className="import-mapping-toolbar">
+            <div className="import-preview-heading">
+              <strong>Xem trước dữ liệu</strong>
+              <span>{previewRows.length} dòng{distinctColumnCounts.size > 1 ? ' · có dòng lệch số cột' : ''}</span>
             </div>
             <div className="mapping-actions">
               <button className="button secondary compact" type="button" onClick={removeMappingColumn} disabled={mapping.length <= MIN_CUSTOM_MAPPING_COLUMNS}>− Cột</button>
@@ -136,37 +177,29 @@ export function ImportDialog({ operation, presets, onClose, onImported, onPreset
             </div>
           </div>
 
-          <div className="mapping-grid">
-            {mapping.map((field, index) => (
-              <label key={index}>
-                <span>Cột {index + 1}</span>
-                <select value={field} onChange={(e) => setMapping((current) => current.map((item, itemIndex) => itemIndex === index ? e.target.value as AccountImportField | 'ignore' : item))}>
-                  <option value="ignore">Bỏ qua</option>
-                  {ACCOUNT_IMPORT_FIELDS.map((item) => <option key={item} value={item}>{importFieldLabels[item]}</option>)}
-                </select>
-              </label>
-            ))}
-          </div>
-
-          <div className="import-preview-heading">
-            <strong>Xem trước dữ liệu</strong>
-            <span>{previewRows.length} dòng{distinctColumnCounts.size > 1 ? ' · có dòng lệch số cột' : ''}</span>
-          </div>
-
           <div className="import-preview-wrap">
             <table className="import-preview-table">
               <thead>
                 <tr>
-                  <th>Dòng</th>
-                  {mapping.map((field, index) => <th key={index}>Cột {index + 1}<small>{importFieldLabels[field]}</small></th>)}
+                  {mapping.map((field, index) => (
+                    <th key={index}>
+                      <select
+                        aria-label={`Trường dữ liệu ${index + 1}`}
+                        value={field}
+                        onChange={(e) => setMapping((current) => current.map((item, itemIndex) => itemIndex === index ? e.target.value as AccountImportField | 'ignore' : item))}
+                      >
+                        <option value="ignore">Bỏ qua</option>
+                        {ACCOUNT_IMPORT_FIELDS.map((item) => <option key={item} value={item}>{importFieldLabels[item]}</option>)}
+                      </select>
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
                 {previewRows.slice(0, PREVIEW_LIMIT).map((row) => {
                   const mismatched = distinctColumnCounts.size > 1 && row.values.length !== maxDataColumns
                   return (
-                    <tr key={row.line} className={mismatched ? 'preview-row-warning' : ''}>
-                      <td className="preview-line-number">{row.line}{mismatched ? ' ⚠' : ''}</td>
+                    <tr key={row.line} className={mismatched ? 'preview-row-warning' : ''} title={mismatched ? `Dòng ${row.line} lệch số cột` : undefined}>
                       {mapping.map((_field, index) => {
                         const exists = index < row.values.length
                         const value = exists ? (row.values[index] ?? '').trim() : ''
@@ -179,7 +212,7 @@ export function ImportDialog({ operation, presets, onClose, onImported, onPreset
                     </tr>
                   )
                 })}
-                {previewRows.length === 0 ? <tr><td colSpan={mapping.length + 1} className="preview-empty-state">Dán dữ liệu để xem từng cột trước khi thực hiện.</td></tr> : null}
+                {previewRows.length === 0 ? <tr><td colSpan={mapping.length} className="preview-empty-state">Dán dữ liệu để xem từng cột trước khi thực hiện.</td></tr> : null}
               </tbody>
             </table>
           </div>
