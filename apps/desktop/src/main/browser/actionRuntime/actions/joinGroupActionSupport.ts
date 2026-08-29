@@ -27,7 +27,9 @@ const JOINED_SELECTORS = [
   '[role="button"][aria-label="Joined"]',
   '[role="button"][aria-label="Đã tham gia"]',
   'div[role="button"]:has-text("Joined")',
-  'div[role="button"]:has-text("Đã tham gia")'
+  'div[role="button"]:has-text("Đã tham gia")',
+  'button:has-text("Joined")',
+  'button:has-text("Đã tham gia")'
 ] as const
 
 const PENDING_SELECTORS = [
@@ -35,7 +37,10 @@ const PENDING_SELECTORS = [
   '[role="button"][aria-label*="Hủy yêu cầu" i]',
   'div[role="button"]:has-text("Pending")',
   'div[role="button"]:has-text("Đang chờ")',
-  'div[role="button"]:has-text("Hủy yêu cầu")'
+  'div[role="button"]:has-text("Hủy yêu cầu")',
+  'button:has-text("Pending")',
+  'button:has-text("Đang chờ")',
+  'button:has-text("Hủy yêu cầu")'
 ] as const
 
 const SUBMIT_SELECTORS = [
@@ -56,6 +61,8 @@ const CANCEL_SELECTORS = [
   '[aria-label="Đóng"]'
 ] as const
 
+const NON_GROUP_SURFACES = new Set(['discover', 'feed', 'joins', 'notifications', 'search'])
+
 export type GroupPrivacy = 'open' | 'closed' | 'unknown'
 export type JoinAttemptOutcome = 'joined' | 'requested' | 'skipped_approval' | 'unverified'
 
@@ -64,6 +71,32 @@ export function normalizeGroupUrl(value: string): string {
   if (/^https?:\/\//i.test(input)) return input
   if (/^(?:www\.)?facebook\.com\//i.test(input)) return `https://${input}`
   return `https://www.facebook.com/groups/${encodeURIComponent(input.replace(/^\/+|\/+$/g, ''))}/`
+}
+
+export function canAttemptAnotherJoin(attempted: number, target: number): boolean {
+  return attempted < Math.max(0, target)
+}
+
+export function crossedJoinPauseThreshold(previous: number, current: number, every: number): boolean {
+  if (every <= 0 || current <= previous) return false
+  return Math.floor(previous / every) < Math.floor(current / every)
+}
+
+export function groupIdentityFromHref(value: string): string | null {
+  try {
+    const url = new URL(value, 'https://www.facebook.com')
+    const parts = url.pathname.split('/').filter(Boolean)
+    if (parts[0]?.toLocaleLowerCase() !== 'groups' || !parts[1]) return null
+    const identity = decodeURIComponent(parts[1]).trim()
+    if (!identity || NON_GROUP_SURFACES.has(identity.toLocaleLowerCase())) return null
+    return identity
+  } catch {
+    return null
+  }
+}
+
+export function isDirectGroupPageUrl(value: string): boolean {
+  return groupIdentityFromHref(value) !== null
 }
 
 function compactNumber(raw: string, suffix: string | undefined): number | null {
@@ -137,15 +170,47 @@ export function configuredGroupTargets(config: ActionConfig): string[] {
   return splitLines(configString(config, 'sourceTargets'))
 }
 
-export async function joinCandidateText(button: Locator): Promise<string> {
+async function candidateContainer(button: Locator): Promise<Locator | null> {
   const article = button.locator('xpath=ancestor::*[@role="article"][1]')
-  if (await article.count().catch(() => 0)) {
-    const text = await article.innerText().catch(() => '')
-    if (text.trim()) return text
-  }
+  if (await article.count().catch(() => 0)) return article
   const groupCard = button.locator('xpath=ancestor::div[.//a[contains(@href,"/groups/")]][1]')
-  if (await groupCard.count().catch(() => 0)) {
-    const text = await groupCard.innerText().catch(() => '')
+  if (await groupCard.count().catch(() => 0)) return groupCard
+  return null
+}
+
+async function candidateGroupIdentity(button: Locator): Promise<string | null> {
+  const container = await candidateContainer(button)
+  if (!container) return null
+  const links = container.locator('a[href*="/groups/"]')
+  const count = await links.count().catch(() => 0)
+  for (let index = 0; index < count; index += 1) {
+    const href = await links.nth(index).getAttribute('href').catch(() => null)
+    const identity = href ? groupIdentityFromHref(href) : null
+    if (identity) return identity
+  }
+  return null
+}
+
+async function candidateContainerByIdentity(page: Page, identity: string): Promise<Locator | null> {
+  const links = page.locator('a[href*="/groups/"]')
+  const count = await links.count().catch(() => 0)
+  for (let index = 0; index < count; index += 1) {
+    const link = links.nth(index)
+    const href = await link.getAttribute('href').catch(() => null)
+    if (!href || groupIdentityFromHref(href) !== identity) continue
+
+    const article = link.locator('xpath=ancestor::*[@role="article"][1]')
+    if (await article.count().catch(() => 0)) return article
+    const groupCard = link.locator('xpath=ancestor::div[.//a[contains(@href,"/groups/")]][1]')
+    if (await groupCard.count().catch(() => 0)) return groupCard
+  }
+  return null
+}
+
+export async function joinCandidateText(button: Locator): Promise<string> {
+  const container = await candidateContainer(button)
+  if (container) {
+    const text = await container.innerText().catch(() => '')
     if (text.trim()) return text
   }
   return button.innerText().catch(() => '')
@@ -184,14 +249,20 @@ async function fillQuestionAnswers(dialog: Locator, answers: readonly string[]):
   }
 }
 
-async function verifyJoinOutcome(page: Page, clickedButton: Locator): Promise<JoinAttemptOutcome> {
-  const clickedText = await clickedButton.innerText().catch(() => '')
-  const clickedLabel = await clickedButton.getAttribute('aria-label').catch(() => null)
-  const combined = `${clickedText} ${clickedLabel ?? ''}`
-  if (/(?:\bjoined\b|đã tham gia)/i.test(combined)) return 'joined'
-  if (/(?:pending|đang chờ|cancel request|hủy yêu cầu)/i.test(combined)) return 'requested'
-  if (await firstVisible(page, JOINED_SELECTORS)) return 'joined'
-  if (await firstVisible(page, PENDING_SELECTORS)) return 'requested'
+async function verifyJoinOutcome(page: Page, candidateIdentity: string | null): Promise<JoinAttemptOutcome> {
+  if (candidateIdentity) {
+    const candidate = await candidateContainerByIdentity(page, candidateIdentity)
+    if (candidate) {
+      if (await firstVisible(candidate, JOINED_SELECTORS)) return 'joined'
+      if (await firstVisible(candidate, PENDING_SELECTORS)) return 'requested'
+    }
+  }
+
+  if (isDirectGroupPageUrl(page.url())) {
+    if (await firstVisible(page, JOINED_SELECTORS)) return 'joined'
+    if (await firstVisible(page, PENDING_SELECTORS)) return 'requested'
+  }
+
   return 'unverified'
 }
 
@@ -201,6 +272,7 @@ export async function submitJoinAttempt(
   context: ActionExecutorContext,
   config: ActionConfig
 ): Promise<JoinAttemptOutcome> {
+  const candidateIdentity = await candidateGroupIdentity(button)
   if (!await button.click({ timeout: 5000 }).then(() => true).catch(() => false)) return 'unverified'
   if (!await sleepWithControl(context.control, 700)) return 'unverified'
 
@@ -216,24 +288,27 @@ export async function submitJoinAttempt(
     await fillQuestionAnswers(dialog, splitLines(configString(config, 'answerQuestions')))
     const submit = await firstVisible(dialog, SUBMIT_SELECTORS)
     if (submit) {
+      if (context.control.isStopped()) return 'unverified'
       await submit.click({ timeout: 5000 }).catch(() => undefined)
       if (!await sleepWithControl(context.control, 700)) return 'unverified'
     }
   }
 
-  return verifyJoinOutcome(page, button)
+  return verifyJoinOutcome(page, candidateIdentity)
 }
 
 export async function paceJoinGroup(
   context: ActionExecutorContext,
   config: ActionConfig,
-  completed: number
+  previousAttempted: number,
+  currentAttempted: number
 ): Promise<boolean> {
   const pauseAfter = configNumber(config, 'pauseAfterCount', 0)
-  if (pauseAfter > 0 && completed > 0 && completed % pauseAfter === 0) {
+  if (crossedJoinPauseThreshold(previousAttempted, currentAttempted, pauseAfter)) {
     const pauseMs = configNumber(config, 'pauseMinutes', 0) * 60_000
     if (pauseMs > 0 && !await sleepWithControl(context.control, pauseMs)) return false
   }
+
   const delaySeconds = pickRange(
     configNumber(config, 'itemDelayMinSeconds', 0),
     configNumber(config, 'itemDelayMaxSeconds', 0)
