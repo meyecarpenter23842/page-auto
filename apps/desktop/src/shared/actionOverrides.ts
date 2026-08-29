@@ -21,6 +21,11 @@ import {
   getK434FieldUiMeta,
   getK434ValidationErrors
 } from './k434LeaveGroupActionOverrides'
+import {
+  applyK435GroupPostActionOverrides,
+  getK435FieldUiMeta,
+  getK435ValidationErrors
+} from './k435GroupPostActionOverrides'
 
 export interface ActionFieldUiMeta {
   section: string
@@ -28,6 +33,7 @@ export interface ActionFieldUiMeta {
   rows?: number
   visibleWhen?: { key: string; equals: string | number | boolean }
   textFilePickerLabel?: string
+  folderPickerLabel?: string
 }
 
 export function applyActionOverrides(): void {
@@ -37,10 +43,12 @@ export function applyActionOverrides(): void {
   applyK432InviteFriendsGroupActionOverrides()
   applyK433GroupInteractionActionOverrides()
   applyK434LeaveGroupActionOverrides()
+  applyK435GroupPostActionOverrides()
 }
 
 export function getActionFieldUiMeta(actionType: string, fieldKey: string): ActionFieldUiMeta | undefined {
-  return getK434FieldUiMeta(actionType, fieldKey)
+  return getK435FieldUiMeta(actionType, fieldKey)
+    ?? getK434FieldUiMeta(actionType, fieldKey)
     ?? getK433FieldUiMeta(actionType, fieldKey)
     ?? getK432FieldUiMeta(actionType, fieldKey)
     ?? getK431FieldUiMeta(actionType, fieldKey)
@@ -55,6 +63,7 @@ export function getActionOverrideValidationErrors(actionType: string, config: Ac
     ...getK431ValidationErrors(actionType, config),
     ...getK432ValidationErrors(actionType, config),
     ...getK433ValidationErrors(actionType, config),
-    ...getK434ValidationErrors(actionType, config)
+    ...getK434ValidationErrors(actionType, config),
+    ...getK435ValidationErrors(actionType, config)
   ]
 }

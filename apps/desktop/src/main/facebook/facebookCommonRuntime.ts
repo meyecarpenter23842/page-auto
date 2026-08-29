@@ -347,6 +347,10 @@ export class FacebookCommonRuntime {
       this.accountName = await readFacebookDisplayName(this.page).catch(() => null)
     }
 
+    if (!this.request.pageUid.trim()) {
+      this.request.diagnostic?.('state=profile_identity ready page_switch=skipped')
+      return { status: 'success', message: 'Profile identity đã sẵn sàng; action này không yêu cầu Page switch.' }
+    }
     return this.ensurePageIdentity()
   }
 
