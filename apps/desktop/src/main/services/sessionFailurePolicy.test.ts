@@ -38,7 +38,7 @@ describe('resolveSessionFailureDecision', () => {
     })
   })
 
-  it.each(['282', '956'] as const)('treats checkpoint %s as a terminal account turn even when the legacy checkpoint setting says stop', (checkpointKind) => {
+  it.each(['282', '956', 'disabled'] as const)('treats checkpoint %s as a terminal account turn even when the legacy checkpoint setting says stop', (checkpointKind) => {
     const result: PostingJobResult = {
       status: 'needs_login',
       code: 'verification_required',
@@ -74,7 +74,7 @@ describe('resolveSessionFailureDecision', () => {
     })
   })
 
-  it('pauses an unclassified verification result instead of assuming it is 282/956', () => {
+  it('pauses an unclassified verification result instead of assuming it is 282/956/disabled', () => {
     const result: PostingJobResult = {
       status: 'needs_login',
       code: 'verification_required',

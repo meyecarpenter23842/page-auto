@@ -28,7 +28,7 @@ describe('shouldRetainPostingBrowserForManualSession', () => {
     })).toBe(true)
   })
 
-  it.each(['282', '956'] as const)('releases browser when checkpoint %s ends the account turn', (checkpointKind) => {
+  it.each(['282', '956', 'disabled'] as const)('releases browser when checkpoint %s ends the account turn', (checkpointKind) => {
     expect(shouldRetainPostingBrowserForManualSession({
       status: 'needs_login',
       code: 'verification_required',

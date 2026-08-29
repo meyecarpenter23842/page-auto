@@ -17,7 +17,7 @@ function isUnresolvedPreflightSession(result: PostingJobResult): boolean {
 
 function isKnownTerminalCheckpoint(result: PostingJobResult): boolean {
   const kind = result.sessionValidation?.checkpointKind
-  return kind === '282' || kind === '956'
+  return kind === '282' || kind === '956' || kind === 'disabled'
 }
 
 export function resolveSessionFailureDecision(
@@ -27,7 +27,7 @@ export function resolveSessionFailureDecision(
   const state = result.sessionValidation?.state
   const checkpoint = result.code === 'verification_required' || state === 'verification_required'
   if (checkpoint) {
-    // 282/956 are explicitly classified terminal account-turn states. We do not
+    // 282/956/disabled are explicitly classified terminal account-turn states. We do not
     // attempt to solve/bypass them: the current browser can be released, then the
     // normal account-switch delay runs before the next account starts.
     if (isKnownTerminalCheckpoint(result)) {

@@ -88,7 +88,7 @@ function successItem(runId: number): RunItem {
 }
 
 describe('RotationService checkpoint account-turn terminal order', () => {
-  it('closes checkpoint-282 account, waits account delay, then starts the next account', async () => {
+  it.each(['282', 'disabled'] as const)('closes terminal checkpoint %s account, waits account delay, then starts the next account', async (checkpointKind) => {
     const store = new Store()
     const events: string[] = []
     let service!: RotationService
@@ -104,12 +104,12 @@ describe('RotationService checkpoint account-turn terminal order', () => {
             result: {
               status: 'needs_login',
               code: 'verification_required',
-              message: 'checkpoint 282',
+              message: `checkpoint ${checkpointKind}`,
               sessionValidation: {
                 phase: 'before_run',
                 state: 'verification_required',
-                message: 'checkpoint 282',
-                checkpointKind: '282'
+                message: `checkpoint ${checkpointKind}`,
+                checkpointKind
               }
             },
             run: store.details
