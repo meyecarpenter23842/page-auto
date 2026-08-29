@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { AccountRepository } from './accountRepository'
 import { initializeDatabase } from './index'
 import { PageTabPostRepository } from './pageTabPostRepository'
 import { PageTabRepository } from './pageTabRepository'
@@ -21,14 +22,16 @@ function createRuntime() {
 
 function configureLegacyTab() {
   const runtime = createRuntime()
+  const accounts = new AccountRepository(runtime.client)
   const tabs = new PageTabRepository(runtime.client)
   const posts = new PageTabPostRepository(runtime.client)
+  const account = accounts.create({ uid: '10001', name: 'Runner' })
   const tab = tabs.create({ name: 'Page A', pageUid: '90001' })
   tabs.update(tab.id, {
     name: tab.name,
     pageUid: tab.pageUid,
     rotation: tab.rotation,
-    accounts: [],
+    accounts: [{ accountId: account.id, enabled: true, sortOrder: 0, postsPerTurn: null }],
     schedules: [],
     groupUids: ['group-1'],
     contentMode: 'random',
