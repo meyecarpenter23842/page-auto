@@ -152,9 +152,24 @@ function ConfigField({ actionType, field, value, onChange }: {
 
   if (field.kind === 'text' && ui?.multiline) {
     return (
-      <label className="scenario-field action-config-field action-config-textarea">
-        <span>{field.label}{field.required ? ' *' : ''}</span>
+      <div className="scenario-field action-config-field action-config-textarea">
+        <div className="action-config-input-line">
+          <span>{field.label}{field.required ? ' *' : ''}</span>
+          {ui.textFilePickerLabel ? (
+            <button
+              className="scenario-button"
+              type="button"
+              onClick={async () => {
+                const picked = await window.pageAuto.pickPageTabTextFile()
+                if (picked) onChange(picked.content)
+              }}
+            >
+              {ui.textFilePickerLabel}
+            </button>
+          ) : null}
+        </div>
         <textarea
+          aria-label={field.label}
           rows={ui.rows ?? 3}
           maxLength={field.maxLength}
           placeholder={field.placeholder}
@@ -162,7 +177,7 @@ function ConfigField({ actionType, field, value, onChange }: {
           onChange={(event) => onChange(event.target.value)}
         />
         {field.help ? <small className="action-config-help">{field.help}</small> : null}
-      </label>
+      </div>
     )
   }
 

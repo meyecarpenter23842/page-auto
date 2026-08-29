@@ -114,6 +114,9 @@ function actionDependencies(runtime: FacebookCommonRuntime, job: ScenarioActionW
       cancelSentFriendRequests: common,
       unfriend: common,
       friendFromEngagement: common
+    },
+    groups: {
+      joinGroup: common
     }
   }
 }
