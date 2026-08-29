@@ -1011,7 +1011,7 @@ body:has(.scenario-manager-mode) .version-badge {
   min-height: 0;
 }
 
-@media (max-width: 1450px) {
+@media (max-width: 1580px) {
   .scenario-runner-grid {
     grid-template-columns: minmax(320px, .92fr) minmax(365px, 1fr) minmax(430px, 1.28fr);
   }
