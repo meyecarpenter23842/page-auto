@@ -114,6 +114,8 @@ export class ScenarioActionWorkerManager {
 
   stop(accountId: number, runKey: string): void {
     this.specialHandler?.stop?.(accountId, runKey)
+    const specialClose = this.specialHandler?.closeAccount?.(accountId)
+    if (specialClose) void specialClose.catch(() => undefined)
     const entry = this.workers.get(accountId)
     if (!entry || entry.shuttingDown) return
     try { entry.process.postMessage({ type: 'stop', runKey }) } catch { /* exit handler settles */ }

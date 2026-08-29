@@ -10,6 +10,7 @@ import {
   getActionFieldUiMeta,
   getActionOverrideValidationErrors
 } from '../../../shared/actionOverrides'
+import { ContentLibraryActionField } from './ContentLibraryActionField'
 import './k41ActionConfig.css'
 
 applyActionOverrides()
@@ -127,6 +128,9 @@ function ConfigField({ actionType, field, value, onChange }: {
   onChange: (value: ActionConfig[string] | undefined) => void
 }) {
   const ui = getActionFieldUiMeta(actionType, field.key)
+  if (actionType === 'post' && field.key === 'contentSetId') {
+    return <ContentLibraryActionField value={value} onChange={onChange} />
+  }
   if (field.kind === 'boolean') {
     return (
       <label className="scenario-check action-config-check">

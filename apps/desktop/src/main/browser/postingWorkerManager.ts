@@ -172,7 +172,25 @@ export class PostingWorkerManager {
       return
     }
     if (entry.pending) {
-      throw new Error(`Không thể đóng Chrome account #${accountId} khi posting job vẫn đang chạy.`)
+      const pending = entry.pending
+      clearTimeout(pending.timer)
+      entry.pending = null
+      entry.retainForManualSession = false
+      entry.shuttingDown = true
+      if (this.workers.get(accountId) === entry) this.workers.delete(accountId)
+      this.windowLayout?.release(accountId, 'posting')
+      accountDiagnostic(accountId, 'CANCEL active posting job → force stop worker/browser')
+      try {
+        entry.process.kill()
+      } catch {
+        // The pending Promise still settles below; exit cleanup is best-effort.
+      }
+      pending.resolve({
+        status: 'failed',
+        code: 'worker_crashed',
+        message: 'Posting worker đã bị dừng theo yêu cầu; trạng thái publish có thể chưa xác định, cần review trước khi retry.'
+      })
+      return
     }
     if (entry.retainForManualSession) {
       accountDiagnostic(accountId, 'KEEP account browser → cần login/checkpoint thủ công; không shutdown persistent browser')

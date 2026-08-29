@@ -29,7 +29,7 @@ export function selectRunPost(snapshot: RunSnapshot, item: RunItem): RunPostMate
   const posts = (snapshot.posts ?? [])
     .filter((post) => post.enabled)
     .map((post) => ({ ...post, variants: post.variants.map((variant) => variant.trim()).filter(Boolean) }))
-    .filter((post) => post.variants.length > 0)
+    .filter((post) => post.variants.length > 0 || post.image.folderPath.trim().length > 0)
 
   if (posts.length > 0) {
     const randomMode = snapshot.postMode === 'random'
@@ -38,11 +38,13 @@ export function selectRunPost(snapshot: RunSnapshot, item: RunItem): RunPostMate
       : item.sortOrder % posts.length
     const post = posts[postIndex]
     if (!post) return null
-    const variantIndex = randomMode
-      ? deterministicIndex(`${item.runId}:${item.id}:${item.groupUid}:variant:${postIndex}`, post.variants.length)
-      : Math.floor(item.sortOrder / posts.length) % post.variants.length
-    const content = post.variants[variantIndex]
-    if (!content) return null
+    const variantIndex = post.variants.length === 0
+      ? 0
+      : randomMode
+        ? deterministicIndex(`${item.runId}:${item.id}:${item.groupUid}:variant:${postIndex}`, post.variants.length)
+        : Math.floor(item.sortOrder / posts.length) % post.variants.length
+    const content = post.variants.length === 0 ? '' : post.variants[variantIndex]
+    if (content === undefined) return null
     return {
       content,
       image: { ...post.image },
