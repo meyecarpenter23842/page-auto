@@ -19,7 +19,7 @@ import {
 import './settingsSections.css'
 
 interface BrowserSettingsSectionProps { appInfo: AppInfo | null }
-type BusyState = 'save' | 'detect' | 'pick' | 'test' | 'retile' | null
+type BusyState = 'save' | 'detect' | 'pick' | 'profileRoot' | 'test' | 'retile' | null
 
 const COMPACT_SIZE_PRESETS = [
   { label: 'Gọn', width: 500, height: 350 },
@@ -110,7 +110,7 @@ export function BrowserSettingsSection({ appInfo }: BrowserSettingsSectionProps)
       const browser = copyBrowser(next.browser)
       setSaved(browser); setDraft(copyBrowser(browser))
       setSavedLayout(copyLayout(nextLayout)); setLayout(copyLayout(nextLayout))
-      setFeedback({ kind: 'ok', text: 'Đã lưu cài đặt trình duyệt và cách xếp Chrome.' })
+      setFeedback({ kind: 'ok', text: 'Đã lưu Chrome, Facebook Profile Root và cách xếp cửa sổ.' })
     } catch (caught) { setFeedback({ kind: 'bad', text: errorText(caught) }) } finally { setBusy(null) }
   }
 
@@ -130,6 +130,17 @@ export function BrowserSettingsSection({ appInfo }: BrowserSettingsSectionProps)
       if (result.status !== 'canceled') setProbe(result)
       if (result.status === 'found' && result.executablePath) update('executablePath', result.executablePath)
       if (result.status !== 'canceled') setFeedback({ kind: result.status === 'found' ? 'ok' : 'bad', text: result.message })
+    } catch (caught) { setFeedback({ kind: 'bad', text: errorText(caught) }) } finally { setBusy(null) }
+  }
+
+  const pickFacebookProfileRoot = async () => {
+    setBusy('profileRoot'); setFeedback(null)
+    try {
+      const root = await window.pageAuto.pickFacebookProfileRoot()
+      if (root) {
+        update('externalProfileRoot', root)
+        setFeedback({ kind: 'ok', text: `Đã chọn Facebook Profile Root. Mỗi account sẽ dùng Root\\UID hiện có.` })
+      }
     } catch (caught) { setFeedback({ kind: 'bad', text: errorText(caught) }) } finally { setBusy(null) }
   }
 
@@ -156,12 +167,18 @@ export function BrowserSettingsSection({ appInfo }: BrowserSettingsSectionProps)
   const compactSummary = grid
     ? `${tileSize.width}×${tileSize.height}px${tileSize.autoFit ? ' · Auto Fit' : ''} · ${grid.columns} cột × ${grid.rows} hàng · ${grid.capacity} Chrome/lớp.`
     : `${tileSize.width}×${tileSize.height}px${tileSize.autoFit ? ' · Auto Fit' : ''} · sức chứa tính theo màn hình đích.`
+  const profileMode = draft.profileStorageMode ?? 'managed'
 
   return <div className="settings-section settings-section-with-actions">
     <div className="settings-section-content"><div className="browser-section">
       <div className="browser-status-grid"><div><span>Phiên bản Chrome</span><strong>{probe?.version ?? 'Chưa đọc được'}</strong></div><div><span>Tình trạng Chrome</span><strong className={probe?.status === 'found' ? 'status-ok' : ''}>{probe?.status === 'found' ? 'Đã tìm thấy' : 'Chưa sẵn sàng'}</strong></div><div className="path-card"><span>Thư mục dữ liệu</span><strong title={appInfo?.dataDirectory ?? ''}>{appInfo?.dataDirectory ?? 'Đang đọc...'}</strong></div></div>
       <div className="browser-form-grid">
         <label className="field span-3"><span>Đường dẫn Chrome</span><div className="path-input-row"><input value={draft.executablePath ?? ''} onChange={(event) => update('executablePath', event.target.value || null)} placeholder="Chọn chrome.exe" /><button className="settings-button" type="button" disabled={busy !== null} onClick={() => void pickChrome()}>Chọn file</button><button className="settings-button" type="button" disabled={busy !== null} onClick={() => void detectChrome()}>{busy === 'detect' ? 'Đang tìm...' : 'Tự tìm Chrome'}</button><button className="settings-button primary" type="button" disabled={busy !== null} onClick={() => void testChrome()}>{busy === 'test' ? 'Đang kiểm tra...' : 'Kiểm tra Chrome'}</button></div></label>
+
+        <label className="field"><span>Nguồn Facebook Profile</span><select value={profileMode} onChange={(event) => update('profileStorageMode', event.target.value as BrowserSettings['profileStorageMode'])}><option value="managed">PAGE-AUTO quản lý</option><option value="external">Thư mục ngoài · Root\\UID</option></select></label>
+        <div className="field span-2"><span>Facebook Profile Root</span>{profileMode === 'external' ? <div className="path-input-row"><input value={draft.externalProfileRoot ?? ''} onChange={(event) => update('externalProfileRoot', event.target.value || null)} placeholder="F:\\FacebookProfiles" /><button className="settings-button" type="button" disabled={busy !== null} onClick={() => void pickFacebookProfileRoot()}>{busy === 'profileRoot' ? 'Đang chọn...' : 'Chọn thư mục'}</button></div> : <div className="test-result ok" title={appInfo?.dataDirectory ?? ''}>App dùng data\\browser-profiles\\account-ID</div>}</div>
+        {profileMode === 'external' ? <div className="toggle-card muted span-3"><div><strong>External mode nghiêm ngặt</strong><small>Account UID 10001 chỉ dùng đúng Root\\10001 đã tồn tại. PAGE-AUTO không clone, không tạo thư mục UID và không fallback sang AppData/ổ C khi thiếu profile.</small></div><span>Root\\UID</span></div> : null}
+
         <label className="field"><span>Cách mở Chrome</span><select value={draft.mode} onChange={(event) => { const mode = event.target.value as BrowserSettings['mode']; update('mode', mode); if (mode === 'minimized') updateLayout('enabled', false) }}><option value="visible">Hiện Chrome</option><option value="minimized">Ẩn xuống taskbar</option></select></label>
         <div className="field"><span>Khung automation</span><div className="test-result ok">Desktop ổn định · native bounds</div></div>
         <div className="field"><span>Kết quả kiểm tra</span><div className={`test-result ${test?.status === 'success' ? 'ok' : test ? 'bad' : ''}`}>{test ? (test.status === 'success' ? `Hoạt động · ${test.launchDurationMs ?? 0} ms` : 'Không mở được') : 'Chưa kiểm tra'}</div></div>

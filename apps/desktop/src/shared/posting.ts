@@ -17,6 +17,7 @@ export const POSTING_ERROR_CODES = [
   'email_code_failed',
   'proxy_invalid',
   'proxy_unavailable',
+  'profile_unavailable',
   'profile_in_use',
   'browser_launch_failed',
   'page_navigation_failed',

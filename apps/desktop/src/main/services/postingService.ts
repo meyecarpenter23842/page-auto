@@ -24,7 +24,7 @@ import type {
   ExecuteSinglePostingJobResult,
   PostingJobResult
 } from '../../shared/posting'
-import { accountProfileDirectory } from '../browser/browserProfileManager'
+import { resolveFacebookProfileDirectory } from '../browser/facebookProfileResolver'
 import { BrowserWindowLayoutManager } from '../browser/browserWindowLayoutManager'
 import { resolveAccountProxyState } from '../browser/proxyConfig'
 import { PostingWorkerManager } from '../browser/postingWorkerManager'
@@ -47,6 +47,10 @@ function accountSecrets(account: AccountRecord): Array<string | null | undefined
 
 function terminalFailure(message: string, code: NonNullable<PostingJobResult['code']> = 'unexpected_error'): PostingJobResult {
   return { status: 'failed', code, message }
+}
+
+function profileFailure(error: unknown): PostingJobResult {
+  return terminalFailure(error instanceof Error ? error.message : String(error), 'profile_unavailable')
 }
 
 function hasInvalidSession(result: PostingJobResult): boolean {
@@ -110,6 +114,16 @@ export class PostingService {
     }
     const proxy = proxyResolution.status === 'valid' ? proxyResolution.proxy : undefined
 
+    const browserSettings = { ...this.getBrowserSettings() }
+    let profileDirectory: string
+    try {
+      profileDirectory = resolveFacebookProfileDirectory(this.dataDirectory, account, browserSettings).profileDirectory
+    } catch (error) {
+      return { accountId: account.id, item: null, result: profileFailure(error), run: details }
+    }
+
+    // External-profile preflight intentionally happens before claimNext(). A missing
+    // Root\\UID must not claim/consume a Group run item and must never fall back.
     const item = this.runs.claimNext(payload.runId)
     if (!item) {
       const current = this.runs.get(payload.runId)
@@ -145,12 +159,12 @@ export class PostingService {
       runId: payload.runId,
       itemId: item.id,
       accountId: account.id,
-      profileDirectory: accountProfileDirectory(this.dataDirectory, account.id),
+      profileDirectory,
       pageUid: details.run.pageUid,
       groupUid: item.groupUid,
       content: material.content,
       imagePaths: images.paths,
-      browser: { ...this.getBrowserSettings() },
+      browser: browserSettings,
       session: sessionSettings,
       network: networkSettings,
       logging: loggingSettings,
@@ -196,15 +210,23 @@ export class PostingService {
     const pageUid = input.pageUid.trim()
     if (!pageUid) return terminalFailure('Page UID không hợp lệ.', 'page_navigation_failed')
 
+    const browserSettings = { ...this.getBrowserSettings() }
+    let profileDirectory: string
+    try {
+      profileDirectory = resolveFacebookProfileDirectory(this.dataDirectory, account, browserSettings).profileDirectory
+    } catch (error) {
+      return profileFailure(error)
+    }
+
     const base: FacebookTaskJobBase = {
       runId: 0,
       itemId: nextManualPageWallItemId(),
       accountId: account.id,
-      profileDirectory: accountProfileDirectory(this.dataDirectory, account.id),
+      profileDirectory,
       pageUid,
       content: input.content,
       imagePaths: [...input.imagePaths],
-      browser: { ...this.getBrowserSettings() },
+      browser: browserSettings,
       session: { ...this.getSessionSettings() },
       network: { ...this.getNetworkSettings() },
       logging: { ...this.getLoggingSettings() },
@@ -237,10 +259,18 @@ export class PostingService {
     }
     const proxy = proxyResolution.status === 'valid' ? proxyResolution.proxy : undefined
 
+    const browserSettings = { ...this.getBrowserSettings() }
+    let profileDirectory: string
+    try {
+      profileDirectory = resolveFacebookProfileDirectory(this.dataDirectory, account, browserSettings).profileDirectory
+    } catch (error) {
+      return profileFailure(error)
+    }
+
     const runtimeJob: FacebookPostTaskJobRequest = {
       ...job,
-      profileDirectory: accountProfileDirectory(this.dataDirectory, account.id),
-      browser: { ...this.getBrowserSettings() },
+      profileDirectory,
+      browser: browserSettings,
       session: { ...this.getSessionSettings() },
       network: { ...this.getNetworkSettings() },
       logging: { ...this.getLoggingSettings() },

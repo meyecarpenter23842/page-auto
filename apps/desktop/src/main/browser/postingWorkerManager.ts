@@ -27,6 +27,7 @@ import { BrowserWindowLayoutManager } from './browserWindowLayoutManager'
 import { getManagedBrowserEndpoint } from './managedBrowserRegistry'
 import { shouldRetainPostingBrowserForManualSession } from './postingWorkerLifecycle'
 import { BrowserLaunchGate } from './runtimeLaunchGate'
+import { workerProfileReuseDecision } from './workerProfileOwnership'
 
 const MANAGED_CDP_ARG_PREFIX = '--page-auto-managed-cdp='
 const ACCOUNT_SHUTDOWN_TIMEOUT_MS = 5_000
@@ -40,6 +41,7 @@ interface PendingJob {
 
 interface AccountWorkerEntry {
   accountId: number
+  profileDirectory: string
   process: UtilityProcess
   ready: boolean
   pending: PendingJob | null
@@ -82,6 +84,31 @@ export class PostingWorkerManager {
 
   async runTask(job: FacebookPostTaskJobRequest): Promise<PostingJobResult> {
     const runtime = { ...this.getRuntimeSettings() }
+    let entry = this.workers.get(job.accountId)
+
+    if (entry && !entry.shuttingDown) {
+      const profileDecision = workerProfileReuseDecision(
+        entry.profileDirectory,
+        job.profileDirectory,
+        Boolean(entry.pending)
+      )
+      if (profileDecision === 'busy') {
+        return {
+          status: 'failed',
+          code: 'profile_unavailable',
+          message: `Facebook Profile Root vừa thay đổi nhưng posting worker của account #${job.accountId} đang bận. Hãy dừng lượt hiện tại rồi chạy lại.`
+        }
+      }
+      if (profileDecision === 'replace') {
+        diagnostic(job, 'profile directory changed → restart posting worker/browser before next job')
+        // Profile ownership beats manual-session retention. A retained browser from
+        // the previous Root must never be reused after settings resolve elsewhere.
+        entry.retainForManualSession = false
+        await this.closeAccount(job.accountId)
+        entry = undefined
+      }
+    }
+
     this.windowLayout?.claim(job.accountId, 'posting')
     const placement = this.windowLayout?.placementFor(
       job.accountId,
@@ -89,7 +116,6 @@ export class PostingWorkerManager {
       job.browser
     ) ?? null
     const runtimeJob = { ...job, browserPlacement: placement } as FacebookPostTaskJobRequest
-    let entry = this.workers.get(job.accountId)
 
     if (!entry || entry.shuttingDown) {
       await this.launchGate.wait(runtime.browserLaunchSpacingMs, job.runId)
@@ -242,13 +268,14 @@ export class PostingWorkerManager {
   }
 
   private spawnWorker(job: FacebookPostTaskJobRequest): AccountWorkerEntry {
-    const managedEndpoint = getManagedBrowserEndpoint(job.accountId)
+    const managedEndpoint = getManagedBrowserEndpoint(job.accountId, job.profileDirectory)
     const workerArgs = managedEndpoint ? [`${MANAGED_CDP_ARG_PREFIX}${managedEndpoint}`] : []
     const worker = utilityProcess.fork(join(__dirname, 'posting-worker.js'), workerArgs, {
       serviceName: `PAGE-AUTO posting account ${job.accountId}`
     })
     const entry: AccountWorkerEntry = {
       accountId: job.accountId,
+      profileDirectory: job.profileDirectory,
       process: worker,
       ready: false,
       pending: null,

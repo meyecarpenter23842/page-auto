@@ -1,3 +1,5 @@
+import { FACEBOOK_PROFILE_STORAGE_MODES, type FacebookProfileStorageMode } from './facebookProfile'
+
 export const APP_SETTINGS_SCHEMA_VERSION = 1 as const
 export const APP_SETTINGS_STORAGE_KEY = 'settings.app'
 
@@ -26,6 +28,10 @@ export type LogRetentionDays = 7 | 30 | 90 | null
 
 export interface BrowserSettings {
   executablePath: string | null
+  /** Facebook persistent profile source. Optional for legacy fixtures/stored settings. */
+  profileStorageMode?: FacebookProfileStorageMode
+  /** External Facebook Profile Root. Each account resolves strictly to Root\\UID. */
+  externalProfileRoot?: string | null
   mode: BrowserMode
   windowWidth: number
   windowHeight: number
@@ -111,6 +117,8 @@ export const DEFAULT_APP_SETTINGS: Readonly<AppSettings> = {
   schemaVersion: APP_SETTINGS_SCHEMA_VERSION,
   browser: {
     executablePath: null,
+    profileStorageMode: 'managed',
+    externalProfileRoot: null,
     mode: 'visible',
     windowWidth: 1280,
     windowHeight: 800,
@@ -169,7 +177,7 @@ export const DEFAULT_APP_SETTINGS: Readonly<AppSettings> = {
 
 const TOP_LEVEL_KEYS = ['browser', 'session', 'network', 'runtime', 'logging', 'advanced'] as const
 const BROWSER_KEYS = [
-  'executablePath', 'mode', 'windowWidth', 'windowHeight', 'disableImageLoading', 'muteAudio', 'disableGpu',
+  'executablePath', 'profileStorageMode', 'externalProfileRoot', 'mode', 'windowWidth', 'windowHeight', 'disableImageLoading', 'muteAudio', 'disableGpu',
   'startupDelayMs', 'startupTimeoutMs', 'navigationTimeoutMs', 'pageSettleDelayMs', 'actionDelayMinMs',
   'actionDelayMaxMs', 'closeDelayMs', 'maxLifetimeMinutes'
 ] as const
@@ -277,6 +285,12 @@ export function assertValidAppSettings(settings: AppSettings): void {
   }
 
   assertNullableString('browser.executablePath', settings.browser.executablePath, 2048)
+  const profileStorageMode = settings.browser.profileStorageMode ?? 'managed'
+  assertEnum('browser.profileStorageMode', profileStorageMode, FACEBOOK_PROFILE_STORAGE_MODES)
+  assertNullableString('browser.externalProfileRoot', settings.browser.externalProfileRoot ?? null, 2048)
+  if (profileStorageMode === 'external' && !settings.browser.externalProfileRoot?.trim()) {
+    throw new Error('browser.externalProfileRoot is required when profileStorageMode is external.')
+  }
   assertEnum('browser.mode', settings.browser.mode, BROWSER_MODES)
   assertInteger('browser.windowWidth', settings.browser.windowWidth, 640, 7680)
   assertInteger('browser.windowHeight', settings.browser.windowHeight, 480, 4320)
