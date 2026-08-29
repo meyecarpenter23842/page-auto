@@ -59,6 +59,7 @@ export function AccountManager() {
   const [revealedSecrets, setRevealedSecrets] = useState<Set<string>>(new Set())
   const [notice, setNotice] = useState<string | null>(null)
   const [openingProfiles, setOpeningProfiles] = useState(false)
+  const [checkingLive, setCheckingLive] = useState(false)
   const [contextMenu, setContextMenu] = useState<ContextMenuState>(null)
   const [checkpoint282Accounts, setCheckpoint282Accounts] = useState<AccountRecord[] | null>(null)
   const [checkpoint956Accounts, setCheckpoint956Accounts] = useState<AccountRecord[] | null>(null)
@@ -253,7 +254,7 @@ export function AccountManager() {
   }
 
   const openProfile = async (openManagerAfter = false) => {
-    if (selected.length === 0 || openingProfiles) return
+    if (selected.length === 0 || openingProfiles || checkingLive) return
     const targets = selected.map((account) => ({ id: account.id, uid: account.uid }))
     setOpeningProfiles(true)
     setContextMenu(null)
@@ -277,6 +278,45 @@ export function AccountManager() {
       await loadAccounts()
     } finally {
       setOpeningProfiles(false)
+    }
+  }
+
+  const checkLiveSelected = async () => {
+    if (selected.length === 0 || openingProfiles || checkingLive) return
+    const targets = selected.map((account) => ({ id: account.id, uid: account.uid }))
+    setCheckingLive(true)
+    setContextMenu(null)
+    try {
+      const outcomes = await Promise.all(targets.map(async (target) => {
+        try {
+          const result = await window.pageAuto.openAccountProfile({ accountId: target.id, checkLive: true })
+          return {
+            uid: target.uid,
+            status: result.status,
+            sessionStatus: result.sessionStatus,
+            message: result.message ?? null
+          }
+        } catch (error) {
+          return {
+            uid: target.uid,
+            status: 'error' as const,
+            sessionStatus: undefined,
+            message: error instanceof Error ? error.message : String(error)
+          }
+        }
+      }))
+      const live = outcomes.filter((item) => item.status !== 'error' && item.sessionStatus === 'valid')
+      const needsAttention = outcomes.filter((item) => item.status !== 'error' && item.sessionStatus === 'needs_login')
+      const failed = outcomes.filter((item) => item.status === 'error')
+      const unknown = outcomes.filter((item) => item.status !== 'error' && item.sessionStatus !== 'valid' && item.sessionStatus !== 'needs_login')
+      const firstIssue = outcomes.find((item) => item.status === 'error' || item.sessionStatus !== 'valid')
+      setNotice(
+        `Check Live ${outcomes.length} tài khoản: hoạt động ${live.length}, cần đăng nhập/xử lý ${needsAttention.length}, chưa xác định ${unknown.length}, lỗi ${failed.length}.`
+        + (firstIssue ? ` · ${firstIssue.uid}: ${firstIssue.message ?? 'chưa xác định trạng thái'}` : '')
+      )
+      await loadAccounts()
+    } finally {
+      setCheckingLive(false)
     }
   }
 
@@ -333,8 +373,8 @@ export function AccountManager() {
             <button className="button danger" type="button" disabled={selectedIds.size === 0} onClick={() => void deleteSelected()}>Xóa</button>
           </div>
           <div className="toolbar-group">
-            <button className="button secondary" type="button" disabled={selectedIds.size === 0 || openingProfiles} onClick={() => void openProfile(true)}>Cửa sổ Chrome</button>
-            <button className="button secondary" type="button" disabled title="Kiểm tra phiên được thực hiện khi mở Chrome hoặc trước mỗi lượt đăng">Kiểm tra phiên</button>
+            <button className="button secondary" type="button" disabled={selectedIds.size === 0 || openingProfiles || checkingLive} onClick={() => void openProfile(true)}>Cửa sổ Chrome</button>
+            <button className="button secondary" type="button" disabled={selectedIds.size === 0 || openingProfiles || checkingLive} onClick={() => void checkLiveSelected()}>{checkingLive ? 'Đang Check Live…' : 'Check Live'}</button>
             <button className="button secondary" type="button" onClick={() => setGroupManagerOpen(true)}>Quản lý nhóm ({groupOverview.groups.length})</button>
             <button className="button secondary" type="button" disabled={selectedIds.size === 0} onClick={openGroupPicker}>Gán nhóm</button>
             <div className="column-settings-anchor">
@@ -401,7 +441,7 @@ export function AccountManager() {
         <div className="account-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onPointerDown={(event) => event.stopPropagation()}>
           <div className="context-menu-meta">Đã chọn {selected.length} tài khoản</div>
           <button type="button" disabled={selected.length !== 1} onClick={() => { setEditorAccount(selected[0] ?? null); setContextMenu(null) }}>Sửa tài khoản</button>
-          <button type="button" disabled={selectedIds.size === 0 || openingProfiles} onClick={() => void openProfile()}>{openingProfiles ? 'Đang mở…' : selected.length > 1 ? `Mở ${selected.length} Chrome` : 'Mở Chrome'}</button>
+          <button type="button" disabled={selectedIds.size === 0 || openingProfiles || checkingLive} onClick={() => void openProfile()}>{openingProfiles ? 'Đang mở…' : selected.length > 1 ? `Mở ${selected.length} Chrome` : 'Mở Chrome'}</button>
           <button type="button" disabled={selectedIds.size === 0} onClick={() => {
             const targets = sortedAccounts.filter((account) => selectedIds.has(account.id))
             if (targets.length > 0) setCheckpoint282Accounts(targets)
@@ -412,7 +452,7 @@ export function AccountManager() {
             if (targets.length > 0) setCheckpoint956Accounts(targets)
             setContextMenu(null)
           }}>Checkpoint 956…</button>
-          <button type="button" disabled title="Kiểm tra phiên được thực hiện khi mở Chrome hoặc trước mỗi lượt đăng">Kiểm tra phiên</button>
+          <button type="button" disabled={selectedIds.size === 0 || openingProfiles || checkingLive} onClick={() => void checkLiveSelected()}>{checkingLive ? 'Đang Check Live…' : 'Check Live'}</button>
           <button type="button" disabled={selectedIds.size === 0} onClick={openGroupPicker}>Gán / chuyển / bỏ nhóm…</button>
           <button type="button" disabled={selectedIds.size === 0} onClick={() => void copySelectedUids()}>Sao chép UID</button>
           <div className="context-menu-separator" />

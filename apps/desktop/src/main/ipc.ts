@@ -81,13 +81,17 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
   const browserEngine = new BrowserEngineService()
   const browserWindowLayout = new BrowserWindowLayoutManager()
   const checkpoint282RunLifecycle = new Checkpoint282RunLifecycle(options.dataDirectory)
+  const profileNameRefreshRequests = new Map<number, number>()
   recovery.recoverInterruptedRuns()
   void logMaintenance.cleanup(appSettings.get().logging).catch(() => undefined)
 
   const browserProfiles = new BrowserProfileManager(options.dataDirectory, (session) => {
     const current = accounts.getById(session.accountId)
     if (!current) return
-    const profileName = session.status === 'valid' ? session.profileName?.trim() || null : null
+    const refreshProfileName = (profileNameRefreshRequests.get(session.accountId) ?? 0) > 0
+    const profileName = refreshProfileName && session.status === 'valid'
+      ? session.profileName?.trim() || null
+      : null
     accounts.update(session.accountId, {
       name: profileName ?? current.name,
       status: session.status === 'valid' || session.status === 'needs_login' ? session.status : current.status,
@@ -189,11 +193,24 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
   ipcMain.handle(IPC_CHANNELS.accountOpenProfile, async (event, payload: AccountOpenProfilePayload) => {
     const account = accounts.getById(payload.accountId)
     if (!account) return { status: 'error', message: 'Account không tồn tại.' }
-    const opening = browserProfiles.open(account)
-    void browserDock.open(BrowserWindow.fromWebContents(event.sender))
-    const result = await opening
-    if (result.status !== 'error') await browserDock.sync()
-    return result
+
+    if (payload.checkLive) {
+      profileNameRefreshRequests.set(account.id, (profileNameRefreshRequests.get(account.id) ?? 0) + 1)
+    }
+
+    try {
+      const opening = browserProfiles.open(account)
+      void browserDock.open(BrowserWindow.fromWebContents(event.sender))
+      const result = await opening
+      if (result.status !== 'error') await browserDock.sync()
+      return result
+    } finally {
+      if (payload.checkLive) {
+        const remaining = (profileNameRefreshRequests.get(account.id) ?? 1) - 1
+        if (remaining > 0) profileNameRefreshRequests.set(account.id, remaining)
+        else profileNameRefreshRequests.delete(account.id)
+      }
+    }
   })
   ipcMain.handle(IPC_CHANNELS.facebookCheckpoint282Run, (_event, payload: FacebookCheckpoint282RunPayload) => {
     const account = accounts.getById(payload.accountId)
