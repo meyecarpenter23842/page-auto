@@ -24,8 +24,8 @@ export function ActionPickerModal({ onClose, onSelect }: ActionPickerModalProps)
   const readyCount = ACTION_REGISTRY.filter((item) => item.runtimeStatus === 'ready').length
 
   return (
-    <div className="scenario-modal-backdrop" role="presentation" onMouseDown={onClose}>
-      <section className="scenario-modal action-picker-modal" role="dialog" aria-modal="true" aria-label="Thêm hành động" onMouseDown={(event) => event.stopPropagation()}>
+    <div className="scenario-modal-backdrop" role="presentation">
+      <section className="scenario-modal action-picker-modal" role="dialog" aria-modal="true" aria-label="Thêm hành động">
         <div className="scenario-modal-head action-picker-head">
           <div><p className="scenario-kicker">ACTION REGISTRY</p><h3>Thêm hành động</h3></div>
           <button type="button" onClick={onClose}>×</button>

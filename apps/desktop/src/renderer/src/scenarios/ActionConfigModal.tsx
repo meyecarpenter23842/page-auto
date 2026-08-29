@@ -10,7 +10,7 @@ import {
   getActionFieldUiMeta,
   getActionOverrideValidationErrors
 } from '../../../shared/actionOverrides'
-import { ContentLibraryActionField } from './ContentLibraryActionField'
+import { PostActionConfigForm } from './PostActionConfigForm'
 import './k41ActionConfig.css'
 
 applyActionOverrides()
@@ -128,9 +128,6 @@ function ConfigField({ actionType, field, value, onChange }: {
   onChange: (value: ActionConfig[string] | undefined) => void
 }) {
   const ui = getActionFieldUiMeta(actionType, field.key)
-  if (actionType === 'post' && field.key === 'contentSetId') {
-    return <ContentLibraryActionField value={value} onChange={onChange} />
-  }
   if (field.kind === 'boolean') {
     return (
       <label className="scenario-check action-config-check">
@@ -291,30 +288,43 @@ export function ActionConfigModal({ value, onClose, onSave }: ActionConfigModalP
   }
 
   const runtimeReady = definition?.runtimeStatus === 'ready'
+  const isPostAction = value.actionType === 'post'
 
   return (
-    <div className="scenario-modal-backdrop" role="presentation" onMouseDown={onClose}>
+    <div className="scenario-modal-backdrop" role="presentation">
       <section
         className="scenario-modal action-config-modal k41-action-config-modal"
         data-action-type={value.actionType}
         role="dialog"
         aria-modal="true"
         aria-label="Cấu hình hành động"
-        onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="scenario-modal-head">
           <div><p className="scenario-kicker">CẤU HÌNH ACTION</p><h3>{value.id === null ? 'Thêm hành động' : 'Sửa hành động'}</h3></div>
           <button type="button" onClick={onClose}>×</button>
         </div>
 
-        <div className="action-config-summary">
-          <div><strong>{definition?.label ?? value.label}</strong><code>{value.actionType}</code></div>
-          <div className="action-config-badges">
-            <span>{value.categoryLabel}</span>
-            <span>{definition?.capabilities.actors.length === 2 ? 'Profile + Page' : 'Profile'}</span>
-            <span className={runtimeReady ? 'ready' : 'placeholder'}>{runtimeReady ? 'Executor sẵn sàng' : 'Chưa chạy thật'}</span>
+        {isPostAction ? (
+          <div className="action-config-summary post-action-summary">
+            <div>
+              <strong>Đăng bài</strong>
+              <span>Chọn nơi đăng, bộ bài viết và thời gian chờ.</span>
+            </div>
+            <div className="action-config-badges">
+              <span>Tường Page / Group</span>
+              <span className="ready">Executor sẵn sàng</span>
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="action-config-summary">
+            <div><strong>{definition?.label ?? value.label}</strong><code>{value.actionType}</code></div>
+            <div className="action-config-badges">
+              <span>{value.categoryLabel}</span>
+              <span>{definition?.capabilities.actors.length === 2 ? 'Profile + Page' : 'Profile'}</span>
+              <span className={runtimeReady ? 'ready' : 'placeholder'}>{runtimeReady ? 'Executor sẵn sàng' : 'Chưa chạy thật'}</span>
+            </div>
+          </div>
+        )}
 
         <div className="action-config-form">
           <div className="k41-action-header-row">
@@ -322,7 +332,9 @@ export function ActionConfigModal({ value, onClose, onSave }: ActionConfigModalP
             <label className="scenario-check modal-check"><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} /><span>Bật action</span></label>
           </div>
 
-          {visibleSections.length ? (
+          {isPostAction ? (
+            <PostActionConfigForm config={config} onChange={setField} />
+          ) : visibleSections.length ? (
             <div className="k41-action-sections">
               {visibleSections.map(([section, fields]) => {
                 const reactions = fields.filter(isReactionField)
