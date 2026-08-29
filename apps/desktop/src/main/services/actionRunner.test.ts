@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import type { ActionResult } from '../../shared/actionRegistry'
+import {
+  createDefaultActionConfig,
+  getActionDefinition,
+  type ActionResult
+} from '../../shared/actionRegistry'
+import { applyK433GroupInteractionActionOverrides } from '../../shared/k433GroupInteractionActionOverrides'
 import type { ActionPreparationResult, ActionRunRequest } from '../../shared/actionRuntime'
 import {
   ActionExecutorRegistry,
@@ -56,6 +61,49 @@ describe('ActionRunner', () => {
     expect(host.calls).toBe(1)
     expect(events).toContain('preparing_actor')
     expect(events).toContain('executing')
+  })
+
+  it('rejects persisted config that violates action override rules before Facebook preparation', async () => {
+    applyK433GroupInteractionActionOverrides()
+    const definition = getActionDefinition('group_interaction')
+    expect(definition).toBeTruthy()
+    const config = createDefaultActionConfig(definition!)
+    for (const key of [
+      'reactionLike',
+      'reactionLove',
+      'reactionCare',
+      'reactionHaha',
+      'reactionWow',
+      'reactionSad',
+      'reactionAngry'
+    ]) config[key] = false
+    config.shareGroupEnabled = true
+    config.shareGroupWhitelist = ''
+
+    const host = new ReadyHost()
+    const executors = new ActionExecutorRegistry()
+    let executorCalls = 0
+    executors.register({
+      actionType: 'group_interaction',
+      execute: async (): Promise<ActionResult> => {
+        executorCalls += 1
+        return { status: 'success', message: 'unexpected' }
+      }
+    })
+    const runner = new ActionRunner(host, executors)
+    const summary = await runner.run({
+      ...profileRequest,
+      actionType: 'group_interaction',
+      label: 'Tương tác nhóm',
+      config
+    }, immediateControl())
+
+    expect(summary.result).toMatchObject({ status: 'failed', code: 'action_config_invalid' })
+    expect(summary.result.message).toContain('Loại cảm xúc')
+    expect(summary.result.message).toContain('Whitelist nhóm đích khi chia sẻ')
+    expect(summary.attempts).toBe(0)
+    expect(host.calls).toBe(0)
+    expect(executorCalls).toBe(0)
   })
 
   it('blocks unsupported actor before preparing Facebook runtime', async () => {

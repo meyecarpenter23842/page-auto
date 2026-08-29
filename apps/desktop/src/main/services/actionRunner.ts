@@ -4,6 +4,7 @@ import {
   type ActionConfig,
   type ActionResult
 } from '../../shared/actionRegistry'
+import { getActionOverrideValidationErrors } from '../../shared/actionOverrides'
 import {
   actionRuntimeResult,
   type ActionExecutionSummary,
@@ -162,6 +163,10 @@ export class ActionRunner {
       return finish(actionRuntimeResult('failed', 'action_config_invalid', validation.errors.join(' '), { errors: validation.errors }))
     }
     normalizedConfig = validation.value
+    const overrideErrors = getActionOverrideValidationErrors(request.actionType, normalizedConfig)
+    if (overrideErrors.length) {
+      return finish(actionRuntimeResult('failed', 'action_config_invalid', overrideErrors.join(' '), { errors: overrideErrors }))
+    }
 
     const executor = this.executors.get(request.actionType)
     if (!executor) {
