@@ -16,6 +16,8 @@ export interface ScenarioRunnerRuntimeSettings {
   parallelAccounts: number
   actionDelayMinSeconds: number
   actionDelayMaxSeconds: number
+  accountSwitchDelayMinSeconds: number
+  accountSwitchDelayMaxSeconds: number
   pauseAfterActions: number
   pauseMinutes: number
   pauseOnErrorMinutes: number

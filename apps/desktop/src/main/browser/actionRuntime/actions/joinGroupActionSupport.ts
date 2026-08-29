@@ -6,6 +6,7 @@ import {
   configNumber,
   configString,
   firstVisible,
+  paceBrowserAction,
   pickRange,
   sleepWithControl,
   splitLines,
@@ -236,17 +237,26 @@ async function visibleJoinDialog(page: Page): Promise<Locator | null> {
   return null
 }
 
-async function fillQuestionAnswers(dialog: Locator, answers: readonly string[]): Promise<void> {
-  if (!answers.length) return
+async function fillQuestionAnswers(
+  dialog: Locator,
+  answers: readonly string[],
+  context: ActionExecutorContext,
+  dependencies: JoinGroupActionDependencies
+): Promise<number> {
+  if (!answers.length) return 0
   const fields = dialog.locator('textarea, [contenteditable="true"][role="textbox"], input[type="text"]')
   const count = await fields.count().catch(() => 0)
+  let filled = 0
   for (let index = 0; index < count; index += 1) {
     const field = fields.nth(index)
     if (!await field.isVisible().catch(() => false)) continue
     const answer = answers[Math.min(index, answers.length - 1)]
     if (!answer) continue
-    await field.fill(answer, { timeout: 5000 }).catch(() => undefined)
+    if (filled > 0 && !await paceBrowserAction(context.control, dependencies)) return filled
+    const didFill = await field.fill(answer, { timeout: 5000 }).then(() => true).catch(() => false)
+    if (didFill) filled += 1
   }
+  return filled
 }
 
 async function verifyJoinOutcome(page: Page, candidateIdentity: string | null): Promise<JoinAttemptOutcome> {
@@ -270,11 +280,16 @@ export async function submitJoinAttempt(
   page: Page,
   button: Locator,
   context: ActionExecutorContext,
-  config: ActionConfig
+  config: ActionConfig,
+  dependencies: JoinGroupActionDependencies
 ): Promise<JoinAttemptOutcome> {
   const candidateIdentity = await candidateGroupIdentity(button)
+  if (!await paceBrowserAction(context.control, dependencies)) return 'unverified'
   if (!await button.click({ timeout: 5000 }).then(() => true).catch(() => false)) return 'unverified'
+
+  // Technical settle is separate from operator-configured pacing: it only lets the dialog/state render.
   if (!await sleepWithControl(context.control, 700)) return 'unverified'
+  if (!await paceBrowserAction(context.control, dependencies)) return 'unverified'
 
   const dialog = await visibleJoinDialog(page)
   if (dialog) {
@@ -285,10 +300,16 @@ export async function submitJoinAttempt(
       return 'skipped_approval'
     }
 
-    await fillQuestionAnswers(dialog, splitLines(configString(config, 'answerQuestions')))
+    const filled = await fillQuestionAnswers(
+      dialog,
+      splitLines(configString(config, 'answerQuestions')),
+      context,
+      dependencies
+    )
     const submit = await firstVisible(dialog, SUBMIT_SELECTORS)
     if (submit) {
       if (context.control.isStopped()) return 'unverified'
+      if (filled > 0 && !await paceBrowserAction(context.control, dependencies)) return 'unverified'
       await submit.click({ timeout: 5000 }).catch(() => undefined)
       if (!await sleepWithControl(context.control, 700)) return 'unverified'
     }

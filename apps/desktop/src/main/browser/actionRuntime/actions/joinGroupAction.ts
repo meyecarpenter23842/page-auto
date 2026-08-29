@@ -53,7 +53,8 @@ async function runJoinButton(
   context: ActionExecutorContext,
   config: ActionConfig,
   target: number,
-  stats: JoinStats
+  stats: JoinStats,
+  dependencies: JoinGroupActionDependencies
 ): Promise<boolean> {
   const text = await joinCandidateText(button)
   if (!groupTextMatchesFilters(text, config)) {
@@ -63,7 +64,7 @@ async function runJoinButton(
 
   const previousAttempted = stats.attempted
   stats.attempted += 1
-  const outcome = await submitJoinAttempt(page, button, context, config)
+  const outcome = await submitJoinAttempt(page, button, context, config, dependencies)
   recordOutcome(stats, outcome)
 
   if (context.control.isStopped() || !canAttemptAnotherJoin(stats.attempted, target)) {
@@ -79,7 +80,8 @@ async function joinFromIdList(
   config: ActionConfig,
   target: number,
   timeoutMs: number,
-  stats: JoinStats
+  stats: JoinStats,
+  dependencies: JoinGroupActionDependencies
 ): Promise<void> {
   for (const group of configuredGroupTargets(config)) {
     if (!canAttemptAnotherJoin(stats.attempted, target) || context.control.isStopped()) return
@@ -109,7 +111,7 @@ async function joinFromIdList(
       const button = buttons.nth(index)
       if (!await button.isVisible().catch(() => false)) continue
       handled = true
-      if (!await runJoinButton(page, button, context, config, target, stats)) return
+      if (!await runJoinButton(page, button, context, config, target, stats, dependencies)) return
       break
     }
     if (!handled) stats.skipped += 1
@@ -121,7 +123,8 @@ async function joinFromDiscoverySurface(
   context: ActionExecutorContext,
   config: ActionConfig,
   target: number,
-  stats: JoinStats
+  stats: JoinStats,
+  dependencies: JoinGroupActionDependencies
 ): Promise<void> {
   const seen = new Set<string>()
   let idleRounds = 0
@@ -145,7 +148,7 @@ async function joinFromDiscoverySurface(
       if (signature) seen.add(signature)
       newCandidates += 1
 
-      if (!await runJoinButton(page, button, context, config, target, stats)) return
+      if (!await runJoinButton(page, button, context, config, target, stats, dependencies)) return
     }
 
     if (newCandidates === 0) idleRounds += 1
@@ -209,7 +212,7 @@ export class JoinGroupActionExecutor implements ActionExecutor {
     const stats: JoinStats = { attempted: 0, joined: 0, requested: 0, skipped: 0, failed: 0 }
 
     if (mode === 'id_list') {
-      await joinFromIdList(page, context, config, target, timeoutMs, stats)
+      await joinFromIdList(page, context, config, target, timeoutMs, stats, this.dependencies)
       return resultFromStats(stats, target, mode, context.control.isStopped())
     }
 
@@ -221,7 +224,7 @@ export class JoinGroupActionExecutor implements ActionExecutor {
       return navigationFailed('Tham gia nhóm', new Error(`Không mở được nguồn ${mode}.`))
     }
 
-    await joinFromDiscoverySurface(page, context, config, target, stats)
+    await joinFromDiscoverySurface(page, context, config, target, stats, this.dependencies)
     return resultFromStats(stats, target, mode, context.control.isStopped())
   }
 }

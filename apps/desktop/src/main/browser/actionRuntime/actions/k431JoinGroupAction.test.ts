@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ActionExecutorContext } from '../../../services/actionRunner'
 import { createK431JoinGroupActionExecutorRegistry } from './index'
+import { paceBrowserAction } from './actionSupport'
 import {
   canAttemptAnotherJoin,
   crossedJoinPauseThreshold,
@@ -53,6 +54,26 @@ describe('K4.3.1 join group executor', () => {
     expect(crossedJoinPauseThreshold(1, 2, 2)).toBe(true)
     expect(crossedJoinPauseThreshold(2, 3, 2)).toBe(false)
     expect(crossedJoinPauseThreshold(0, 1, 0)).toBe(false)
+  })
+
+  it('applies common browser pacing from Chrome settings between UI operations', async () => {
+    const sleeps: number[] = []
+    const context = {
+      control: {
+        isStopped: () => false,
+        waitIfPaused: async () => undefined,
+        sleep: async (delayMs: number) => { sleeps.push(delayMs) }
+      }
+    } as unknown as ActionExecutorContext
+
+    const paced = await paceBrowserAction(context.control, {
+      resolvePage: async () => null,
+      actionDelayMinMs: 2500,
+      actionDelayMaxMs: 2500
+    })
+
+    expect(paced).toBe(true)
+    expect(sleeps.reduce((total, value) => total + value, 0)).toBe(2500)
   })
 
   it('applies configured delay between attempted joins even without a verified success', async () => {
