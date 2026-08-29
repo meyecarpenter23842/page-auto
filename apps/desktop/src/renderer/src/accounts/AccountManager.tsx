@@ -34,6 +34,7 @@ import {
   type ContextMenuState,
   type GridColumn
 } from './accountManagerModel'
+import { AccountBrowserWorkspace } from './AccountBrowserWorkspace'
 import { Checkpoint282Dialog } from './Checkpoint282Dialog'
 import { Checkpoint956Dialog } from './Checkpoint956Dialog'
 import './accounts.css'
@@ -59,6 +60,7 @@ export function AccountManager() {
   const [revealedSecrets, setRevealedSecrets] = useState<Set<string>>(new Set())
   const [notice, setNotice] = useState<string | null>(null)
   const [openingProfiles, setOpeningProfiles] = useState(false)
+  const [browserWorkspaceOpen, setBrowserWorkspaceOpen] = useState(false)
   const [contextMenu, setContextMenu] = useState<ContextMenuState>(null)
   const [checkpoint282Accounts, setCheckpoint282Accounts] = useState<AccountRecord[] | null>(null)
   const [checkpoint956Accounts, setCheckpoint956Accounts] = useState<AccountRecord[] | null>(null)
@@ -330,6 +332,7 @@ export function AccountManager() {
           </div>
           <div className="toolbar-group">
             <button className="button secondary" type="button" disabled={selectedIds.size === 0 || openingProfiles} onClick={() => void openProfile()}>{openingProfiles ? 'Đang mở…' : selected.length > 1 ? `Mở ${selected.length} Chrome` : 'Mở Chrome'}</button>
+            <button className={`button secondary${browserWorkspaceOpen ? ' active' : ''}`} type="button" onClick={() => setBrowserWorkspaceOpen((value) => !value)}>Cửa sổ Chrome</button>
             <button className="button secondary" type="button" disabled title="Kiểm tra phiên được thực hiện khi mở Chrome hoặc trước mỗi lượt đăng">Kiểm tra phiên</button>
             <button className="button secondary" type="button" onClick={() => setGroupManagerOpen(true)}>Quản lý nhóm ({groupOverview.groups.length})</button>
             <button className="button secondary" type="button" disabled={selectedIds.size === 0} onClick={openGroupPicker}>Gán nhóm</button>
@@ -339,6 +342,16 @@ export function AccountManager() {
             </div>
           </div>
         </div>
+
+        {browserWorkspaceOpen ? (
+          <AccountBrowserWorkspace
+            accounts={accounts}
+            selected={selected}
+            openingProfiles={openingProfiles}
+            onOpenSelected={openProfile}
+            onClose={() => setBrowserWorkspaceOpen(false)}
+          />
+        ) : null}
 
         <div className="filter-row">
           <input className="search-input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Tìm UID, tên đăng nhập, tên, email, ghi chú…" />
