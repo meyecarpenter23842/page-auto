@@ -193,19 +193,24 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
   ipcMain.handle(IPC_CHANNELS.accountOpenProfile, async (event, payload: AccountOpenProfilePayload) => {
     const account = accounts.getById(payload.accountId)
     if (!account) return { status: 'error', message: 'Account không tồn tại.' }
+    const checkLive = payload.checkLive === true
 
-    if (payload.checkLive) {
+    if (checkLive) {
       profileNameRefreshRequests.set(account.id, (profileNameRefreshRequests.get(account.id) ?? 0) + 1)
     }
 
     try {
       const opening = browserProfiles.open(account)
-      void browserDock.open(BrowserWindow.fromWebContents(event.sender))
+      if (!checkLive) void browserDock.open(BrowserWindow.fromWebContents(event.sender))
       const result = await opening
-      if (result.status !== 'error') await browserDock.sync()
+      if (checkLive) {
+        if (result.status === 'started') await browserProfiles.closeAccount(account.id)
+      } else if (result.status !== 'error') {
+        await browserDock.sync()
+      }
       return result
     } finally {
-      if (payload.checkLive) {
+      if (checkLive) {
         const remaining = (profileNameRefreshRequests.get(account.id) ?? 1) - 1
         if (remaining > 0) profileNameRefreshRequests.set(account.id, remaining)
         else profileNameRefreshRequests.delete(account.id)
