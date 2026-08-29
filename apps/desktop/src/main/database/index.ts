@@ -4,6 +4,7 @@ import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { appSettings } from './schema'
 import { ACCOUNT_GROUP_SCHEMA_VERSION, applyAccountGroupMigration } from './accountGroupMigration'
+import { CANONICAL_POST_SCHEMA_VERSION, applyCanonicalPostMigration } from './canonicalPostMigration'
 import { CONTENT_LIBRARY_SCHEMA_VERSION, applyContentLibraryMigration } from './contentLibraryMigration'
 import { HOTMAIL_SCHEMA_VERSION, applyHotmailMigration } from './hotmailMigration'
 import { latestSchemaVersion, migrations } from './migrations'
@@ -61,6 +62,7 @@ export function initializeDatabase(databaseFile: string): DatabaseRuntime {
   applyScenarioMigration(client)
   applyAccountGroupMigration(client)
   applyContentLibraryMigration(client)
+  applyCanonicalPostMigration(client)
 
   const schemaVersion = Math.max(
     latestSchemaVersion,
@@ -68,7 +70,8 @@ export function initializeDatabase(databaseFile: string): DatabaseRuntime {
     PAGE_WALL_SCHEMA_VERSION,
     SCENARIO_SCHEMA_VERSION,
     ACCOUNT_GROUP_SCHEMA_VERSION,
-    CONTENT_LIBRARY_SCHEMA_VERSION
+    CONTENT_LIBRARY_SCHEMA_VERSION,
+    CANONICAL_POST_SCHEMA_VERSION
   )
   const orm = drizzle(client)
   orm

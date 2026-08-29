@@ -154,6 +154,76 @@ export const pageTabPosts = sqliteTable('page_tab_posts', {
   updatedAt: integer('updated_at').notNull()
 })
 
+export const posts = sqliteTable('posts', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  name: text('name').notNull(),
+  variantsJson: text('variants_json').notNull().default('[]'),
+  imageFolderPath: text('image_folder_path').notNull().default(''),
+  imageMode: text('image_mode').notNull().default('random'),
+  imagesPerPost: integer('images_per_post').notNull().default(1),
+  missingPolicy: text('missing_policy').notNull().default('text_only'),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull()
+})
+
+export const postCollections = sqliteTable('post_collections', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  name: text('name').notNull(),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull()
+})
+
+export const postCollectionBindings = sqliteTable('post_collection_bindings', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  collectionId: integer('collection_id').notNull(),
+  postId: integer('post_id').notNull(),
+  enabled: integer('enabled').notNull().default(1),
+  sortOrder: integer('sort_order').notNull()
+})
+
+export const pageTabPostBindings = sqliteTable('page_tab_post_bindings', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  pageTabId: integer('page_tab_id').notNull(),
+  postId: integer('post_id').notNull(),
+  enabled: integer('enabled').notNull().default(1),
+  sortOrder: integer('sort_order').notNull(),
+  nameOverride: text('name_override'),
+  variantsOverrideJson: text('variants_override_json'),
+  imageFolderPathOverride: text('image_folder_path_override'),
+  imageModeOverride: text('image_mode_override'),
+  imagesPerPostOverride: integer('images_per_post_override'),
+  missingPolicyOverride: text('missing_policy_override'),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull()
+})
+
+export const scenarioActionPostBindings = sqliteTable('scenario_action_post_bindings', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  scenarioActionId: integer('scenario_action_id').notNull(),
+  postId: integer('post_id').notNull(),
+  enabled: integer('enabled').notNull().default(1),
+  sortOrder: integer('sort_order').notNull(),
+  nameOverride: text('name_override'),
+  variantsOverrideJson: text('variants_override_json'),
+  imageFolderPathOverride: text('image_folder_path_override'),
+  imageModeOverride: text('image_mode_override'),
+  imagesPerPostOverride: integer('images_per_post_override'),
+  missingPolicyOverride: text('missing_policy_override'),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull()
+})
+
+export const postLegacySources = sqliteTable('post_legacy_sources', {
+  sourceKind: text('source_kind').notNull(),
+  sourceId: integer('source_id').notNull(),
+  postId: integer('post_id').notNull()
+})
+
+export const postCollectionLegacySources = sqliteTable('post_collection_legacy_sources', {
+  contentSetId: integer('content_set_id').primaryKey(),
+  collectionId: integer('collection_id').notNull()
+})
+
 export const runs = sqliteTable('runs', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   pageTabId: integer('page_tab_id'),
