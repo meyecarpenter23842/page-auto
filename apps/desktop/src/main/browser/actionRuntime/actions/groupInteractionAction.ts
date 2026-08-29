@@ -33,7 +33,7 @@ import {
 } from './groupInteractionActionSupport'
 import { groupIdentityFromHref } from './joinGroupActionSupport'
 
-interface GroupInteractionStats {
+export interface GroupInteractionStats {
   groupsVisited: number
   postsSeen: number
   viewed: number
@@ -48,7 +48,7 @@ interface GroupInteractionStats {
   failed: number
 }
 
-interface GroupTargets {
+export interface GroupTargets {
   views: number
   reactions: number
   comments: number
@@ -74,6 +74,18 @@ function interactionDone(stats: GroupInteractionStats, baseline: GroupBaseline, 
     && stats.commented - baseline.commented >= targets.comments
     && stats.sharedToWall - baseline.sharedToWall >= targets.wallShares
     && stats.sharedToGroup - baseline.sharedToGroup >= targets.groupShares
+}
+
+export function groupInteractionTargetsSatisfied(stats: GroupInteractionStats, targets: GroupTargets): boolean {
+  return stats.viewed >= targets.views
+    && stats.reacted >= targets.reactions
+    && stats.commented >= targets.comments
+    && stats.sharedToWall >= targets.wallShares
+    && stats.sharedToGroup >= targets.groupShares
+}
+
+function targetCount(targets: GroupTargets): number {
+  return targets.views + targets.reactions + targets.comments + targets.wallShares + targets.groupShares
 }
 
 function baselineFromStats(stats: GroupInteractionStats): GroupBaseline {
@@ -204,15 +216,16 @@ async function processCurrentSurface(
   targets: GroupTargets,
   stats: GroupInteractionStats,
   directGroupPage: boolean
-): Promise<void> {
+): Promise<boolean> {
   if (configBoolean(config, 'sortRecent')) await sortGroupFeedByRecent(page)
 
   const pageRestriction = await restrictionFor(page)
   if (pageRestriction) {
     await handleRestriction(page, config, stats, directGroupPage)
-    return
+    return false
   }
 
+  const postsSeenBefore = stats.postsSeen
   const whitelist = configuredGroupWhitelist(config)
   const baseline = baselineFromStats(stats)
   const shareTargets = splitLines(configString(config, 'shareGroupWhitelist'))
@@ -220,15 +233,15 @@ async function processCurrentSurface(
   let idleRounds = 0
 
   for (let round = 0; round < 16 && !interactionDone(stats, baseline, targets); round += 1) {
-    if (context.control.isStopped()) return
+    if (context.control.isStopped()) return stats.postsSeen > postsSeenBefore
     await context.control.waitIfPaused()
-    if (context.control.isStopped()) return
+    if (context.control.isStopped()) return stats.postsSeen > postsSeenBefore
 
     const articles = groupArticles(page)
     const count = await articles.count().catch(() => 0)
     let newPosts = 0
     for (let index = 0; index < count && !interactionDone(stats, baseline, targets); index += 1) {
-      if (context.control.isStopped()) return
+      if (context.control.isStopped()) return stats.postsSeen > postsSeenBefore
       const article = articles.nth(index)
       if (!await article.isVisible().catch(() => false)) continue
       const text = await article.innerText().catch(() => '')
@@ -237,15 +250,19 @@ async function processCurrentSurface(
       if (seen.has(signature)) continue
       seen.add(signature)
       newPosts += 1
-      if (!await processArticle(page, article, context, config, whitelist, shareTargets, targets, baseline, stats, directGroupPage)) return
+      if (!await processArticle(page, article, context, config, whitelist, shareTargets, targets, baseline, stats, directGroupPage)) {
+        return stats.postsSeen > postsSeenBefore
+      }
     }
 
     if (newPosts === 0) idleRounds += 1
     else idleRounds = 0
-    if (idleRounds >= 3 || interactionDone(stats, baseline, targets)) return
+    if (idleRounds >= 3 || interactionDone(stats, baseline, targets)) return stats.postsSeen > postsSeenBefore
     await page.mouse.wheel(0, 1400).catch(() => undefined)
-    if (!await sleepWithControl(context.control, 900)) return
+    if (!await sleepWithControl(context.control, 900)) return stats.postsSeen > postsSeenBefore
   }
+
+  return stats.postsSeen > postsSeenBefore
 }
 
 function buildTargets(config: ActionConfig): GroupTargets {
@@ -270,7 +287,9 @@ function buildTargets(config: ActionConfig): GroupTargets {
 function resultFromStats(stats: GroupInteractionStats, targets: GroupTargets, stopped: boolean): ActionResult {
   const data = { ...stats, targets }
   if (stopped) return { status: 'stopped', code: 'action_stopped', message: 'Tương tác nhóm đã dừng.', data }
-  if (stats.viewed + completedActions(stats) > 0) {
+
+  const expected = targetCount(targets)
+  if (expected > 0 && groupInteractionTargetsSatisfied(stats, targets)) {
     return {
       status: 'success',
       code: 'group_interaction_completed',
@@ -278,6 +297,16 @@ function resultFromStats(stats: GroupInteractionStats, targets: GroupTargets, st
       data
     }
   }
+
+  if (stats.postsSeen > 0 && expected > 0) {
+    return {
+      status: 'failed',
+      code: 'group_interaction_incomplete',
+      message: `Tương tác nhóm chưa đạt cấu hình: xem ${stats.viewed}/${targets.views}, cảm xúc ${stats.reacted}/${targets.reactions}, comment ${stats.commented}/${targets.comments}, chia sẻ tường ${stats.sharedToWall}/${targets.wallShares}, chia sẻ nhóm ${stats.sharedToGroup}/${targets.groupShares}.`,
+      data
+    }
+  }
+
   if (stats.restricted > 0) {
     return {
       status: 'skipped',
@@ -334,8 +363,8 @@ export class GroupInteractionActionExecutor implements ActionExecutor {
         return navigationFailed('Tương tác nhóm', new Error('Không mở được newsfeed nhóm.'))
       }
       const targets = buildTargets(config)
-      addTargets(aggregateTargets, targets)
-      await processCurrentSurface(page, context, config, targets, stats, false)
+      const eligible = await processCurrentSurface(page, context, config, targets, stats, false)
+      if (eligible) addTargets(aggregateTargets, targets)
       return resultFromStats(stats, aggregateTargets, context.control.isStopped())
     }
 
@@ -359,8 +388,8 @@ export class GroupInteractionActionExecutor implements ActionExecutor {
       }
       stats.groupsVisited += 1
       const targets = buildTargets(config)
-      addTargets(aggregateTargets, targets)
-      await processCurrentSurface(page, context, config, targets, stats, true)
+      const eligible = await processCurrentSurface(page, context, config, targets, stats, true)
+      if (eligible) addTargets(aggregateTargets, targets)
     }
 
     return resultFromStats(stats, aggregateTargets, context.control.isStopped())
