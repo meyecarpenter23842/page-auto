@@ -10,6 +10,7 @@ import {
   sleepWithControl
 } from './actionSupport'
 import {
+  canAttemptAnotherJoin,
   configuredGroupTargets,
   findSurfaceJoinButtons,
   groupTextMatchesFilters,
@@ -22,6 +23,7 @@ import {
 } from './joinGroupActionSupport'
 
 interface JoinStats {
+  attempted: number
   joined: number
   requested: number
   skipped: number
@@ -50,6 +52,7 @@ async function runJoinButton(
   button: Locator,
   context: ActionExecutorContext,
   config: ActionConfig,
+  target: number,
   stats: JoinStats
 ): Promise<boolean> {
   const text = await joinCandidateText(button)
@@ -58,12 +61,16 @@ async function runJoinButton(
     return true
   }
 
+  const previousAttempted = stats.attempted
+  stats.attempted += 1
   const outcome = await submitJoinAttempt(page, button, context, config)
   recordOutcome(stats, outcome)
-  if (outcome === 'joined' || outcome === 'requested') {
-    return paceJoinGroup(context, config, completed(stats))
+
+  if (context.control.isStopped() || !canAttemptAnotherJoin(stats.attempted, target)) {
+    return !context.control.isStopped()
   }
-  return !context.control.isStopped()
+
+  return paceJoinGroup(context, config, previousAttempted, stats.attempted)
 }
 
 async function joinFromIdList(
@@ -75,7 +82,7 @@ async function joinFromIdList(
   stats: JoinStats
 ): Promise<void> {
   for (const group of configuredGroupTargets(config)) {
-    if (completed(stats) >= target || context.control.isStopped()) return
+    if (!canAttemptAnotherJoin(stats.attempted, target) || context.control.isStopped()) return
     await context.control.waitIfPaused()
     if (context.control.isStopped()) return
 
@@ -102,7 +109,7 @@ async function joinFromIdList(
       const button = buttons.nth(index)
       if (!await button.isVisible().catch(() => false)) continue
       handled = true
-      await runJoinButton(page, button, context, config, stats)
+      if (!await runJoinButton(page, button, context, config, target, stats)) return
       break
     }
     if (!handled) stats.skipped += 1
@@ -119,7 +126,7 @@ async function joinFromDiscoverySurface(
   const seen = new Set<string>()
   let idleRounds = 0
 
-  for (let round = 0; round < 14 && completed(stats) < target; round += 1) {
+  for (let round = 0; round < 14 && canAttemptAnotherJoin(stats.attempted, target); round += 1) {
     if (context.control.isStopped()) return
     await context.control.waitIfPaused()
 
@@ -127,7 +134,7 @@ async function joinFromDiscoverySurface(
     const count = await buttons?.count().catch(() => 0) ?? 0
     let newCandidates = 0
 
-    for (let index = 0; index < count && completed(stats) < target; index += 1) {
+    for (let index = 0; index < count && canAttemptAnotherJoin(stats.attempted, target); index += 1) {
       if (context.control.isStopped()) return
       const button = buttons!.nth(index)
       if (!await button.isVisible().catch(() => false)) continue
@@ -138,12 +145,12 @@ async function joinFromDiscoverySurface(
       if (signature) seen.add(signature)
       newCandidates += 1
 
-      if (!await runJoinButton(page, button, context, config, stats)) return
+      if (!await runJoinButton(page, button, context, config, target, stats)) return
     }
 
     if (newCandidates === 0) idleRounds += 1
     else idleRounds = 0
-    if (idleRounds >= 3) return
+    if (idleRounds >= 3 || !canAttemptAnotherJoin(stats.attempted, target)) return
 
     await page.mouse.wheel(0, 1600).catch(() => undefined)
     if (!await sleepWithControl(context.control, 900)) return
@@ -164,7 +171,7 @@ function resultFromStats(
     return {
       status: 'success',
       code: 'join_group_completed',
-      message: `Tham gia nhóm hoàn tất: ${stats.joined} đã vào, ${stats.requested} đã gửi yêu cầu.`,
+      message: `Tham gia nhóm hoàn tất: ${stats.joined} đã vào, ${stats.requested} đã gửi yêu cầu; ${stats.attempted}/${target} lượt đã chạy.`,
       data
     }
   }
@@ -172,7 +179,7 @@ function resultFromStats(
     return {
       status: 'failed',
       code: 'join_group_no_verified_result',
-      message: 'Không xác nhận được nhóm nào đã tham gia hoặc đã gửi yêu cầu.',
+      message: `Đã chạy ${stats.attempted}/${target} lượt nhưng chưa xác nhận được nhóm nào đã tham gia hoặc đã gửi yêu cầu.`,
       data
     }
   }
@@ -199,7 +206,7 @@ export class JoinGroupActionExecutor implements ActionExecutor {
     )
     const mode = configString(config, 'sourceMode') || 'id_list'
     const timeoutMs = this.dependencies.navigationTimeoutMs ?? 45_000
-    const stats: JoinStats = { joined: 0, requested: 0, skipped: 0, failed: 0 }
+    const stats: JoinStats = { attempted: 0, joined: 0, requested: 0, skipped: 0, failed: 0 }
 
     if (mode === 'id_list') {
       await joinFromIdList(page, context, config, target, timeoutMs, stats)
