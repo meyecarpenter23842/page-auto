@@ -913,10 +913,62 @@ Verifier hardening kèm 5C sau review 5B:
 Giới hạn cố ý của 5C:
 
 - `PageBusinessWorkspace` vẫn là UI shell; chưa có nút renderer gọi Đăng Tường thật.
-- Chưa tạo Wall run-item DB, scheduler/hẹn giờ, IPC/preload hay config persistence riêng cho Tường.
+- Chưa tạo Wall run-item DB, scheduler/hẹn giờ, IPC hoặc config persistence riêng cho Tường.
 - `RotationService`, Group `run_items`, Group anti-duplicate và Group `PublishResultDetector` không đổi semantics.
 - `executeFacebookPostTask()` là Main execution entrypoint; account-turn scheduling cho Wall phải được nối ở lô orchestration/UI tiếp theo, không giả lập bằng Group run-item.
 
 Invariant sau 5C:
 
 > Khi Main orchestration cung cấp một `PageWallPostTaskJobRequest` hợp lệ, production utility worker có thể chạy Tường qua cùng Facebook Common Runtime, evidence lifecycle và account-session sync như Group mà không cần `groupUid`; UI/scheduler chưa được coi là hoàn thành cho tới lô wiring riêng tiếp theo.
+
+---
+
+## 24. K4.5.1 — ownership Thư viện Bài viết chung
+
+K4.5.1 chốt `content_sets/content_items` là **shared application data** ở Main/SQLite, không thuộc Facebook Common Runtime và cũng không thuộc riêng `group_post`, `page_wall_post`, Page Tab hay Kịch Bản.
+
+Ownership hiện hành sau K4.5.1:
+
+```text
+React — Thư viện Bài viết
+        |
+        v
+Typed IPC / Preload
+        |
+        v
+ContentLibraryRepository (Main)
+        |
+        +--> content_sets
+        |      page_tab_id = NULL => nguồn global
+        |
+        +--> content_items
+               variants + media source config
+
+Consumer Page / Kịch Bản / business config
+        |
+        +--> tham chiếu contentSetId
+        +--> giữ mode/override của consumer
+        |
+        v
+Run Orchestration
+        |
+        +--> snapshot nội dung + media selection input khi Start
+        |
+        v
+Business worker chỉ đọc snapshot của run
+```
+
+Các invariant bắt buộc:
+
+- Renderer không đọc SQLite hay filesystem trực tiếp; picker folder/file text đi qua Main.
+- Một nguồn global có thể được nhiều Page/Kịch Bản/nghiệp vụ dùng lại; không copy nguyên bài thành DB riêng cho từng consumer.
+- `sequential/random` là quyết định của consumer/run, không phải ownership của bản thân nguồn global.
+- Sau khi một run đã tạo snapshot, sửa/xóa nội dung gốc không được âm thầm thay đổi nội dung của run đang chạy.
+- `ContentLibraryRepository` chỉ được CRUD row global (`content_sets.page_tab_id IS NULL`) và không được mutate compatibility row của Page Tab cũ.
+- Migration v13 giữ row `page_tab_id != NULL` và `page_tab_posts` hiện hữu để Group/Page runtime đang chạy không bị đổi observable behavior trong K4.5.1.
+- K4.5.1 **chưa** đổi `group_post/page_wall_post` consumer runtime. Lô K4.5.2 mới được phép nối tham chiếu `contentSetId`, selection mode và snapshot sang consumer; khi đó cần regression chứng minh Group hiện tại không bị mất semantics.
+- Config Backup phải mang nguồn global nhưng vẫn đọc được backup v1 cũ không có trường thư viện chung.
+
+Ranh giới quan trọng:
+
+> Facebook Common chuẩn bị browser/session/Page identity; Content Library chỉ cung cấp dữ liệu đầu vào. Business task không được đọc live Content Library trong lúc publish, và Content Library không được biết selector Facebook hay trạng thái worker.

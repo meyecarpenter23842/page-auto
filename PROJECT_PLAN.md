@@ -1,6 +1,8 @@
 # PAGE-AUTO — Baseline triển khai hiện hành
 
 > Đây là baseline bắt buộc phải đọc trước khi sửa code. Khi sửa core/runtime Facebook phải đọc thêm `ARCHITECTURE.md`. Nếu `PROJECT_PLAN_DETAILS.md` hoặc tài liệu cũ có điểm xung đột thì `PROJECT_PLAN.md` được ưu tiên; thay đổi kiến trúc đã chốt phải cập nhật `ARCHITECTURE.md` trong cùng lô.
+>
+> **Quyết định K4.5.1 — Thư viện Bài viết chung:** `content_sets/content_items` là nguồn bài viết dùng chung toàn app, không phải mỗi Page Tab một DB bài viết riêng. Page/Kịch Bản/nghiệp vụ chỉ tham chiếu nguồn; tuần tự/random là cấu hình của consumer. Khi bắt đầu run phải snapshot nội dung để sửa thư viện giữa phiên không làm thay đổi run đang chạy. Trong giai đoạn chuyển tiếp, `content_sets.page_tab_id != NULL` chỉ là compatibility cho Page Tab cũ; các cụm “Content/Post Library” ở mục Group bên dưới được hiểu là **tham chiếu/consumer UI**, không còn là ownership dữ liệu riêng của Page.
 
 ## 1. Mục tiêu sản phẩm
 
@@ -15,6 +17,7 @@ Nguyên tắc cốt lõi:
 - Account trong cùng một phiên/nghiệp vụ của Page chạy tuần tự, không song song.
 - Nhiều Page Tab khác nhau có thể chạy song song theo giới hạn cấu hình.
 - Group gốc không bị xóa; mỗi run Group clone snapshot riêng để chống trùng trong phiên.
+- Bài viết gốc nằm trong Thư viện Bài viết chung; consumer snapshot nội dung khi tạo run.
 - React chỉ làm UI; renderer không truy cập DB/browser trực tiếp.
 - Electron Main quản lý SQLite, scheduler và worker lifecycle.
 - Playwright chạy ở worker/utility process riêng để browser lỗi không làm treo UI.
@@ -266,21 +269,22 @@ Bên trong Page có các tab nghiệp vụ:
 Giữ toàn bộ nghiệp vụ hiện tại:
 
 - Group UID list
-- Content/Post Library
-- ảnh/folder ảnh
+- tham chiếu Thư viện Bài viết chung; không sở hữu DB bài viết riêng về đích
+- ảnh/folder ảnh theo bài hoặc consumer config phù hợp
 - số bài/account
 - delay bài, delay đổi account
 - ngày chạy + nhiều time windows
-- sequential/random
+- sequential/random ở consumer
 - runtime/log
 - snapshot Group chống trùng trong phiên
+- snapshot bài viết khi mở run để thư viện gốc có thể sửa độc lập
 
 ### 5.2. Đăng Tường (`page_wall_post`)
 
 Sau khi common Facebook runtime ổn định mới triển khai:
 
-- nội dung
-- ảnh
+- chọn nguồn từ Thư viện Bài viết chung
+- nội dung/ảnh lấy từ snapshot của run
 - đăng ngay
 - hẹn ngày/giờ
 - danh sách bài đã hẹn
@@ -310,6 +314,25 @@ Trạng thái UI phiên đã chốt:
 - vàng = chờ/delay
 
 Status phiên không được phá status gốc/lịch sử account.
+
+### 5.5. Thư viện Bài viết chung
+
+Nguồn bài viết là app-level data source, không thuộc một Page Tab cụ thể:
+
+```text
+content_sets (global)
+  -> content_items
+      -> nhiều biến thể nội dung
+      -> cấu hình nguồn ảnh cơ bản
+
+Page / Kịch Bản / business consumer
+  -> tham chiếu content_set
+  -> chọn sequential/random theo config consumer
+  -> tạo run snapshot
+  -> worker chỉ dùng snapshot của run
+```
+
+Trong K4.5.1, `content_sets.page_tab_id` được chuyển nullable để `NULL` biểu diễn nguồn global. Row có Page Tab ID và `page_tab_posts` vẫn được giữ compatibility; chưa đổi runtime consumer trong cùng lô migration/UI này.
 
 ---
 
@@ -480,6 +503,8 @@ import_presets
 column_layouts
 ```
 
+`content_sets/content_items` là canonical shared post library cho thiết kế mới. `page_tab_id` nullable dùng để phân biệt global rows (`NULL`) với compatibility rows của Page Tab cũ trong giai đoạn chuyển đổi. Không tạo một bảng “bài viết riêng” mới cho từng Page/Kịch Bản.
+
 `app_settings` chứa cấu hình app-level như CAPTCHA providers. Secret trong app settings không được đưa vào config backup hoặc log.
 
 Page Tab reference account ID; không copy password/cookie/proxy sang tab.
@@ -508,7 +533,7 @@ Không ghi plaintext:
 - proxy password
 - CAPTCHA provider API key
 
-Config Backup mặc định loại toàn bộ secret ở trên, browser profile, runtime log và screenshot.
+Config Backup mặc định loại toàn bộ secret ở trên, browser profile, runtime log và screenshot. Thư viện Bài viết chung không chứa credential và phải được mang theo trong Config Backup.
 
 Log của common Facebook runtime phải đủ để trace worker -> Main -> DB -> UI nhưng không lộ credential.
 
@@ -599,6 +624,15 @@ Các phase nền cũ vẫn có giá trị lịch sử: Bootstrap -> Account -> S
 - clear API key explicit
 - config backup không chứa CAPTCHA API key
 
+### Thư viện Bài viết chung
+
+- migration giữ nguyên content Page Tab legacy;
+- tạo nhiều global `content_sets` với `page_tab_id = NULL`;
+- CRUD/reorder bài, variants và media config;
+- repository global không được sửa legacy set;
+- Config Backup round-trip nguồn chung và vẫn restore backup v1 cũ;
+- khi nối runtime ở lô sau, run snapshot không đổi nếu thư viện gốc được sửa giữa phiên.
+
 ### Architecture/runtime regression
 
 - Group source/run chống trùng không đổi ngoài thay đổi được chốt.
@@ -631,7 +665,8 @@ Live bug liên quan checkpoint/2FA continuation chỉ được coi fixed sau liv
 12. External Profile Root khi bật resolve `Root\UID` strict, không clone/fallback.
 13. Windows artifact là portable folder/ZIP với PageAuto.exe.
 14. Đăng Tường và Sửa Page sử dụng common runtime, không nhân bản code Group/session.
-15. Các lỗi checkpoint + post-2FA continuation chỉ đóng sau live retest thực tế.
+15. Thư viện Bài viết là nguồn global dùng chung; Page/Kịch Bản không sở hữu bản copy DB riêng và run dùng snapshot.
+16. Các lỗi checkpoint + post-2FA continuation chỉ đóng sau live retest thực tế.
 
 ---
 
