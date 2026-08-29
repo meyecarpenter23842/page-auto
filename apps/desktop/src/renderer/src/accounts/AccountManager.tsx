@@ -252,7 +252,7 @@ export function AccountManager() {
     await refreshAccountsAndGroups()
   }
 
-  const openProfile = async () => {
+  const openProfile = async (openManagerAfter = false) => {
     if (selected.length === 0 || openingProfiles) return
     const targets = selected.map((account) => ({ id: account.id, uid: account.uid }))
     setOpeningProfiles(true)
@@ -266,9 +266,13 @@ export function AccountManager() {
       const alreadyOpen = outcomes.filter((item) => item.status === 'already_open').length
       const failed = outcomes.filter((item) => item.status === 'error')
       const firstFailure = failed[0]
+      const dock = openManagerAfter && started + alreadyOpen > 0
+        ? await window.pageAuto.openAccountBrowserDock()
+        : null
       setNotice(
         `Đã xử lý ${outcomes.length} Chrome: mở mới ${started}, đang mở ${alreadyOpen}, lỗi ${failed.length}`
         + (firstFailure ? ` · ${firstFailure.uid}: ${firstFailure.message ?? 'lỗi không xác định'}` : '.')
+        + (dock ? ` · ${dock.message}` : '')
       )
       await loadAccounts()
     } finally {
@@ -329,7 +333,7 @@ export function AccountManager() {
             <button className="button danger" type="button" disabled={selectedIds.size === 0} onClick={() => void deleteSelected()}>Xóa</button>
           </div>
           <div className="toolbar-group">
-            <button className="button secondary" type="button" disabled={selectedIds.size === 0 || openingProfiles} onClick={() => void openProfile()}>Cửa sổ Chrome</button>
+            <button className="button secondary" type="button" disabled={selectedIds.size === 0 || openingProfiles} onClick={() => void openProfile(true)}>Cửa sổ Chrome</button>
             <button className="button secondary" type="button" disabled title="Kiểm tra phiên được thực hiện khi mở Chrome hoặc trước mỗi lượt đăng">Kiểm tra phiên</button>
             <button className="button secondary" type="button" onClick={() => setGroupManagerOpen(true)}>Quản lý nhóm ({groupOverview.groups.length})</button>
             <button className="button secondary" type="button" disabled={selectedIds.size === 0} onClick={openGroupPicker}>Gán nhóm</button>

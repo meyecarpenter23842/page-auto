@@ -1,29 +1,54 @@
 import { describe, expect, it } from 'vitest'
-import { computeAccountBrowserDockCells } from './accountBrowserDock'
+import { computeAccountBrowserDockLayout } from './accountBrowserDock'
 
-describe('computeAccountBrowserDockCells', () => {
+describe('computeAccountBrowserDockLayout', () => {
   it('returns no cells when there are no profile windows', () => {
-    expect(computeAccountBrowserDockCells(1000, 700, 0)).toEqual([])
+    expect(computeAccountBrowserDockLayout(1000, [])).toEqual({
+      cells: [],
+      contentWidth: 1,
+      contentHeight: 1
+    })
   })
 
-  it('uses two columns for the common two-profile manager layout', () => {
-    const cells = computeAccountBrowserDockCells(1000, 700, 2, 4)
-    expect(cells).toHaveLength(2)
-    expect(cells[0]?.y).toBe(4)
-    expect(cells[1]?.x).toBeGreaterThan(cells[0]?.x ?? 0)
-    expect(cells[0]?.width).toBe(cells[1]?.width)
+  it('keeps the original Chrome size instead of stretching to the manager', () => {
+    const layout = computeAccountBrowserDockLayout(1200, [
+      { width: 500, height: 350 },
+      { width: 500, height: 350 }
+    ], 4)
+
+    expect(layout.cells).toEqual([
+      { x: 4, y: 4, width: 500, height: 350 },
+      { x: 508, y: 4, width: 500, height: 350 }
+    ])
   })
 
-  it('keeps all cells inside the manager client area', () => {
-    const width = 900
-    const height = 600
-    const cells = computeAccountBrowserDockCells(width, height, 5, 6)
-    expect(cells).toHaveLength(5)
-    for (const cell of cells) {
-      expect(cell.x).toBeGreaterThanOrEqual(0)
-      expect(cell.y).toBeGreaterThanOrEqual(0)
-      expect(cell.x + cell.width).toBeLessThanOrEqual(width)
-      expect(cell.y + cell.height).toBeLessThanOrEqual(height)
-    }
+  it('reflows fixed-size Chrome windows when the manager gets narrower', () => {
+    const sizes = [
+      { width: 500, height: 350 },
+      { width: 500, height: 350 }
+    ]
+    const wide = computeAccountBrowserDockLayout(1200, sizes, 4)
+    const narrow = computeAccountBrowserDockLayout(800, sizes, 4)
+
+    expect(wide.cells[1]).toEqual({ x: 508, y: 4, width: 500, height: 350 })
+    expect(narrow.cells[1]).toEqual({ x: 4, y: 358, width: 500, height: 350 })
+  })
+
+  it('grows the content area so many fixed-size profiles can be scrolled', () => {
+    const layout = computeAccountBrowserDockLayout(
+      1100,
+      Array.from({ length: 5 }, () => ({ width: 500, height: 350 })),
+      4
+    )
+
+    expect(layout.cells).toHaveLength(5)
+    expect(layout.cells.every((cell) => cell.width === 500 && cell.height === 350)).toBe(true)
+    expect(layout.contentHeight).toBe(1066)
+  })
+
+  it('allows horizontal overflow instead of shrinking an oversized Chrome window', () => {
+    const layout = computeAccountBrowserDockLayout(700, [{ width: 900, height: 500 }], 4)
+    expect(layout.cells[0]).toEqual({ x: 4, y: 4, width: 900, height: 500 })
+    expect(layout.contentWidth).toBe(908)
   })
 })
