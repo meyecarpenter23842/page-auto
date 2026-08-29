@@ -115,11 +115,7 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
     () => appSettings.get().logging
   )
   const accountExecution = new AccountExecutionCoordinator()
-  const checkpoint282Runtime = new Checkpoint282RuntimeController(
-    accountExecution,
-    checkpoint282RunLifecycle,
-    browserProfiles
-  )
+  const checkpoint282Runtime = new Checkpoint282RuntimeController(accountExecution, checkpoint282RunLifecycle, browserProfiles)
   const executePageWallPostNow = (input: Parameters<PostingService['executePageWallPostNow']>[0]) => accountExecution.run(
     input.accountId,
     () => corePosting.executePageWallPostNow(input)
@@ -175,22 +171,11 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
   })
   ipcMain.handle(IPC_CHANNELS.facebookCheckpoint282Run, (_event, payload: FacebookCheckpoint282RunPayload) => {
     const account = accounts.getById(payload.accountId)
-    if (!account) {
-      return {
-        accountId: payload.accountId,
-        uid: '',
-        state: 'error',
-        surface: payload.surface,
-        message: 'Account không tồn tại.'
-      }
-    }
+    if (!account) return { accountId: payload.accountId, uid: '', state: 'error', surface: payload.surface, message: 'Account không tồn tại.' }
     return checkpoint282Runtime.run(account, payload)
   })
   ipcMain.handle(IPC_CHANNELS.facebookCheckpointEvidenceFolderPick, async () => {
-    const result = await dialog.showOpenDialog({
-      title: 'Chọn thư mục lưu bằng chứng CP Facebook',
-      properties: ['openDirectory', 'createDirectory']
-    })
+    const result = await dialog.showOpenDialog({ title: 'Chọn thư mục lưu bằng chứng CP Facebook', properties: ['openDirectory', 'createDirectory'] })
     return result.canceled ? null : (result.filePaths[0] ?? null)
   })
 
@@ -200,7 +185,6 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
   ipcMain.handle(IPC_CHANNELS.pageTabsUpdate, (_event, payload: UpdatePageTabPayload) => pageTabs.update(payload.id, payload.config))
   ipcMain.handle(IPC_CHANNELS.pageTabsDelete, (_event, payload: PageTabIdPayload) => pageTabs.delete(payload.id))
   ipcMain.handle(IPC_CHANNELS.pageTabsDuplicate, (_event, payload: PageTabIdPayload) => pageTabs.duplicate(payload.id))
-
   ipcMain.handle(IPC_CHANNELS.pageTabsPickImageFolder, async () => {
     const result = await dialog.showOpenDialog({ title: 'Chọn folder ảnh cho Page Tab', properties: ['openDirectory'] })
     return result.canceled ? null : (result.filePaths[0] ?? null)
@@ -210,18 +194,14 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
     if (!normalized) return { exists: false, fileCount: 0 }
     try {
       const entries = await readdir(normalized, { withFileTypes: true })
-      return {
-        exists: true,
-        fileCount: entries.filter((entry) => entry.isFile() && supportedImageExtensions.has(extname(entry.name).toLowerCase())).length
-      }
+      return { exists: true, fileCount: entries.filter((entry) => entry.isFile() && supportedImageExtensions.has(extname(entry.name).toLowerCase())).length }
     } catch {
       return { exists: false, fileCount: 0 }
     }
   })
   ipcMain.handle(IPC_CHANNELS.pageTabsPickTextFile, async () => {
     const result = await dialog.showOpenDialog({
-      title: 'Import text / CSV',
-      properties: ['openFile'],
+      title: 'Import text / CSV', properties: ['openFile'],
       filters: [{ name: 'Text / CSV', extensions: ['txt', 'csv'] }, { name: 'All files', extensions: ['*'] }]
     })
     const filePath = result.canceled ? undefined : result.filePaths[0]
@@ -232,8 +212,7 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
   })
   ipcMain.handle(IPC_CHANNELS.pageWallPickImages, async () => {
     const result = await dialog.showOpenDialog({
-      title: 'Chọn ảnh Đăng Tường',
-      properties: ['openFile', 'multiSelections'],
+      title: 'Chọn ảnh Đăng Tường', properties: ['openFile', 'multiSelections'],
       filters: [{ name: 'Ảnh', extensions: ['jpg', 'jpeg', 'png', 'webp'] }]
     })
     return result.canceled ? [] : result.filePaths
@@ -279,6 +258,15 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
     if (!executablePath) return { status: 'canceled', executablePath: null, version: null, message: 'Đã hủy chọn Chrome.' }
     return browserEngine.probeExecutable(executablePath)
   })
+  ipcMain.handle(IPC_CHANNELS.browserPickProfileRoot, async () => {
+    const savedRoot = appSettings.get().browser.externalProfileRoot?.trim()
+    const result = await dialog.showOpenDialog({
+      title: 'Chọn Facebook Profile Root — mỗi account nằm trong Root\\UID',
+      properties: ['openDirectory'],
+      ...(savedRoot ? { defaultPath: savedRoot } : {})
+    })
+    return result.canceled ? null : (result.filePaths[0] ?? null)
+  })
   ipcMain.handle(IPC_CHANNELS.browserTest, (_event, input: BrowserTestRequest) => {
     const current = appSettings.get()
     const candidate = { ...current, browser: { ...input.settings } }
@@ -290,20 +278,13 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
   ipcMain.handle(IPC_CHANNELS.browserDisplaysList, () => browserWindowLayout.listDisplays())
   ipcMain.handle(IPC_CHANNELS.browserRetile, (): BrowserRetileResult => {
     const layout = browserWindowLayoutSettings.get()
-    if (!layout.enabled) {
-      return { status: 'not_compact', appliedCount: 0, overflowCount: 0, message: 'Compact/Tiled đang tắt.' }
-    }
-    if (browserWindowLayout.activeCount() === 0) {
-      return { status: 'no_browsers', appliedCount: 0, overflowCount: 0, message: 'Không có Chrome PAGE-AUTO nào đang mở để sắp xếp.' }
-    }
-
+    if (!layout.enabled) return { status: 'not_compact', appliedCount: 0, overflowCount: 0, message: 'Compact/Tiled đang tắt.' }
+    if (browserWindowLayout.activeCount() === 0) return { status: 'no_browsers', appliedCount: 0, overflowCount: 0, message: 'Không có Chrome PAGE-AUTO nào đang mở để sắp xếp.' }
     const snapshot = browserWindowLayout.snapshot(layout, appSettings.get().browser)
     browserProfiles.retile(snapshot.placements)
     corePosting.retileBrowsers(snapshot.placements)
     return {
-      status: 'success',
-      appliedCount: snapshot.placements.size,
-      overflowCount: snapshot.overflowCount,
+      status: 'success', appliedCount: snapshot.placements.size, overflowCount: snapshot.overflowCount,
       message: snapshot.overflowCount > 0
         ? `Đã sắp xếp ${snapshot.placements.size} Chrome; ${snapshot.overflowCount} Chrome vượt số ô cấu hình nên giữ nguyên.`
         : `Đã sắp xếp ${snapshot.placements.size} Chrome theo layout đã lưu.`

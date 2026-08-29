@@ -166,6 +166,7 @@ const api = {
   resetAppSettings: (): Promise<AppSettings> => ipcRenderer.invoke(IPC_CHANNELS.appSettingsReset) as Promise<AppSettings>,
   detectChrome: (): Promise<BrowserExecutableResult> => ipcRenderer.invoke(IPC_CHANNELS.browserDetect) as Promise<BrowserExecutableResult>,
   pickChromeExecutable: (): Promise<BrowserExecutableResult> => ipcRenderer.invoke(IPC_CHANNELS.browserPickExecutable) as Promise<BrowserExecutableResult>,
+  pickFacebookProfileRoot: (): Promise<string | null> => ipcRenderer.invoke(IPC_CHANNELS.browserPickProfileRoot) as Promise<string | null>,
   probeChromeExecutable: (executablePath: string): Promise<BrowserExecutableResult> => ipcRenderer.invoke(IPC_CHANNELS.browserProbeExecutable, executablePath) as Promise<BrowserExecutableResult>,
   testBrowser: (input: BrowserTestRequest): Promise<BrowserTestResult> => ipcRenderer.invoke(IPC_CHANNELS.browserTest, input) as Promise<BrowserTestResult>,
   getBrowserWindowLayout: (): Promise<BrowserWindowLayoutSettings> => ipcRenderer.invoke(IPC_CHANNELS.browserWindowLayoutGet) as Promise<BrowserWindowLayoutSettings>,

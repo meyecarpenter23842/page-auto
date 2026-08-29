@@ -130,6 +130,7 @@ export const IPC_CHANNELS = {
   appSettingsReset: 'settings:app:reset',
   browserDetect: 'settings:browser:detect',
   browserPickExecutable: 'settings:browser:pick-executable',
+  browserPickProfileRoot: 'settings:browser:pick-profile-root',
   browserProbeExecutable: 'settings:browser:probe-executable',
   browserTest: 'settings:browser:test',
   browserWindowLayoutGet: 'settings:browser-window-layout:get',
@@ -219,6 +220,7 @@ export interface PageAutoIpcContract {
   resetAppSettings: () => Promise<AppSettings>
   detectChrome: () => Promise<BrowserExecutableResult>
   pickChromeExecutable: () => Promise<BrowserExecutableResult>
+  pickFacebookProfileRoot: () => Promise<string | null>
   probeChromeExecutable: (executablePath: string) => Promise<BrowserExecutableResult>
   testBrowser: (input: BrowserTestRequest) => Promise<BrowserTestResult>
   getBrowserWindowLayout: () => Promise<BrowserWindowLayoutSettings>

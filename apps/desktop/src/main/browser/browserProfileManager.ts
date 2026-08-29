@@ -1,4 +1,3 @@
-import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { utilityProcess, type UtilityProcess } from 'electron'
 import type { AccountRecord, BrowserProfileResult } from '../../shared/accounts'
@@ -20,6 +19,11 @@ import type {
 } from '../../shared/facebookCheckpoint'
 import { getEmailCodeProvider } from '../services/emailCodeProviderRegistry'
 import type { FacebookSessionAccount, FacebookSessionResult } from './facebookSession'
+import {
+  FacebookProfileResolutionError,
+  appManagedFacebookProfileDirectory,
+  resolveFacebookProfileDirectory
+} from './facebookProfileResolver'
 import { BrowserWindowLayoutManager } from './browserWindowLayoutManager'
 import {
   consumeCheckpoint282StaleResult,
@@ -72,6 +76,7 @@ interface PendingCheckpoint {
 
 interface BrowserWorkerEntry {
   process: UtilityProcess
+  profileDirectory: string
   pending: PendingBootstrap | null
   checkpoint282Pending: PendingCheckpoint | null
   checkpoint956Pending: PendingCheckpoint | null
@@ -83,8 +88,9 @@ interface BrowserWorkerEntry {
 type SessionResultHandler = (result: FacebookSessionResult) => void
 type AccountClosedListener = (accountId: number) => void
 
+/** @deprecated App-managed path only. New Facebook flows must use resolveFacebookProfileDirectory. */
 export function accountProfileDirectory(dataDirectory: string, accountId: number): string {
-  return join(dataDirectory, 'browser-profiles', `account-${accountId}`)
+  return appManagedFacebookProfileDirectory(dataDirectory, accountId)
 }
 
 function sessionAccount(account: AccountRecord): FacebookSessionAccount {
@@ -106,6 +112,14 @@ function emailSupportError(accountId: number, message: string): EmailCodeResult 
     receivedAt: null,
     sender: null,
     message
+  }
+}
+
+function profileErrorResult(error: unknown): BrowserProfileResult {
+  return {
+    status: 'error',
+    ...(error instanceof FacebookProfileResolutionError ? { code: error.code } : {}),
+    message: error instanceof Error ? error.message : String(error)
   }
 }
 
@@ -175,13 +189,30 @@ export class BrowserProfileManager {
   }
 
   async open(account: AccountRecord): Promise<BrowserProfileResult> {
-    const profileDirectory = accountProfileDirectory(this.dataDirectory, account.id)
+    let profileDirectory: string
+    try {
+      profileDirectory = resolveFacebookProfileDirectory(this.dataDirectory, account, this.getBrowserSettings()).profileDirectory
+    } catch (error) {
+      return profileErrorResult(error)
+    }
+
     const proxyResolution = resolveAccountProxyState(account)
     if (proxyResolution.status === 'invalid') {
       return { status: 'error', profileDirectory, message: proxyResolution.message }
     }
 
-    const existing = this.workers.get(account.id)
+    let existing = this.workers.get(account.id)
+    if (existing && !existing.closing && existing.profileDirectory !== profileDirectory) {
+      if (existing.pending || existing.checkpoint282Pending || existing.checkpoint956Pending) {
+        return {
+          status: 'error',
+          profileDirectory,
+          message: 'Facebook Profile Root vừa thay đổi nhưng browser account đang bận. Hãy dừng lượt hiện tại rồi mở lại account.'
+        }
+      }
+      await this.closeAccount(account.id)
+      existing = undefined
+    }
     if (existing && !existing.closing) {
       if (existing.pending || existing.checkpoint282Pending || existing.checkpoint956Pending) {
         return {
@@ -195,7 +226,7 @@ export class BrowserProfileManager {
     if (existing) this.workers.delete(account.id)
 
     try {
-      const entry = await this.spawnWorker(account)
+      const entry = await this.spawnWorker(account, profileDirectory)
       return await this.bootstrap(entry, account, 'started')
     } catch (error) {
       this.workers.delete(account.id)
@@ -204,6 +235,7 @@ export class BrowserProfileManager {
       return {
         status: 'error',
         profileDirectory,
+        ...(error instanceof FacebookProfileResolutionError ? { code: error.code } : {}),
         message: error instanceof Error ? error.message : String(error)
       }
     }
@@ -300,7 +332,20 @@ export class BrowserProfileManager {
     account: AccountRecord,
     payload: Pick<FacebookCheckpoint282RunPayload, 'surface' | 'action' | 'evidenceFolder'>
   ): Promise<FacebookCheckpoint282Result> {
-    const profileDirectory = accountProfileDirectory(this.dataDirectory, account.id)
+    let profileDirectory: string
+    try {
+      profileDirectory = resolveFacebookProfileDirectory(this.dataDirectory, account, this.getBrowserSettings()).profileDirectory
+    } catch (error) {
+      return {
+        accountId: account.id,
+        uid: account.uid,
+        state: 'error',
+        surface: payload.surface,
+        checkpointKind: '956',
+        message: error instanceof Error ? error.message : String(error)
+      }
+    }
+
     const proxyResolution = resolveAccountProxyState(account)
     if (proxyResolution.status === 'invalid') {
       return {
@@ -314,6 +359,20 @@ export class BrowserProfileManager {
     }
 
     let entry = this.workers.get(account.id)
+    if (entry && !entry.closing && entry.profileDirectory !== profileDirectory) {
+      if (entry.pending || entry.checkpoint282Pending || entry.checkpoint956Pending) {
+        return {
+          accountId: account.id,
+          uid: account.uid,
+          state: 'error',
+          surface: payload.surface,
+          checkpointKind: '956',
+          message: 'Facebook Profile Root vừa thay đổi nhưng browser account đang bận. Hãy Stop flow cũ trước khi chạy CP956 lại.'
+        }
+      }
+      await this.closeAccount(account.id)
+      entry = undefined
+    }
     if (entry && !entry.closing && (entry.pending || entry.checkpoint282Pending || entry.checkpoint956Pending)) {
       return {
         accountId: account.id,
@@ -328,7 +387,7 @@ export class BrowserProfileManager {
     if (!entry || entry.closing) {
       if (entry) this.workers.delete(account.id)
       try {
-        entry = await this.spawnWorker(account)
+        entry = await this.spawnWorker(account, profileDirectory)
       } catch (error) {
         return {
           accountId: account.id,
@@ -410,7 +469,7 @@ export class BrowserProfileManager {
       clearTimeout(entry.pending.timer)
       entry.pending.resolve({
         status: 'error',
-        profileDirectory: accountProfileDirectory(this.dataDirectory, accountId),
+        profileDirectory: entry.profileDirectory,
         message: 'Browser đang được đóng vì lượt automation của account đã kết thúc.'
       })
       entry.pending = null
@@ -504,10 +563,8 @@ export class BrowserProfileManager {
     clearAllManagedBrowserEndpoints()
   }
 
-  private async spawnWorker(account: AccountRecord): Promise<BrowserWorkerEntry> {
-    const profileDirectory = accountProfileDirectory(this.dataDirectory, account.id)
+  private async spawnWorker(account: AccountRecord, profileDirectory: string): Promise<BrowserWorkerEntry> {
     clearManagedBrowserEndpoint(account.id)
-    mkdirSync(profileDirectory, { recursive: true })
     this.windowLayout?.claim(account.id, 'profile')
 
     const workerPath = join(__dirname, 'browser-profile-worker.js')
@@ -516,6 +573,7 @@ export class BrowserProfileManager {
     })
     const entry: BrowserWorkerEntry = {
       process: worker,
+      profileDirectory,
       pending: null,
       checkpoint282Pending: null,
       checkpoint956Pending: null,
@@ -575,7 +633,7 @@ export class BrowserProfileManager {
     account: AccountRecord,
     openStatus: 'started' | 'already_open'
   ): Promise<BrowserProfileResult> {
-    const profileDirectory = accountProfileDirectory(this.dataDirectory, account.id)
+    const profileDirectory = entry.profileDirectory
     const proxyResolution = resolveAccountProxyState(account)
     if (proxyResolution.status === 'invalid') {
       return Promise.resolve<BrowserProfileResult>({ status: 'error', profileDirectory, message: proxyResolution.message })
@@ -680,7 +738,7 @@ export class BrowserProfileManager {
         entry.pending = null
         pending.resolve({
           status: 'error',
-          profileDirectory: accountProfileDirectory(this.dataDirectory, accountId),
+          profileDirectory: entry.profileDirectory,
           message: 'Browser đã được đóng trước khi Session Engine hoàn tất.'
         })
       }
@@ -715,7 +773,7 @@ export class BrowserProfileManager {
     }
 
     if (isBrowserReadyMessage(message)) {
-      if (message.accountId === accountId) setManagedBrowserEndpoint(accountId, message.cdpEndpoint)
+      if (message.accountId === accountId) setManagedBrowserEndpoint(accountId, message.cdpEndpoint, entry.profileDirectory)
       return
     }
 
@@ -760,7 +818,7 @@ export class BrowserProfileManager {
     }
 
     if (!isSessionResultMessage(message) || message.accountId !== accountId) return
-    if (message.cdpEndpoint) setManagedBrowserEndpoint(accountId, message.cdpEndpoint)
+    if (message.cdpEndpoint) setManagedBrowserEndpoint(accountId, message.cdpEndpoint, entry.profileDirectory)
     this.onSessionResult?.(message)
 
     const pending = entry.pending
@@ -769,7 +827,7 @@ export class BrowserProfileManager {
     entry.pending = null
     pending.resolve({
       status: pending.openStatus,
-      profileDirectory: accountProfileDirectory(this.dataDirectory, accountId),
+      profileDirectory: entry.profileDirectory,
       sessionStatus: message.status,
       message: message.message
     })

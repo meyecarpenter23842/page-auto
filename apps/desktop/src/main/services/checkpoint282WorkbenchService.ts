@@ -1,7 +1,7 @@
-import { existsSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import type Database from 'better-sqlite3'
 import type { AccountRecord } from '../../shared/accounts'
+import type { BrowserSettings } from '../../shared/appSettings'
 import {
   assertValidFacebookCheckpoint282Preset,
   type FacebookCheckpoint282AccountPreflight,
@@ -18,7 +18,10 @@ import {
   type FacebookCheckpoint282ResolveDuplicateResult,
   type FacebookCheckpoint282VerificationPreflight
 } from '../../shared/checkpoint282Workbench'
-import { accountProfileDirectory } from '../browser/browserProfileManager'
+import {
+  FacebookProfileResolutionError,
+  inspectFacebookProfileDirectory
+} from '../browser/facebookProfileResolver'
 import {
   appendCheckpoint282History,
   checkpoint282CanonicalFolder,
@@ -29,6 +32,7 @@ import {
 } from '../browser/checkpoint282Assets'
 import { resolveAccountProxyState } from '../browser/proxyConfig'
 import { AccountRepository } from '../database/accountRepository'
+import { AppSettingsRepository } from '../database/appSettingsRepository'
 import { Checkpoint282PresetRepository } from '../database/checkpoint282PresetRepository'
 import { HotmailRepository, type EmailStateRecord } from '../database/hotmailRepository'
 
@@ -131,10 +135,24 @@ function missingVerificationPreflight(): FacebookCheckpoint282VerificationPrefli
 function accountRow(
   account: AccountRecord,
   dataDirectory: string,
+  browserSettings: BrowserSettings,
   preset: FacebookCheckpoint282Preset,
   emailState: EmailStateRecord | null
 ): FacebookCheckpoint282AccountPreflight {
-  const profileExists = existsSync(accountProfileDirectory(dataDirectory, account.id))
+  let profileExists = false
+  let strictProfileIssue: string | null = null
+  try {
+    const profile = inspectFacebookProfileDirectory(dataDirectory, account, browserSettings)
+    profileExists = profile.exists
+    if (profile.mode === 'external' && !profile.exists) {
+      strictProfileIssue = `Không tìm thấy Facebook profile Root\\${account.uid}; external mode không tạo/fallback profile.`
+    }
+  } catch (error) {
+    strictProfileIssue = error instanceof FacebookProfileResolutionError
+      ? error.message
+      : 'Không thể kiểm tra Facebook profile của account.'
+  }
+
   const hasCookie = Boolean(account.cookie?.trim())
   const hasPasswordFallback = Boolean(account.password?.trim())
   const hasTwoFactor = Boolean(account.twoFactorSecret?.trim())
@@ -153,7 +171,10 @@ function accountRow(
 
   const messages: string[] = []
   let sessionLevel: FacebookCheckpoint282PreflightLevel = 'ok'
-  if (!profileExists && !hasCookie && account.status !== 'valid') {
+  if (strictProfileIssue) {
+    sessionLevel = 'blocked'
+    messages.push(strictProfileIssue)
+  } else if (!profileExists && !hasCookie && account.status !== 'valid') {
     if (hasPasswordFallback) {
       sessionLevel = 'warning'
       messages.push('Không có session/cookie sẵn; Login Common sẽ cần password fallback.')
@@ -203,6 +224,7 @@ function assertAccount(accounts: AccountRepository, accountId: number): AccountR
 
 export class Checkpoint282WorkbenchService {
   private readonly accounts: AccountRepository
+  private readonly appSettings: AppSettingsRepository
   private readonly presets: Checkpoint282PresetRepository
   private readonly emailStates: HotmailRepository
 
@@ -211,6 +233,7 @@ export class Checkpoint282WorkbenchService {
     private readonly dataDirectory: string
   ) {
     this.accounts = new AccountRepository(database)
+    this.appSettings = new AppSettingsRepository(database)
     this.presets = new Checkpoint282PresetRepository(database)
     this.emailStates = new HotmailRepository(database)
   }
@@ -226,6 +249,7 @@ export class Checkpoint282WorkbenchService {
   preflight(input: FacebookCheckpoint282PreflightRequest): FacebookCheckpoint282PreflightResult {
     const preset = input.preset ?? this.presets.get()
     assertValidFacebookCheckpoint282Preset(preset)
+    const browserSettings = this.appSettings.get().browser
     const seen = new Set<number>()
     const rows: FacebookCheckpoint282AccountPreflight[] = []
 
@@ -255,7 +279,7 @@ export class Checkpoint282WorkbenchService {
         })
         continue
       }
-      rows.push(accountRow(account, this.dataDirectory, preset, this.emailStates.getEmailState(accountId)))
+      rows.push(accountRow(account, this.dataDirectory, browserSettings, preset, this.emailStates.getEmailState(accountId)))
     }
 
     return {

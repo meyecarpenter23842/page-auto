@@ -1,3 +1,5 @@
+import type { FacebookProfileErrorCode } from './facebookProfile'
+
 export const ACCOUNT_STATUSES = ['unknown', 'valid', 'needs_login', 'disabled'] as const
 export type AccountStatus = (typeof ACCOUNT_STATUSES)[number]
 
@@ -114,6 +116,7 @@ export interface AccountColumnLayout {
 
 export interface BrowserProfileResult {
   status: 'started' | 'already_open' | 'error'
+  code?: FacebookProfileErrorCode
   profileDirectory?: string
   sessionStatus?: AccountStatus
   message?: string

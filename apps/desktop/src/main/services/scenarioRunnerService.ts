@@ -10,7 +10,7 @@ import type {
   ScenarioRunnerStartPayload
 } from '../../shared/scenarioRunnerRuntime'
 import type { ScenarioActionRecord, ScenarioDetails } from '../../shared/scenarios'
-import { accountProfileDirectory } from '../browser/browserProfileManager'
+import { resolveFacebookProfileDirectory } from '../browser/facebookProfileResolver'
 import { BrowserWindowLayoutManager } from '../browser/browserWindowLayoutManager'
 import { resolveAccountProxyState } from '../browser/proxyConfig'
 import { ScenarioActionWorkerManager } from '../browser/scenarioActionWorkerManager'
@@ -392,8 +392,6 @@ export class ScenarioRunnerService {
         runtime.message = hadFailure ? 'Hoàn tất với lỗi action.' : 'Hoàn tất.'
       }
 
-      // Managed browser close is the lifecycle boundary. Always wait for it before
-      // account orchestration can advance, including checkpoint/needs_attention.
       await this.workers.closeAccount(account.id).catch(() => undefined)
       this.browserWindowLayout.release(account.id, 'scenario')
 
@@ -407,6 +405,7 @@ export class ScenarioRunnerService {
 
   private buildWorkerJob(account: AccountRecord, request: ActionRunRequest): ScenarioActionWorkerJob {
     const settings = this.getSettings()
+    const profileDirectory = resolveFacebookProfileDirectory(this.dataDirectory, account, settings.browser).profileDirectory
     const proxyResolution = resolveAccountProxyState(account)
     if (proxyResolution.status === 'invalid') throw new Error(proxyResolution.message)
     const proxy = proxyResolution.status === 'valid' ? proxyResolution.proxy : undefined
@@ -420,7 +419,7 @@ export class ScenarioRunnerService {
 
     return {
       accountId: account.id,
-      profileDirectory: accountProfileDirectory(this.dataDirectory, account.id),
+      profileDirectory,
       browser: { ...settings.browser },
       session: { ...settings.session },
       network: { ...settings.network },
