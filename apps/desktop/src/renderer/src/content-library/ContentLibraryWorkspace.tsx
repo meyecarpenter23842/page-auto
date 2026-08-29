@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   CONTENT_LIBRARY_IMAGE_MODES,
   CONTENT_LIBRARY_MISSING_POLICIES,
@@ -52,31 +52,39 @@ export function ContentLibraryWorkspace() {
   const [preview, setPreview] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const sourceLoadSequence = useRef(0)
 
   const load = useCallback(async (preferredSetId?: number | null, preferredItemId?: number | null) => {
-    const nextSets = await window.pageAuto.listContentLibraries()
-    setSets(nextSets)
-    const targetSetId = preferredSetId === undefined ? (selectedSetId ?? nextSets[0]?.id ?? null) : preferredSetId
-    setSelectedSetId(targetSetId)
-    if (targetSetId === null) {
-      setDetails(null)
-      setSelectedItemId(null)
-      setEditor(null)
-      return
+    const requestId = ++sourceLoadSequence.current
+    try {
+      const nextSets = await window.pageAuto.listContentLibraries()
+      if (requestId !== sourceLoadSequence.current) return
+      setSets(nextSets)
+      const targetSetId = preferredSetId === undefined ? (selectedSetId ?? nextSets[0]?.id ?? null) : preferredSetId
+      setSelectedSetId(targetSetId)
+      if (targetSetId === null) {
+        setDetails(null)
+        setSelectedItemId(null)
+        setEditor(null)
+        return
+      }
+      const nextDetails = await window.pageAuto.getContentLibrary({ id: targetSetId })
+      if (requestId !== sourceLoadSequence.current) return
+      setDetails(nextDetails)
+      if (!nextDetails) {
+        setSelectedItemId(null)
+        setEditor(null)
+        return
+      }
+      const targetItemId = preferredItemId === undefined ? selectedItemId : preferredItemId
+      const targetItem = targetItemId === null
+        ? null
+        : nextDetails.items.find((item) => item.id === targetItemId) ?? nextDetails.items[0] ?? null
+      setSelectedItemId(targetItem?.id ?? null)
+      setEditor(targetItem ? editorFromItem(targetItem) : null)
+    } catch (cause) {
+      if (requestId === sourceLoadSequence.current) throw cause
     }
-    const nextDetails = await window.pageAuto.getContentLibrary({ id: targetSetId })
-    setDetails(nextDetails)
-    if (!nextDetails) {
-      setSelectedItemId(null)
-      setEditor(null)
-      return
-    }
-    const targetItemId = preferredItemId === undefined ? selectedItemId : preferredItemId
-    const targetItem = targetItemId === null
-      ? null
-      : nextDetails.items.find((item) => item.id === targetItemId) ?? nextDetails.items[0] ?? null
-    setSelectedItemId(targetItem?.id ?? null)
-    setEditor(targetItem ? editorFromItem(targetItem) : null)
   }, [selectedItemId, selectedSetId])
 
   useEffect(() => {
@@ -109,6 +117,8 @@ export function ContentLibraryWorkspace() {
   }, [details, itemSearch])
 
   const chooseSet = async (id: number) => {
+    const requestId = ++sourceLoadSequence.current
+    setBusy(true)
     setSelectedSetId(id)
     setSelectedItemId(null)
     setEditor(null)
@@ -116,12 +126,15 @@ export function ContentLibraryWorkspace() {
     setError(null)
     try {
       const next = await window.pageAuto.getContentLibrary({ id })
+      if (requestId !== sourceLoadSequence.current) return
       setDetails(next)
       const first = next?.items[0] ?? null
       setSelectedItemId(first?.id ?? null)
       setEditor(first ? editorFromItem(first) : null)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      if (requestId === sourceLoadSequence.current) setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      if (requestId === sourceLoadSequence.current) setBusy(false)
     }
   }
 
@@ -260,7 +273,7 @@ export function ContentLibraryWorkspace() {
           <div className="content-library-heading"><div><p className="eyebrow">NGUỒN CHUNG</p><h2>Thư viện</h2></div><span>{sets.length}</span></div>
           <div className="content-library-toolbar"><label className="content-library-search"><span>⌕</span><input value={setSearch} onChange={(event) => setSetSearch(event.target.value)} placeholder="Tìm nguồn..." /></label><button className="content-library-button primary" type="button" disabled={busy} onClick={() => void createSet()}>+ Nguồn</button></div>
           <div className="content-library-source-list">
-            {filteredSets.map((item) => <button key={item.id} type="button" className={item.id === selectedSetId ? 'content-library-source active' : 'content-library-source'} onClick={() => void chooseSet(item.id)}><span className="content-library-source-icon">▤</span><span><strong>{item.name}</strong><small>{item.enabledCount}/{item.itemCount} bài bật</small></span></button>)}
+            {filteredSets.map((item) => <button key={item.id} type="button" disabled={busy} className={item.id === selectedSetId ? 'content-library-source active' : 'content-library-source'} onClick={() => void chooseSet(item.id)}><span className="content-library-source-icon">▤</span><span><strong>{item.name}</strong><small>{item.enabledCount}/{item.itemCount} bài bật</small></span></button>)}
             {!filteredSets.length ? <div className="content-library-empty">Chưa có nguồn bài viết.</div> : null}
           </div>
           {details ? <div className="content-library-source-actions"><button type="button" disabled={busy} onClick={() => void renameSet()}>Đổi tên</button><button className="danger" type="button" disabled={busy} onClick={() => void deleteSet()}>Xóa nguồn</button></div> : null}
