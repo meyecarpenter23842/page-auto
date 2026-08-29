@@ -84,14 +84,22 @@
   line-height: 1.4;
 }
 
-.import-preview-heading {
+.import-group-field {
+  width: 200px;
+}
+
+.import-mapping-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  margin-top: 7px;
-  padding-top: 7px;
-  border-top: 1px solid #e5e9ef;
+  min-height: 28px;
+}
+
+.import-preview-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   color: #344054;
   font-size: 10.5px;
 }
@@ -121,40 +129,44 @@
   font-size: 9.5px;
 }
 
+.import-preview-table th,
+.import-preview-table td {
+  width: 160px;
+  min-width: 160px;
+  max-width: 160px;
+}
+
 .import-preview-table th {
   position: sticky;
   top: 0;
   z-index: 2;
-  min-width: 135px;
-  max-width: 190px;
-  padding: 4px 6px;
-  color: #344054;
+  padding: 2px;
   background: #edf1f5;
   border-right: 1px solid #d6dde6;
   border-bottom: 1px solid #cbd4df;
   text-align: left;
-  white-space: nowrap;
 }
 
-.import-preview-table th:first-child {
-  left: 0;
-  z-index: 3;
-  min-width: 48px;
-  width: 48px;
+.import-preview-table th select {
+  width: 100%;
+  min-width: 0;
+  min-height: 28px;
+  padding: 3px 24px 3px 6px;
+  color: #182033;
+  background: #fff;
+  border: 1px solid #bfc9d6;
+  border-radius: 2px;
+  outline: none;
+  font-family: "Segoe UI", Arial, sans-serif;
+  font-size: 10px;
 }
 
-.import-preview-table th small {
-  display: block;
-  margin-top: 2px;
-  color: #667085;
-  font-family: inherit;
-  font-size: 8px;
-  font-weight: 500;
+.import-preview-table th select:focus {
+  border-color: #6f9ee8;
+  box-shadow: 0 0 0 1px rgba(23, 92, 211, 0.08);
 }
 
 .import-preview-table td {
-  min-width: 135px;
-  max-width: 190px;
   height: 24px;
   padding: 3px 6px;
   overflow: hidden;
@@ -164,17 +176,6 @@
   border-bottom: 1px solid #e8ecf1;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.import-preview-table .preview-line-number {
-  position: sticky;
-  left: 0;
-  z-index: 1;
-  min-width: 48px;
-  width: 48px;
-  color: #667085;
-  background: #f7f9fb;
-  text-align: center;
 }
 
 .import-preview-table .preview-cell-empty {
