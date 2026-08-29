@@ -40,6 +40,7 @@ export type FacebookCommonErrorCode =
   | 'profile_in_use'
   | 'browser_launch_failed'
   | 'page_navigation_failed'
+  | 'page_access_unavailable'
   | 'page_identity_unconfirmed'
   | 'unexpected_error'
 
@@ -154,7 +155,7 @@ function beforeRunIdentityFailure(message: string): FacebookCommonStepResult {
   }
 }
 
-function normalizePageIdentityFailure(result: {
+export function normalizePageIdentityFailure(result: {
   status: string
   code?: string
   message: string
@@ -163,6 +164,7 @@ function normalizePageIdentityFailure(result: {
     result.code === 'needs_login'
       || result.code === 'verification_required'
       || result.code === 'page_navigation_failed'
+      || result.code === 'page_access_unavailable'
       || result.code === 'page_identity_unconfirmed'
       ? result.code
       : 'page_identity_unconfirmed'
@@ -292,13 +294,18 @@ export class FacebookCommonRuntime {
       return { status: 'success', message: 'Page identity hiện tại đã đúng Page UID.' }
     }
 
+    this.request.diagnostic?.('state=page_identity switching')
     const identity = await new PageIdentitySwitcher(
       this.page,
       this.context,
       this.browser,
       this.request.network.networkTimeoutMs
     ).switchTo(this.request.pageUid)
-    if (identity.status !== 'success') return normalizePageIdentityFailure(identity)
+    if (identity.status !== 'success') {
+      const failure = normalizePageIdentityFailure(identity)
+      this.request.diagnostic?.(`state=page_identity failed code=${failure.code ?? 'unknown'}`)
+      return failure
+    }
     this.request.diagnostic?.('state=page_identity switched')
     return { status: 'success', message: identity.message }
   }

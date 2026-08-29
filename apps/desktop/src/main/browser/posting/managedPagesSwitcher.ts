@@ -3,17 +3,48 @@ import type { BrowserSettings } from '../../../shared/appSettings'
 import type { PostingJobResult } from '../../../shared/posting'
 import { activeFacebookProfileId, detectFacebookAccessBlock } from './pageState'
 
+export type ManagedPageTargetPresence = 'present' | 'not_listed' | 'unknown'
+
 export interface ManagedPagesSwitchAttempt {
   result: PostingJobResult | null
   diagnostic: string
+  targetPresence: ManagedPageTargetPresence
+}
+
+export interface ManagedPagesAbsenceEvidence {
+  surfaceRecognized: boolean
+  explicitEmptyState: boolean
+  atBottom: boolean
+  loading: boolean
+  stableBottomPasses: number
+  observedPageUidCount: number
 }
 
 const MANAGED_PAGES_URL = 'https://www.facebook.com/pages/?category=your_pages&ref=bookmarks'
+const MANAGED_PAGES_SURFACE_PATTERN = /pages you manage|your pages|trang bạn quản lý|các trang bạn quản lý|trang của bạn|halaman yang anda kelola|halaman anda/i
+const MANAGED_PAGES_EMPTY_PATTERN = /you don't have any pages|you have no pages|no pages to show|bạn chưa có trang|không có trang nào|anda tidak memiliki halaman|tidak ada halaman/i
 const SWITCH_ACTION_PATTERN = /switch now|switch into(?: this page)?|switch to(?: this page)?|chuyển ngay|chuyển sang(?: trang này)?|beralih sekarang|beralih ke(?: halaman ini)?|ganti sekarang|ganti ke(?: halaman ini)?/i
 const MORE_ACTIONS_PATTERN = /more|options|actions|menu|lainnya|opsi|selengkapnya|khác|thêm/i
 const POLL_MS = 200
+const ENUMERATION_SETTLE_MS = 300
+const REQUIRED_STABLE_BOTTOM_PASSES = 2
 
 type PostingCode = NonNullable<PostingJobResult['code']>
+
+interface ManagedPagesEnumerationProbe {
+  surfaceRecognized: boolean
+  explicitEmptyState: boolean
+  atBottom: boolean
+  loading: boolean
+  scrollHeight: number
+  observedPageUids: string[]
+}
+
+interface ManagedPagesTargetScan {
+  targetLink: Locator | null
+  targetPresence: ManagedPageTargetPresence
+  diagnostic: string
+}
 
 function failure(code: PostingCode, message: string): PostingJobResult {
   return {
@@ -83,55 +114,133 @@ async function identityMatches(
   return false
 }
 
-export function managedPageHrefMatchesUid(pageUid: string, rawHref: string): boolean {
-  const uid = pageUid.trim()
-  if (!uid || !/^\d+$/.test(uid)) return false
-
+export function managedPageUidFromHref(rawHref: string): string | null {
   try {
     const parsed = new URL(rawHref, 'https://www.facebook.com/')
     const host = parsed.hostname.toLowerCase()
-    if (host !== 'facebook.com' && !host.endsWith('.facebook.com')) return false
+    if (host !== 'facebook.com' && !host.endsWith('.facebook.com')) return null
 
     if (parsed.pathname.toLowerCase() === '/profile.php') {
-      return parsed.searchParams.get('id') === uid
+      const id = parsed.searchParams.get('id')?.trim() ?? ''
+      return /^\d+$/.test(id) ? id : null
     }
 
-    const segments = parsed.pathname.split('/').filter(Boolean)
-    return segments[0] === uid
+    const firstSegment = parsed.pathname.split('/').filter(Boolean)[0]?.trim() ?? ''
+    return /^\d+$/.test(firstSegment) ? firstSegment : null
   } catch {
-    return false
+    return null
   }
+}
+
+export function managedPageHrefMatchesUid(pageUid: string, rawHref: string): boolean {
+  const uid = pageUid.trim()
+  return Boolean(uid && /^\d+$/.test(uid) && managedPageUidFromHref(rawHref) === uid)
+}
+
+export function managedPagesAbsenceConfirmed(evidence: ManagedPagesAbsenceEvidence): boolean {
+  if (!evidence.surfaceRecognized || evidence.loading) return false
+  if (evidence.explicitEmptyState) return true
+  return evidence.atBottom
+    && evidence.stableBottomPasses >= REQUIRED_STABLE_BOTTOM_PASSES
+    && evidence.observedPageUidCount > 0
 }
 
 export function isManagedPagesSwitchLabel(value: string): boolean {
   return SWITCH_ACTION_PATTERN.test(value.replace(/\s+/g, ' ').trim())
 }
 
-async function findManagedPageLink(page: Page, pageUid: string, timeoutMs: number): Promise<Locator | null> {
+async function findManagedPageLinkOnce(page: Page, pageUid: string): Promise<Locator | null> {
   const uid = escapeCss(pageUid.trim())
-  const deadline = Date.now() + Math.max(1_000, timeoutMs)
+  const links = page.locator(`a[href*="${uid}"]`)
+  const count = await links.count().catch(() => 0)
+  let fallback: Locator | null = null
 
-  while (Date.now() < deadline) {
-    const links = page.locator(`a[href*="${uid}"]`)
-    const count = await links.count().catch(() => 0)
-    let fallback: Locator | null = null
+  for (let index = 0; index < count; index += 1) {
+    const link = links.nth(index)
+    if (!await link.isVisible().catch(() => false)) continue
+    const href = await link.getAttribute('href').catch(() => null)
+    if (!href || !managedPageHrefMatchesUid(pageUid, href)) continue
 
-    for (let index = 0; index < count; index += 1) {
-      const link = links.nth(index)
-      if (!await link.isVisible().catch(() => false)) continue
-      const href = await link.getAttribute('href').catch(() => null)
-      if (!href || !managedPageHrefMatchesUid(pageUid, href)) continue
-
-      const text = (await link.innerText().catch(() => '')).trim()
-      if (text) return link
-      fallback ??= link
-    }
-
-    if (fallback) return fallback
-    await page.waitForTimeout(POLL_MS).catch(() => undefined)
+    const text = (await link.innerText().catch(() => '')).trim()
+    if (text) return link
+    fallback ??= link
   }
 
-  return null
+  return fallback
+}
+
+async function probeManagedPagesEnumeration(page: Page): Promise<ManagedPagesEnumerationProbe> {
+  const main = page.locator('[role="main"], main').first()
+  const surfaceRecognized = await visibleCount(main.getByText(MANAGED_PAGES_SURFACE_PATTERN)) > 0
+  const explicitEmptyState = await visibleCount(main.getByText(MANAGED_PAGES_EMPTY_PATTERN)) > 0
+  const loading = await visibleCount(main.locator('[role="progressbar"], [aria-busy="true"]')) > 0
+  const hrefs = await main.locator('a[href]').evaluateAll((elements) => (
+    elements.map((element) => element.getAttribute('href')).filter((href): href is string => Boolean(href))
+  )).catch(() => [] as string[])
+  const observedPageUids = [...new Set(hrefs.map(managedPageUidFromHref).filter((uid): uid is string => Boolean(uid)))]
+  const metrics = await page.evaluate(() => {
+    const scrolling = document.scrollingElement ?? document.documentElement
+    const scrollHeight = Math.max(scrolling.scrollHeight, document.documentElement.scrollHeight, document.body?.scrollHeight ?? 0)
+    const viewportBottom = scrolling.scrollTop + window.innerHeight
+    return {
+      scrollHeight,
+      atBottom: viewportBottom >= scrollHeight - 8
+    }
+  }).catch(() => ({ scrollHeight: -1, atBottom: false }))
+
+  return {
+    surfaceRecognized,
+    explicitEmptyState,
+    loading,
+    scrollHeight: metrics.scrollHeight,
+    atBottom: metrics.atBottom,
+    observedPageUids
+  }
+}
+
+async function scanManagedPagesTarget(page: Page, pageUid: string, timeoutMs: number): Promise<ManagedPagesTargetScan> {
+  const deadline = Date.now() + Math.max(1_000, timeoutMs)
+  const observedPageUids = new Set<string>()
+  let surfaceRecognized = false
+  let explicitEmptyState = false
+  let stableBottomPasses = 0
+  let lastScrollHeight = -1
+
+  while (Date.now() <= deadline) {
+    const targetLink = await findManagedPageLinkOnce(page, pageUid)
+    if (targetLink) return { targetLink, targetPresence: 'present', diagnostic: 'uid-link-found' }
+
+    const probe = await probeManagedPagesEnumeration(page)
+    surfaceRecognized ||= probe.surfaceRecognized
+    explicitEmptyState ||= probe.explicitEmptyState
+    for (const uid of probe.observedPageUids) observedPageUids.add(uid)
+
+    const stableBottom = probe.atBottom
+      && !probe.loading
+      && probe.scrollHeight >= 0
+      && probe.scrollHeight === lastScrollHeight
+    stableBottomPasses = stableBottom ? stableBottomPasses + 1 : 0
+
+    if (managedPagesAbsenceConfirmed({
+      surfaceRecognized,
+      explicitEmptyState,
+      atBottom: probe.atBottom,
+      loading: probe.loading,
+      stableBottomPasses,
+      observedPageUidCount: observedPageUids.size
+    })) {
+      return { targetLink: null, targetPresence: 'not_listed', diagnostic: 'uid-not-listed-confirmed' }
+    }
+
+    lastScrollHeight = probe.scrollHeight
+    await page.evaluate(() => {
+      const scrolling = document.scrollingElement ?? document.documentElement
+      window.scrollTo(0, scrolling.scrollHeight)
+    }).catch(() => undefined)
+    await page.waitForTimeout(ENUMERATION_SETTLE_MS).catch(() => undefined)
+  }
+
+  return { targetLink: null, targetPresence: 'unknown', diagnostic: 'uid-link-missing-unconfirmed' }
 }
 
 async function findManagedPageCard(targetLink: Locator): Promise<Locator | null> {
@@ -208,43 +317,52 @@ export async function tryManagedPagesSwitch(
     })
     if (browser.pageSettleDelayMs > 0) await page.waitForTimeout(browser.pageSettleDelayMs)
   } catch {
-    return { result: null, diagnostic: 'navigation-failed' }
+    return { result: null, diagnostic: 'navigation-failed', targetPresence: 'unknown' }
   }
 
   const accessBlock = await blocked(page)
-  if (accessBlock) return { result: accessBlock, diagnostic: 'blocked' }
+  if (accessBlock) return { result: accessBlock, diagnostic: 'blocked', targetPresence: 'unknown' }
 
   if (await identityMatches(page, context, uid, 500)) {
     return {
       result: { status: 'success', message: 'Page identity đã active và khớp i_user trên Pages you manage.' },
-      diagnostic: 'already-active'
+      diagnostic: 'already-active',
+      targetPresence: 'present'
     }
   }
 
-  const targetLink = await findManagedPageLink(page, uid, networkTimeoutMs)
-  if (!targetLink) return { result: null, diagnostic: 'uid-link-missing' }
+  const targetScan = await scanManagedPagesTarget(page, uid, networkTimeoutMs)
+  if (!targetScan.targetLink) {
+    return {
+      result: null,
+      diagnostic: targetScan.diagnostic,
+      targetPresence: targetScan.targetPresence
+    }
+  }
+  const targetLink = targetScan.targetLink
 
   const card = await findManagedPageCard(targetLink)
-  if (!card) return { result: null, diagnostic: 'uid-card-missing' }
+  if (!card) return { result: null, diagnostic: 'uid-card-missing', targetPresence: 'present' }
 
   const actionRoot = await openManagedPageMenu(page, card, networkTimeoutMs)
-  if (!actionRoot) return { result: null, diagnostic: 'uid-card-menu-not-opened' }
+  if (!actionRoot) return { result: null, diagnostic: 'uid-card-menu-not-opened', targetPresence: 'present' }
 
   const switchAction = await findSwitchAction(actionRoot)
-  if (!switchAction) return { result: null, diagnostic: 'switch-action-missing' }
+  if (!switchAction) return { result: null, diagnostic: 'switch-action-missing', targetPresence: 'present' }
 
   if (!await clickWithDomFallback(switchAction, networkTimeoutMs)) {
-    return { result: null, diagnostic: 'switch-action-click-failed' }
+    return { result: null, diagnostic: 'switch-action-click-failed', targetPresence: 'present' }
   }
 
   if (await identityMatches(page, context, uid, networkTimeoutMs)) {
     return {
       result: { status: 'success', message: 'Đã switch đúng Page từ Pages you manage và xác minh i_user đúng Page UID.' },
-      diagnostic: 'success'
+      diagnostic: 'success',
+      targetPresence: 'present'
     }
   }
 
   const afterClickBlock = await blocked(page)
-  if (afterClickBlock) return { result: afterClickBlock, diagnostic: 'blocked-after-switch' }
-  return { result: null, diagnostic: 'switch-action-unconfirmed' }
+  if (afterClickBlock) return { result: afterClickBlock, diagnostic: 'blocked-after-switch', targetPresence: 'present' }
+  return { result: null, diagnostic: 'switch-action-unconfirmed', targetPresence: 'present' }
 }
