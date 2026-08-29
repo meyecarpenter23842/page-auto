@@ -2,6 +2,7 @@ import { applyK41ActionOverrides } from '../../../../shared/k41ActionOverrides'
 import { applyK42FriendActionOverrides } from '../../../../shared/k42FriendActionOverrides'
 import { applyK431JoinGroupActionOverrides } from '../../../../shared/k431JoinGroupActionOverrides'
 import { applyK432InviteFriendsGroupActionOverrides } from '../../../../shared/k432InviteFriendsGroupActionOverrides'
+import { applyK433GroupInteractionActionOverrides } from '../../../../shared/k433GroupInteractionActionOverrides'
 import { ActionExecutorRegistry } from '../../../services/actionRunner'
 import { ViewNewsfeedActionExecutor, type ViewNewsfeedDependencies } from './viewNewsfeedAction'
 import { ViewStoryActionExecutor, type ViewStoryDependencies } from './viewStoryAction'
@@ -18,6 +19,8 @@ import { JoinGroupActionExecutor } from './joinGroupAction'
 import type { JoinGroupActionDependencies } from './joinGroupActionSupport'
 import { InviteFriendsToGroupActionExecutor } from './inviteFriendsToGroupAction'
 import type { InviteFriendsToGroupActionDependencies } from './inviteFriendsToGroupActionSupport'
+import { GroupInteractionActionExecutor } from './groupInteractionAction'
+import type { GroupInteractionActionDependencies } from './groupInteractionActionSupport'
 
 export interface K41ViewActionDependencies {
   newsfeed: ViewNewsfeedDependencies
@@ -43,8 +46,13 @@ export interface K432InviteFriendsGroupActionDependencies {
   inviteFriendsToGroup: InviteFriendsToGroupActionDependencies
 }
 
+export interface K433GroupInteractionActionDependencies {
+  groupInteraction: GroupInteractionActionDependencies
+}
+
 export interface K43GroupActionDependencies extends K431JoinGroupActionDependencies {
   inviteFriendsToGroup?: InviteFriendsToGroupActionDependencies
+  groupInteraction?: GroupInteractionActionDependencies
 }
 
 export interface K4ActionDependencies {
@@ -87,6 +95,14 @@ export function registerK432InviteFriendsGroupActionExecutors(
   registry.register(new InviteFriendsToGroupActionExecutor(dependencies.inviteFriendsToGroup))
 }
 
+export function registerK433GroupInteractionActionExecutors(
+  registry: ActionExecutorRegistry,
+  dependencies: K433GroupInteractionActionDependencies
+): void {
+  applyK433GroupInteractionActionOverrides()
+  registry.register(new GroupInteractionActionExecutor(dependencies.groupInteraction))
+}
+
 export function createK41ActionExecutorRegistry(dependencies: K41ViewActionDependencies): ActionExecutorRegistry {
   const registry = new ActionExecutorRegistry()
   registerK41ViewActionExecutors(registry, dependencies)
@@ -115,6 +131,14 @@ export function createK432InviteFriendsGroupActionExecutorRegistry(
   return registry
 }
 
+export function createK433GroupInteractionActionExecutorRegistry(
+  dependencies: K433GroupInteractionActionDependencies
+): ActionExecutorRegistry {
+  const registry = new ActionExecutorRegistry()
+  registerK433GroupInteractionActionExecutors(registry, dependencies)
+  return registry
+}
+
 export function createK4ActionExecutorRegistry(dependencies: K4ActionDependencies): ActionExecutorRegistry {
   const registry = new ActionExecutorRegistry()
   registerK41ViewActionExecutors(registry, dependencies.view)
@@ -122,6 +146,9 @@ export function createK4ActionExecutorRegistry(dependencies: K4ActionDependencie
   registerK431JoinGroupActionExecutors(registry, dependencies.groups)
   registerK432InviteFriendsGroupActionExecutors(registry, {
     inviteFriendsToGroup: dependencies.groups.inviteFriendsToGroup ?? dependencies.groups.joinGroup
+  })
+  registerK433GroupInteractionActionExecutors(registry, {
+    groupInteraction: dependencies.groups.groupInteraction ?? dependencies.groups.joinGroup
   })
   return registry
 }
@@ -141,3 +168,5 @@ export * from './joinGroupActionSupport'
 export * from './joinGroupAction'
 export * from './inviteFriendsToGroupActionSupport'
 export * from './inviteFriendsToGroupAction'
+export * from './groupInteractionActionSupport'
+export * from './groupInteractionAction'

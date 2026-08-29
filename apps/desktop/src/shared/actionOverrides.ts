@@ -11,6 +11,11 @@ import {
   getK432FieldUiMeta,
   getK432ValidationErrors
 } from './k432InviteFriendsGroupActionOverrides'
+import {
+  applyK433GroupInteractionActionOverrides,
+  getK433FieldUiMeta,
+  getK433ValidationErrors
+} from './k433GroupInteractionActionOverrides'
 
 export interface ActionFieldUiMeta {
   section: string
@@ -25,10 +30,12 @@ export function applyActionOverrides(): void {
   applyK42FriendActionOverrides()
   applyK431JoinGroupActionOverrides()
   applyK432InviteFriendsGroupActionOverrides()
+  applyK433GroupInteractionActionOverrides()
 }
 
 export function getActionFieldUiMeta(actionType: string, fieldKey: string): ActionFieldUiMeta | undefined {
-  return getK432FieldUiMeta(actionType, fieldKey)
+  return getK433FieldUiMeta(actionType, fieldKey)
+    ?? getK432FieldUiMeta(actionType, fieldKey)
     ?? getK431FieldUiMeta(actionType, fieldKey)
     ?? getK42FieldUiMeta(actionType, fieldKey)
     ?? getK41FieldUiMeta(actionType, fieldKey)
@@ -39,6 +46,7 @@ export function getActionOverrideValidationErrors(actionType: string, config: Ac
     ...getK41ValidationErrors(actionType, config),
     ...getK42ValidationErrors(actionType, config),
     ...getK431ValidationErrors(actionType, config),
-    ...getK432ValidationErrors(actionType, config)
+    ...getK432ValidationErrors(actionType, config),
+    ...getK433ValidationErrors(actionType, config)
   ]
 }
