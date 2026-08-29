@@ -29,6 +29,15 @@ const SHARE_SELECTORS = [
   'div[role="button"]:has-text("Share")',
   'div[role="button"]:has-text("Chia sẻ")'
 ] as const
+const REACTION_CONFIG_KEYS = [
+  'reactionLike',
+  'reactionLove',
+  'reactionCare',
+  'reactionHaha',
+  'reactionWow',
+  'reactionSad',
+  'reactionAngry'
+] as const
 const REACTION_SELECTORS: Record<string, readonly string[]> = {
   like: LIKE_SELECTORS,
   love: ['[role="button"][aria-label="Love"]', '[role="button"][aria-label="Yêu thích"]'],
@@ -72,6 +81,10 @@ export function configuredGroupWhitelist(config: ActionConfig, key = 'groupWhite
 export function groupIdentityAllowed(identity: string | null, whitelist: readonly string[]): boolean {
   if (!whitelist.length) return true
   return identity !== null && whitelist.includes(identity.toLocaleLowerCase())
+}
+
+export function hasConfiguredGroupReaction(config: ActionConfig): boolean {
+  return REACTION_CONFIG_KEYS.some((key) => config[key] === true)
 }
 
 export function classifyGroupRestriction(text: string): GroupRestrictionCode | null {
@@ -133,9 +146,11 @@ export async function sortGroupFeedByRecent(page: Page): Promise<boolean> {
 }
 
 export async function reactToGroupArticle(page: Page, article: Locator, config: ActionConfig): Promise<boolean> {
+  if (!hasConfiguredGroupReaction(config)) return false
   const like = await firstVisible(article, LIKE_SELECTORS)
   if (!like) return false
-  const reaction = pickOne(selectedReactions(config)) ?? 'like'
+  const reaction = pickOne(selectedReactions(config))
+  if (!reaction) return false
   if (reaction === 'like') return like.click({ timeout: 5000 }).then(() => true).catch(() => false)
   if (!await like.hover({ timeout: 5000 }).then(() => true).catch(() => false)) return false
   const choice = await firstVisible(page, REACTION_SELECTORS[reaction] ?? LIKE_SELECTORS)
@@ -204,26 +219,30 @@ async function clickPostAndVerifyDialogClosed(page: Page, dialog: Locator, post:
   return dialog.waitFor({ state: 'hidden', timeout: 10_000 }).then(() => true).catch(() => false)
 }
 
+async function firstVisibleShareDestination(page: Page, labels: readonly string[]): Promise<Locator | null> {
+  for (const label of labels) {
+    const menuItem = page.getByRole('menuitem', { name: label, exact: true }).first()
+    if (await menuItem.isVisible().catch(() => false)) return menuItem
+    const button = page.getByRole('button', { name: label, exact: true }).first()
+    if (await button.isVisible().catch(() => false)) return button
+  }
+  return null
+}
+
 export async function shareGroupArticleToWall(page: Page, article: Locator): Promise<boolean> {
   if (!await openShareMenu(article)) return false
-  const shareNow = await firstVisible(page, [
-    '[role="menuitem"]:has-text("Share now")',
-    '[role="menuitem"]:has-text("Chia sẻ ngay")',
-    'div[role="button"]:has-text("Share now")',
-    'div[role="button"]:has-text("Chia sẻ ngay")'
-  ])
+  const shareNow = await firstVisibleShareDestination(page, ['Share now', 'Chia sẻ ngay'])
   if (shareNow) {
-    const clicked = await shareNow.click({ timeout: 5000 }).then(() => true).catch(() => false)
-    if (!clicked) await dismissShareSurface(page)
-    return clicked
+    if (!await shareNow.click({ timeout: 5000 }).then(() => true).catch(() => false)) {
+      await dismissShareSurface(page)
+      return false
+    }
+    const completed = await shareNow.waitFor({ state: 'hidden', timeout: 10_000 }).then(() => true).catch(() => false)
+    if (!completed) await dismissShareSurface(page)
+    return completed
   }
 
-  const shareFeed = await firstVisible(page, [
-    '[role="menuitem"]:has-text("Share to Feed")',
-    '[role="menuitem"]:has-text("Chia sẻ lên Bảng tin")',
-    'div[role="button"]:has-text("Share to Feed")',
-    'div[role="button"]:has-text("Chia sẻ lên Bảng tin")'
-  ])
+  const shareFeed = await firstVisibleShareDestination(page, ['Share to Feed', 'Chia sẻ lên Bảng tin'])
   if (!shareFeed || !await shareFeed.click({ timeout: 5000 }).then(() => true).catch(() => false)) {
     await dismissShareSurface(page)
     return false
@@ -245,12 +264,7 @@ export async function shareGroupArticleToWall(page: Page, article: Locator): Pro
 
 export async function shareGroupArticleToGroup(page: Page, article: Locator, target: string): Promise<boolean> {
   if (!await openShareMenu(article)) return false
-  const shareGroup = await firstVisible(page, [
-    '[role="menuitem"]:has-text("Share to a group")',
-    '[role="menuitem"]:has-text("Chia sẻ lên nhóm")',
-    'div[role="button"]:has-text("Share to a group")',
-    'div[role="button"]:has-text("Chia sẻ lên nhóm")'
-  ])
+  const shareGroup = await firstVisibleShareDestination(page, ['Share to a group', 'Chia sẻ lên nhóm'])
   if (!shareGroup || !await shareGroup.click({ timeout: 5000 }).then(() => true).catch(() => false)) {
     await dismissShareSurface(page)
     return false

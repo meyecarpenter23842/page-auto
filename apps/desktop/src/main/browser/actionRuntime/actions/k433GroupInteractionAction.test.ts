@@ -8,7 +8,8 @@ import {
 import {
   classifyGroupRestriction,
   configuredGroupWhitelist,
-  groupIdentityAllowed
+  groupIdentityAllowed,
+  hasConfiguredGroupReaction
 } from './groupInteractionActionSupport'
 
 describe('K4.3.3 group interaction executor', () => {
@@ -47,6 +48,20 @@ describe('K4.3.3 group interaction executor', () => {
     expect(groupIdentityAllowed('123', whitelist)).toBe(true)
     expect(groupIdentityAllowed('other', whitelist)).toBe(false)
     expect(groupIdentityAllowed(null, [])).toBe(true)
+  })
+
+  it('never treats the reaction enable flag itself as an implicit Like choice', () => {
+    expect(hasConfiguredGroupReaction({
+      reactionEnabled: true,
+      reactionLike: false,
+      reactionLove: false,
+      reactionCare: false,
+      reactionHaha: false,
+      reactionWow: false,
+      reactionSad: false,
+      reactionAngry: false
+    })).toBe(false)
+    expect(hasConfiguredGroupReaction({ reactionEnabled: true, reactionLove: true })).toBe(true)
   })
 
   it('classifies Facebook restriction messages without bypassing them', () => {
