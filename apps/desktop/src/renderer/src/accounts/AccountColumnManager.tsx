@@ -41,3 +41,4 @@ export function ColumnManager({ layout, onChange, onClose }: ColumnManagerProps)
     </div>
   )
 }
+export { ColumnManager as AccountColumnManager }
