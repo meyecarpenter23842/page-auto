@@ -152,8 +152,11 @@ export async function commentOnGroupArticle(
   if (!box) return false
   if (imagePath.trim()) {
     const articleInput = article.locator('input[type="file"][accept*="image" i]').first()
-    const input = await articleInput.count().catch(() => 0) ? articleInput : page.locator('input[type="file"][accept*="image" i]').first()
-    await input.setInputFiles(imagePath.trim()).catch(() => undefined)
+    const input = await articleInput.count().catch(() => 0)
+      ? articleInput
+      : page.locator('input[type="file"][accept*="image" i]').first()
+    if (!await input.count().catch(() => 0)) return false
+    if (!await input.setInputFiles(imagePath.trim()).then(() => true).catch(() => false)) return false
   }
   if (!await box.fill(text, { timeout: 5000 }).then(() => true).catch(() => false)) return false
   return box.press('Enter', { timeout: 5000 }).then(() => true).catch(() => false)
@@ -192,6 +195,15 @@ async function openShareMenu(article: Locator): Promise<boolean> {
   return Boolean(share && await share.click({ timeout: 5000 }).then(() => true).catch(() => false))
 }
 
+async function dismissShareSurface(page: Page): Promise<void> {
+  await page.keyboard.press('Escape').catch(() => undefined)
+}
+
+async function clickPostAndVerifyDialogClosed(page: Page, dialog: Locator, post: Locator): Promise<boolean> {
+  if (!await post.click({ timeout: 5000 }).then(() => true).catch(() => false)) return false
+  return dialog.waitFor({ state: 'hidden', timeout: 10_000 }).then(() => true).catch(() => false)
+}
+
 export async function shareGroupArticleToWall(page: Page, article: Locator): Promise<boolean> {
   if (!await openShareMenu(article)) return false
   const shareNow = await firstVisible(page, [
@@ -200,7 +212,11 @@ export async function shareGroupArticleToWall(page: Page, article: Locator): Pro
     'div[role="button"]:has-text("Share now")',
     'div[role="button"]:has-text("Chia sẻ ngay")'
   ])
-  if (shareNow) return shareNow.click({ timeout: 5000 }).then(() => true).catch(() => false)
+  if (shareNow) {
+    const clicked = await shareNow.click({ timeout: 5000 }).then(() => true).catch(() => false)
+    if (!clicked) await dismissShareSurface(page)
+    return clicked
+  }
 
   const shareFeed = await firstVisible(page, [
     '[role="menuitem"]:has-text("Share to Feed")',
@@ -208,12 +224,23 @@ export async function shareGroupArticleToWall(page: Page, article: Locator): Pro
     'div[role="button"]:has-text("Share to Feed")',
     'div[role="button"]:has-text("Chia sẻ lên Bảng tin")'
   ])
-  if (!shareFeed || !await shareFeed.click({ timeout: 5000 }).then(() => true).catch(() => false)) return false
-  const post = await firstVisible(page, [
-    '[role="dialog"] [role="button"]:has-text("Post")',
-    '[role="dialog"] [role="button"]:has-text("Đăng")'
+  if (!shareFeed || !await shareFeed.click({ timeout: 5000 }).then(() => true).catch(() => false)) {
+    await dismissShareSurface(page)
+    return false
+  }
+
+  const dialog = page.locator('[role="dialog"]').last()
+  const post = await firstVisible(dialog, [
+    '[role="button"]:has-text("Post")',
+    '[role="button"]:has-text("Đăng")'
   ])
-  return post ? post.click({ timeout: 5000 }).then(() => true).catch(() => false) : false
+  if (!post) {
+    await dismissShareSurface(page)
+    return false
+  }
+  const completed = await clickPostAndVerifyDialogClosed(page, dialog, post)
+  if (!completed) await dismissShareSurface(page)
+  return completed
 }
 
 export async function shareGroupArticleToGroup(page: Page, article: Locator, target: string): Promise<boolean> {
@@ -224,13 +251,19 @@ export async function shareGroupArticleToGroup(page: Page, article: Locator, tar
     'div[role="button"]:has-text("Share to a group")',
     'div[role="button"]:has-text("Chia sẻ lên nhóm")'
   ])
-  if (!shareGroup || !await shareGroup.click({ timeout: 5000 }).then(() => true).catch(() => false)) return false
+  if (!shareGroup || !await shareGroup.click({ timeout: 5000 }).then(() => true).catch(() => false)) {
+    await dismissShareSurface(page)
+    return false
+  }
 
   const dialog = page.locator('[role="dialog"]').last()
   const identity = normalizeConfiguredGroup(target)
   const groupLink = identity ? dialog.locator(`a[href*="/groups/${identity}"]`).first() : dialog.locator('a[href*="/groups/"]').first()
   if (await groupLink.isVisible().catch(() => false)) {
-    await groupLink.click({ timeout: 5000 }).catch(() => undefined)
+    if (!await groupLink.click({ timeout: 5000 }).then(() => true).catch(() => false)) {
+      await dismissShareSurface(page)
+      return false
+    }
   } else {
     const search = await firstVisible(dialog, [
       'input[placeholder*="Search" i]',
@@ -238,17 +271,29 @@ export async function shareGroupArticleToGroup(page: Page, article: Locator, tar
       '[role="textbox"][aria-label*="Search" i]',
       '[role="textbox"][aria-label*="Tìm kiếm" i]'
     ])
-    if (!search || !await search.fill(target, { timeout: 5000 }).then(() => true).catch(() => false)) return false
+    if (!search || !await search.fill(target, { timeout: 5000 }).then(() => true).catch(() => false)) {
+      await dismissShareSurface(page)
+      return false
+    }
     const candidate = identity ? dialog.locator(`a[href*="/groups/${identity}"]`).first() : dialog.locator('a[href*="/groups/"]').first()
-    if (!await candidate.isVisible().catch(() => false)) return false
-    await candidate.click({ timeout: 5000 }).catch(() => undefined)
+    if (!await candidate.isVisible().catch(() => false)
+      || !await candidate.click({ timeout: 5000 }).then(() => true).catch(() => false)) {
+      await dismissShareSurface(page)
+      return false
+    }
   }
 
-  const post = await firstVisible(page, [
-    '[role="dialog"] [role="button"]:has-text("Post")',
-    '[role="dialog"] [role="button"]:has-text("Đăng")'
+  const post = await firstVisible(dialog, [
+    '[role="button"]:has-text("Post")',
+    '[role="button"]:has-text("Đăng")'
   ])
-  return post ? post.click({ timeout: 5000 }).then(() => true).catch(() => false) : false
+  if (!post) {
+    await dismissShareSurface(page)
+    return false
+  }
+  const completed = await clickPostAndVerifyDialogClosed(page, dialog, post)
+  if (!completed) await dismissShareSurface(page)
+  return completed
 }
 
 export async function leaveCurrentGroup(page: Page): Promise<boolean> {

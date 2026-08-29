@@ -41,7 +41,7 @@ const REACTION_ICONS: Record<string, string> = {
 }
 
 function isReactionField(field: ActionConfigFieldDefinition): boolean {
-  return field.kind === 'boolean' && field.key.startsWith('reaction')
+  return field.kind === 'boolean' && Object.prototype.hasOwnProperty.call(REACTION_ICONS, field.key)
 }
 
 function getRangePartnerKey(key: string): string | null {
