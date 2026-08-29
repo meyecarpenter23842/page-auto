@@ -273,6 +273,9 @@ async function inviteWithCheckboxes(
   }
 
   const submit = await firstVisible(dialog, SUBMIT_INVITES_SELECTORS)
+  if (context.control.isStopped()) {
+    return { invited: 0, unverified: 0, candidates: selection.candidates, exhausted: false }
+  }
   if (!submit || !await submit.click({ timeout: 5000 }).then(() => true).catch(() => false)) {
     return { invited: 0, unverified: selection.selected, candidates: selection.candidates, exhausted: false }
   }
