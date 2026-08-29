@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cloneDefaultAppSettings } from '../../shared/appSettings'
+import { cloneDefaultAppSettings, type BrowserSettings } from '../../shared/appSettings'
 import {
   pageWallPostTaskFromBase,
   type FacebookPostTaskJobRequest,
@@ -29,7 +29,15 @@ function setupAccount() {
     password: 'canonical-password',
     cookie: 'c_user=10001; xs=canonical'
   })
-  return { directory, runtime, accounts, account }
+  return { directory, runtime, accounts, account, profileRoot: join(directory, 'facebook-profiles') }
+}
+
+function profileBrowserSettings(profileRoot: string): BrowserSettings {
+  return {
+    ...cloneDefaultAppSettings().browser,
+    profileStorageMode: 'external',
+    externalProfileRoot: profileRoot
+  }
 }
 
 function wallJob(accountId: number): ReturnType<typeof pageWallPostTaskFromBase> {
@@ -63,8 +71,8 @@ function wallJob(accountId: number): ReturnType<typeof pageWallPostTaskFromBase>
 
 describe('PostingService Facebook task entrypoint', () => {
   it('rebuilds canonical account/session/runtime material before dispatching a Page Wall task', async () => {
-    const { directory, runtime, accounts, account } = setupAccount()
-    const service = new PostingService(runtime.client, directory)
+    const { directory, runtime, accounts, account, profileRoot } = setupAccount()
+    const service = new PostingService(runtime.client, directory, () => profileBrowserSettings(profileRoot))
     const runTask = vi.fn(async (_job: FacebookPostTaskJobRequest): Promise<PostingJobResult> => ({
       status: 'success',
       message: 'published',
@@ -79,7 +87,7 @@ describe('PostingService Facebook task entrypoint', () => {
 
     expect(runTask).toHaveBeenCalledTimes(1)
     const dispatched = runTask.mock.calls[0]![0]
-    expect(dispatched.profileDirectory).toBe(join(directory, 'browser-profiles', `account-${account.id}`))
+    expect(dispatched.profileDirectory).toBe(join(profileRoot, account.uid))
     expect(dispatched.sessionAccount).toMatchObject({
       id: account.id,
       uid: account.uid,
@@ -100,8 +108,8 @@ describe('PostingService Facebook task entrypoint', () => {
   })
 
   it('builds a page_wall_post task from the secret-free one-shot input', async () => {
-    const { directory, runtime, account } = setupAccount()
-    const service = new PostingService(runtime.client, directory)
+    const { directory, runtime, account, profileRoot } = setupAccount()
+    const service = new PostingService(runtime.client, directory, () => profileBrowserSettings(profileRoot))
     const runTask = vi.fn(async (_job: FacebookPostTaskJobRequest): Promise<PostingJobResult> => ({
       status: 'success',
       message: 'published'
@@ -120,6 +128,7 @@ describe('PostingService Facebook task entrypoint', () => {
 
     expect(result.status).toBe('success')
     const dispatched = runTask.mock.calls[0]![0]
+    expect(dispatched.profileDirectory).toBe(join(profileRoot, account.uid))
     expect(dispatched.task).toEqual({
       type: 'page_wall_post',
       target: { kind: 'page_wall', pageUid: '90001' }
@@ -141,7 +150,8 @@ describe('PostingService Facebook task entrypoint', () => {
     const runtime = initializeDatabase(join(directory, 'page-auto.sqlite'))
     const accounts = new AccountRepository(runtime.client)
     const account = accounts.create({ uid: '10002', proxy: 'missing-port' })
-    const service = new PostingService(runtime.client, directory)
+    const profileRoot = join(directory, 'facebook-profiles')
+    const service = new PostingService(runtime.client, directory, () => profileBrowserSettings(profileRoot))
     const runTask = vi.fn()
     Object.defineProperty(service, 'workers', {
       value: { runTask, closeAll: vi.fn() },
