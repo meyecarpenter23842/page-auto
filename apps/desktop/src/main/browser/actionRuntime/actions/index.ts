@@ -3,6 +3,7 @@ import { applyK42FriendActionOverrides } from '../../../../shared/k42FriendActio
 import { applyK431JoinGroupActionOverrides } from '../../../../shared/k431JoinGroupActionOverrides'
 import { applyK432InviteFriendsGroupActionOverrides } from '../../../../shared/k432InviteFriendsGroupActionOverrides'
 import { applyK433GroupInteractionActionOverrides } from '../../../../shared/k433GroupInteractionActionOverrides'
+import { applyK434LeaveGroupActionOverrides } from '../../../../shared/k434LeaveGroupActionOverrides'
 import { ActionExecutorRegistry } from '../../../services/actionRunner'
 import { ViewNewsfeedActionExecutor, type ViewNewsfeedDependencies } from './viewNewsfeedAction'
 import { ViewStoryActionExecutor, type ViewStoryDependencies } from './viewStoryAction'
@@ -21,6 +22,7 @@ import { InviteFriendsToGroupActionExecutor } from './inviteFriendsToGroupAction
 import type { InviteFriendsToGroupActionDependencies } from './inviteFriendsToGroupActionSupport'
 import { GroupInteractionActionExecutor } from './groupInteractionAction'
 import type { GroupInteractionActionDependencies } from './groupInteractionActionSupport'
+import { LeaveGroupActionExecutor, type LeaveGroupActionDependencies } from './leaveGroupAction'
 
 export interface K41ViewActionDependencies {
   newsfeed: ViewNewsfeedDependencies
@@ -50,9 +52,14 @@ export interface K433GroupInteractionActionDependencies {
   groupInteraction: GroupInteractionActionDependencies
 }
 
+export interface K434LeaveGroupActionDependencies {
+  leaveGroup: LeaveGroupActionDependencies
+}
+
 export interface K43GroupActionDependencies extends K431JoinGroupActionDependencies {
   inviteFriendsToGroup?: InviteFriendsToGroupActionDependencies
   groupInteraction?: GroupInteractionActionDependencies
+  leaveGroup?: LeaveGroupActionDependencies
 }
 
 export interface K4ActionDependencies {
@@ -103,6 +110,14 @@ export function registerK433GroupInteractionActionExecutors(
   registry.register(new GroupInteractionActionExecutor(dependencies.groupInteraction))
 }
 
+export function registerK434LeaveGroupActionExecutors(
+  registry: ActionExecutorRegistry,
+  dependencies: K434LeaveGroupActionDependencies
+): void {
+  applyK434LeaveGroupActionOverrides()
+  registry.register(new LeaveGroupActionExecutor(dependencies.leaveGroup))
+}
+
 export function createK41ActionExecutorRegistry(dependencies: K41ViewActionDependencies): ActionExecutorRegistry {
   const registry = new ActionExecutorRegistry()
   registerK41ViewActionExecutors(registry, dependencies)
@@ -139,6 +154,14 @@ export function createK433GroupInteractionActionExecutorRegistry(
   return registry
 }
 
+export function createK434LeaveGroupActionExecutorRegistry(
+  dependencies: K434LeaveGroupActionDependencies
+): ActionExecutorRegistry {
+  const registry = new ActionExecutorRegistry()
+  registerK434LeaveGroupActionExecutors(registry, dependencies)
+  return registry
+}
+
 export function createK4ActionExecutorRegistry(dependencies: K4ActionDependencies): ActionExecutorRegistry {
   const registry = new ActionExecutorRegistry()
   registerK41ViewActionExecutors(registry, dependencies.view)
@@ -149,6 +172,9 @@ export function createK4ActionExecutorRegistry(dependencies: K4ActionDependencie
   })
   registerK433GroupInteractionActionExecutors(registry, {
     groupInteraction: dependencies.groups.groupInteraction ?? dependencies.groups.joinGroup
+  })
+  registerK434LeaveGroupActionExecutors(registry, {
+    leaveGroup: dependencies.groups.leaveGroup ?? dependencies.groups.groupInteraction ?? dependencies.groups.joinGroup
   })
   return registry
 }
@@ -170,3 +196,4 @@ export * from './inviteFriendsToGroupActionSupport'
 export * from './inviteFriendsToGroupAction'
 export * from './groupInteractionActionSupport'
 export * from './groupInteractionAction'
+export * from './leaveGroupAction'
