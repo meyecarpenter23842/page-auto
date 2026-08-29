@@ -13,7 +13,13 @@ Phase 9 completes the current MVP baseline:
 - Recovery, execution logs, bounded retry and screenshot evidence are persisted locally.
 - Windows distribution is a **portable folder + ZIP** with `PageAuto.exe`; there is no Setup/NSIS installer in the MVP.
 
-See [`PROJECT_PLAN.md`](./PROJECT_PLAN.md) for the accepted architecture and implementation order.
+Before changing architecture/data ownership, read these canonical entrypoints in order:
+
+1. [`PROJECT_PRINCIPLES.md`](./PROJECT_PRINCIPLES.md) — project-wide invariants and explicit supersedence decisions.
+2. [`PROJECT_PLAN.md`](./PROJECT_PLAN.md) — accepted implementation baseline/order.
+3. [`ARCHITECTURE.md`](./ARCHITECTURE.md) — source/runtime ownership boundaries.
+
+For the post/content data model specifically, **Issue #188 + `PROJECT_PRINCIPLES.md` supersede older `content_sets/content_items` / `contentSetId` wording** still present in transitional K4.5.1/K4.5.2 documentation. Those references describe legacy/compatibility source until the #188 migration is implemented; they must not be treated as the target architecture.
 
 ## Development
 
