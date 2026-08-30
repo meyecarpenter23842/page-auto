@@ -31,6 +31,16 @@ import {
   type CreateAccountGroupInput,
   type RenameAccountGroupInput
 } from '../shared/accountGroups'
+import {
+  AI_AGENT_IPC,
+  type AiAgentCatalogView,
+  type AiAgentEnabledPayload,
+  type AiAgentIdPayload,
+  type AiAgentImportResult,
+  type GenerateAiPostsInput,
+  type GenerateAiPostsResult,
+  type SaveGeminiApiKeyInput
+} from '../shared/aiAgents'
 import type { AppSettings, AppSettingsPatch } from '../shared/appSettings'
 import type { BrowserExecutableResult, BrowserTestRequest, BrowserTestResult } from '../shared/browserSettings'
 import type { BrowserDisplayInfo, BrowserRetileResult, BrowserWindowLayoutSettings } from '../shared/browserWindowLayout'
@@ -122,6 +132,14 @@ const api = {
   renameAccountGroup: (input: RenameAccountGroupInput): Promise<AccountGroupRecord> => ipcRenderer.invoke(ACCOUNT_GROUP_IPC.rename, input) as Promise<AccountGroupRecord>,
   deleteAccountGroup: (payload: AccountGroupIdPayload): Promise<boolean> => ipcRenderer.invoke(ACCOUNT_GROUP_IPC.delete, payload) as Promise<boolean>,
   assignAccountsToGroup: (input: AssignAccountsToGroupInput): Promise<number> => ipcRenderer.invoke(ACCOUNT_GROUP_IPC.assign, input) as Promise<number>,
+  getAiAgentCatalog: (): Promise<AiAgentCatalogView> => ipcRenderer.invoke(AI_AGENT_IPC.catalog) as Promise<AiAgentCatalogView>,
+  importAiAgentJson: (): Promise<AiAgentImportResult | null> => ipcRenderer.invoke(AI_AGENT_IPC.importJson) as Promise<AiAgentImportResult | null>,
+  setAiAgentEnabled: (payload: AiAgentEnabledPayload): Promise<AiAgentCatalogView> => ipcRenderer.invoke(AI_AGENT_IPC.setEnabled, payload) as Promise<AiAgentCatalogView>,
+  setDefaultAiAgent: (payload: AiAgentIdPayload): Promise<AiAgentCatalogView> => ipcRenderer.invoke(AI_AGENT_IPC.setDefault, payload) as Promise<AiAgentCatalogView>,
+  deleteAiAgent: (payload: AiAgentIdPayload): Promise<AiAgentCatalogView> => ipcRenderer.invoke(AI_AGENT_IPC.delete, payload) as Promise<AiAgentCatalogView>,
+  saveGeminiApiKey: (input: SaveGeminiApiKeyInput): Promise<AiAgentCatalogView> => ipcRenderer.invoke(AI_AGENT_IPC.saveGeminiApiKey, input) as Promise<AiAgentCatalogView>,
+  clearGeminiApiKey: (): Promise<AiAgentCatalogView> => ipcRenderer.invoke(AI_AGENT_IPC.clearGeminiApiKey) as Promise<AiAgentCatalogView>,
+  generateAiPosts: (input: GenerateAiPostsInput): Promise<GenerateAiPostsResult> => ipcRenderer.invoke(AI_AGENT_IPC.generatePosts, input) as Promise<GenerateAiPostsResult>,
   listContentLibraries: (): Promise<ContentLibrarySetSummary[]> => ipcRenderer.invoke(CONTENT_LIBRARY_IPC.list) as Promise<ContentLibrarySetSummary[]>,
   getContentLibrary: (payload: ContentLibrarySetIdPayload): Promise<ContentLibrarySetDetails | null> => ipcRenderer.invoke(CONTENT_LIBRARY_IPC.get, payload) as Promise<ContentLibrarySetDetails | null>,
   createContentLibrary: (input: CreateContentLibrarySetInput): Promise<ContentLibrarySetDetails> => ipcRenderer.invoke(CONTENT_LIBRARY_IPC.createSet, input) as Promise<ContentLibrarySetDetails>,
