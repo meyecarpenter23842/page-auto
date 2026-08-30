@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState, type ChangeEvent } from 'react'
 import { AI_POST_DELIMITER, parseAiPostOutput } from './aiPostOutputFormat'
+import { AiDraftResultsPanel } from './AiDraftResultsPanel'
 import './aiContentWorkspace.css'
 import './aiContentWorkspaceModes.css'
 
@@ -214,33 +215,13 @@ export function AiContentWorkspace() {
 
           <div className="ai-compose-footer">
             <span className={missingInput ? 'ai-form-hint' : 'ai-form-hint ready'}>{missingInput ?? `Đã đủ thông tin để ${action === 'create' ? 'tạo' : 'random'} bài.`}</span>
-            <button className="ai-generate-button" type="button" disabled={Boolean(missingInput)} title={missingInput ?? undefined}>
+            <button className="ai-generate-button" type="button" disabled={Boolean(missingInput)} title={missingInput ?? 'Provider thật sẽ được nối sau khi audit Agent JSON export.'}>
               <span aria-hidden="true">✦</span> {actionVerb} {postCount} bài
             </button>
           </div>
         </aside>
 
-        <section className="ai-preview-panel">
-          <div className="ai-preview-header">
-            <div>
-              <p>KẾT QUẢ</p>
-              <h2>Bài viết xem trước</h2>
-              <span className="ai-output-contract">Chuẩn đầu ra: Bài 1 <code>{AI_POST_DELIMITER}</code> Bài 2 <code>{AI_POST_DELIMITER}</code> ...</span>
-            </div>
-            <div className="ai-preview-actions"><span className="ai-result-count">0 bài</span><button type="button" disabled>Lưu bài đã chọn</button></div>
-          </div>
-
-          <div className="ai-preview-canvas">
-            <div className="ai-preview-empty">
-              <div className="ai-preview-empty-icon" aria-hidden="true">✦</div>
-              <strong>{action === 'create' ? 'Kết quả tạo mới sẽ nằm ở đây' : 'Kết quả Random sẽ nằm ở đây'}</strong>
-              <p>{action === 'create'
-                ? 'Nhập thông tin gốc ở bên trái. AI phải trả đúng số lượng đã chọn; mỗi bài được phân cách bằng dấu | trước khi đưa vào Thư viện.'
-                : 'Dán nội dung nguồn ở bên trái. AI sẽ tạo đúng số lượng biến thể đã chọn và vẫn dùng cùng chuẩn phân cách | của Thư viện.'}</p>
-              <div className="ai-preview-empty-notes"><span>✓ Không tự lưu</span><span>✓ Đúng số lượng</span><span>✓ Chuẩn bài | bài</span></div>
-            </div>
-          </div>
-        </section>
+        <AiDraftResultsPanel expectedCount={postCount} actionLabel={actionVerb} />
       </div>
 
       {agentManagerOpen ? (

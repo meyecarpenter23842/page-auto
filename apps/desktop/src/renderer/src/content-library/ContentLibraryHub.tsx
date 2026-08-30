@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { AiContentWorkspace } from './AiContentWorkspace'
+import { CONTENT_LIBRARY_EXTERNAL_CHANGE_EVENT } from './aiDraftResults'
 import { ContentLibraryWorkspace } from './ContentLibraryWorkspace'
 import './contentLibraryHub.css'
 
@@ -7,6 +8,22 @@ type ContentLibraryTab = 'library' | 'ai'
 
 export function ContentLibraryHub() {
   const [activeTab, setActiveTab] = useState<ContentLibraryTab>('library')
+  const [libraryRevision, setLibraryRevision] = useState(0)
+  const [libraryStale, setLibraryStale] = useState(false)
+
+  useEffect(() => {
+    const markLibraryStale = () => setLibraryStale(true)
+    window.addEventListener(CONTENT_LIBRARY_EXTERNAL_CHANGE_EVENT, markLibraryStale)
+    return () => window.removeEventListener(CONTENT_LIBRARY_EXTERNAL_CHANGE_EVENT, markLibraryStale)
+  }, [])
+
+  const activateLibrary = () => {
+    if (libraryStale) {
+      setLibraryRevision((current) => current + 1)
+      setLibraryStale(false)
+    }
+    setActiveTab('library')
+  }
 
   return (
     <section className="content-library-hub" aria-label="Bài viết">
@@ -18,10 +35,10 @@ export function ContentLibraryHub() {
           role="tab"
           aria-controls="content-library-panel-library"
           aria-selected={activeTab === 'library'}
-          onClick={() => setActiveTab('library')}
+          onClick={activateLibrary}
         >
           <span aria-hidden="true">▤</span>
-          Thư viện
+          Thư viện{libraryStale ? ' · Mới' : ''}
         </button>
         <button
           id="content-library-tab-ai"
@@ -44,7 +61,7 @@ export function ContentLibraryHub() {
           aria-labelledby="content-library-tab-library"
           hidden={activeTab !== 'library'}
         >
-          <ContentLibraryWorkspace />
+          <ContentLibraryWorkspace key={libraryRevision} />
         </div>
         <div
           id="content-library-panel-ai"
