@@ -4,6 +4,7 @@ import { registerAccountGroupIpcHandlers, type AccountGroupIpcRuntime } from './
 import { registerAiAgentIpcHandlers, type AiAgentIpcRuntime } from './aiAgentIpc'
 import { registerCheckpoint282WorkbenchIpcHandlers, type Checkpoint282WorkbenchIpcRuntime } from './checkpoint282WorkbenchIpc'
 import { registerContentLibraryIpcHandlers, type ContentLibraryIpcRuntime } from './contentLibraryIpc'
+import { registerCopyPostIpcHandlers, type CopyPostIpcRuntime } from './copyPostIpc'
 import { initializeDatabase, type DatabaseRuntime } from './database'
 import { registerHotmailIpcHandlers, type HotmailIpcRuntime } from './hotmailIpc'
 import { registerIpcHandlers, type IpcRuntime } from './ipc'
@@ -20,6 +21,7 @@ let accountGroupIpcRuntime: AccountGroupIpcRuntime | null = null
 let aiAgentIpcRuntime: AiAgentIpcRuntime | null = null
 let checkpoint282WorkbenchIpcRuntime: Checkpoint282WorkbenchIpcRuntime | null = null
 let contentLibraryIpcRuntime: ContentLibraryIpcRuntime | null = null
+let copyPostIpcRuntime: CopyPostIpcRuntime | null = null
 let hotmailIpcRuntime: HotmailIpcRuntime | null = null
 let postLibraryIpcRuntime: PostLibraryIpcRuntime | null = null
 let scenarioIpcRuntime: ScenarioIpcRuntime | null = null
@@ -77,6 +79,7 @@ app.whenReady().then(() => {
     accountGroupIpcRuntime = registerAccountGroupIpcHandlers(databaseRuntime.client)
     aiAgentIpcRuntime = registerAiAgentIpcHandlers(databaseRuntime.client)
     contentLibraryIpcRuntime = registerContentLibraryIpcHandlers(databaseRuntime.client)
+    copyPostIpcRuntime = registerCopyPostIpcHandlers(databaseRuntime.client)
     checkpoint282WorkbenchIpcRuntime = registerCheckpoint282WorkbenchIpcHandlers({ database: databaseRuntime.client, dataDirectory })
     hotmailIpcRuntime = registerHotmailIpcHandlers(databaseRuntime.client)
     postLibraryIpcRuntime = registerPostLibraryIpcHandlers(databaseRuntime.client)
@@ -98,6 +101,8 @@ app.whenReady().then(() => {
     scenarioIpcRuntime = null
     checkpoint282WorkbenchIpcRuntime?.dispose()
     checkpoint282WorkbenchIpcRuntime = null
+    copyPostIpcRuntime?.dispose()
+    copyPostIpcRuntime = null
     contentLibraryIpcRuntime?.dispose()
     contentLibraryIpcRuntime = null
     aiAgentIpcRuntime?.dispose()
@@ -127,6 +132,8 @@ app.on('before-quit', () => {
   scenarioIpcRuntime = null
   checkpoint282WorkbenchIpcRuntime?.dispose()
   checkpoint282WorkbenchIpcRuntime = null
+  copyPostIpcRuntime?.dispose()
+  copyPostIpcRuntime = null
   contentLibraryIpcRuntime?.dispose()
   contentLibraryIpcRuntime = null
   aiAgentIpcRuntime?.dispose()

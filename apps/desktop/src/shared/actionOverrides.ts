@@ -7,6 +7,11 @@ import { applyK433GroupInteractionActionOverrides, getK433FieldUiMeta, getK433Va
 import { applyK434LeaveGroupActionOverrides, getK434FieldUiMeta, getK434ValidationErrors } from './k434LeaveGroupActionOverrides'
 import { applyK435GroupPostActionOverrides, getK435FieldUiMeta, getK435ValidationErrors } from './k435GroupPostActionOverrides'
 import { applyK452PostActionOverrides, getK452PostFieldUiMeta, getK452PostValidationErrors } from './k452PostActionOverrides'
+import {
+  applyK453CopyPostActionOverrides,
+  getK453CopyPostFieldUiMeta,
+  getK453CopyPostValidationErrors
+} from './k453CopyPostActionOverrides'
 
 export interface ActionFieldUiMeta {
   section: string
@@ -26,10 +31,12 @@ export function applyActionOverrides(): void {
   applyK434LeaveGroupActionOverrides()
   applyK435GroupPostActionOverrides()
   applyK452PostActionOverrides()
+  applyK453CopyPostActionOverrides()
 }
 
 export function getActionFieldUiMeta(actionType: string, fieldKey: string): ActionFieldUiMeta | undefined {
-  return getK452PostFieldUiMeta(actionType, fieldKey)
+  return getK453CopyPostFieldUiMeta(actionType, fieldKey)
+    ?? getK452PostFieldUiMeta(actionType, fieldKey)
     ?? getK435FieldUiMeta(actionType, fieldKey)
     ?? getK434FieldUiMeta(actionType, fieldKey)
     ?? getK433FieldUiMeta(actionType, fieldKey)
@@ -42,12 +49,17 @@ export function getActionFieldUiMeta(actionType: string, fieldKey: string): Acti
 export function getActionOverrideValidationErrors(actionType: string, config: ActionConfig): string[] {
   return [
     ...getK41ValidationErrors(actionType, config),
-    ...getK42ValidationErrors(actionType, config),
+    ...getK42FriendValidationErrorsCompat(actionType, config),
     ...getK431ValidationErrors(actionType, config),
     ...getK432ValidationErrors(actionType, config),
     ...getK433ValidationErrors(actionType, config),
     ...getK434ValidationErrors(actionType, config),
     ...getK435ValidationErrors(actionType, config),
-    ...getK452PostValidationErrors(actionType, config)
+    ...getK452PostValidationErrors(actionType, config),
+    ...getK453CopyPostValidationErrors(actionType, config)
   ]
+}
+
+function getK42FriendValidationErrorsCompat(actionType: string, config: ActionConfig): string[] {
+  return getK42ValidationErrors(actionType, config)
 }
