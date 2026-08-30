@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { AiContentWorkspace } from './AiContentWorkspace'
+import { AiContentWorkspaceAgentBuilder } from './AiContentWorkspaceAgentBuilder'
 import { CONTENT_LIBRARY_EXTERNAL_CHANGE_EVENT } from './aiDraftResults'
 import { ContentLibraryWorkspace } from './ContentLibraryWorkspace'
 import './contentLibraryHub.css'
@@ -69,7 +69,7 @@ export function ContentLibraryHub() {
           aria-labelledby="content-library-tab-ai"
           hidden={activeTab !== 'ai'}
         >
-          <AiContentWorkspace />
+          <AiContentWorkspaceAgentBuilder />
         </div>
       </div>
     </section>

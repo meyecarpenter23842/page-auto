@@ -3,17 +3,16 @@ import type Database from 'better-sqlite3'
 import { readFile, stat } from 'node:fs/promises'
 import {
   AI_AGENT_IPC,
-  parseAiAgentJson,
   type AiAgentEnabledPayload,
   type AiAgentIdPayload,
-  type GenerateAiPostsInput,
-  type SaveGeminiApiKeyInput
+  type GenerateAiPostsInput
 } from '../shared/aiAgents'
 import { AiAgentRepository } from './database/aiAgentRepository'
-import { AiGeminiSecretStore } from './services/aiGeminiSecretStore'
-import { GeminiAiContentService } from './services/geminiAiContentService'
+import { AiGoogleCloudCredentialStore } from './services/aiGoogleCloudCredentialStore'
+import { parseGoogleServiceAccountJson } from './services/googleServiceAccountCredential'
+import { GoogleAgentRuntimeService } from './services/googleAgentRuntimeService'
 
-const MAX_AGENT_JSON_BYTES = 5 * 1024 * 1024
+const MAX_GOOGLE_CREDENTIAL_BYTES = 1024 * 1024
 
 export interface AiAgentIpcRuntime {
   dispose: () => void
@@ -21,36 +20,46 @@ export interface AiAgentIpcRuntime {
 
 export function registerAiAgentIpcHandlers(database: Database.Database): AiAgentIpcRuntime {
   const agents = new AiAgentRepository(database)
-  const secrets = new AiGeminiSecretStore(database)
-  const generation = new GeminiAiContentService(agents, () => secrets.get())
+  const credentials = new AiGoogleCloudCredentialStore(database)
+  const runtime = new GoogleAgentRuntimeService(agents, credentials)
 
-  const view = () => agents.view(secrets.configured())
+  const view = () => agents.view(credentials.view())
 
   ipcMain.handle(AI_AGENT_IPC.catalog, () => view())
 
   ipcMain.handle(AI_AGENT_IPC.importJson, async () => {
     const result = await dialog.showOpenDialog({
-      title: 'Import Agent JSON',
+      title: 'Kết nối Google Agent Builder',
       properties: ['openFile'],
-      filters: [{ name: 'Agent JSON', extensions: ['json'] }]
+      filters: [{ name: 'Google Cloud service account', extensions: ['json'] }]
     })
     const filePath = result.canceled ? undefined : result.filePaths[0]
     if (!filePath) return null
 
     const fileStat = await stat(filePath)
-    if (fileStat.size > MAX_AGENT_JSON_BYTES) throw new Error('File Agent JSON lớn hơn giới hạn 5 MB.')
+    if (fileStat.size > MAX_GOOGLE_CREDENTIAL_BYTES) {
+      throw new Error('File Google Cloud credential lớn hơn giới hạn 1 MB.')
+    }
 
-    const fileName = filePath.split(/[\\/]/).at(-1) ?? 'agent.json'
+    const fileName = filePath.split(/[\\/]/).at(-1) ?? 'service-account.json'
     const raw = await readFile(filePath, 'utf8')
-    const parsed = parseAiAgentJson(fileName, raw)
-    const imported = agents.import(parsed, fileName)
+    const credential = parseGoogleServiceAccountJson(raw, fileName)
+    credentials.save(credential)
+
+    const remoteAgents = await runtime.syncAgents()
+    const synced = agents.syncRemote(remoteAgents)
+    const warnings = remoteAgents.length
+      ? []
+      : [
+          'Đã kết nối Google Cloud nhưng chưa thấy Agent Runtime nào đã deploy trong project này.'
+        ]
 
     return {
       catalog: view(),
       fileName,
-      importedCount: imported.importedCount,
-      updatedCount: imported.updatedCount,
-      warnings: parsed.warnings
+      importedCount: synced.importedCount,
+      updatedCount: synced.updatedCount,
+      warnings
     }
   })
 
@@ -69,17 +78,22 @@ export function registerAiAgentIpcHandlers(database: Database.Database): AiAgent
     return view()
   })
 
-  ipcMain.handle(AI_AGENT_IPC.saveGeminiApiKey, (_event, input: SaveGeminiApiKeyInput) => {
-    secrets.save(input.apiKey)
-    return view()
+  ipcMain.handle(AI_AGENT_IPC.saveGeminiApiKey, () => {
+    throw new Error(
+      'Page-Auto không dùng Gemini API key cho Agent Builder. Hãy kết nối bằng Google Cloud service-account JSON.'
+    )
   })
 
   ipcMain.handle(AI_AGENT_IPC.clearGeminiApiKey, () => {
-    secrets.clear()
+    credentials.clear()
+    agents.clear()
     return view()
   })
 
-  ipcMain.handle(AI_AGENT_IPC.generatePosts, (_event, input: GenerateAiPostsInput) => generation.generate(input))
+  ipcMain.handle(
+    AI_AGENT_IPC.generatePosts,
+    (_event, input: GenerateAiPostsInput) => runtime.generate(input)
+  )
 
   return {
     dispose: () => {
