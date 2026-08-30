@@ -1,0 +1,63 @@
+.workspace-content-library .content-library-hub,
+.workspace-content-library .content-library-hub-body,
+.workspace-content-library .ai-content-workspace,
+.workspace-content-library .ai-content-layout,
+.workspace-content-library .ai-preview-panel {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+}
+
+.workspace-content-library .content-library-hub {
+  align-self: stretch;
+}
+
+.workspace-content-library .ai-content-layout {
+  grid-template-columns: minmax(340px, 380px) minmax(0, 1fr);
+}
+
+.workspace-content-library .ai-results-workspace {
+  width: 100%;
+  grid-template-columns: minmax(210px, 250px) minmax(0, 1fr);
+}
+
+/* A single result does not need a navigation rail. Random always resolves to
+   one canonical draft containing N pipe-separated variants, so its editor gets
+   the entire result width. The same rule also improves create-mode when only
+   one result is requested. */
+.workspace-content-library .ai-results-workspace:has(.ai-draft-list > .ai-draft-row:only-child) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.workspace-content-library .ai-results-workspace:has(.ai-draft-list > .ai-draft-row:only-child) > .ai-draft-list {
+  display: none;
+}
+
+.workspace-content-library .ai-results-workspace:has(.ai-draft-list > .ai-draft-row:only-child) > .ai-draft-editor {
+  width: 100%;
+  max-width: none;
+}
+
+.workspace-content-library .ai-results-workspace:has(.ai-draft-list > .ai-draft-row:only-child) .ai-draft-editor-content textarea {
+  min-height: 360px;
+}
+
+@media (min-width: 1500px) {
+  .workspace-content-library .ai-content-layout {
+    grid-template-columns: 370px minmax(0, 1fr);
+  }
+
+  .workspace-content-library .ai-results-workspace {
+    grid-template-columns: 240px minmax(0, 1fr);
+  }
+
+  .workspace-content-library .ai-draft-editor-content textarea {
+    min-height: 380px;
+  }
+}
+
+@media (max-width: 1120px) {
+  .workspace-content-library .ai-content-layout {
+    grid-template-columns: 330px minmax(0, 1fr);
+  }
+}
