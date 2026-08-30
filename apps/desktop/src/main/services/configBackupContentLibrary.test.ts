@@ -51,8 +51,12 @@ describe('Issue #188 canonical config backup v2', () => {
       pageTabId: pageA.id,
       mode: 'random',
       posts: [{
-        name: 'compat A', enabled: true, sortOrder: 0, variants: ['compat A'],
-        image: { folderPath: '', mode: 'sequential', imagesPerPost: 1, missingPolicy: 'text_only' }
+        postId: post.id,
+        name: 'Tên riêng Page A',
+        enabled: true,
+        sortOrder: 0,
+        variants: ['Nội dung riêng A'],
+        image: { ...post.image }
       }]
     })
 

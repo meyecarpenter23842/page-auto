@@ -12,6 +12,7 @@ import {
   type UpdateContentLibraryItemInput
 } from '../shared/contentLibrary'
 import { ContentLibraryRepository } from './database/contentLibraryRepository'
+import { LegacyCanonicalPostBridge } from './database/legacyCanonicalPostBridge'
 
 export interface ContentLibraryIpcRuntime {
   dispose: () => void
@@ -21,16 +22,51 @@ const MAX_IMPORT_FILE_BYTES = 10 * 1024 * 1024
 
 export function registerContentLibraryIpcHandlers(database: Database.Database): ContentLibraryIpcRuntime {
   const library = new ContentLibraryRepository(database)
+  const bridge = new LegacyCanonicalPostBridge(database)
 
-  ipcMain.handle(CONTENT_LIBRARY_IPC.list, () => library.list())
-  ipcMain.handle(CONTENT_LIBRARY_IPC.get, (_event, payload: ContentLibrarySetIdPayload) => library.get(payload.id))
-  ipcMain.handle(CONTENT_LIBRARY_IPC.createSet, (_event, input: CreateContentLibrarySetInput) => library.createSet(input))
-  ipcMain.handle(CONTENT_LIBRARY_IPC.renameSet, (_event, input: RenameContentLibrarySetInput) => library.renameSet(input))
-  ipcMain.handle(CONTENT_LIBRARY_IPC.deleteSet, (_event, payload: ContentLibrarySetIdPayload) => library.deleteSet(payload.id))
-  ipcMain.handle(CONTENT_LIBRARY_IPC.createItem, (_event, input: CreateContentLibraryItemInput) => library.createItem(input))
-  ipcMain.handle(CONTENT_LIBRARY_IPC.updateItem, (_event, input: UpdateContentLibraryItemInput) => library.updateItem(input))
-  ipcMain.handle(CONTENT_LIBRARY_IPC.deleteItem, (_event, payload: ContentLibraryItemIdPayload) => library.deleteItem(payload.id))
-  ipcMain.handle(CONTENT_LIBRARY_IPC.moveItem, (_event, input: MoveContentLibraryItemInput) => library.moveItem(input))
+  ipcMain.handle(CONTENT_LIBRARY_IPC.list, () => {
+    bridge.syncAllGlobalSets()
+    return library.list()
+  })
+  ipcMain.handle(CONTENT_LIBRARY_IPC.get, (_event, payload: ContentLibrarySetIdPayload) => {
+    bridge.syncGlobalSet(payload.id)
+    return library.get(payload.id)
+  })
+  ipcMain.handle(CONTENT_LIBRARY_IPC.createSet, (_event, input: CreateContentLibrarySetInput) => {
+    const created = library.createSet(input)
+    bridge.syncGlobalSet(created.id)
+    return created
+  })
+  ipcMain.handle(CONTENT_LIBRARY_IPC.renameSet, (_event, input: RenameContentLibrarySetInput) => {
+    const renamed = library.renameSet(input)
+    bridge.syncGlobalSet(renamed.id)
+    return renamed
+  })
+  ipcMain.handle(CONTENT_LIBRARY_IPC.deleteSet, (_event, payload: ContentLibrarySetIdPayload) => {
+    const deleted = library.deleteSet(payload.id)
+    if (deleted) bridge.syncGlobalSet(payload.id)
+    return deleted
+  })
+  ipcMain.handle(CONTENT_LIBRARY_IPC.createItem, (_event, input: CreateContentLibraryItemInput) => {
+    const result = library.createItem(input)
+    bridge.syncGlobalSet(result.id)
+    return result
+  })
+  ipcMain.handle(CONTENT_LIBRARY_IPC.updateItem, (_event, input: UpdateContentLibraryItemInput) => {
+    const result = library.updateItem(input)
+    bridge.syncGlobalSet(result.id)
+    return result
+  })
+  ipcMain.handle(CONTENT_LIBRARY_IPC.deleteItem, (_event, payload: ContentLibraryItemIdPayload) => {
+    const result = library.deleteItem(payload.id)
+    bridge.syncGlobalSet(result.id)
+    return result
+  })
+  ipcMain.handle(CONTENT_LIBRARY_IPC.moveItem, (_event, input: MoveContentLibraryItemInput) => {
+    const result = library.moveItem(input)
+    bridge.syncGlobalSet(result.id)
+    return result
+  })
   ipcMain.handle(CONTENT_LIBRARY_IPC.pickImageFolder, async () => {
     const result = await dialog.showOpenDialog({ title: 'Chọn folder ảnh cho bài viết', properties: ['openDirectory'] })
     return result.canceled ? null : (result.filePaths[0] ?? null)
