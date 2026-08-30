@@ -1,10 +1,14 @@
 import { useMemo, useRef, useState, type ChangeEvent } from 'react'
+import { AI_POST_DELIMITER, parseAiPostOutput } from './aiPostOutputFormat'
 import './aiContentWorkspace.css'
+import './aiContentWorkspaceModes.css'
 
 type AgentFileState =
   | { kind: 'idle' }
   | { kind: 'valid'; fileName: string }
   | { kind: 'invalid'; fileName: string; message: string }
+
+type AiContentAction = 'create' | 'random'
 
 const POST_TYPES = ['Bán hàng', 'Chia sẻ', 'Review', 'Giới thiệu'] as const
 const TONES = ['Tự nhiên', 'Gần gũi', 'Chuyên nghiệp', 'Ngắn gọn'] as const
@@ -14,10 +18,12 @@ const LENGTHS = ['Ngắn', 'Trung bình', 'Dài'] as const
 export function AiContentWorkspace() {
   const [agentManagerOpen, setAgentManagerOpen] = useState(false)
   const [selectedAgent, setSelectedAgent] = useState('')
+  const [action, setAction] = useState<AiContentAction>('create')
   const [subject, setSubject] = useState('')
   const [sourceInfo, setSourceInfo] = useState('')
   const [highlight, setHighlight] = useState('')
   const [audience, setAudience] = useState('')
+  const [randomSource, setRandomSource] = useState('')
   const [postType, setPostType] = useState<(typeof POST_TYPES)[number]>('Bán hàng')
   const [tone, setTone] = useState<(typeof TONES)[number]>('Tự nhiên')
   const [structure, setStructure] = useState<(typeof STRUCTURES)[number]>('Hook → Nội dung → CTA')
@@ -29,12 +35,18 @@ export function AiContentWorkspace() {
   const [agentFile, setAgentFile] = useState<AgentFileState>({ kind: 'idle' })
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
+  const randomSourcePosts = useMemo(() => parseAiPostOutput(randomSource), [randomSource])
+
   const missingInput = useMemo(() => {
     if (!selectedAgent) return 'Chọn Agent trước khi tạo bài.'
+    if (action === 'random') {
+      if (!randomSourcePosts.length) return 'Dán ít nhất một bài nguồn để Random.'
+      return null
+    }
     if (!subject.trim()) return 'Nhập sản phẩm hoặc chủ đề.'
     if (!sourceInfo.trim()) return 'Nhập thông tin chính để AI có dữ liệu viết bài.'
     return null
-  }, [selectedAgent, sourceInfo, subject])
+  }, [action, randomSourcePosts.length, selectedAgent, sourceInfo, subject])
 
   const handleAgentFile = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -53,6 +65,8 @@ export function AiContentWorkspace() {
       })
     }
   }
+
+  const actionVerb = action === 'create' ? 'Tạo' : 'Random'
 
   return (
     <section className="ai-content-workspace" aria-label="Tạo bài bằng AI">
@@ -73,40 +87,88 @@ export function AiContentWorkspace() {
         <aside className="ai-compose-panel">
           <div className="ai-compose-scroll">
             <section className="ai-form-section">
-              <div className="ai-section-heading">
-                <div><strong>Thông tin gốc</strong><small>AI chỉ viết từ dữ liệu anh cung cấp</small></div>
-                <span>Bắt buộc</span>
+              <div className="ai-section-heading compact">
+                <div><strong>Hành động</strong><small>Chọn tạo mới hoặc biến tấu nội dung có sẵn</small></div>
               </div>
 
-              <label className="ai-field">
-                <span>Sản phẩm / chủ đề <b>*</b></span>
-                <input value={subject} onChange={(event) => setSubject(event.target.value)} placeholder="Ví dụ: Căn hộ 2PN Vinhomes Central Park" />
-              </label>
-
-              <label className="ai-field">
-                <span>Thông tin chính <b>*</b></span>
-                <textarea
-                  className="ai-source-info"
-                  value={sourceInfo}
-                  onChange={(event) => setSourceInfo(event.target.value)}
-                  placeholder="Giá, thông số, đặc điểm, ưu đãi, địa chỉ... Chỉ nhập những gì AI được phép sử dụng."
-                />
-              </label>
-
-              <div className="ai-form-grid two">
+              <div className="ai-action-grid">
                 <label className="ai-field">
-                  <span>Điểm cần nhấn mạnh</span>
-                  <input value={highlight} onChange={(event) => setHighlight(event.target.value)} placeholder="Ví dụ: view sông, tầng cao" />
+                  <span>Hành động</span>
+                  <select value={action} onChange={(event) => setAction(event.target.value as AiContentAction)}>
+                    <option value="create">Tạo bài mới</option>
+                    <option value="random">Random bài</option>
+                  </select>
                 </label>
-                <label className="ai-field">
-                  <span>Đối tượng</span>
-                  <input value={audience} onChange={(event) => setAudience(event.target.value)} placeholder="Ví dụ: người mua để ở" />
+                <label className="ai-field ai-count-field">
+                  <span>Số lượng</span>
+                  <input type="number" min={1} max={50} value={postCount} onChange={(event) => setPostCount(Math.max(1, Math.min(50, Number(event.target.value) || 1)))} />
                 </label>
+              </div>
+
+              <div className="ai-action-summary">
+                <span>{action === 'create' ? 'Viết bài mới từ thông tin gốc.' : 'Tạo biến thể từ nội dung nguồn.'}</span>
+                <strong>Mỗi bài cách bằng <code>{AI_POST_DELIMITER}</code></strong>
               </div>
             </section>
 
+            {action === 'create' ? (
+              <section className="ai-form-section">
+                <div className="ai-section-heading">
+                  <div><strong>Thông tin gốc</strong><small>AI chỉ viết từ dữ liệu anh cung cấp</small></div>
+                  <span>Bắt buộc</span>
+                </div>
+
+                <label className="ai-field">
+                  <span>Sản phẩm / chủ đề <b>*</b></span>
+                  <input value={subject} onChange={(event) => setSubject(event.target.value)} placeholder="Ví dụ: Căn hộ 2PN Vinhomes Central Park" />
+                </label>
+
+                <label className="ai-field">
+                  <span>Thông tin chính <b>*</b></span>
+                  <textarea
+                    className="ai-source-info"
+                    value={sourceInfo}
+                    onChange={(event) => setSourceInfo(event.target.value)}
+                    placeholder="Giá, thông số, đặc điểm, ưu đãi, địa chỉ... Chỉ nhập những gì AI được phép sử dụng."
+                  />
+                </label>
+
+                <div className="ai-form-grid two">
+                  <label className="ai-field">
+                    <span>Điểm cần nhấn mạnh</span>
+                    <input value={highlight} onChange={(event) => setHighlight(event.target.value)} placeholder="Ví dụ: view sông, tầng cao" />
+                  </label>
+                  <label className="ai-field">
+                    <span>Đối tượng</span>
+                    <input value={audience} onChange={(event) => setAudience(event.target.value)} placeholder="Ví dụ: người mua để ở" />
+                  </label>
+                </div>
+              </section>
+            ) : (
+              <section className="ai-form-section">
+                <div className="ai-section-heading">
+                  <div><strong>Nội dung nguồn</strong><small>Dán bài gốc để AI viết thành các biến thể khác nhau</small></div>
+                  <span>Bắt buộc</span>
+                </div>
+
+                <label className="ai-field">
+                  <span>Bài nguồn <b>*</b></span>
+                  <textarea
+                    className="ai-source-info ai-random-source"
+                    value={randomSource}
+                    onChange={(event) => setRandomSource(event.target.value)}
+                    placeholder={`Bài nguồn 1\n${AI_POST_DELIMITER}\nBài nguồn 2`}
+                  />
+                </label>
+                <div className="ai-random-source-state">
+                  <span>{randomSourcePosts.length ? `Đã nhận ${randomSourcePosts.length} bài nguồn` : 'Chưa có bài nguồn'}</span>
+                  <strong>Nhiều bài nguồn cũng cách nhau bằng {AI_POST_DELIMITER}</strong>
+                </div>
+              </section>
+            )}
+
             <section className="ai-form-section ai-generation-options">
-              <div className="ai-section-heading compact"><div><strong>Cách tạo</strong><small>Chọn nhanh, không cần viết prompt</small></div></div>
+              <div className="ai-section-heading compact"><div><strong>Cách viết</strong><small>Chọn nhanh, không cần viết prompt</small></div></div>
 
               <div className="ai-form-grid two">
                 <label className="ai-field">
@@ -130,16 +192,12 @@ export function AiContentWorkspace() {
                 </select>
               </label>
 
-              <div className="ai-form-grid three">
+              <div className="ai-form-grid two">
                 <label className="ai-field">
                   <span>Độ dài</span>
                   <select value={length} onChange={(event) => setLength(event.target.value as (typeof LENGTHS)[number])}>
                     {LENGTHS.map((item) => <option key={item}>{item}</option>)}
                   </select>
-                </label>
-                <label className="ai-field ai-count-field">
-                  <span>Số bài</span>
-                  <input type="number" min={1} max={50} value={postCount} onChange={(event) => setPostCount(Math.max(1, Math.min(50, Number(event.target.value) || 1)))} />
                 </label>
                 <div className="ai-option-stack" aria-label="Tùy chọn nội dung">
                   <label><input type="checkbox" checked={emoji} onChange={(event) => setEmoji(event.target.checked)} /> Emoji nhẹ</label>
@@ -155,25 +213,31 @@ export function AiContentWorkspace() {
           </div>
 
           <div className="ai-compose-footer">
-            <span className={missingInput ? 'ai-form-hint' : 'ai-form-hint ready'}>{missingInput ?? 'Đã đủ thông tin để tạo bài.'}</span>
+            <span className={missingInput ? 'ai-form-hint' : 'ai-form-hint ready'}>{missingInput ?? `Đã đủ thông tin để ${action === 'create' ? 'tạo' : 'random'} bài.`}</span>
             <button className="ai-generate-button" type="button" disabled={Boolean(missingInput)} title={missingInput ?? undefined}>
-              <span aria-hidden="true">✦</span> Tạo {postCount} bài
+              <span aria-hidden="true">✦</span> {actionVerb} {postCount} bài
             </button>
           </div>
         </aside>
 
         <section className="ai-preview-panel">
           <div className="ai-preview-header">
-            <div><p>KẾT QUẢ</p><h2>Bài viết xem trước</h2></div>
+            <div>
+              <p>KẾT QUẢ</p>
+              <h2>Bài viết xem trước</h2>
+              <span className="ai-output-contract">Chuẩn đầu ra: Bài 1 <code>{AI_POST_DELIMITER}</code> Bài 2 <code>{AI_POST_DELIMITER}</code> ...</span>
+            </div>
             <div className="ai-preview-actions"><span className="ai-result-count">0 bài</span><button type="button" disabled>Lưu bài đã chọn</button></div>
           </div>
 
           <div className="ai-preview-canvas">
             <div className="ai-preview-empty">
               <div className="ai-preview-empty-icon" aria-hidden="true">✦</div>
-              <strong>Kết quả AI sẽ nằm ở đây</strong>
-              <p>Nhập thông tin gốc ở bên trái. Sau khi tạo, anh có thể xem rộng từng bài, sửa trực tiếp, chọn bài muốn giữ rồi mới lưu vào Thư viện.</p>
-              <div className="ai-preview-empty-notes"><span>✓ Không tự lưu</span><span>✓ Sửa trước khi lưu</span><span>✓ Preview rộng</span></div>
+              <strong>{action === 'create' ? 'Kết quả tạo mới sẽ nằm ở đây' : 'Kết quả Random sẽ nằm ở đây'}</strong>
+              <p>{action === 'create'
+                ? 'Nhập thông tin gốc ở bên trái. AI phải trả đúng số lượng đã chọn; mỗi bài được phân cách bằng dấu | trước khi đưa vào Thư viện.'
+                : 'Dán nội dung nguồn ở bên trái. AI sẽ tạo đúng số lượng biến thể đã chọn và vẫn dùng cùng chuẩn phân cách | của Thư viện.'}</p>
+              <div className="ai-preview-empty-notes"><span>✓ Không tự lưu</span><span>✓ Đúng số lượng</span><span>✓ Chuẩn bài | bài</span></div>
             </div>
           </div>
         </section>
