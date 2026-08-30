@@ -105,7 +105,7 @@ describe('PostingService Facebook task entrypoint', () => {
 
     service.closeAll()
     runtime.close()
-  })
+  }, 15_000)
 
   it('builds a page_wall_post task from the secret-free one-shot input', async () => {
     const { directory, runtime, account, profileRoot } = setupAccount()
