@@ -1,8 +1,10 @@
-export const CONTENT_LIBRARY_IMAGE_MODES = ['sequential', 'random'] as const
+export const CONTENT_LIBRARY_IMAGE_MODES = ['sequential', 'random', 'filename_match'] as const
 export type ContentLibraryImageMode = (typeof CONTENT_LIBRARY_IMAGE_MODES)[number]
 
 export const CONTENT_LIBRARY_MISSING_POLICIES = ['text_only', 'skip'] as const
 export type ContentLibraryMissingPolicy = (typeof CONTENT_LIBRARY_MISSING_POLICIES)[number]
+
+export const CANONICAL_CONTENT_LIBRARY_SET_ID = -1
 
 export const CONTENT_LIBRARY_IPC = {
   list: 'content-library:list',

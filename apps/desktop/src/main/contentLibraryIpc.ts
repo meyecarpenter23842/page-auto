@@ -2,6 +2,7 @@ import { dialog, ipcMain } from 'electron'
 import type Database from 'better-sqlite3'
 import { readFile, stat } from 'node:fs/promises'
 import {
+  CANONICAL_CONTENT_LIBRARY_SET_ID,
   CONTENT_LIBRARY_IPC,
   type ContentLibraryItemIdPayload,
   type ContentLibrarySetIdPayload,
@@ -11,6 +12,7 @@ import {
   type RenameContentLibrarySetInput,
   type UpdateContentLibraryItemInput
 } from '../shared/contentLibrary'
+import { CanonicalContentLibraryRepository } from './database/canonicalContentLibraryRepository'
 import { ContentLibraryRepository } from './database/contentLibraryRepository'
 import { LegacyCanonicalPostBridge } from './database/legacyCanonicalPostBridge'
 
@@ -22,13 +24,15 @@ const MAX_IMPORT_FILE_BYTES = 10 * 1024 * 1024
 
 export function registerContentLibraryIpcHandlers(database: Database.Database): ContentLibraryIpcRuntime {
   const library = new ContentLibraryRepository(database)
+  const canonicalLibrary = new CanonicalContentLibraryRepository(database)
   const bridge = new LegacyCanonicalPostBridge(database)
 
   ipcMain.handle(CONTENT_LIBRARY_IPC.list, () => {
-    bridge.syncAllGlobalSets()
-    return library.list()
+    const canonical = canonicalLibrary.summary()
+    return [canonical, ...library.list()]
   })
   ipcMain.handle(CONTENT_LIBRARY_IPC.get, (_event, payload: ContentLibrarySetIdPayload) => {
+    if (payload.id === CANONICAL_CONTENT_LIBRARY_SET_ID) return canonicalLibrary.get()
     bridge.syncGlobalSet(payload.id)
     return library.get(payload.id)
   })
@@ -38,31 +42,41 @@ export function registerContentLibraryIpcHandlers(database: Database.Database): 
     return created
   })
   ipcMain.handle(CONTENT_LIBRARY_IPC.renameSet, (_event, input: RenameContentLibrarySetInput) => {
+    if (input.id === CANONICAL_CONTENT_LIBRARY_SET_ID) {
+      throw new Error('“Tất cả bài viết” là kho bài gốc và không thể đổi tên.')
+    }
     const renamed = library.renameSet(input)
     bridge.syncGlobalSet(renamed.id)
     return renamed
   })
   ipcMain.handle(CONTENT_LIBRARY_IPC.deleteSet, (_event, payload: ContentLibrarySetIdPayload) => {
+    if (payload.id === CANONICAL_CONTENT_LIBRARY_SET_ID) {
+      throw new Error('“Tất cả bài viết” là kho bài gốc và không thể xóa như một nguồn.')
+    }
     const deleted = library.deleteSet(payload.id)
     if (deleted) bridge.syncGlobalSet(payload.id)
     return deleted
   })
   ipcMain.handle(CONTENT_LIBRARY_IPC.createItem, (_event, input: CreateContentLibraryItemInput) => {
+    if (input.contentSetId === CANONICAL_CONTENT_LIBRARY_SET_ID) return canonicalLibrary.create(input)
     const result = library.createItem(input)
     bridge.syncGlobalSet(result.id)
     return result
   })
   ipcMain.handle(CONTENT_LIBRARY_IPC.updateItem, (_event, input: UpdateContentLibraryItemInput) => {
+    if (input.id < 0) return canonicalLibrary.update(input)
     const result = library.updateItem(input)
     bridge.syncGlobalSet(result.id)
     return result
   })
   ipcMain.handle(CONTENT_LIBRARY_IPC.deleteItem, (_event, payload: ContentLibraryItemIdPayload) => {
+    if (payload.id < 0) return canonicalLibrary.delete(payload.id)
     const result = library.deleteItem(payload.id)
     bridge.syncGlobalSet(result.id)
     return result
   })
   ipcMain.handle(CONTENT_LIBRARY_IPC.moveItem, (_event, input: MoveContentLibraryItemInput) => {
+    if (input.contentSetId === CANONICAL_CONTENT_LIBRARY_SET_ID || input.itemId < 0) return canonicalLibrary.move()
     const result = library.moveItem(input)
     bridge.syncGlobalSet(result.id)
     return result
