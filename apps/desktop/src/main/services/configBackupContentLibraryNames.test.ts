@@ -41,7 +41,7 @@ describe('K4.5.1 content library backup name matching', () => {
     addSource(sourceLibrary, 'Bán', 'accent-content')
 
     const payload = new ConfigBackupService(source.client).createPayload('1.0.0')
-    expect(payload.contentLibraries?.map((item) => item.name).sort()).toEqual(['Ban', 'Bán'].sort())
+    expect(payload.postCollections.map((item) => item.name).sort()).toEqual(['Ban', 'Bán'].sort())
 
     const target = runtime('page-auto-content-name-target-')
     new ConfigBackupService(target.client).restoreFromJson(JSON.stringify(payload))
