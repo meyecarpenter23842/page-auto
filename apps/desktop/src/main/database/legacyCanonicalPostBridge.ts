@@ -117,6 +117,13 @@ export class LegacyCanonicalPostBridge {
       `).run(set.name, timestamp(set.updatedAt, now), collectionId)
 
       const previousPosts = this.collectionPostIds(collectionId)
+      const scenarioActionIds = this.scenarioActionsForSet(contentSetId)
+      const scenarioPosts = previousPosts.length === 0 && scenarioActionIds.length > 0
+        ? this.scenarioPostIdsForSet(contentSetId)
+        : []
+      const preferredPosts = previousPosts.length > 0 ? previousPosts : scenarioPosts
+      const scenarioCompatibilityOnly = scenarioActionIds.length > 0 && previousPosts.length === 0
+
       const items = this.client.prepare(`
         SELECT
           id,
@@ -137,7 +144,14 @@ export class LegacyCanonicalPostBridge {
       `).all(contentSetId) as LegacyPostRow[]
 
       const desired = items.map((item, index): LegacyPostRef => ({
-        postId: this.upsertLegacyPost('content_item', item, now, index),
+        postId: this.upsertLegacyPost(
+          'content_item',
+          item,
+          now,
+          index,
+          preferredPosts[index],
+          !scenarioCompatibilityOnly
+        ),
         enabled: Number(item.enabled) === 1,
         sortOrder: index
       }))
@@ -182,6 +196,7 @@ export class LegacyCanonicalPostBridge {
     `).get(pageTabId) as { count: number; latest: number }
 
     let sourceKind: 'page_tab_post' | 'content_item' = 'page_tab_post'
+    let legacyPostMode: 'sequential' | 'random' | null = null
     let legacyRows = this.client.prepare(`
       SELECT
         id,
@@ -202,10 +217,10 @@ export class LegacyCanonicalPostBridge {
 
     if (legacyRows.length === 0 && Number(canonicalState.count) === 0) {
       const set = this.client.prepare(`
-        SELECT id, updated_at AS updatedAt
+        SELECT id, mode, updated_at AS updatedAt
         FROM content_sets
         WHERE page_tab_id = ?
-      `).get(pageTabId) as { id: number; updatedAt: number } | undefined
+      `).get(pageTabId) as { id: number; mode: string; updatedAt: number } | undefined
       if (set) {
         const image = this.client.prepare(`
           SELECT
@@ -247,6 +262,7 @@ export class LegacyCanonicalPostBridge {
           updatedAt: number
         }>
         sourceKind = 'content_item'
+        legacyPostMode = set.mode === 'random' ? 'random' : 'sequential'
         legacyRows = rows.map((row, index) => ({
           id: Number(row.id),
           name: normalizedName(row.name, `Bài viết ${index + 1}`),
@@ -295,6 +311,12 @@ export class LegacyCanonicalPostBridge {
         item.createdAt,
         item.updatedAt
       ))
+
+      if (legacyPostMode) {
+        this.client.prepare(`
+          UPDATE page_tabs SET post_selection_mode = ? WHERE id = ?
+        `).run(legacyPostMode, pageTabId)
+      }
     })
     transaction()
     this.cleanupStalePageLegacyPosts()
@@ -328,7 +350,14 @@ export class LegacyCanonicalPostBridge {
     return rows.map((row) => Number(row.postId))
   }
 
-  private upsertLegacyPost(sourceKind: 'content_item' | 'page_tab_post', row: LegacyPostRow, now: number, fallbackIndex: number): number {
+  private upsertLegacyPost(
+    sourceKind: 'content_item' | 'page_tab_post',
+    row: LegacyPostRow,
+    now: number,
+    fallbackIndex: number,
+    preferredPostId?: number,
+    adoptPreferred = true
+  ): number {
     const mapped = this.client.prepare(`
       SELECT post_id AS postId
       FROM post_legacy_sources
@@ -346,7 +375,7 @@ export class LegacyCanonicalPostBridge {
     const createdAt = timestamp(row.createdAt, now)
     const updatedAt = timestamp(row.updatedAt, now)
 
-    if (mapped && this.client.prepare('SELECT 1 FROM posts WHERE id = ?').get(mapped.postId)) {
+    const updatePost = (postId: number) => {
       this.client.prepare(`
         UPDATE posts
         SET name = ?, variants_json = ?, image_folder_path = ?, image_mode = ?,
@@ -360,9 +389,24 @@ export class LegacyCanonicalPostBridge {
         image.imagesPerPost,
         image.missingPolicy,
         updatedAt,
-        mapped.postId
+        postId
       )
+    }
+
+    if (mapped && this.client.prepare('SELECT 1 FROM posts WHERE id = ?').get(mapped.postId)) {
+      updatePost(Number(mapped.postId))
       return Number(mapped.postId)
+    }
+
+    if (preferredPostId !== undefined && this.client.prepare('SELECT 1 FROM posts WHERE id = ?').get(preferredPostId)) {
+      if (adoptPreferred) {
+        this.client.prepare(`
+          INSERT OR IGNORE INTO post_legacy_sources (source_kind, source_id, post_id)
+          VALUES (?, ?, ?)
+        `).run(sourceKind, row.id, preferredPostId)
+        updatePost(preferredPostId)
+      }
+      return preferredPostId
     }
 
     const insert = this.client.prepare(`
@@ -406,6 +450,19 @@ export class LegacyCanonicalPostBridge {
         return []
       }
     })
+  }
+
+  private scenarioPostIdsForSet(contentSetId: number): number[] {
+    for (const actionId of this.scenarioActionsForSet(contentSetId)) {
+      const rows = this.client.prepare(`
+        SELECT post_id AS postId
+        FROM scenario_action_post_bindings
+        WHERE scenario_action_id = ?
+        ORDER BY sort_order, id
+      `).all(actionId) as Array<{ postId: number }>
+      if (rows.length > 0) return rows.map((row) => Number(row.postId))
+    }
+    return []
   }
 
   private syncScenarioSetBindings(contentSetId: number, desired: LegacyPostRef[], removedPosts: number[], now: number): void {
