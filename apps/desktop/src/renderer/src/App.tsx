@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { AppInfo } from '../../ipc/channels'
 import { AccountManager } from './accounts/AccountManager'
-import { ContentLibraryWorkspace } from './content-library/ContentLibraryWorkspace'
+import { ContentLibraryHub } from './content-library/ContentLibraryHub'
 import { HotmailAuto } from './hotmail/HotmailAuto'
 import { ExecutionLogs } from './logs/ExecutionLogs'
 import { PageBusinessWorkspace } from './page-tabs/PageBusinessWorkspace'
@@ -28,7 +28,7 @@ const routeDescriptions: Record<RouteId, { title: string; description: string }>
   overview: { title: 'Tổng quan', description: 'Phase 9 đóng gói PAGE-AUTO thành Windows portable folder/ZIP, giữ data cạnh executable và bổ sung backup/restore config không chứa plaintext secret.' },
   accounts: { title: 'Account Manager', description: 'Quản lý account theo data-grid nhiều cột, import linh hoạt và persistent browser profile riêng.' },
   hotmail: { title: 'Email', description: 'Dashboard Email theo UID từ Account Manager, Microsoft Mail.Read, external profile root trực tiếp, mail khôi phục và Proxy Email pool độc lập.' },
-  'content-library': { title: 'Thư viện Bài viết', description: 'Nguồn bài viết dùng chung toàn app. Page/Kịch Bản sẽ tham chiếu nguồn và mỗi phiên chạy snapshot nội dung riêng.' },
+  'content-library': { title: 'Thư viện Bài viết', description: 'Quản lý kho bài viết dùng chung và tạo nội dung AI trước khi lưu vào cùng thư viện gốc.' },
   'page-tabs': { title: 'Page Tabs', description: 'Mỗi Page UID là một workspace đa nghiệp vụ: Nhóm, Đăng Tường, Sửa Page và các tác vụ mở rộng dùng chung tầng Facebook.' },
   scenarios: { title: 'Kịch Bản', description: 'Chọn tài khoản, chọn nhiều kịch bản và chuẩn bị cấu hình chạy; thư viện action vẫn được quản lý riêng, không gắn Page vào runner này.' },
   logs: { title: 'Runtime Logs', description: 'Execution log chi tiết, screenshot evidence, retry disposition và manual-review cho kết quả publish chưa chắc chắn.' },
@@ -102,7 +102,7 @@ export function App() {
       <main key={activeRoute} className={`${workspaceClass} workspace-transition`}>
         <header className="topbar"><div><p className="eyebrow">PAGE-AUTO / {activeRoute === 'hotmail' ? 'EMAIL' : activeRoute === 'scenarios' ? 'KỊCH BẢN' : activeRoute === 'content-library' ? 'BÀI VIẾT' : activeRoute.toUpperCase()}</p><h1>{active.title}</h1></div><div className="version-badge">{appInfo ? `v${appInfo.version}` : 'Loading...'}</div></header>
 
-        {activeRoute === 'accounts' ? <AccountManager /> : activeRoute === 'hotmail' ? <HotmailAuto /> : activeRoute === 'content-library' ? <ContentLibraryWorkspace /> : activeRoute === 'page-tabs' ? <PageBusinessWorkspace /> : activeRoute === 'scenarios' ? <ScenarioWorkspace /> : activeRoute === 'logs' ? <ExecutionLogs /> : activeRoute === 'settings' ? <SettingsPanel appInfo={appInfo} /> : (
+        {activeRoute === 'accounts' ? <AccountManager /> : activeRoute === 'hotmail' ? <HotmailAuto /> : activeRoute === 'content-library' ? <ContentLibraryHub /> : activeRoute === 'page-tabs' ? <PageBusinessWorkspace /> : activeRoute === 'scenarios' ? <ScenarioWorkspace /> : activeRoute === 'logs' ? <ExecutionLogs /> : activeRoute === 'settings' ? <SettingsPanel appInfo={appInfo} /> : (
           <>
             <section className="hero-card"><div><span className="phase-badge">PHASE 9</span><h2>{active.title}</h2><p>{active.description}</p></div><div className="architecture-grid"><div><strong>Portable</strong><span>Folder + ZIP</span></div><div><strong>Executable</strong><span>PageAuto.exe</span></div><div><strong>Data</strong><span>Beside executable</span></div><div><strong>Backup</strong><span>Config · no secrets</span></div></div></section>
             <section className="content-card"><div className="section-heading"><div><p className="eyebrow">MVP packaging status</p><h2>Phase 9 hoàn thiện mô hình Windows portable</h2></div><span className="healthy-chip">Portable-ready architecture</span></div><div className="check-list"><div><span>01</span><div><strong>No installer</strong><p>Artifact mục tiêu là folder/ZIP portable, không tạo Setup/NSIS trong MVP.</p></div></div><div><span>02</span><div><strong>Stable data path</strong><p>SQLite, browser profile, logs và screenshots nằm trong data cạnh PageAuto.exe.</p></div></div><div><span>03</span><div><strong>Versioned migration</strong><p>Database cũ tiếp tục chạy migration version khi mở bằng bản app mới.</p></div></div><div><span>04</span><div><strong>Safe config backup</strong><p>Backup cấu hình không xuất password, cookie, 2FA hoặc browser profile.</p></div></div></div></section>
