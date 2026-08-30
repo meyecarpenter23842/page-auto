@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import type { SavePageTabPostItemInput } from '../../shared/pageTabs'
 import { initializeDatabase } from './index'
 import { CanonicalPostRepository, PageTabPostBindingRepository, ScenarioActionPostBindingRepository } from './canonicalPostRepository'
 import { ContentLibraryRepository } from './contentLibraryRepository'
@@ -43,15 +44,15 @@ const image = {
   missingPolicy: 'text_only' as const
 }
 
-function savePost(name: string, content: string, postId?: number | null) {
-  return {
-    postId,
+function savePost(name: string, content: string, postId?: number | null): SavePageTabPostItemInput {
+  const base: SavePageTabPostItemInput = {
     name,
     enabled: true,
     sortOrder: 0,
     variants: [content],
     image: { ...image }
   }
+  return postId === undefined ? base : { ...base, postId }
 }
 
 describe('Issue #188 Page canonical UI cutover', () => {
