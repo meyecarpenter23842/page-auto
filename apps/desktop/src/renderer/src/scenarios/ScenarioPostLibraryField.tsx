@@ -10,6 +10,11 @@ import {
   type PageTabImageConfig
 } from '../../../shared/pageTabs'
 import type { ScenarioActionPostInput } from '../../../shared/scenarios'
+import {
+  canDisableScenarioPost,
+  clampScenarioImagesPerPost,
+  ensureScenarioHasEnabledPost
+} from './scenarioPostUiValidation'
 import './postActionConfig.css'
 
 interface Props {
@@ -32,7 +37,7 @@ function canonicalFromItem(item: ContentLibraryItem): CanonicalPostSummary | nul
 function preview(values: readonly string[]): string {
   const value = values.find((item) => item.trim())?.replace(/\s+/g, ' ').trim()
   if (!value) return 'Bài chỉ có ảnh hoặc chưa có nội dung chữ.'
-  return value.length > 120 ? `${value.slice(0, 120)}…` : value
+  return value.length > 150 ? `${value.slice(0, 150)}…` : value
 }
 
 function normalizeOrder(posts: readonly ScenarioActionPostInput[]): ScenarioActionPostInput[] {
@@ -54,6 +59,11 @@ export function ScenarioPostLibraryField({ posts, onChange }: Props) {
   const [name, setName] = useState('')
   const [variantText, setVariantText] = useState('')
   const [image, setImage] = useState<PageTabImageConfig>({ ...DEFAULT_PAGE_TAB_IMAGE, mode: 'random' })
+
+  useEffect(() => {
+    if (!posts.length || posts.some((post) => post.enabled)) return
+    onChange(normalizeOrder(ensureScenarioHasEnabledPost(posts)))
+  }, [onChange, posts])
 
   useEffect(() => {
     if (!pickerOpen) return
@@ -86,7 +96,14 @@ export function ScenarioPostLibraryField({ posts, onChange }: Props) {
   }, [available, search])
 
   const updatePosts = (next: readonly ScenarioActionPostInput[]) => onChange(normalizeOrder(next))
-  const toggle = (index: number, enabled: boolean) => updatePosts(posts.map((post, current) => current === index ? { ...post, enabled } : post))
+  const toggle = (index: number, enabled: boolean) => {
+    if (!enabled && !canDisableScenarioPost(posts, index)) {
+      setError('Action cần ít nhất một bài đang bật.')
+      return
+    }
+    setError('')
+    updatePosts(posts.map((post, current) => current === index ? { ...post, enabled } : post))
+  }
   const remove = (index: number) => updatePosts(posts.filter((_post, current) => current !== index))
   const move = (index: number, delta: -1 | 1) => {
     const target = index + delta
@@ -121,6 +138,11 @@ export function ScenarioPostLibraryField({ posts, onChange }: Props) {
     setError('')
   }
 
+  const closeCreate = () => {
+    setCreating(false)
+    resetCreate()
+  }
+
   const addNew = () => {
     const variants = parsePostVariantText(variantText)
     const folderPath = image.folderPath.trim()
@@ -135,10 +157,13 @@ export function ScenarioPostLibraryField({ posts, onChange }: Props) {
       enabled: true,
       sortOrder: posts.length,
       variants,
-      image: { ...image, folderPath }
+      image: {
+        ...image,
+        folderPath,
+        imagesPerPost: clampScenarioImagesPerPost(image.imagesPerPost)
+      }
     }])
-    setCreating(false)
-    resetCreate()
+    closeCreate()
   }
 
   return (
@@ -148,24 +173,27 @@ export function ScenarioPostLibraryField({ posts, onChange }: Props) {
         <small>Canonical · dùng chung toàn app</small>
       </div>
 
-      <div className="action-config-input-line">
+      <div className="post-library-toolbar">
         <button className="scenario-button primary" type="button" onClick={() => { resetCreate(); setCreating(true) }}>+ Bài mới</button>
         <button className="scenario-button" type="button" onClick={() => setPickerOpen(true)}>Chọn từ thư viện</button>
-        <small className="action-config-help compact-help">{posts.filter((post) => post.enabled).length}/{posts.length} bài bật</small>
+        <small>{posts.filter((post) => post.enabled).length}/{posts.length} bài bật</small>
       </div>
 
       {posts.length ? (
-        <div className="post-library-preview">
+        <div className="post-bound-list">
           {posts.map((post, index) => (
-            <div className="post-library-preview-row" key={`${post.postId ?? 'new'}-${index}`}>
-              <span className="post-library-index">{index + 1}</span>
-              <div>
-                <strong>{post.name}</strong>
+            <div className="post-bound-row" key={`${post.postId ?? 'new'}-${index}`}>
+              <label className="post-bound-check" title="Bật/tắt bài">
+                <input type="checkbox" checked={post.enabled} onChange={(event) => toggle(index, event.target.checked)} />
+              </label>
+              <div className="post-bound-copy">
+                <div className="post-bound-title">
+                  <strong>{post.name}</strong>
+                  <span>{typeof post.postId === 'number' ? `Post #${post.postId}` : 'Bài mới'}</span>
+                </div>
                 <p>{preview(post.variants)}</p>
-                <small>{typeof post.postId === 'number' ? `Post #${post.postId}` : 'Bài mới · sẽ tạo vào kho gốc khi lưu action'}</small>
               </div>
-              <div className="scenario-row-actions">
-                <label className="scenario-check" title="Bật/tắt bài"><input type="checkbox" checked={post.enabled} onChange={(event) => toggle(index, event.target.checked)} /><span /></label>
+              <div className="post-bound-actions">
                 <button type="button" title="Lên" disabled={index === 0} onClick={() => move(index, -1)}>↑</button>
                 <button type="button" title="Xuống" disabled={index === posts.length - 1} onClick={() => move(index, 1)}>↓</button>
                 <button className="row-danger" type="button" title="Gỡ khỏi action" onClick={() => remove(index)}>×</button>
@@ -175,22 +203,34 @@ export function ScenarioPostLibraryField({ posts, onChange }: Props) {
         </div>
       ) : <div className="post-library-empty">Chưa có bài. Tạo bài mới hoặc chọn bài có sẵn từ kho chung.</div>}
 
+      {error ? <small className="action-config-help post-library-error">{error}</small> : null}
+
       {creating ? (
-        <div className="post-library-selected">
-          <div className="post-library-selected-head"><div><small>BÀI MỚI</small><strong>Tạo vào kho gốc + bind vào action</strong></div></div>
-          <label className="scenario-field"><span>Tên bài</span><input autoFocus value={name} maxLength={160} onChange={(event) => setName(event.target.value)} placeholder={`Bài viết ${posts.length + 1}`} /></label>
-          <label className="scenario-field"><span>Nội dung</span><textarea rows={4} value={variantText} onChange={(event) => setVariantText(event.target.value)} placeholder="Dùng dấu | để tách biến thể; dùng \\| nếu cần ký tự |." /></label>
-          <label className="scenario-field"><span>Folder ảnh</span><div className="action-config-input-line"><input value={image.folderPath} onChange={(event) => setImage((current) => ({ ...current, folderPath: event.target.value }))} placeholder="Để trống nếu chỉ đăng text"/><button className="scenario-button" type="button" onClick={async () => { const folder = await window.pageAuto.pickContentLibraryImageFolder(); if (folder) setImage((current) => ({ ...current, folderPath: folder })) }}>Chọn folder</button></div></label>
-          <div className="post-delay-row">
-            <label><span>Chọn ảnh</span><select value={image.mode} onChange={(event) => setImage((current) => ({ ...current, mode: event.target.value as PageTabImageConfig['mode'] }))}><option value="sequential">Lần lượt</option><option value="random">Ngẫu nhiên</option><option value="filename_match">Khớp Group UID</option></select></label>
-            <label><span>Số ảnh / bài</span><input type="number" min={1} max={50} value={image.imagesPerPost} onChange={(event) => setImage((current) => ({ ...current, imagesPerPost: Math.max(1, Number(event.target.value) || 1) }))}/></label>
-            <label><span>Khi thiếu ảnh</span><select value={image.missingPolicy} onChange={(event) => setImage((current) => ({ ...current, missingPolicy: event.target.value as PageTabImageConfig['missingPolicy'] }))}><option value="text_only">Vẫn đăng text</option><option value="skip">Bỏ qua</option></select></label>
-          </div>
-          <div className="action-config-input-line"><button className="scenario-button" type="button" onClick={() => { setCreating(false); resetCreate() }}>Hủy</button><button className="scenario-button primary" type="button" onClick={addNew}>Thêm bài</button></div>
+        <div className="scenario-modal-backdrop" role="presentation" onMouseDown={closeCreate}>
+          <section className="scenario-modal action-config-modal post-create-modal" role="dialog" aria-modal="true" aria-label="Tạo bài mới" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="scenario-modal-head">
+              <div><p className="scenario-kicker">KHO BÀI VIẾT GỐC</p><h3>Tạo bài mới</h3></div>
+              <button type="button" onClick={closeCreate}>×</button>
+            </div>
+            <div className="action-config-form post-create-form">
+              <p className="post-create-note">Tạo bài vào kho gốc và bind ngay vào action này.</p>
+              <label className="scenario-field"><span>Tên bài</span><input autoFocus value={name} maxLength={160} onChange={(event) => setName(event.target.value)} placeholder={`Bài viết ${posts.length + 1}`} /></label>
+              <label className="scenario-field"><span>Nội dung</span><textarea rows={5} value={variantText} onChange={(event) => setVariantText(event.target.value)} placeholder="Dùng dấu | để tách biến thể; dùng \\| nếu cần ký tự |." /></label>
+              <label className="scenario-field"><span>Folder ảnh</span><div className="action-config-input-line"><input value={image.folderPath} onChange={(event) => setImage((current) => ({ ...current, folderPath: event.target.value }))} placeholder="Để trống nếu chỉ đăng text"/><button className="scenario-button" type="button" onClick={async () => { const folder = await window.pageAuto.pickContentLibraryImageFolder(); if (folder) setImage((current) => ({ ...current, folderPath: folder })) }}>Chọn folder</button></div></label>
+              <div className="post-create-options">
+                <label><span>Chọn ảnh</span><select value={image.mode} onChange={(event) => setImage((current) => ({ ...current, mode: event.target.value as PageTabImageConfig['mode'] }))}><option value="sequential">Lần lượt</option><option value="random">Ngẫu nhiên</option><option value="filename_match">Khớp Group UID</option></select></label>
+                <label><span>Số ảnh / bài</span><input type="number" min={1} max={50} value={image.imagesPerPost} onChange={(event) => setImage((current) => ({ ...current, imagesPerPost: clampScenarioImagesPerPost(Number(event.target.value) || 1) }))}/></label>
+                <label><span>Khi thiếu ảnh</span><select value={image.missingPolicy} onChange={(event) => setImage((current) => ({ ...current, missingPolicy: event.target.value as PageTabImageConfig['missingPolicy'] }))}><option value="text_only">Vẫn đăng text</option><option value="skip">Bỏ qua</option></select></label>
+              </div>
+              {error ? <small className="action-config-help post-library-error">{error}</small> : null}
+            </div>
+            <div className="scenario-modal-actions">
+              <button className="scenario-button" type="button" onClick={closeCreate}>Hủy</button>
+              <button className="scenario-button primary" type="button" onClick={addNew}>Thêm bài</button>
+            </div>
+          </section>
         </div>
       ) : null}
-
-      {error ? <small className="action-config-help post-library-error">{error}</small> : null}
 
       {pickerOpen ? (
         <div className="scenario-modal-backdrop" role="presentation" onMouseDown={() => setPickerOpen(false)}>
