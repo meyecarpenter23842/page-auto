@@ -42,7 +42,7 @@ export interface PreparedScenarioGroupPostAction {
 
 export interface PreparedScenarioPostRun {
   actions: Map<number, PreparedScenarioPostAction>
-  /** Optional for callers built before the canonical group_post cutover. */
+  /** Compatibility for old saved standalone group_post actions. */
   groupActions?: Map<number, PreparedScenarioGroupPostAction>
 }
 
@@ -57,6 +57,16 @@ interface ScenarioPostScope {
   wallOrdinals: Map<number, number>
 }
 
+interface TargetResult {
+  status: ActionResultStatus
+  attempts: number
+  success: number
+  skipped: number
+  code?: string
+  message?: string
+  data?: Record<string, unknown>
+}
+
 function numberConfig(config: ActionConfig, key: string, fallback: number): number {
   const value = config[key]
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback
@@ -65,6 +75,10 @@ function numberConfig(config: ActionConfig, key: string, fallback: number): numb
 function stringConfig(config: ActionConfig, key: string, fallback = ''): string {
   const value = config[key]
   return typeof value === 'string' ? value : fallback
+}
+
+function booleanConfig(config: ActionConfig, key: string): boolean {
+  return config[key] === true
 }
 
 function actionConfigFromUnknown(value: unknown): ActionConfig {
@@ -133,6 +147,14 @@ function workerResult(
     accountName: null,
     sessionState: state
   }
+}
+
+function targetLabel(status: ActionResultStatus): string {
+  if (status === 'success') return 'thành công'
+  if (status === 'skipped') return 'bỏ qua'
+  if (status === 'needs_attention') return 'cần xử lý'
+  if (status === 'stopped') return 'đã dừng'
+  return 'thất bại'
 }
 
 export class ScenarioPostActionAdapter {
@@ -252,7 +274,7 @@ export class ScenarioPostActionAdapter {
 
   async run(job: ScenarioActionWorkerJob, onLog?: (event: ActionLogEvent) => void): Promise<ScenarioActionWorkerResult> {
     if (job.request.actionType === 'group_post') return this.runGroupPost(job, onLog)
-    return this.runProfileWallPost(job, onLog)
+    return this.runCompositePost(job, onLog)
   }
 
   stop(accountId: number, runKey: string): void {
@@ -322,7 +344,7 @@ export class ScenarioPostActionAdapter {
     }
   }
 
-  private async runProfileWallPost(
+  private async runCompositePost(
     job: ScenarioActionWorkerJob,
     onLog?: (event: ActionLogEvent) => void
   ): Promise<ScenarioActionWorkerResult> {
@@ -343,12 +365,14 @@ export class ScenarioPostActionAdapter {
       return workerResult(config, {
         status: 'failed',
         code: 'action_actor_unsupported',
-        message: 'Đăng tường trong Kịch Bản chỉ chạy bằng tài khoản.'
+        message: 'Đăng bài trong Kịch Bản chỉ chạy bằng tài khoản.'
       }, startedAt, 0)
     }
 
+    const postToWall = booleanConfig(config, 'postToWall')
+    const postToGroups = booleanConfig(config, 'postToGroups')
     const profileUid = job.sessionAccount.uid.trim()
-    if (!profileUid) {
+    if (postToWall && !profileUid) {
       return workerResult(config, {
         status: 'failed',
         code: 'profile_identity_unconfirmed',
@@ -361,7 +385,7 @@ export class ScenarioPostActionAdapter {
       return workerResult(config, {
         status: 'failed',
         code: 'post_action_id_missing',
-        message: 'Action Đăng tường cần scenarioActionId để đọc snapshot của phiên.'
+        message: 'Action Đăng bài cần scenarioActionId để đọc snapshot của phiên.'
       }, startedAt, 0)
     }
 
@@ -375,7 +399,6 @@ export class ScenarioPostActionAdapter {
         message: 'Không tìm thấy snapshot Thư viện chung của action trong phiên hiện tại.'
       }, startedAt, 0)
     }
-
     const configuredContentSetId = Math.floor(numberConfig(config, 'contentSetId', 0))
     if (configuredContentSetId !== prepared.contentSetId) {
       return workerResult(config, {
@@ -386,9 +409,112 @@ export class ScenarioPostActionAdapter {
     }
 
     const selectionMode = stringConfig(config, 'selectionMode', 'sequential') as PostSelectionMode
-    const targetCount = Math.max(1, Math.floor(numberConfig(config, 'postsPerAccount', 1)))
     const delayMin = numberConfig(config, 'postDelayMinSeconds', 0)
     const delayMax = numberConfig(config, 'postDelayMaxSeconds', 0)
+    const targets: Record<string, TargetResult> = {}
+    let attempts = 0
+    let sessionState: ScenarioActionWorkerResult['sessionState'] = null
+
+    this.emit(job, onLog, 'executing', 'info', `Đã khóa nguồn “${prepared.contentSetName}” (#${prepared.contentSetId}) với ${prepared.posts.length} bài cho phiên.`)
+
+    if (postToWall) {
+      const wallResult = await this.runWallTarget(job, scope, prepared, config, selectionMode, profileUid, delayMin, delayMax, onLog)
+      targets.wall = wallResult.target
+      attempts += wallResult.target.attempts
+      sessionState = wallResult.sessionState ?? sessionState
+    }
+
+    if (postToGroups && !scope.cancelledRunKeys.has(job.request.runKey)) {
+      if (postToWall && (targets.wall?.attempts ?? 0) > 0) {
+        const delayMs = this.randomDelayMs(delayMin, delayMax)
+        if (delayMs > 0 && !await this.sleep(scope, job.request.runKey, delayMs)) {
+          return workerResult(config, {
+            status: 'stopped',
+            code: 'action_stopped',
+            message: 'Đăng bài đã dừng trong lúc chuyển từ Tường sang Nhóm.',
+            data: { contentSetId: prepared.contentSetId, selectionMode, targets }
+          }, startedAt, attempts, sessionState)
+        }
+      }
+      const group = await this.groupPost.runWithSnapshot(job, {
+        groupTargets: stringConfig(config, 'groupTargets'),
+        posts: prepared.posts,
+        postMode: selectionMode,
+        postsPerAccount: Math.max(1, Math.floor(numberConfig(config, 'groupPostsPerAccount', 1))),
+        postDelayMinSeconds: delayMin,
+        postDelayMaxSeconds: delayMax
+      }, onLog)
+      const groupData = group.summary.result.data ?? {}
+      targets.group = {
+        status: group.summary.result.status,
+        attempts: group.summary.attempts,
+        success: typeof groupData.success === 'number' ? groupData.success : group.summary.result.status === 'success' ? 1 : 0,
+        skipped: typeof groupData.skipped === 'number' ? groupData.skipped : group.summary.result.status === 'skipped' ? 1 : 0,
+        ...(group.summary.result.code ? { code: group.summary.result.code } : {}),
+        ...(group.summary.result.message ? { message: group.summary.result.message } : {}),
+        ...(Object.keys(groupData).length ? { data: groupData } : {})
+      }
+      attempts += group.summary.attempts
+      sessionState = group.sessionState ?? sessionState
+    }
+
+    if (scope.cancelledRunKeys.has(job.request.runKey)) {
+      return workerResult(config, {
+        status: 'stopped',
+        code: 'action_stopped',
+        message: 'Đăng bài đã dừng theo yêu cầu.',
+        data: { contentSetId: prepared.contentSetId, selectionMode, targets }
+      }, startedAt, attempts, sessionState)
+    }
+
+    const statuses = Object.values(targets).map((target) => target.status)
+    const summaryText = [
+      targets.wall ? `Tường: ${targetLabel(targets.wall.status)}` : null,
+      targets.group ? `Nhóm: ${targetLabel(targets.group.status)}` : null
+    ].filter(Boolean).join(' · ')
+    let status: ActionResultStatus = 'skipped'
+    let code = 'post_no_target_result'
+    if (statuses.includes('needs_attention')) {
+      status = 'needs_attention'
+      code = 'post_partial_needs_attention'
+    } else if (statuses.includes('failed')) {
+      status = 'failed'
+      code = 'post_partial_failure'
+    } else if (statuses.includes('success')) {
+      status = 'success'
+      code = 'post_completed'
+    } else if (statuses.includes('stopped')) {
+      status = 'stopped'
+      code = 'action_stopped'
+    } else if (statuses.length) {
+      code = 'post_all_skipped'
+    }
+
+    return workerResult(config, {
+      status,
+      code,
+      message: `Đăng bài kết thúc. ${summaryText || 'Không có kết quả đích.'}`,
+      data: {
+        contentSetId: prepared.contentSetId,
+        contentSetName: prepared.contentSetName,
+        selectionMode,
+        targets
+      }
+    }, startedAt, attempts, sessionState)
+  }
+
+  private async runWallTarget(
+    job: ScenarioActionWorkerJob,
+    scope: ScenarioPostScope,
+    prepared: PreparedScenarioPostAction,
+    config: ActionConfig,
+    selectionMode: PostSelectionMode,
+    profileUid: string,
+    delayMin: number,
+    delayMax: number,
+    onLog?: (event: ActionLogEvent) => void
+  ): Promise<{ target: TargetResult; sessionState: ScenarioActionWorkerResult['sessionState'] }> {
+    const targetCount = Math.max(1, Math.floor(numberConfig(config, 'wallPostsPerAccount', 1)))
     let attempts = 0
     let success = 0
     let skipped = 0
@@ -397,8 +523,6 @@ export class ScenarioPostActionAdapter {
     let terminalMessage: string | undefined
     let state: ScenarioActionWorkerResult['sessionState'] = null
 
-    this.emit(job, onLog, 'executing', 'info', `Đã khóa ${prepared.posts.length} bài cho tường tài khoản ${profileUid}; không switch Page.`)
-
     for (let index = 0; index < targetCount; index += 1) {
       if (scope.cancelledRunKeys.has(job.request.runKey)) {
         terminalStatus = 'stopped'
@@ -406,7 +530,6 @@ export class ScenarioPostActionAdapter {
         terminalMessage = 'Đăng tường đã dừng theo yêu cầu.'
         break
       }
-
       attempts += 1
       const ordinal = scope.wallOrdinals.get(prepared.actionId) ?? 0
       scope.wallOrdinals.set(prepared.actionId, ordinal + 1)
@@ -419,11 +542,10 @@ export class ScenarioPostActionAdapter {
         terminalMessage = 'Snapshot Thư viện chung không còn bài hợp lệ để đăng tường.'
         break
       }
-
       const images = await selectRunImages(material.image, item)
       if (images.missing && material.image.missingPolicy === 'skip') {
         skipped += 1
-        this.emit(job, onLog, 'executing', 'info', `Bỏ qua bài #${index + 1}: thiếu ảnh theo policy.`)
+        this.emit(job, onLog, 'executing', 'info', `[Tường tài khoản ${profileUid}] Bỏ qua bài #${index + 1}: thiếu ảnh theo policy.`)
       } else {
         const base: FacebookTaskJobBase = {
           runId: runIdForSelection(job.request.runKey),
@@ -457,10 +579,9 @@ export class ScenarioPostActionAdapter {
           onLog,
           'executing',
           result.status === 'failed' || result.status === 'needs_login' ? 'warning' : 'info',
-          `Bài #${index + 1}: ${result.message}`,
+          `[Tường tài khoản ${profileUid}] ${result.message}`,
           result.code
         )
-
         if (result.status === 'success') success += 1
         else if (result.status === 'skipped') skipped += 1
         else {
@@ -482,31 +603,20 @@ export class ScenarioPostActionAdapter {
       }
     }
 
-    if (scope.cancelledRunKeys.has(job.request.runKey) && terminalStatus === null) {
-      terminalStatus = 'stopped'
-      terminalCode = 'action_stopped'
-      terminalMessage = 'Đăng tường đã dừng theo yêu cầu.'
-    }
-
-    const status: ActionResultStatus = terminalStatus ?? (success > 0 ? 'success' : 'skipped')
-    const code = terminalCode ?? (success > 0 ? 'post_completed' : 'post_all_skipped')
-    const message = terminalMessage
-      ?? `Đăng tường tài khoản hoàn tất: ${success} thành công, ${skipped} bỏ qua; ${attempts}/${targetCount} lượt đã chạy.`
-
-    return workerResult(config, {
-      status,
-      code,
-      message,
-      data: {
-        contentSetId: prepared.contentSetId,
-        contentSetName: prepared.contentSetName,
-        selectionMode,
-        profileUid,
-        target: targetCount,
+    const status = terminalStatus ?? (success > 0 ? 'success' : 'skipped')
+    const message = terminalMessage ?? `Đăng tường tài khoản hoàn tất: ${success} thành công, ${skipped} bỏ qua; ${attempts}/${targetCount} lượt đã chạy.`
+    return {
+      target: {
+        status,
+        attempts,
         success,
-        skipped
-      }
-    }, startedAt, attempts, state)
+        skipped,
+        ...(terminalCode ? { code: terminalCode } : {}),
+        message,
+        data: { profileUid, target: targetCount }
+      },
+      sessionState: state
+    }
   }
 
   private wallSnapshot(prepared: PreparedScenarioPostAction, selectionMode: PostSelectionMode, profileUid: string): RunSnapshot {

@@ -293,8 +293,8 @@ export function ActionConfigModal({ value, onClose, onSave }: ActionConfigModalP
     () => definition ? getActionOverrideValidationErrors(definition.id, baseValidation.value) : [],
     [baseValidation.value, definition]
   )
-  const postBindingError = usesCanonicalPosts(value.actionType) && posts.length === 0
-    ? 'Cần ít nhất một bài viết đang gắn vào action.'
+  const postBindingError = usesCanonicalPosts(value.actionType) && enabled && !posts.some((post) => post.enabled)
+    ? 'Action đang bật cần ít nhất một bài viết được bật.'
     : null
   const valid = baseValidation.valid && extraErrors.length === 0 && postBindingError === null
 
@@ -378,12 +378,8 @@ export function ActionConfigModal({ value, onClose, onSave }: ActionConfigModalP
         {isPostAction ? (
           <div className="action-config-summary post-action-summary">
             <div>
-              <strong>Đăng tường</strong>
-              <span>Đăng bài lên tường của tài khoản đang chạy Kịch Bản.</span>
-            </div>
-            <div className="action-config-badges">
-              <span>TK con</span>
-              <span className="ready">Executor sẵn sàng</span>
+              <strong>Đăng bài</strong>
+              <span>Chọn Đăng tường, Đăng nhóm hoặc cả hai. Tất cả đều chạy bằng tài khoản của Kịch Bản.</span>
             </div>
           </div>
         ) : (

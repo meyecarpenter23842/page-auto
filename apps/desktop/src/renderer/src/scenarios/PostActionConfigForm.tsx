@@ -21,6 +21,8 @@ function stringValue(config: ActionConfig, key: string): string {
 }
 
 export function PostActionConfigForm({ config, posts, onChange, onPostsChange }: PostActionConfigFormProps) {
+  const postToWall = config.postToWall === true
+  const postToGroups = config.postToGroups === true
   const selectionMode = stringValue(config, 'selectionMode') || 'sequential'
 
   return (
@@ -29,23 +31,66 @@ export function PostActionConfigForm({ config, posts, onChange, onPostsChange }:
         <div className="post-config-heading">
           <span className="post-config-step">1</span>
           <div>
-            <strong>Đăng tường tài khoản</strong>
-            <small>Action dùng chính tài khoản đang chạy Kịch Bản. Không switch Page và không chứa cấu hình Group.</small>
+            <strong>Nơi đăng</strong>
+            <small>Bật Đăng tường, Đăng nhóm hoặc cả hai. Đều dùng tài khoản đang chạy Kịch Bản.</small>
           </div>
         </div>
-        <div className="post-delay-row">
-          <label>
-            <span>Số bài / tài khoản</span>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 22, flexWrap: 'wrap' }}>
+          <label className="post-target-toggle" style={{ alignItems: 'center' }}>
+            <input type="checkbox" checked={postToWall} onChange={(event) => onChange('postToWall', event.target.checked)} />
+            <span><strong>Đăng tường</strong></span>
+          </label>
+          <label className="scenario-field compact-number" style={{ width: 120 }}>
+            <span>Số bài</span>
             <input
-              aria-label="Số bài / tài khoản"
+              aria-label="Số bài đăng tường"
               type="number"
               min={1}
               max={100}
-              value={numberValue(config, 'postsPerAccount', 1)}
-              onChange={(event) => onChange('postsPerAccount', event.target.value === '' ? undefined : Number(event.target.value))}
+              disabled={!postToWall}
+              value={numberValue(config, 'wallPostsPerAccount', 1)}
+              onChange={(event) => onChange('wallPostsPerAccount', event.target.value === '' ? undefined : Number(event.target.value))}
+            />
+          </label>
+
+          <label className="post-target-toggle" style={{ alignItems: 'center' }}>
+            <input type="checkbox" checked={postToGroups} onChange={(event) => onChange('postToGroups', event.target.checked)} />
+            <span><strong>Đăng nhóm</strong></span>
+          </label>
+          <label className="scenario-field compact-number" style={{ width: 120 }}>
+            <span>Số bài</span>
+            <input
+              aria-label="Số bài đăng nhóm"
+              type="number"
+              min={1}
+              max={100}
+              disabled={!postToGroups}
+              value={numberValue(config, 'groupPostsPerAccount', 1)}
+              onChange={(event) => onChange('groupPostsPerAccount', event.target.value === '' ? undefined : Number(event.target.value))}
             />
           </label>
         </div>
+
+        {postToGroups ? (
+          <div className="post-group-fields">
+            <div className="post-group-title">
+              <span>Danh sách Group *</span>
+              <button className="scenario-button" type="button" onClick={async () => {
+                const picked = await window.pageAuto.pickPageTabTextFile()
+                if (picked) onChange('groupTargets', picked.content)
+              }}>Mở file ID</button>
+            </div>
+            <textarea
+              aria-label="Danh sách Group"
+              rows={4}
+              maxLength={100_000}
+              placeholder="Mỗi dòng một Group UID hoặc URL Facebook..."
+              value={stringValue(config, 'groupTargets')}
+              onChange={(event) => onChange('groupTargets', event.target.value)}
+            />
+          </div>
+        ) : null}
       </section>
 
       <section className="post-config-block">
