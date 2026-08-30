@@ -38,6 +38,7 @@ import {
   type ResolvedPostBinding
 } from '../database/canonicalPostRepository'
 import { ContentLibraryRepository } from '../database/contentLibraryRepository'
+import { LegacyCanonicalPostBridge } from '../database/legacyCanonicalPostBridge'
 import { PageTabPostRepository } from '../database/pageTabPostRepository'
 import { PageTabRepository } from '../database/pageTabRepository'
 import { ScenarioRepository } from '../database/scenarioRepository'
@@ -440,6 +441,7 @@ export class ConfigBackupService {
   private readonly contentLibrary: ContentLibraryRepository
   private readonly scenarios: ScenarioRepository
   private readonly scenarioBindings: ScenarioActionPostBindingRepository
+  private readonly legacyBridge: LegacyCanonicalPostBridge
 
   constructor(private readonly client: Database.Database) {
     this.accounts = new AccountRepository(client)
@@ -450,9 +452,13 @@ export class ConfigBackupService {
     this.contentLibrary = new ContentLibraryRepository(client)
     this.scenarios = new ScenarioRepository(client)
     this.scenarioBindings = new ScenarioActionPostBindingRepository(client)
+    this.legacyBridge = new LegacyCanonicalPostBridge(client)
   }
 
   createPayload(appVersion: string): ConfigBackupPayload {
+    this.legacyBridge.reconcileAllPages()
+    this.legacyBridge.syncAllGlobalSets()
+
     const registry = new ExportPostRegistry(this.canonicalPosts.list().sort((a, b) => a.id - b.id))
     const legacySetCollections = new Map<number, { key: string; bindings: ConfigBackupPostCollection['bindings'] }>()
     const mappedCollectionIds = new Set<number>()
@@ -683,14 +689,17 @@ export class ConfigBackupService {
           const result = this.client.prepare(`INSERT INTO post_collections (name, created_at, updated_at) VALUES (?, ?, ?)`).run(collection.name.trim(), now, now)
           collectionId = Number(result.lastInsertRowid)
         }
+        const orderedBindings = collection.bindings.slice().sort((a, b) => a.sortOrder - b.sortOrder)
         const insertCollectionBinding = this.client.prepare(`
           INSERT INTO post_collection_bindings (collection_id, post_id, enabled, sort_order)
           VALUES (?, ?, ?, ?)
         `)
-        collection.bindings
-          .slice()
-          .sort((a, b) => a.sortOrder - b.sortOrder)
-          .forEach((binding, index) => insertCollectionBinding.run(collectionId, postId(binding.postKey), binding.enabled ? 1 : 0, index))
+        orderedBindings.forEach((binding, index) => insertCollectionBinding.run(
+          collectionId,
+          postId(binding.postKey),
+          binding.enabled ? 1 : 0,
+          index
+        ))
 
         const normalizedName = collection.name.trim()
         if (!normalizedName) throw new Error('Backup có nhóm bài viết tên rỗng.')
@@ -699,8 +708,20 @@ export class ConfigBackupService {
         `).get(normalizedName) as { id: number } | undefined
         const legacyTarget = existingLegacy ? this.contentLibrary.get(existingLegacy.id) : this.contentLibrary.createSet({ name: normalizedName })
         if (!legacyTarget) throw new Error(`Không thể tạo compatibility source “${normalizedName}”.`)
+
+        const previousLegacyItems = this.client.prepare(`
+          SELECT id FROM content_items WHERE content_set_id = ? ORDER BY sort_order, id
+        `).all(legacyTarget.id) as Array<{ id: number }>
+        if (previousLegacyItems.length > 0) {
+          const placeholders = previousLegacyItems.map(() => '?').join(', ')
+          this.client.prepare(`
+            DELETE FROM post_legacy_sources
+            WHERE source_kind = 'content_item' AND source_id IN (${placeholders})
+          `).run(...previousLegacyItems.map((item) => item.id))
+        }
         this.client.prepare('DELETE FROM content_items WHERE content_set_id = ?').run(legacyTarget.id)
-        for (const binding of collection.bindings.slice().sort((a, b) => a.sortOrder - b.sortOrder)) {
+
+        for (const binding of orderedBindings) {
           const post = backupPosts.get(binding.postKey)
           if (!post) throw new Error(`Thiếu bài viết ${binding.postKey} cho nhóm “${collection.name}”.`)
           this.contentLibrary.createItem({
@@ -711,6 +732,33 @@ export class ConfigBackupService {
             image: legacyImage(post.image)
           })
         }
+
+        const restoredLegacyItems = this.client.prepare(`
+          SELECT id FROM content_items WHERE content_set_id = ? ORDER BY sort_order, id
+        `).all(legacyTarget.id) as Array<{ id: number }>
+        if (restoredLegacyItems.length !== orderedBindings.length) {
+          throw new Error(`Không thể khôi phục provenance cho nhóm “${collection.name}”.`)
+        }
+
+        this.client.prepare(`
+          DELETE FROM post_collection_legacy_sources
+          WHERE content_set_id = ? OR collection_id = ?
+        `).run(legacyTarget.id, collectionId)
+        this.client.prepare(`
+          INSERT INTO post_collection_legacy_sources (content_set_id, collection_id)
+          VALUES (?, ?)
+        `).run(legacyTarget.id, collectionId)
+
+        const insertLegacySource = this.client.prepare(`
+          INSERT OR IGNORE INTO post_legacy_sources (source_kind, source_id, post_id)
+          VALUES ('content_item', ?, ?)
+        `)
+        orderedBindings.forEach((binding, index) => {
+          const item = restoredLegacyItems[index]
+          if (!item) throw new Error(`Thiếu compatibility item #${index + 1} cho nhóm “${collection.name}”.`)
+          insertLegacySource.run(item.id, postId(binding.postKey))
+        })
+
         legacySetIdByCollectionKey.set(collection.key, legacyTarget.id)
         contentLibrariesRestored += 1
       }
@@ -775,6 +823,7 @@ export class ConfigBackupService {
           pageTabId: targetId,
           mode: tab.postMode,
           posts: effective.map((binding, index) => ({
+            postId: binding.postId,
             name: binding.name,
             enabled: binding.enabled,
             sortOrder: index,
@@ -811,7 +860,7 @@ export class ConfigBackupService {
           })
           scenarioId = created.id
           usedScenarioIds.add(scenarioId)
-        knownScenarios.push({ id: created.id, name: created.name })
+          knownScenarios.push({ id: created.id, name: created.name })
         }
 
         for (const action of scenario.actions) {
@@ -901,4 +950,3 @@ export class ConfigBackupService {
     }
   }
 }
-
