@@ -6,6 +6,7 @@ import type {
 } from '../../../shared/aiAgents'
 import { AiAgentManagerModal } from './AiAgentManagerModal'
 import { AiDraftResultsPanel, type AiIncomingDraftBatch } from './AiDraftResultsPanel'
+import { captureAiRequestContext } from './aiDraftResults'
 import { AI_POST_DELIMITER, parseAiPostOutput } from './aiPostOutputFormat'
 import './aiContentWorkspace.css'
 import './aiContentWorkspaceModes.css'
@@ -57,6 +58,8 @@ export function AiContentWorkspaceAgentBuilder() {
   const [generationError, setGenerationError] = useState<string | null>(null)
   const [generationVersion, setGenerationVersion] = useState(0)
   const [incomingBatch, setIncomingBatch] = useState<AiIncomingDraftBatch | null>(null)
+  const [resultAction, setResultAction] = useState<AiContentAction>('create')
+  const [resultPostCount, setResultPostCount] = useState(5)
 
   const enabledAgents = useMemo(
     () => catalog.agents.filter((agent) => agent.enabled),
@@ -133,13 +136,14 @@ export function AiContentWorkspaceAgentBuilder() {
 
   const generate = async () => {
     if (missingInput || generating) return
+    const requestContext = captureAiRequestContext(action, postCount)
     setGenerating(true)
     setGenerationError(null)
     try {
       const result: GenerateAiPostsResult = await window.pageAuto.generateAiPosts({
         agentId: selectedAgent,
-        action,
-        postCount,
+        action: requestContext.action,
+        postCount: requestContext.postCount,
         subject,
         sourceInfo,
         highlight,
@@ -155,6 +159,8 @@ export function AiContentWorkspaceAgentBuilder() {
       })
       const version = generationVersion + 1
       setGenerationVersion(version)
+      setResultAction(requestContext.action)
+      setResultPostCount(requestContext.postCount)
       setIncomingBatch({ version, output: result.output, warning: result.warning })
     } catch (cause) {
       setGenerationError(errorMessage(cause))
@@ -164,6 +170,9 @@ export function AiContentWorkspaceAgentBuilder() {
   }
 
   const actionVerb = action === 'create' ? 'Tạo' : 'Random'
+  const resultActionVerb = resultAction === 'create' ? 'Tạo' : 'Random'
+  const previewActionVerb = incomingBatch ? resultActionVerb : actionVerb
+  const previewPostCount = incomingBatch ? resultPostCount : postCount
 
   return (
     <section className="ai-content-workspace" aria-label="Tạo bài bằng Agent Builder">
@@ -423,8 +432,8 @@ export function AiContentWorkspaceAgentBuilder() {
         </aside>
 
         <AiDraftResultsPanel
-          expectedCount={postCount}
-          actionLabel={actionVerb}
+          expectedCount={previewPostCount}
+          actionLabel={previewActionVerb}
           incomingBatch={incomingBatch}
         />
       </div>
