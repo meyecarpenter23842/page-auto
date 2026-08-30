@@ -8,6 +8,7 @@ import {
   type ActionConfig,
   type ActionDefinition
 } from '../../../shared/actionRegistry'
+import { normalizeK452PostConfig } from '../../../shared/k452PostActionOverrides'
 import {
   scenarioCategoryLabels,
   type ScenarioActionPostInput,
@@ -26,7 +27,9 @@ function formatTime(value: number): string {
 
 function parseConfig(definition: ActionDefinition, configJson: string): ActionConfig {
   try {
-    const validation = validateActionConfig(definition.id, JSON.parse(configJson))
+    const raw = JSON.parse(configJson)
+    const input = definition.id === 'post' ? normalizeK452PostConfig(raw) : raw
+    const validation = validateActionConfig(definition.id, input)
     return validation.valid ? validation.value : createDefaultActionConfig(definition)
   } catch {
     return createDefaultActionConfig(definition)
@@ -305,7 +308,7 @@ export function ScenarioManager() {
                 <div><dt>Cập nhật</dt><dd>{formatTime(details.updatedAt)}</dd></div>
               </dl>
               <div className="scenario-info-card"><strong>Common Action Modules</strong><p>Action đăng bài chỉ bind tới kho bài gốc; runtime vẫn snapshot khi Start.</p></div>
-              <div className="scenario-safe-note"><span>✓</span><p>Login/session/2FA/checkpoint/Page switch không nằm trong từng action.</p></div>
+              <div className="scenario-safe-note"><span>✓</span><p>Kịch Bản chỉ chạy TK con; automation Page nằm ở tab Page riêng.</p></div>
             </div>
           ) : <div className="scenario-empty inspector-empty">Chọn hoặc tạo một kịch bản để bắt đầu.</div>}
         </aside>

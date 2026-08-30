@@ -62,6 +62,21 @@ describe('Facebook task contracts', () => {
     expect(validateFacebookPostTaskJob(taskJob)).toBeNull()
   })
 
+  it('reuses the wall task for a profile without switching Page when common pageUid is blank', () => {
+    const { groupUid: _groupUid, ...base } = legacyGroupJob()
+    const taskJob = pageWallPostTaskFromBase({ ...base, pageUid: '' })
+
+    expect(taskJob.task).toEqual({
+      type: 'page_wall_post',
+      target: { kind: 'page_wall', pageUid: '10001' }
+    })
+    expect(taskJob.pageUid).toBe('')
+    expect(validateFacebookPostTaskJob(taskJob)).toBeNull()
+
+    taskJob.task.target.pageUid = 'different-profile'
+    expect(validateFacebookPostTaskJob(taskJob)).toContain('Profile wall target')
+  })
+
   it('rejects a page-wall target that disagrees with the common Page runtime', () => {
     const { groupUid: _groupUid, ...base } = legacyGroupJob()
     const taskJob = pageWallPostTaskFromBase(base)

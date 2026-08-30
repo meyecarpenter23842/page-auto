@@ -2,7 +2,8 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { PageWallExecutionInput } from '../../shared/pageWall'
+import { cloneDefaultAppSettings } from '../../shared/appSettings'
+import type { FacebookPostTaskJobRequest } from '../../shared/facebookTasks'
 import type {
   ExecuteSinglePostingJobPayload,
   ExecuteSinglePostingJobResult,
@@ -106,12 +107,12 @@ function createGroupPostConfig(content = ''): Record<string, unknown> {
 function createScenarioHarness() {
   const runtime = createRuntime('page-auto-canonical-scenario-runtime-')
   const runs = new RunRepository(runtime.client)
-  let wallInput: PageWallExecutionInput | null = null
+  let wallJob: FacebookPostTaskJobRequest | null = null
   let groupRunId: number | null = null
 
   const posting = {
-    executePageWallPostNow: async (input: PageWallExecutionInput): Promise<PostingJobResult> => {
-      wallInput = { ...input, imagePaths: [...input.imagePaths] }
+    executeFacebookPostTask: async (job: FacebookPostTaskJobRequest): Promise<PostingJobResult> => {
+      wallJob = job
       return { status: 'success', message: 'wall ok' }
     },
     executeSingle: async (payload: ExecuteSinglePostingJobPayload): Promise<ExecuteSinglePostingJobResult> => {
@@ -148,8 +149,36 @@ function createScenarioHarness() {
     library: new ContentLibraryRepository(runtime.client),
     scenarios: new ScenarioRepository(runtime.client),
     adapter: new ScenarioPostActionAdapter(runtime.client, posting),
-    lastWallInput: () => wallInput,
+    lastWallJob: () => wallJob,
     lastGroupRunId: () => groupRunId
+  }
+}
+
+function profileWallWorkerJob(actionId: number, config: Record<string, unknown>): ScenarioActionWorkerJob {
+  const settings = cloneDefaultAppSettings()
+  return {
+    accountId: 1,
+    profileDirectory: 'C:\\PageAuto\\profiles\\uid-1',
+    browser: settings.browser,
+    session: settings.session,
+    network: settings.network,
+    sessionAccount: {
+      id: 1,
+      uid: 'uid-1',
+      username: null,
+      password: null,
+      cookie: 'c_user=uid-1',
+      twoFactorSecret: null,
+      name: null
+    },
+    request: {
+      runKey: 'scenario-canonical-post:a1:r0',
+      scenarioActionId: actionId,
+      actionType: 'post',
+      label: 'Đăng tường',
+      actor: { kind: 'profile', accountId: 1, accountUid: 'uid-1' },
+      config
+    }
   }
 }
 
@@ -182,8 +211,8 @@ describe('canonical post runtime cutover', () => {
     expect(created.run.snapshot.posts?.[0]?.variants).toEqual(['legacy page content'])
   })
 
-  it('uses Scenario post bindings even if the legacy Content Set is deleted, and freezes before execution', async () => {
-    const { canonical, scenarioBindings, library, scenarios, adapter, lastWallInput } = createScenarioHarness()
+  it('uses Scenario post bindings after legacy source deletion, freezes at Start, and posts only to the profile wall', async () => {
+    const { canonical, scenarioBindings, library, scenarios, adapter, lastWallJob } = createScenarioHarness()
     const set = library.createSet({ name: 'Legacy source' })
     library.createItem({
       contentSetId: set.id,
@@ -196,7 +225,7 @@ describe('canonical post runtime cutover', () => {
     const details = scenarios.createAction({
       scenarioId: scenario.id,
       actionType: 'post',
-      label: 'Đăng bài',
+      label: 'Đăng tường',
       category: 'publishing',
       configJson: JSON.stringify(createPostConfig(set.id))
     })
@@ -219,21 +248,15 @@ describe('canonical post runtime cutover', () => {
     })
     adapter.beginScenarioRun('scenario-canonical-post', [1], prepared)
 
-    const job = {
-      accountId: 1,
-      request: {
-        runKey: 'scenario-canonical-post:a1:r0',
-        scenarioActionId: action.id,
-        actionType: 'post',
-        label: 'Đăng bài',
-        actor: { kind: 'profile', accountId: 1, accountUid: 'uid-1' },
-        config: createPostConfig(set.id)
-      }
-    } as unknown as ScenarioActionWorkerJob
-    const result = await adapter.run(job)
+    const result = await adapter.run(profileWallWorkerJob(action.id, createPostConfig(set.id)))
 
     expect(result.summary.result.status).toBe('success')
-    expect(lastWallInput()?.content).toBe('canonical scenario at Start')
+    expect(lastWallJob()?.content).toBe('canonical scenario at Start')
+    expect(lastWallJob()?.pageUid).toBe('')
+    expect(lastWallJob()?.task).toEqual({
+      type: 'page_wall_post',
+      target: { kind: 'page_wall', pageUid: 'uid-1' }
+    })
     adapter.finishScenarioRun('scenario-canonical-post')
   })
 
