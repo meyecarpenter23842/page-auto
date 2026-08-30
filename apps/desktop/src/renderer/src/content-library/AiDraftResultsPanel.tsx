@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import type { ContentLibraryImageConfig } from '../../../shared/contentLibrary'
 import {
   buildAiDraftBatch,
   CONTENT_LIBRARY_EXTERNAL_CHANGE_EVENT,
@@ -114,6 +115,28 @@ export function AiDraftResultsPanel({
         error: changedContent ? null : draft.error
       }
     }))
+  }
+
+  const updateDraftImage = (
+    id: string,
+    patch: Partial<ContentLibraryImageConfig>
+  ) => {
+    setDrafts((current) => current.map((draft) => (
+      draft.id === id
+        ? {
+            ...draft,
+            image: { ...draft.image, ...patch },
+            status: draft.status !== 'ready' ? 'ready' : draft.status,
+            error: null
+          }
+        : draft
+    )))
+  }
+
+  const pickImageFolder = async () => {
+    if (!activeDraft) return
+    const folderPath = await window.pageAuto.pickContentLibraryImageFolder()
+    if (folderPath) updateDraftImage(activeDraft.id, { folderPath })
   }
 
   const retrySave = async (id: string) => {
@@ -413,9 +436,89 @@ export function AiDraftResultsPanel({
                     />
                   </label>
 
+                  <section className="ai-draft-media-config" aria-label="Ảnh và lưu Thư viện">
+                    <header>
+                      <div>
+                        <strong>Ảnh & lưu Thư viện</strong>
+                        <small>Cấu hình này được lưu cùng bài, không phải nhập lại sau.</small>
+                      </div>
+                      <span>{activeDraft.image.folderPath ? 'Có folder ảnh' : 'Chưa chọn ảnh'}</span>
+                    </header>
+
+                    <label className="ai-media-field ai-media-folder-field">
+                      <span>Folder ảnh</span>
+                      <div className="ai-media-folder-row">
+                        <input
+                          value={activeDraft.image.folderPath}
+                          disabled={saving}
+                          placeholder="Không bắt buộc"
+                          onChange={(event) => updateDraftImage(
+                            activeDraft.id,
+                            { folderPath: event.target.value }
+                          )}
+                        />
+                        <button
+                          type="button"
+                          disabled={saving}
+                          onClick={() => void pickImageFolder()}
+                        >
+                          Chọn
+                        </button>
+                      </div>
+                    </label>
+
+                    <div className="ai-media-grid">
+                      <label className="ai-media-field">
+                        <span>Cách lấy ảnh</span>
+                        <select
+                          value={activeDraft.image.mode}
+                          disabled={saving}
+                          onChange={(event) => updateDraftImage(
+                            activeDraft.id,
+                            { mode: event.target.value as ContentLibraryImageConfig['mode'] }
+                          )}
+                        >
+                          <option value="sequential">Lần lượt</option>
+                          <option value="random">Ngẫu nhiên</option>
+                          <option value="filename_match">Khớp tên file</option>
+                        </select>
+                      </label>
+
+                      <label className="ai-media-field ai-media-count-field">
+                        <span>Số ảnh/bài</span>
+                        <input
+                          type="number"
+                          min={1}
+                          max={50}
+                          value={activeDraft.image.imagesPerPost}
+                          disabled={saving}
+                          onChange={(event) => updateDraftImage(
+                            activeDraft.id,
+                            { imagesPerPost: Math.min(50, Math.max(1, Number(event.target.value) || 1)) }
+                          )}
+                        />
+                      </label>
+
+                      <label className="ai-media-field">
+                        <span>Khi thiếu ảnh</span>
+                        <select
+                          value={activeDraft.image.missingPolicy}
+                          disabled={saving}
+                          onChange={(event) => updateDraftImage(
+                            activeDraft.id,
+                            { missingPolicy: event.target.value as ContentLibraryImageConfig['missingPolicy'] }
+                          )}
+                        >
+                          <option value="text_only">Đăng chữ</option>
+                          <option value="skip">Bỏ qua bài</option>
+                        </select>
+                      </label>
+                    </div>
+                  </section>
+
                   <footer className="ai-draft-editor-footer">
                     <span>
-                      {activeDraft.content.trim().length.toLocaleString('vi-VN')} ký tự
+                      {activeDraft.content.trim().length.toLocaleString('vi-VN')} ký tự · Nội dung và cấu hình ảnh sẽ đi cùng nhau khi lưu
                     </span>
                     {activeDraft.error ? (
                       <div className="ai-draft-error">

@@ -1,3 +1,82 @@
 @import './aiResponsivePreview.css';
 
-.content-library-hub{display:flex;flex-direction:column;gap:10px;height:100%;min-height:0}.content-library-hub-tabs{display:inline-flex;align-self:flex-start;gap:3px;padding:3px;border:1px solid #dce5ee;border-radius:11px;background:#eef3f8;box-shadow:0 5px 16px rgba(20,43,70,.04)}.content-library-hub-tabs button{display:inline-flex;align-items:center;gap:7px;height:34px;padding:0 13px;border:0;border-radius:8px;background:transparent;color:#607185;font-size:12px;font-weight:750;cursor:pointer;transition:background .16s ease,color .16s ease,box-shadow .16s ease}.content-library-hub-tabs button:hover{color:#2f455d}.content-library-hub-tabs button.active{background:#fff;color:#176bc6;box-shadow:0 2px 9px rgba(32,68,104,.1)}.content-library-hub-tabs button span{font-size:13px}.content-library-hub-body{display:flex;flex:1;min-height:0}.content-library-hub-body>.content-library-page,.content-library-hub-body>.ai-content-workspace{flex:1;min-width:0}
+.content-library-hub {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.content-library-hub-tabs {
+  display: inline-flex;
+  align-self: flex-start;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid #dce5ee;
+  border-radius: 11px;
+  background: #eef3f8;
+  box-shadow: 0 5px 16px rgba(20, 43, 70, .04);
+}
+
+.content-library-hub-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 34px;
+  padding: 0 13px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #607185;
+  font-size: 12px;
+  font-weight: 750;
+  cursor: pointer;
+  transition: background .16s ease, color .16s ease, box-shadow .16s ease;
+}
+
+.content-library-hub-tabs button:hover { color: #2f455d; }
+
+.content-library-hub-tabs button.active {
+  background: #fff;
+  color: #176bc6;
+  box-shadow: 0 2px 9px rgba(32, 68, 104, .1);
+}
+
+.content-library-hub-tabs button span { font-size: 13px; }
+
+.content-library-hub-body {
+  display: flex;
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* ContentLibraryHub keeps both tabs mounted. The direct child is the tabpanel
+   wrapper, not ContentLibraryWorkspace/AiContentWorkspace itself. It must own
+   the available flex width or the AI screen shrinks to its intrinsic width. */
+.content-library-hub-body > [role='tabpanel'] {
+  flex: 1 1 0;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.content-library-hub-body > [role='tabpanel'][hidden] {
+  display: none !important;
+}
+
+.content-library-hub-body > [role='tabpanel']:not([hidden]) {
+  display: flex;
+}
+
+.content-library-hub-body > [role='tabpanel'] > .content-library-page,
+.content-library-hub-body > [role='tabpanel'] > .ai-content-workspace {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+}
