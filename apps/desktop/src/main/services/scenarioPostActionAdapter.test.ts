@@ -2,7 +2,8 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { PageWallExecutionInput } from '../../shared/pageWall'
+import { cloneDefaultAppSettings } from '../../shared/appSettings'
+import type { FacebookPostTaskJobRequest } from '../../shared/facebookTasks'
 import type {
   ExecuteSinglePostingJobPayload,
   ExecuteSinglePostingJobResult,
@@ -33,9 +34,11 @@ function setup() {
   let wallCalls = 0
   let groupCalls = 0
   let wallResult: PostingJobResult = { status: 'success', message: 'wall ok' }
+  const wallJobs: FacebookPostTaskJobRequest[] = []
   const posting = {
-    executePageWallPostNow: async (_input: PageWallExecutionInput): Promise<PostingJobResult> => {
+    executeFacebookPostTask: async (job: FacebookPostTaskJobRequest): Promise<PostingJobResult> => {
       wallCalls += 1
+      wallJobs.push(job)
       return { ...wallResult }
     },
     executeSingle: async (payload: ExecuteSinglePostingJobPayload): Promise<ExecuteSinglePostingJobResult> => {
@@ -70,7 +73,8 @@ function setup() {
     scenarios: new ScenarioRepository(runtime.client),
     adapter: new ScenarioPostActionAdapter(runtime.client, posting),
     setWallResult: (result: PostingJobResult) => { wallResult = result },
-    calls: () => ({ wallCalls, groupCalls })
+    calls: () => ({ wallCalls, groupCalls }),
+    wallJobs
   }
 }
 
@@ -78,12 +82,7 @@ function createScenarioConfig(contentSetId: number, overrides: Record<string, un
   return {
     contentSetId,
     selectionMode: 'sequential',
-    postToWall: true,
-    wallPageUid: '90001',
-    wallPostsPerAccount: 1,
-    postToGroups: false,
-    groupTargets: '',
-    groupPostsPerAccount: 1,
+    postsPerAccount: 1,
     postDelayMinSeconds: 0,
     postDelayMaxSeconds: 0,
     ...overrides
@@ -99,11 +98,39 @@ function createPostAction(
   const details = scenarios.createAction({
     scenarioId: scenario.id,
     actionType: 'post',
-    label: 'Đăng bài',
+    label: 'Đăng tường',
     category: 'publishing',
     configJson: JSON.stringify(createScenarioConfig(contentSetId, overrides))
   })
   return { scenario, action: details.actions[0]! }
+}
+
+function workerJob(actionId: number, config: Record<string, unknown>): ScenarioActionWorkerJob {
+  const settings = cloneDefaultAppSettings()
+  return {
+    accountId: 1,
+    profileDirectory: 'C:\\PageAuto\\profiles\\uid-1',
+    browser: settings.browser,
+    session: settings.session,
+    network: settings.network,
+    sessionAccount: {
+      id: 1,
+      uid: 'uid-1',
+      username: null,
+      password: null,
+      cookie: 'c_user=uid-1',
+      twoFactorSecret: null,
+      name: null
+    },
+    request: {
+      runKey: 'scenario-test:a1:r0',
+      scenarioActionId: actionId,
+      actionType: 'post',
+      label: 'Đăng tường',
+      actor: { kind: 'profile', accountId: 1, accountUid: 'uid-1' },
+      config
+    }
+  }
 }
 
 describe('ScenarioPostActionAdapter', () => {
@@ -140,9 +167,9 @@ describe('ScenarioPostActionAdapter', () => {
     expect(() => adapter.prepareScenarioRun([scenario.id])).toThrow('không tồn tại trong Thư viện chung trước khi Start')
   })
 
-  it('keeps Wall and Group results independent when both targets are enabled', async () => {
-    const { library, scenarios, adapter, setWallResult, calls } = setup()
-    const set = library.createSet({ name: 'Nguồn partial' })
+  it('posts only to the running profile wall and ignores legacy Page/Group destination fields', async () => {
+    const { library, scenarios, adapter, calls, wallJobs } = setup()
+    const set = library.createSet({ name: 'Nguồn profile wall' })
     library.createItem({
       contentSetId: set.id,
       name: 'Bài A',
@@ -150,33 +177,34 @@ describe('ScenarioPostActionAdapter', () => {
       variants: ['Nội dung snapshot'],
       image: { folderPath: '', mode: 'sequential', imagesPerPost: 1, missingPolicy: 'text_only' }
     })
-    const { scenario, action } = createPostAction(scenarios, set.id, {
+    const legacyComposite = createScenarioConfig(set.id, {
+      postToWall: true,
+      wallPageUid: '90001',
+      wallPostsPerAccount: 1,
       postToGroups: true,
-      groupTargets: 'group-a'
+      groupTargets: 'group-a',
+      groupPostsPerAccount: 3
     })
-    setWallResult({ status: 'failed', code: 'publish_unconfirmed', message: 'wall failed' })
+    const { scenario, action } = createPostAction(scenarios, set.id, legacyComposite)
     const prepared = adapter.prepareScenarioRun([scenario.id])
     adapter.beginScenarioRun('scenario-test', [1], prepared)
 
-    const job = {
-      accountId: 1,
-      request: {
-        runKey: 'scenario-test:a1:r0',
-        scenarioActionId: action.id,
-        actionType: 'post',
-        label: 'Đăng bài',
-        actor: { kind: 'profile', accountId: 1, accountUid: 'uid-1' },
-        config: createScenarioConfig(set.id, { postToGroups: true, groupTargets: 'group-a' })
-      }
-    } as unknown as ScenarioActionWorkerJob
-    const result = await adapter.run(job)
-    const targets = result.summary.result.data?.targets as Record<string, { status: string }> | undefined
+    const result = await adapter.run(workerJob(action.id, legacyComposite))
 
-    expect(result.summary.result.status).toBe('failed')
-    expect(result.summary.result.code).toBe('post_partial_failure')
-    expect(targets?.wall?.status).toBe('failed')
-    expect(targets?.group?.status).toBe('success')
-    expect(calls()).toEqual({ wallCalls: 1, groupCalls: 1 })
+    expect(result.summary.result.status).toBe('success')
+    expect(result.summary.normalizedConfig).toMatchObject({
+      contentSetId: set.id,
+      postsPerAccount: 1
+    })
+    expect(result.summary.normalizedConfig).not.toHaveProperty('wallPageUid')
+    expect(result.summary.normalizedConfig).not.toHaveProperty('postToGroups')
+    expect(calls()).toEqual({ wallCalls: 1, groupCalls: 0 })
+    expect(wallJobs).toHaveLength(1)
+    expect(wallJobs[0]?.pageUid).toBe('')
+    expect(wallJobs[0]?.task).toEqual({
+      type: 'page_wall_post',
+      target: { kind: 'page_wall', pageUid: 'uid-1' }
+    })
 
     adapter.finishScenarioRun('scenario-test')
   })

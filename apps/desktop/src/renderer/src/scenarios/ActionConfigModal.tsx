@@ -10,6 +10,7 @@ import {
   getActionFieldUiMeta,
   getActionOverrideValidationErrors
 } from '../../../shared/actionOverrides'
+import { normalizeK452PostConfig } from '../../../shared/k452PostActionOverrides'
 import type { ScenarioActionPostInput } from '../../../shared/scenarios'
 import { PostActionConfigForm } from './PostActionConfigForm'
 import { ScenarioPostLibraryField } from './ScenarioPostLibraryField'
@@ -61,6 +62,7 @@ function canonicalCompatibilityConfig(actionType: string, input: ActionConfig): 
     if (typeof source !== 'number' || !Number.isSafeInteger(source) || source <= 0) {
       next.contentSetId = LEGACY_CONTENT_SET_SENTINEL
     }
+    return normalizeK452PostConfig(next)
   }
   if (actionType === 'group_post') {
     const content = next.content
@@ -376,11 +378,11 @@ export function ActionConfigModal({ value, onClose, onSave }: ActionConfigModalP
         {isPostAction ? (
           <div className="action-config-summary post-action-summary">
             <div>
-              <strong>Đăng bài</strong>
-              <span>Chọn nơi đăng, bài viết canonical và thời gian chờ.</span>
+              <strong>Đăng tường</strong>
+              <span>Đăng bài lên tường của tài khoản đang chạy Kịch Bản.</span>
             </div>
             <div className="action-config-badges">
-              <span>Tường Page / Group</span>
+              <span>TK con</span>
               <span className="ready">Executor sẵn sàng</span>
             </div>
           </div>
@@ -389,7 +391,7 @@ export function ActionConfigModal({ value, onClose, onSave }: ActionConfigModalP
             <div><strong>{definition?.label ?? value.label}</strong><code>{value.actionType}</code></div>
             <div className="action-config-badges">
               <span>{value.categoryLabel}</span>
-              <span>{definition?.capabilities.actors.length === 2 ? 'Profile + Page' : 'Profile'}</span>
+              <span>TK con</span>
               <span className={runtimeReady ? 'ready' : 'placeholder'}>{runtimeReady ? 'Executor sẵn sàng' : 'Chưa chạy thật'}</span>
             </div>
           </div>

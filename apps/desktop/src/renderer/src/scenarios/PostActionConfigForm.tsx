@@ -20,53 +20,31 @@ function stringValue(config: ActionConfig, key: string): string {
   return typeof value === 'string' ? value : ''
 }
 
-function toggleClass(enabled: boolean): string {
-  return enabled ? 'post-target-card active' : 'post-target-card'
-}
-
 export function PostActionConfigForm({ config, posts, onChange, onPostsChange }: PostActionConfigFormProps) {
-  const postToWall = config.postToWall === true
-  const postToGroups = config.postToGroups === true
   const selectionMode = stringValue(config, 'selectionMode') || 'sequential'
 
   return (
     <div className="post-action-flow">
-      <section className="post-config-block">
+      <section className="post-config-block compact">
         <div className="post-config-heading">
           <span className="post-config-step">1</span>
           <div>
-            <strong>Nơi đăng</strong>
-            <small>Bật Tường Page, Nhóm hoặc cả hai. Mỗi đích có số bài riêng.</small>
+            <strong>Đăng tường tài khoản</strong>
+            <small>Action dùng chính tài khoản đang chạy Kịch Bản. Không switch Page và không chứa cấu hình Group.</small>
           </div>
         </div>
-
-        <div className="post-target-grid">
-          <div className={toggleClass(postToWall)}>
-            <label className="post-target-toggle">
-              <input type="checkbox" checked={postToWall} onChange={(event) => onChange('postToWall', event.target.checked)} />
-              <span><strong>Đăng tường Page</strong><small>Đăng trực tiếp lên tường Page.</small></span>
-            </label>
-            {postToWall ? (
-              <div className="post-target-fields">
-                <label className="scenario-field"><span>Page UID *</span><input aria-label="Page UID" value={stringValue(config, 'wallPageUid')} placeholder="Nhập Page UID..." maxLength={200} onChange={(event) => onChange('wallPageUid', event.target.value)} /></label>
-                <label className="scenario-field compact-number"><span>Số bài / tài khoản</span><input aria-label="Số bài đăng tường" type="number" min={1} max={100} value={numberValue(config, 'wallPostsPerAccount', 1)} onChange={(event) => onChange('wallPostsPerAccount', event.target.value === '' ? undefined : Number(event.target.value))} /></label>
-              </div>
-            ) : null}
-          </div>
-
-          <div className={toggleClass(postToGroups)}>
-            <label className="post-target-toggle">
-              <input type="checkbox" checked={postToGroups} onChange={(event) => onChange('postToGroups', event.target.checked)} />
-              <span><strong>Đăng nhóm</strong><small>Mỗi dòng một Group UID hoặc URL Facebook.</small></span>
-            </label>
-            {postToGroups ? (
-              <div className="post-group-fields">
-                <div className="post-group-title"><span>Danh sách Group *</span><button className="scenario-button" type="button" onClick={async () => { const picked = await window.pageAuto.pickPageTabTextFile(); if (picked) onChange('groupTargets', picked.content) }}>Mở file ID</button></div>
-                <textarea aria-label="Danh sách Group" rows={4} maxLength={100_000} placeholder="Mỗi dòng một Group UID hoặc URL Facebook..." value={stringValue(config, 'groupTargets')} onChange={(event) => onChange('groupTargets', event.target.value)} />
-                <label className="scenario-field compact-number"><span>Số bài / tài khoản</span><input aria-label="Số bài đăng nhóm" type="number" min={1} max={100} value={numberValue(config, 'groupPostsPerAccount', 1)} onChange={(event) => onChange('groupPostsPerAccount', event.target.value === '' ? undefined : Number(event.target.value))} /></label>
-              </div>
-            ) : null}
-          </div>
+        <div className="post-delay-row">
+          <label>
+            <span>Số bài / tài khoản</span>
+            <input
+              aria-label="Số bài / tài khoản"
+              type="number"
+              min={1}
+              max={100}
+              value={numberValue(config, 'postsPerAccount', 1)}
+              onChange={(event) => onChange('postsPerAccount', event.target.value === '' ? undefined : Number(event.target.value))}
+            />
+          </label>
         </div>
       </section>
 

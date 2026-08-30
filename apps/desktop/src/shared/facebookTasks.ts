@@ -49,7 +49,11 @@ export type FacebookTaskDescriptor =
  *
  * Existing Main call sites can omit executionMode while adapters normalize every
  * worker-bound job to an explicit lifecycle. Group legacy orchestration is always
- * `rotation`; Page Wall run-now/scheduled execution is `one_shot`.
+ * `rotation`; wall posting is `one_shot`.
+ *
+ * For `page_wall_post`, a non-empty `pageUid` means Page mode and Common Runtime
+ * must switch/verify that Page. A blank `pageUid` means profile-wall mode: Common
+ * Runtime stays on the account identity and the task target is the account UID.
  */
 export type FacebookTaskJobBase = Omit<PostingJobRequest, 'groupUid'> & {
   executionMode?: FacebookExecutionMode
@@ -95,12 +99,14 @@ export function legacyPostingJobFromGroupTask(job: GroupPostTaskJobRequest): Pos
 }
 
 export function pageWallPostTaskFromBase(base: FacebookTaskJobBase): PageWallPostTaskJobRequest {
+  const commonPageUid = base.pageUid.trim()
+  const targetUid = commonPageUid || base.sessionAccount.uid.trim()
   return {
     ...base,
     executionMode: 'one_shot',
     task: {
       type: 'page_wall_post',
-      target: { kind: 'page_wall', pageUid: base.pageUid }
+      target: { kind: 'page_wall', pageUid: targetUid }
     }
   }
 }
@@ -110,10 +116,19 @@ export function validateFacebookPostTaskJob(job: FacebookPostTaskJobRequest): st
     return job.task.target.groupUid.trim() ? null : 'group_post yêu cầu Group UID hợp lệ.'
   }
 
-  const targetPageUid = job.task.target.pageUid.trim()
-  if (!targetPageUid) return 'page_wall_post yêu cầu Page UID hợp lệ.'
-  if (targetPageUid !== job.pageUid.trim()) {
-    return 'Page UID của page_wall_post target phải trùng Page UID của common runtime.'
+  const targetUid = job.task.target.pageUid.trim()
+  if (!targetUid) return 'page_wall_post yêu cầu UID tường hợp lệ.'
+
+  const commonPageUid = job.pageUid.trim()
+  if (commonPageUid) {
+    return targetUid === commonPageUid
+      ? null
+      : 'Page UID của page_wall_post target phải trùng Page UID của common runtime.'
   }
-  return null
+
+  const profileUid = job.sessionAccount.uid.trim()
+  if (!profileUid) return 'profile wall yêu cầu UID account hợp lệ.'
+  return targetUid === profileUid
+    ? null
+    : 'Profile wall target phải trùng UID account khi common runtime không switch Page.'
 }

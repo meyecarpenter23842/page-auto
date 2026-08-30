@@ -17,18 +17,7 @@ export interface K452PostFieldUiMeta {
 const UI_META: Record<string, K452PostFieldUiMeta> = {
   contentSetId: { section: 'Nguồn bài viết' },
   selectionMode: { section: 'Nguồn bài viết' },
-  postToWall: { section: 'Đăng tường' },
-  wallPageUid: { section: 'Đăng tường', visibleWhen: { key: 'postToWall', equals: true } },
-  wallPostsPerAccount: { section: 'Đăng tường', visibleWhen: { key: 'postToWall', equals: true } },
-  postToGroups: { section: 'Đăng nhóm' },
-  groupTargets: {
-    section: 'Đăng nhóm',
-    multiline: true,
-    rows: 5,
-    visibleWhen: { key: 'postToGroups', equals: true },
-    textFilePickerLabel: 'Mở file ID'
-  },
-  groupPostsPerAccount: { section: 'Đăng nhóm', visibleWhen: { key: 'postToGroups', equals: true } },
+  postsPerAccount: { section: 'Số lượng' },
   postDelayMinSeconds: { section: 'Delay' },
   postDelayMaxSeconds: { section: 'Delay' }
 }
@@ -38,20 +27,45 @@ function numberValue(config: ActionConfig, key: string, fallback: number): numbe
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback
 }
 
-function stringValue(config: ActionConfig, key: string): string {
-  const value = config[key]
-  return typeof value === 'string' ? value.trim() : ''
+function scalarConfig(value: unknown): ActionConfig {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  const result: ActionConfig = {}
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof entry === 'string' || typeof entry === 'number' || typeof entry === 'boolean') result[key] = entry
+  }
+  return result
 }
 
-function booleanValue(config: ActionConfig, key: string): boolean {
-  return config[key] === true
+/**
+ * Converts the short-lived composite `post` config (Page wall + Group) into the
+ * canonical Scenario meaning: post to the wall of the profile/account that is
+ * already running the Scenario. Destination/Page fields are intentionally dropped.
+ */
+export function normalizeK452PostConfig(input: unknown): ActionConfig {
+  const source = scalarConfig(input)
+  const postsPerAccount = typeof source.postsPerAccount === 'number'
+    ? source.postsPerAccount
+    : typeof source.wallPostsPerAccount === 'number'
+      ? source.wallPostsPerAccount
+      : 1
+
+  const normalized: ActionConfig = {
+    selectionMode: source.selectionMode === 'random' ? 'random' : 'sequential',
+    postsPerAccount,
+    postDelayMinSeconds: typeof source.postDelayMinSeconds === 'number' ? source.postDelayMinSeconds : 200,
+    postDelayMaxSeconds: typeof source.postDelayMaxSeconds === 'number' ? source.postDelayMaxSeconds : 300
+  }
+  if (typeof source.contentSetId === 'number') normalized.contentSetId = source.contentSetId
+  return normalized
 }
 
 export function applyK452PostActionOverrides(): void {
   const definition = getActionDefinition('post')
   if (!definition) return
+  definition.label = 'Đăng tường'
   definition.runtimeStatus = 'ready'
-  definition.description = 'Đăng bài từ Thư viện chung lên tường Page và/hoặc Group.'
+  definition.description = 'Đăng bài lên tường của tài khoản đang chạy Kịch Bản.'
+  definition.capabilities.actors = ['profile']
   definition.configSchema = {
     version: 1,
     fields: [
@@ -61,7 +75,7 @@ export function applyK452PostActionOverrides(): void {
         kind: 'number',
         required: true,
         min: 1,
-        help: 'Chọn nguồn global từ Thư viện Bài viết chung.'
+        help: 'Nguồn compatibility; bài canonical đã bind được ưu tiên khi Start.'
       },
       {
         key: 'selectionMode',
@@ -70,35 +84,9 @@ export function applyK452PostActionOverrides(): void {
         defaultValue: 'sequential',
         options: POST_SELECTION_OPTIONS
       },
-      { key: 'postToWall', label: 'Đăng tường', kind: 'boolean', defaultValue: true },
       {
-        key: 'wallPageUid',
-        label: 'Page UID',
-        kind: 'text',
-        defaultValue: '',
-        maxLength: 200,
-        placeholder: 'Nhập Page UID...'
-      },
-      {
-        key: 'wallPostsPerAccount',
-        label: 'Số bài',
-        kind: 'number',
-        defaultValue: 1,
-        min: 1,
-        max: 100
-      },
-      { key: 'postToGroups', label: 'Đăng nhóm', kind: 'boolean', defaultValue: false },
-      {
-        key: 'groupTargets',
-        label: 'Group ID / URL',
-        kind: 'text',
-        defaultValue: '',
-        maxLength: 100_000,
-        placeholder: 'Mỗi dòng một Group UID hoặc URL Facebook...'
-      },
-      {
-        key: 'groupPostsPerAccount',
-        label: 'Số bài',
+        key: 'postsPerAccount',
+        label: 'Số bài / tài khoản',
         kind: 'number',
         defaultValue: 1,
         min: 1,
@@ -134,21 +122,16 @@ export function getK452PostValidationErrors(actionType: string, config: ActionCo
   if (actionType !== 'post') return []
   const errors: string[] = []
   const contentSetId = numberValue(config, 'contentSetId', 0)
-  const postToWall = booleanValue(config, 'postToWall')
-  const postToGroups = booleanValue(config, 'postToGroups')
-  const wallPosts = numberValue(config, 'wallPostsPerAccount', 1)
-  const groupPosts = numberValue(config, 'groupPostsPerAccount', 1)
+  const postsPerAccount = numberValue(config, 'postsPerAccount', 1)
   const delayMin = numberValue(config, 'postDelayMinSeconds', 0)
   const delayMax = numberValue(config, 'postDelayMaxSeconds', 0)
 
   if (!Number.isSafeInteger(contentSetId) || contentSetId <= 0) {
-    errors.push('Nguồn bài viết: cần chọn một nguồn trong Thư viện chung.')
+    errors.push('Nguồn bài viết: cần có nguồn/binding bài viết hợp lệ.')
   }
-  if (!postToWall && !postToGroups) errors.push('Cần bật ít nhất một đích: Đăng tường hoặc Đăng nhóm.')
-  if (postToWall && !stringValue(config, 'wallPageUid')) errors.push('Page UID: không được để trống khi bật Đăng tường.')
-  if (postToWall && (!Number.isSafeInteger(wallPosts) || wallPosts < 1)) errors.push('Đăng tường: Số bài phải từ 1 trở lên.')
-  if (postToGroups && !stringValue(config, 'groupTargets')) errors.push('Group ID / URL: cần nhập ít nhất một Group khi bật Đăng nhóm.')
-  if (postToGroups && (!Number.isSafeInteger(groupPosts) || groupPosts < 1)) errors.push('Đăng nhóm: Số bài phải từ 1 trở lên.')
+  if (!Number.isSafeInteger(postsPerAccount) || postsPerAccount < 1) {
+    errors.push('Số bài / tài khoản: phải từ 1 trở lên.')
+  }
   if (delayMax < delayMin) errors.push('Delay: giá trị từ phải nhỏ hơn hoặc bằng giá trị đến.')
   return errors
 }

@@ -2,80 +2,68 @@ import { describe, expect, it } from 'vitest'
 import { getActionDefinition, validateActionConfig } from './actionRegistry'
 import {
   applyK452PostActionOverrides,
-  getK452PostFieldUiMeta,
-  getK452PostValidationErrors
+  getK452PostValidationErrors,
+  normalizeK452PostConfig
 } from './k452PostActionOverrides'
 
 applyK452PostActionOverrides()
 
 describe('K4.5.2 post action overrides', () => {
-  it('marks post ready with Content Library and independent target config', () => {
+  it('defines post as a profile-only wall action instead of a Page/Group composite', () => {
     const definition = getActionDefinition('post')
+    expect(definition?.label).toBe('Đăng tường')
     expect(definition?.runtimeStatus).toBe('ready')
+    expect(definition?.capabilities.actors).toEqual(['profile'])
     expect(definition?.configSchema.fields.map((field) => field.key)).toEqual([
       'contentSetId',
       'selectionMode',
-      'postToWall',
-      'wallPageUid',
-      'wallPostsPerAccount',
-      'postToGroups',
-      'groupTargets',
-      'groupPostsPerAccount',
+      'postsPerAccount',
       'postDelayMinSeconds',
       'postDelayMaxSeconds'
     ])
-    expect(getK452PostFieldUiMeta('post', 'groupTargets')?.textFilePickerLabel).toBe('Mở file ID')
   })
 
-  it('accepts Wall-only and Group-only configs', () => {
-    const wall = validateActionConfig('post', {
+  it('normalizes the old composite config without carrying Page or Group destinations forward', () => {
+    expect(normalizeK452PostConfig({
       contentSetId: 10,
-      selectionMode: 'sequential',
+      selectionMode: 'random',
       postToWall: true,
-      wallPageUid: '123456',
-      wallPostsPerAccount: 2,
-      postToGroups: false,
-      groupTargets: '',
-      groupPostsPerAccount: 1,
+      wallPageUid: '90001',
+      wallPostsPerAccount: 4,
+      postToGroups: true,
+      groupTargets: '80001',
+      groupPostsPerAccount: 3,
+      postDelayMinSeconds: 10,
+      postDelayMaxSeconds: 20
+    })).toEqual({
+      contentSetId: 10,
+      selectionMode: 'random',
+      postsPerAccount: 4,
       postDelayMinSeconds: 10,
       postDelayMaxSeconds: 20
     })
-    expect(wall.valid).toBe(true)
-    expect(getK452PostValidationErrors('post', wall.value)).toEqual([])
-
-    const group = validateActionConfig('post', {
-      contentSetId: 11,
-      selectionMode: 'random',
-      postToWall: false,
-      wallPageUid: '',
-      wallPostsPerAccount: 1,
-      postToGroups: true,
-      groupTargets: '111\nhttps://facebook.com/groups/222',
-      groupPostsPerAccount: 3,
-      postDelayMinSeconds: 0,
-      postDelayMaxSeconds: 0
-    })
-    expect(group.valid).toBe(true)
-    expect(getK452PostValidationErrors('post', group.value)).toEqual([])
   })
 
-  it('rejects missing targets, conditional target config and inverted delay', () => {
-    const base = validateActionConfig('post', {
+  it('accepts a normal account-wall config and rejects inverted delay', () => {
+    const valid = validateActionConfig('post', {
+      contentSetId: 11,
+      selectionMode: 'sequential',
+      postsPerAccount: 2,
+      postDelayMinSeconds: 10,
+      postDelayMaxSeconds: 20
+    })
+    expect(valid.valid).toBe(true)
+    expect(getK452PostValidationErrors('post', valid.value)).toEqual([])
+
+    const invalid = validateActionConfig('post', {
       contentSetId: 12,
       selectionMode: 'sequential',
-      postToWall: true,
-      wallPageUid: '',
-      wallPostsPerAccount: 1,
-      postToGroups: true,
-      groupTargets: '',
-      groupPostsPerAccount: 1,
+      postsPerAccount: 1,
       postDelayMinSeconds: 30,
       postDelayMaxSeconds: 10
     })
-    expect(base.valid).toBe(true)
-    expect(getK452PostValidationErrors('post', base.value)).toEqual([
-      'Page UID: không được để trống khi bật Đăng tường.',
-      'Group ID / URL: cần nhập ít nhất một Group khi bật Đăng nhóm.',
+    expect(invalid.valid).toBe(true)
+    expect(getK452PostValidationErrors('post', invalid.value)).toEqual([
       'Delay: giá trị từ phải nhỏ hơn hoặc bằng giá trị đến.'
     ])
   })
