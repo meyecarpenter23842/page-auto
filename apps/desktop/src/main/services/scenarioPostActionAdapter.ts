@@ -424,7 +424,15 @@ export class ScenarioPostActionAdapter {
       sessionState = wallResult.sessionState ?? sessionState
     }
 
-    if (postToGroups && !scope.cancelledRunKeys.has(job.request.runKey)) {
+    const wallRequiresAttention = targets.wall?.status === 'needs_attention'
+      || sessionState === 'needs_login'
+      || sessionState === 'verification_required'
+
+    if (postToGroups && wallRequiresAttention) {
+      this.emit(job, onLog, 'executing', 'warning', 'Bỏ qua Đăng nhóm vì tài khoản đang cần đăng nhập hoặc xác minh.')
+    }
+
+    if (postToGroups && !wallRequiresAttention && !scope.cancelledRunKeys.has(job.request.runKey)) {
       if (postToWall && (targets.wall?.attempts ?? 0) > 0) {
         const delayMs = this.randomDelayMs(delayMin, delayMax)
         if (delayMs > 0 && !await this.sleep(scope, job.request.runKey, delayMs)) {
@@ -573,7 +581,8 @@ export class ScenarioPostActionAdapter {
           ...(job.proxy ? { proxy: job.proxy } : {})
         }
         const result = await this.posting.executeFacebookPostTask(pageWallPostTaskFromBase(base))
-        state = sessionStateFromPosting(result) ?? state
+        const resultSessionState = sessionStateFromPosting(result)
+        state = resultSessionState ?? state
         this.emit(
           job,
           onLog,
@@ -585,7 +594,11 @@ export class ScenarioPostActionAdapter {
         if (result.status === 'success') success += 1
         else if (result.status === 'skipped') skipped += 1
         else {
-          terminalStatus = result.status === 'needs_login' ? 'needs_attention' : 'failed'
+          terminalStatus = result.status === 'needs_login'
+            || resultSessionState === 'needs_login'
+            || resultSessionState === 'verification_required'
+            ? 'needs_attention'
+            : 'failed'
           terminalCode = result.code
           terminalMessage = result.message
           break

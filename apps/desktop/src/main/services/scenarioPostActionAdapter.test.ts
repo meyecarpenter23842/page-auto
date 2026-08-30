@@ -225,6 +225,47 @@ describe('ScenarioPostActionAdapter', () => {
     adapter.finishScenarioRun('scenario-test')
   })
 
+  it('does not start Group when Wall reports login or verification attention', async () => {
+    const wallResults: PostingJobResult[] = [
+      { status: 'needs_login', code: 'needs_login', message: 'login required' },
+      {
+        status: 'failed',
+        code: 'verification_required',
+        message: 'verification required',
+        sessionValidation: {
+          phase: 'after_run',
+          state: 'verification_required',
+          message: 'verification required'
+        }
+      }
+    ]
+
+    for (const [index, wallResult] of wallResults.entries()) {
+      const { library, scenarios, adapter, setWallResult, calls } = setup()
+      const set = addPost(library, `Nguồn attention ${index}`)
+      const config = createScenarioConfig(set.id, {
+        postToWall: true,
+        postToGroups: true,
+        groupTargets: 'group-must-not-run',
+        groupPostsPerAccount: 1
+      })
+      const { scenario, action } = createPostAction(scenarios, set.id, config)
+      setWallResult(wallResult)
+      const prepared = adapter.prepareScenarioRun([scenario.id])
+      adapter.beginScenarioRun('scenario-test', [1], prepared)
+
+      const result = await adapter.run(workerJob(action.id, config))
+      const targets = result.summary.result.data?.targets as Record<string, { status: string }> | undefined
+
+      expect(result.summary.result.status).toBe('needs_attention')
+      expect(targets?.wall?.status).toBe('needs_attention')
+      expect(targets?.group).toBeUndefined()
+      expect(calls()).toEqual({ wallCalls: 1, groupCalls: 0 })
+
+      adapter.finishScenarioRun('scenario-test')
+    }
+  })
+
   it('supports Group-only Đăng bài without invoking the wall executor', async () => {
     const { library, scenarios, adapter, calls, wallJobs } = setup()
     const set = addPost(library, 'Nguồn group only')
