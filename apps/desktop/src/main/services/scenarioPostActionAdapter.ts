@@ -78,6 +78,17 @@ function booleanConfig(config: ActionConfig, key: string): boolean {
   return config[key] === true
 }
 
+function actionConfigFromUnknown(value: unknown): ActionConfig {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  const config: ActionConfig = {}
+  for (const [key, entry] of Object.entries(value)) {
+    if (typeof entry === 'string' || typeof entry === 'number' || typeof entry === 'boolean') {
+      config[key] = entry
+    }
+  }
+  return config
+}
+
 function scenarioRunIdFromRunKey(runKey: string): string {
   const marker = runKey.indexOf(':a')
   return marker > 0 ? runKey.slice(0, marker) : runKey
@@ -249,7 +260,7 @@ export class ScenarioPostActionAdapter {
     this.scopes.set(runId, {
       prepared: {
         actions: new Map([...prepared.actions].map(([id, action]) => [id, { ...action, posts: clonePosts(action.posts) }])),
-        groupActions: new Map([...(prepared.groupActions ?? new Map())].map(([id, action]) => [id, { ...action, posts: clonePosts(action.posts) }]))
+        groupActions: new Map([...(prepared.groupActions ?? new Map<number, PreparedScenarioGroupPostAction>())].map(([id, action]) => [id, { ...action, posts: clonePosts(action.posts) }]))
       },
       cancelledRunKeys: new Set(),
       wallOrdinals: new Map()
@@ -298,7 +309,8 @@ export class ScenarioPostActionAdapter {
     // Canonical bindings own content/media for this path. Keep validating the
     // legacy action's target/count/delay fields, but do not require its inline
     // content field just to execute a snapshot that was already frozen at Start.
-    const validationInput = { ...job.request.config, content: '__canonical_snapshot__' }
+    const rawConfig = actionConfigFromUnknown(job.request.config)
+    const validationInput: ActionConfig = { ...rawConfig, content: '__canonical_snapshot__' }
     const validation = validateActionConfig('group_post', validationInput)
     const extraErrors = getK435ValidationErrors('group_post', validation.value)
     if (!validation.valid || extraErrors.length) {
@@ -311,7 +323,7 @@ export class ScenarioPostActionAdapter {
 
     const config: ActionConfig = {
       ...validation.value,
-      content: typeof job.request.config.content === 'string' ? job.request.config.content : ''
+      content: typeof rawConfig.content === 'string' ? rawConfig.content : ''
     }
     const result = await this.groupPost.runWithSnapshot(job, {
       groupTargets: stringConfig(config, 'sourceTargets'),
