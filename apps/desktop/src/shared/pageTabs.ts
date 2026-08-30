@@ -16,6 +16,9 @@ export type PostSelectionMode = (typeof POST_SELECTION_MODES)[number]
 export const ACCOUNT_ORDER_MODES = ['sequential', 'random'] as const
 export type AccountOrderMode = (typeof ACCOUNT_ORDER_MODES)[number]
 
+export const GROUP_ORDER_MODES = ['sequential', 'random'] as const
+export type GroupOrderMode = (typeof GROUP_ORDER_MODES)[number]
+
 export function parsePostVariantText(value: string): string[] {
   const variants: string[] = []
   let buffer = ''
@@ -160,6 +163,8 @@ export interface PageTabSaveInput {
   accounts: PageTabAccountInput[]
   schedules: PageTabScheduleInput[]
   groupUids: string[]
+  /** Backward compatible for configs created before Group-order support. */
+  groupOrderMode?: GroupOrderMode
   /** Legacy compatibility. New UI/runtime uses PageTabPostLibrary. */
   contentMode: ContentMode
   /** Legacy compatibility. New UI/runtime uses PageTabPostLibrary. */

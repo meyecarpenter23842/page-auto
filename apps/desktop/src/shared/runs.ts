@@ -1,5 +1,6 @@
 import type {
   ContentMode,
+  GroupOrderMode,
   PageTabImageConfig,
   PageTabRotationConfig,
   PageTabScheduleInput,
@@ -44,6 +45,8 @@ export interface RunSnapshot {
   image: PageTabImageConfig
   postMode?: PostSelectionMode
   posts?: RunSnapshotPost[]
+  /** Backward compatible for runs created before Group-order support. */
+  groupOrderMode?: GroupOrderMode
   groupSourceCount: number
 }
 

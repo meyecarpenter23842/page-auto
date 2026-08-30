@@ -4,11 +4,13 @@ import {
   CONTENT_MODES,
   DEFAULT_PAGE_TAB_IMAGE,
   DEFAULT_PAGE_TAB_ROTATION,
+  GROUP_ORDER_MODES,
   IMAGE_MODES,
   MISSING_IMAGE_POLICIES,
   type AccountOrderMode,
   type ContentMode,
   type CreatePageTabInput,
+  type GroupOrderMode,
   type ImageMode,
   type MissingImagePolicy,
   type PageTabAccountRef,
@@ -31,6 +33,7 @@ interface PageTabRow {
   accountDelayMinSeconds: number
   accountDelayMaxSeconds: number
   accountOrderMode: string
+  groupOrderMode: string
   createdAt: number
   updatedAt: number
 }
@@ -86,9 +89,13 @@ function normalizeConfig(input: PageTabSaveInput): PageTabSaveInput {
   const accountDelayMinSeconds = nonNegativeInteger(input.rotation.accountDelayMinSeconds, 'Delay account tối thiểu')
   const accountDelayMaxSeconds = nonNegativeInteger(input.rotation.accountDelayMaxSeconds, 'Delay account tối đa')
   const accountOrderMode = input.rotation.accountOrderMode ?? 'sequential'
+  const groupOrderMode = input.groupOrderMode ?? 'sequential'
 
   if (!ACCOUNT_ORDER_MODES.includes(accountOrderMode)) {
     throw new Error('Chế độ thứ tự tài khoản không hợp lệ.')
+  }
+  if (!GROUP_ORDER_MODES.includes(groupOrderMode)) {
+    throw new Error('Chế độ thứ tự Group không hợp lệ.')
   }
   if (postDelayMinSeconds > postDelayMaxSeconds) {
     throw new Error('Delay bài tối thiểu không được lớn hơn tối đa.')
@@ -173,6 +180,7 @@ function normalizeConfig(input: PageTabSaveInput): PageTabSaveInput {
     accounts,
     schedules,
     groupUids: normalizeGroupUids(input.groupUids),
+    groupOrderMode,
     contentMode: input.contentMode,
     contents: normalizeContents(input.contents),
     image: {
@@ -196,6 +204,7 @@ function toPageTabRow(row: Record<string, unknown>): PageTabRow {
     accountDelayMinSeconds: Number(row.accountDelayMinSeconds),
     accountDelayMaxSeconds: Number(row.accountDelayMaxSeconds),
     accountOrderMode: String(row.accountOrderMode ?? 'sequential'),
+    groupOrderMode: String(row.groupOrderMode ?? 'sequential'),
     createdAt: Number(row.createdAt),
     updatedAt: Number(row.updatedAt)
   }
@@ -248,6 +257,7 @@ export class PageTabRepository {
         account_delay_min_seconds AS accountDelayMinSeconds,
         account_delay_max_seconds AS accountDelayMaxSeconds,
         account_order_mode AS accountOrderMode,
+        group_order_mode AS groupOrderMode,
         created_at AS createdAt,
         updated_at AS updatedAt
       FROM page_tabs
@@ -362,6 +372,9 @@ export class PageTabRepository {
         sortOrder: Number(item.sortOrder)
       })),
       groupUids: groupRows.map((item) => String(item.groupUid)),
+      groupOrderMode: GROUP_ORDER_MODES.includes(tab.groupOrderMode as GroupOrderMode)
+        ? tab.groupOrderMode as GroupOrderMode
+        : 'sequential',
       contentMode: (contentSet ? String(contentSet.mode) : 'sequential') as ContentMode,
       contents: contents.map((item) => String(item.content)),
       image,
@@ -381,8 +394,8 @@ export class PageTabRepository {
           name, page_uid, status, posts_per_account,
           post_delay_min_seconds, post_delay_max_seconds,
           account_delay_min_seconds, account_delay_max_seconds,
-          account_order_mode, created_at, updated_at
-        ) VALUES (?, ?, 'idle', ?, ?, ?, ?, ?, ?, ?, ?)
+          account_order_mode, group_order_mode, created_at, updated_at
+        ) VALUES (?, ?, 'idle', ?, ?, ?, ?, ?, ?, 'sequential', ?, ?)
       `).run(
         name,
         pageUid,
@@ -438,6 +451,7 @@ export class PageTabRepository {
           account_delay_min_seconds = ?,
           account_delay_max_seconds = ?,
           account_order_mode = ?,
+          group_order_mode = ?,
           updated_at = ?
         WHERE id = ?
       `).run(
@@ -449,6 +463,7 @@ export class PageTabRepository {
         config.rotation.accountDelayMinSeconds,
         config.rotation.accountDelayMaxSeconds,
         config.rotation.accountOrderMode ?? 'sequential',
+        config.groupOrderMode ?? 'sequential',
         now,
         id
       )
@@ -546,6 +561,7 @@ export class PageTabRepository {
         sortOrder: item.sortOrder
       })),
       groupUids: [...source.groupUids],
+      groupOrderMode: source.groupOrderMode ?? 'sequential',
       contentMode: source.contentMode,
       contents: [...source.contents],
       image: { ...source.image }
