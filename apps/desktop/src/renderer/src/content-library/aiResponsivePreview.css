@@ -16,30 +16,71 @@
   grid-template-columns: minmax(340px, 380px) minmax(0, 1fr);
 }
 
+/* Result rail always stays visible, including Random/single-result batches.
+   !important intentionally defeats the old #214 single-result :has() rules
+   during HMR/stale-style transitions so desktop testing cannot lose the rail. */
 .workspace-content-library .ai-results-workspace {
   width: 100%;
-  grid-template-columns: minmax(210px, 250px) minmax(0, 1fr);
+  grid-template-columns: minmax(220px, 3fr) minmax(0, 7fr) !important;
+  overflow: hidden;
 }
 
-/* A single result does not need a navigation rail. Random always resolves to
-   one canonical draft containing N pipe-separated variants, so its editor gets
-   the entire result width. The same rule also improves create-mode when only
-   one result is requested. */
-.workspace-content-library .ai-results-workspace:has(.ai-draft-list > .ai-draft-row:only-child) {
-  grid-template-columns: minmax(0, 1fr);
+.workspace-content-library .ai-results-workspace > .ai-draft-list {
+  position: static !important;
+  z-index: auto !important;
+  display: flex !important;
+  width: auto !important;
+  min-height: 0 !important;
+  overflow: auto !important;
+  padding: 0 2px 0 0 !important;
 }
 
-.workspace-content-library .ai-results-workspace:has(.ai-draft-list > .ai-draft-row:only-child) > .ai-draft-list {
-  display: none;
+.workspace-content-library .ai-results-workspace > .ai-draft-list > .ai-draft-row {
+  display: grid !important;
+  grid-template-columns: 26px minmax(0, 1fr) !important;
+  min-height: 68px !important;
+  border: 1px solid #dfe7ef !important;
+  border-radius: 10px !important;
+  background: #fff !important;
+  box-shadow: 0 3px 10px rgba(31, 57, 84, .035) !important;
+  overflow: hidden !important;
 }
 
-.workspace-content-library .ai-results-workspace:has(.ai-draft-list > .ai-draft-row:only-child) > .ai-draft-editor {
+.workspace-content-library .ai-results-workspace > .ai-draft-list > .ai-draft-row.active {
+  border-color: #79b3f5 !important;
+  background: #f8fbff !important;
+}
+
+.workspace-content-library .ai-results-workspace > .ai-draft-list > .ai-draft-row.saved {
+  border-color: #cde6d7 !important;
+  background: #fbfefc !important;
+}
+
+.workspace-content-library .ai-results-workspace > .ai-draft-list > .ai-draft-row.error {
+  border-color: #efcfd4 !important;
+  background: #fffafb !important;
+}
+
+.workspace-content-library .ai-results-workspace > .ai-draft-list > .ai-draft-row > .ai-draft-check {
+  display: grid !important;
+  place-items: start center !important;
+  padding: 12px 0 0 !important;
+  border-right: 1px solid #edf1f5 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+}
+
+.workspace-content-library .ai-results-workspace > .ai-draft-list > .ai-draft-row > .ai-draft-check::after {
+  content: none !important;
+}
+
+.workspace-content-library .ai-results-workspace > .ai-draft-list > .ai-draft-row > .ai-draft-open {
+  display: flex !important;
+}
+
+.workspace-content-library .ai-draft-editor {
   width: 100%;
   max-width: none;
-}
-
-.workspace-content-library .ai-results-workspace:has(.ai-draft-list > .ai-draft-row:only-child) .ai-draft-editor-content textarea {
-  min-height: 360px;
 }
 
 @media (min-width: 1500px) {
@@ -48,11 +89,7 @@
   }
 
   .workspace-content-library .ai-results-workspace {
-    grid-template-columns: 240px minmax(0, 1fr);
-  }
-
-  .workspace-content-library .ai-draft-editor-content textarea {
-    min-height: 380px;
+    grid-template-columns: minmax(240px, 3fr) minmax(0, 7fr) !important;
   }
 }
 

@@ -17,6 +17,7 @@ describe('aiDraftResults', () => {
       id: 'batch-1',
       name: 'Bài AI 1',
       kind: 'single',
+      image: { folderPath: '', mode: 'sequential', imagesPerPost: 1, missingPolicy: 'text_only' },
       selected: true,
       status: 'ready'
     })
@@ -78,6 +79,23 @@ describe('aiDraftResults', () => {
       enabled: true,
       variants: ['Nội dung đã sửa'],
       image: { folderPath: '', mode: 'sequential', imagesPerPost: 1, missingPolicy: 'text_only' }
+    })
+  })
+
+  it('carries preview image setup into the canonical library item', () => {
+    const draft = buildAiDraftBatch('Nội dung', 1, 'image-save').drafts[0]!
+    draft.image = {
+      folderPath: 'F:\\Media\\Giay',
+      mode: 'random',
+      imagesPerPost: 2,
+      missingPolicy: 'skip'
+    }
+
+    expect(createCanonicalContentInput(draft, 0).image).toEqual({
+      folderPath: 'F:\\Media\\Giay',
+      mode: 'random',
+      imagesPerPost: 2,
+      missingPolicy: 'skip'
     })
   })
 

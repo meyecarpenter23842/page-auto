@@ -4,6 +4,7 @@ import {
   DEFAULT_CONTENT_LIBRARY_IMAGE,
   formatContentVariantText,
   parseContentVariantText,
+  type ContentLibraryImageConfig,
   type CreateContentLibraryItemInput
 } from '../../../shared/contentLibrary'
 import { validateAiPostOutput } from './aiPostOutputFormat'
@@ -28,6 +29,7 @@ export interface AiDraftResult {
   name: string
   content: string
   kind: AiDraftResultKind
+  image: ContentLibraryImageConfig
   selected: boolean
   status: AiDraftResultStatus
   error: string | null
@@ -41,6 +43,10 @@ export interface AiDraftBatch {
   message: string
 }
 
+function defaultImageConfig(): ContentLibraryImageConfig {
+  return { ...DEFAULT_CONTENT_LIBRARY_IMAGE }
+}
+
 function buildRandomDraft(
   posts: readonly string[],
   batchId: string
@@ -51,6 +57,7 @@ function buildRandomDraft(
     name: 'Bài AI Random',
     content: formatContentVariantText(posts),
     kind: 'variant_group',
+    image: defaultImageConfig(),
     selected: true,
     status: 'ready',
     error: null
@@ -71,6 +78,7 @@ export function buildAiDraftBatch(
         name: `Bài AI ${index + 1}`,
         content,
         kind: 'single' as const,
+        image: defaultImageConfig(),
         selected: true,
         status: 'ready' as const,
         error: null
@@ -130,6 +138,6 @@ export function createCanonicalContentInput(
     name: normalized.name,
     enabled: true,
     variants: normalized.variants,
-    image: { ...DEFAULT_CONTENT_LIBRARY_IMAGE }
+    image: { ...draft.image }
   }
 }
