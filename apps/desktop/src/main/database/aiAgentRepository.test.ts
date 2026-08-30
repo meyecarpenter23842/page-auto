@@ -2,7 +2,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { parseAiAgentJson } from '../../shared/aiAgents'
+import type { RemoteAgentDescriptor } from '../../shared/aiAgents'
 import { initializeDatabase } from './index'
 import { AiAgentRepository } from './aiAgentRepository'
 
@@ -12,20 +12,27 @@ function setup() {
   return { runtime, repository: new AiAgentRepository(runtime.client) }
 }
 
+function remote(id: string, location = 'us-central1'): RemoteAgentDescriptor {
+  return {
+    resourceName: `projects/project-a/locations/${location}/reasoningEngines/${id}`,
+    displayName: `Agent ${id}`,
+    description: `Description ${id}`,
+    projectId: 'project-a',
+    location
+  }
+}
+
 describe('AiAgentRepository', () => {
-  it('persists imported agents and keeps a usable default across restart-like reads', () => {
+  it('persists Agent Runtime sync and keeps a usable default', () => {
     const { runtime, repository } = setup()
-    const parsed = parseAiAgentJson('pack.json', JSON.stringify({ agents: [
-      { id: 'one', name: 'Agent One', instructions: 'One', model: 'gemini-3.5-flash' },
-      { id: 'two', name: 'Agent Two', instructions: 'Two', model: 'gemini-3.5-flash' }
-    ] }))
 
-    repository.import(parsed, 'pack.json')
-    const first = repository.get()
-    expect(first.agents).toHaveLength(2)
-    expect(first.defaultAgentId).toBeTruthy()
+    const first = repository.syncRemote([remote('one'), remote('two')])
+    expect(first.importedCount).toBe(2)
+    expect(first.updatedCount).toBe(0)
+    expect(first.catalog.agents).toHaveLength(2)
+    expect(first.catalog.defaultAgentId).toBeTruthy()
 
-    const defaultId = first.defaultAgentId!
+    const defaultId = first.catalog.defaultAgentId!
     repository.setEnabled(defaultId, false)
     const afterDisable = repository.get()
     expect(afterDisable.defaultAgentId).not.toBe(defaultId)
@@ -36,15 +43,33 @@ describe('AiAgentRepository', () => {
     runtime.close()
   })
 
-  it('updates an imported Agent without duplicating it', () => {
+  it('refreshes existing remote Agents without duplicating them', () => {
     const { runtime, repository } = setup()
-    const first = parseAiAgentJson('pack.json', JSON.stringify({ agents: [{ id: 'same', name: 'Agent', instructions: 'v1', model: 'gemini-3.5-flash' }] }))
-    const second = parseAiAgentJson('pack.json', JSON.stringify({ agents: [{ id: 'same', name: 'Agent', instructions: 'v2', model: 'gemini-3.5-flash' }] }))
 
-    expect(repository.import(first, 'pack.json')).toMatchObject({ importedCount: 1, updatedCount: 0 })
-    expect(repository.import(second, 'pack.json')).toMatchObject({ importedCount: 0, updatedCount: 1 })
-    expect(repository.get().agents).toHaveLength(1)
-    expect(repository.get().agents[0]?.instructions).toBe('v2')
+    expect(repository.syncRemote([remote('same')])).toMatchObject({
+      importedCount: 1,
+      updatedCount: 0
+    })
+    expect(repository.syncRemote([{
+      ...remote('same'),
+      displayName: 'Agent renamed'
+    }])).toMatchObject({
+      importedCount: 0,
+      updatedCount: 1
+    })
+
+    const current = repository.get()
+    expect(current.agents).toHaveLength(1)
+    expect(current.agents[0]?.name).toBe('Agent renamed')
+    runtime.close()
+  })
+
+  it('clears the local Agent catalog when the cloud connection is removed', () => {
+    const { runtime, repository } = setup()
+    repository.syncRemote([remote('one')])
+    repository.clear()
+    expect(repository.get().agents).toEqual([])
+    expect(repository.get().defaultAgentId).toBeNull()
     runtime.close()
   })
 })
