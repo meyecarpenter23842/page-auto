@@ -6,6 +6,7 @@ import { appSettings } from './schema'
 import { ACCOUNT_GROUP_SCHEMA_VERSION, applyAccountGroupMigration } from './accountGroupMigration'
 import { CANONICAL_POST_SCHEMA_VERSION, applyCanonicalPostMigration } from './canonicalPostMigration'
 import { CONTENT_LIBRARY_SCHEMA_VERSION, applyContentLibraryMigration } from './contentLibraryMigration'
+import { COPY_POST_SCHEMA_VERSION, applyCopyPostMigration } from './copyPostMigration'
 import { HOTMAIL_SCHEMA_VERSION, applyHotmailMigration } from './hotmailMigration'
 import { latestSchemaVersion, migrations } from './migrations'
 import { PAGE_WALL_SCHEMA_VERSION, applyPageWallMigration } from './pageWallMigration'
@@ -63,6 +64,7 @@ export function initializeDatabase(databaseFile: string): DatabaseRuntime {
   applyAccountGroupMigration(client)
   applyContentLibraryMigration(client)
   applyCanonicalPostMigration(client)
+  applyCopyPostMigration(client)
 
   const schemaVersion = Math.max(
     latestSchemaVersion,
@@ -71,7 +73,8 @@ export function initializeDatabase(databaseFile: string): DatabaseRuntime {
     SCENARIO_SCHEMA_VERSION,
     ACCOUNT_GROUP_SCHEMA_VERSION,
     CONTENT_LIBRARY_SCHEMA_VERSION,
-    CANONICAL_POST_SCHEMA_VERSION
+    CANONICAL_POST_SCHEMA_VERSION,
+    COPY_POST_SCHEMA_VERSION
   )
   const orm = drizzle(client)
   orm

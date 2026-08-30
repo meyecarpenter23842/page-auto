@@ -70,6 +70,13 @@ import {
   type RenameContentLibrarySetInput,
   type UpdateContentLibraryItemInput
 } from '../shared/contentLibrary'
+import {
+  COPY_POST_IPC,
+  type CopyPostSaveRequest,
+  type CopyPostSaveResult,
+  type CopyPostScanItem,
+  type CopyPostScanRequest
+} from '../shared/copyPost'
 import type { ConfigBackupExportResult, ConfigBackupRestoreResult } from '../shared/configBackup'
 import type { HotmailComboActionPayload, HotmailComboBatchResult } from '../shared/emailCombo'
 import type { ExecutionLogFilters, ExecutionLogRecord, RetryRunItemPayload, RetryRunItemResult } from '../shared/executionLogs'
@@ -151,6 +158,9 @@ const api = {
   moveContentLibraryItem: (input: MoveContentLibraryItemInput): Promise<ContentLibrarySetDetails> => ipcRenderer.invoke(CONTENT_LIBRARY_IPC.moveItem, input) as Promise<ContentLibrarySetDetails>,
   pickContentLibraryImageFolder: (): Promise<string | null> => ipcRenderer.invoke(CONTENT_LIBRARY_IPC.pickImageFolder) as Promise<string | null>,
   pickContentLibraryTextFile: (): Promise<ContentLibraryTextFileResult | null> => ipcRenderer.invoke(CONTENT_LIBRARY_IPC.pickTextFile) as Promise<ContentLibraryTextFileResult | null>,
+  scanCopyPosts: (input: CopyPostScanRequest): Promise<CopyPostScanItem[]> => ipcRenderer.invoke(COPY_POST_IPC.scan, input) as Promise<CopyPostScanItem[]>,
+  pickCopyPostMediaFolder: (): Promise<string | null> => ipcRenderer.invoke(COPY_POST_IPC.pickMediaFolder) as Promise<string | null>,
+  saveCopyPosts: (input: CopyPostSaveRequest): Promise<CopyPostSaveResult> => ipcRenderer.invoke(COPY_POST_IPC.saveSelected, input) as Promise<CopyPostSaveResult>,
   openAccountProfile: (payload: AccountOpenProfilePayload): Promise<BrowserProfileResult> => ipcRenderer.invoke(IPC_CHANNELS.accountOpenProfile, payload) as Promise<BrowserProfileResult>,
   openAccountBrowserDock: (): Promise<AccountBrowserDockOpenResult> => ipcRenderer.invoke(ACCOUNT_BROWSER_DOCK_IPC.open) as Promise<AccountBrowserDockOpenResult>,
   runFacebookCheckpoint282: (payload: FacebookCheckpoint282RunPayload): Promise<FacebookCheckpoint282Result> => ipcRenderer.invoke(IPC_CHANNELS.facebookCheckpoint282Run, payload) as Promise<FacebookCheckpoint282Result>,
