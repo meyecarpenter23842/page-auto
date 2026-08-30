@@ -14,14 +14,18 @@ interface ActionPickerModalProps {
   onSelect: (definition: ActionDefinition) => void
 }
 
+const SCENARIO_ACTIONS = ACTION_REGISTRY.filter((definition) => definition.id !== 'group_post')
+
 export function ActionPickerModal({ onClose, onSelect }: ActionPickerModalProps) {
   const [query, setQuery] = useState('')
-  const [selectedId, setSelectedId] = useState(ACTION_REGISTRY[0]?.id ?? '')
+  const [selectedId, setSelectedId] = useState(SCENARIO_ACTIONS[0]?.id ?? '')
   const normalizedQuery = query.trim().toLocaleLowerCase('vi')
-  const filtered = useMemo(() => normalizedQuery ? ACTION_REGISTRY.filter((definition) => definition.label.toLocaleLowerCase('vi').includes(normalizedQuery) || definition.id.toLocaleLowerCase('vi').includes(normalizedQuery)) : ACTION_REGISTRY, [normalizedQuery])
+  const filtered = useMemo(() => normalizedQuery
+    ? SCENARIO_ACTIONS.filter((definition) => definition.label.toLocaleLowerCase('vi').includes(normalizedQuery) || definition.id.toLocaleLowerCase('vi').includes(normalizedQuery))
+    : SCENARIO_ACTIONS, [normalizedQuery])
   const selected = getActionDefinition(selectedId)
   const visibleSelected = selected && filtered.some((item) => item.id === selected.id) ? selected : filtered[0]
-  const readyCount = ACTION_REGISTRY.filter((item) => item.runtimeStatus === 'ready').length
+  const readyCount = SCENARIO_ACTIONS.filter((item) => item.runtimeStatus === 'ready').length
 
   return (
     <div className="scenario-modal-backdrop" role="presentation">
@@ -30,7 +34,7 @@ export function ActionPickerModal({ onClose, onSelect }: ActionPickerModalProps)
           <div><p className="scenario-kicker">ACTION REGISTRY</p><h3>Thêm hành động</h3></div>
           <button type="button" onClick={onClose}>×</button>
         </div>
-        <label className="action-picker-search"><span>⌕</span><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Tìm hành động hoặc mã action..." /><small>{filtered.length}/{ACTION_REGISTRY.length}</small></label>
+        <label className="action-picker-search"><span>⌕</span><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Tìm hành động hoặc mã action..." /><small>{filtered.length}/{SCENARIO_ACTIONS.length}</small></label>
         <div className="action-picker-body">
           <div className="action-picker-catalog">
             {ACTION_CATEGORIES.map((category) => {
@@ -53,7 +57,7 @@ export function ActionPickerModal({ onClose, onSelect }: ActionPickerModalProps)
                 <div><span>Cấu hình</span><strong>{visibleSelected.configSchema.fields.length} trường</strong></div>
                 <div><span>Runtime</span><strong>{visibleSelected.runtimeStatus === 'ready' ? 'Executor sẵn sàng' : 'Placeholder'}</strong></div>
               </div>
-              <div className={visibleSelected.runtimeStatus === 'ready' ? 'action-placeholder-card ready-card' : 'action-placeholder-card'}><strong>{visibleSelected.runtimeStatus === 'ready' ? 'Module riêng đã có executor' : 'Chưa có executor'}</strong><p>{visibleSelected.runtimeStatus === 'ready' ? 'Selector/flow nằm riêng trong module action; login/session/Page switch vẫn dùng Common Runtime.' : `Hiện có ${readyCount} action đã có executor. Action này sẽ làm ở lô sau.`}</p></div>
+              <div className={visibleSelected.runtimeStatus === 'ready' ? 'action-placeholder-card ready-card' : 'action-placeholder-card'}><strong>{visibleSelected.runtimeStatus === 'ready' ? 'Module riêng đã có executor' : 'Chưa có executor'}</strong><p>{visibleSelected.runtimeStatus === 'ready' ? 'Kịch Bản dùng profile/tài khoản; automation Page được quản lý ở tab Page riêng.' : `Hiện có ${readyCount} action đã có executor. Action này sẽ làm ở lô sau.`}</p></div>
             </> : <div className="scenario-empty">Chọn một hành động.</div>}
           </aside>
         </div>

@@ -82,7 +82,11 @@ function createScenarioConfig(contentSetId: number, overrides: Record<string, un
   return {
     contentSetId,
     selectionMode: 'sequential',
-    postsPerAccount: 1,
+    postToWall: true,
+    wallPostsPerAccount: 1,
+    postToGroups: false,
+    groupTargets: '',
+    groupPostsPerAccount: 1,
     postDelayMinSeconds: 0,
     postDelayMaxSeconds: 0,
     ...overrides
@@ -98,7 +102,7 @@ function createPostAction(
   const details = scenarios.createAction({
     scenarioId: scenario.id,
     actionType: 'post',
-    label: 'Đăng tường',
+    label: 'Đăng bài',
     category: 'publishing',
     configJson: JSON.stringify(createScenarioConfig(contentSetId, overrides))
   })
@@ -126,11 +130,23 @@ function workerJob(actionId: number, config: Record<string, unknown>): ScenarioA
       runKey: 'scenario-test:a1:r0',
       scenarioActionId: actionId,
       actionType: 'post',
-      label: 'Đăng tường',
+      label: 'Đăng bài',
       actor: { kind: 'profile', accountId: 1, accountUid: 'uid-1' },
       config
     }
   }
+}
+
+function addPost(library: ContentLibraryRepository, name = 'Nguồn chung') {
+  const set = library.createSet({ name })
+  library.createItem({
+    contentSetId: set.id,
+    name: 'Bài A',
+    enabled: true,
+    variants: ['Nội dung snapshot'],
+    image: { folderPath: '', mode: 'sequential', imagesPerPost: 1, missingPolicy: 'text_only' }
+  })
+  return set
 }
 
 describe('ScenarioPostActionAdapter', () => {
@@ -167,44 +183,110 @@ describe('ScenarioPostActionAdapter', () => {
     expect(() => adapter.prepareScenarioRun([scenario.id])).toThrow('không tồn tại trong Thư viện chung trước khi Start')
   })
 
-  it('posts only to the running profile wall and ignores legacy Page/Group destination fields', async () => {
-    const { library, scenarios, adapter, calls, wallJobs } = setup()
-    const set = library.createSet({ name: 'Nguồn profile wall' })
-    library.createItem({
-      contentSetId: set.id,
-      name: 'Bài A',
-      enabled: true,
-      variants: ['Nội dung snapshot'],
-      image: { folderPath: '', mode: 'sequential', imagesPerPost: 1, missingPolicy: 'text_only' }
-    })
-    const legacyComposite = createScenarioConfig(set.id, {
+  it('runs Wall and Group inside the same Đăng bài action while Wall stays on the running profile', async () => {
+    const { library, scenarios, adapter, setWallResult, calls, wallJobs } = setup()
+    const set = addPost(library, 'Nguồn composite')
+    const config = createScenarioConfig(set.id, {
       postToWall: true,
-      wallPageUid: '90001',
+      wallPageUid: 'legacy-page-must-be-ignored',
       wallPostsPerAccount: 1,
       postToGroups: true,
       groupTargets: 'group-a',
-      groupPostsPerAccount: 3
+      groupPostsPerAccount: 1
     })
-    const { scenario, action } = createPostAction(scenarios, set.id, legacyComposite)
+    const { scenario, action } = createPostAction(scenarios, set.id, config)
+    setWallResult({ status: 'failed', code: 'publish_unconfirmed', message: 'wall failed' })
     const prepared = adapter.prepareScenarioRun([scenario.id])
     adapter.beginScenarioRun('scenario-test', [1], prepared)
 
-    const result = await adapter.run(workerJob(action.id, legacyComposite))
+    const result = await adapter.run(workerJob(action.id, config))
+    const targets = result.summary.result.data?.targets as Record<string, { status: string }> | undefined
 
-    expect(result.summary.result.status).toBe('success')
+    expect(result.summary.result.status).toBe('failed')
+    expect(result.summary.result.code).toBe('post_partial_failure')
+    expect(targets?.wall?.status).toBe('failed')
+    expect(targets?.group?.status).toBe('success')
+    expect(calls()).toEqual({ wallCalls: 1, groupCalls: 1 })
     expect(result.summary.normalizedConfig).toMatchObject({
-      contentSetId: set.id,
-      postsPerAccount: 1
+      postToWall: true,
+      wallPostsPerAccount: 1,
+      postToGroups: true,
+      groupTargets: 'group-a',
+      groupPostsPerAccount: 1
     })
     expect(result.summary.normalizedConfig).not.toHaveProperty('wallPageUid')
-    expect(result.summary.normalizedConfig).not.toHaveProperty('postToGroups')
-    expect(calls()).toEqual({ wallCalls: 1, groupCalls: 0 })
     expect(wallJobs).toHaveLength(1)
     expect(wallJobs[0]?.pageUid).toBe('')
     expect(wallJobs[0]?.task).toEqual({
       type: 'page_wall_post',
       target: { kind: 'page_wall', pageUid: 'uid-1' }
     })
+
+    adapter.finishScenarioRun('scenario-test')
+  })
+
+  it('does not start Group when Wall reports login or verification attention', async () => {
+    const wallResults: PostingJobResult[] = [
+      { status: 'needs_login', code: 'needs_login', message: 'login required' },
+      {
+        status: 'failed',
+        code: 'verification_required',
+        message: 'verification required',
+        sessionValidation: {
+          phase: 'after_run',
+          state: 'verification_required',
+          message: 'verification required'
+        }
+      }
+    ]
+
+    for (const [index, wallResult] of wallResults.entries()) {
+      const { library, scenarios, adapter, setWallResult, calls } = setup()
+      const set = addPost(library, `Nguồn attention ${index}`)
+      const config = createScenarioConfig(set.id, {
+        postToWall: true,
+        postToGroups: true,
+        groupTargets: 'group-must-not-run',
+        groupPostsPerAccount: 1
+      })
+      const { scenario, action } = createPostAction(scenarios, set.id, config)
+      setWallResult(wallResult)
+      const prepared = adapter.prepareScenarioRun([scenario.id])
+      adapter.beginScenarioRun('scenario-test', [1], prepared)
+
+      const result = await adapter.run(workerJob(action.id, config))
+      const targets = result.summary.result.data?.targets as Record<string, { status: string }> | undefined
+
+      expect(result.summary.result.status).toBe('needs_attention')
+      expect(targets?.wall?.status).toBe('needs_attention')
+      expect(targets?.group).toBeUndefined()
+      expect(calls()).toEqual({ wallCalls: 1, groupCalls: 0 })
+
+      adapter.finishScenarioRun('scenario-test')
+    }
+  })
+
+  it('supports Group-only Đăng bài without invoking the wall executor', async () => {
+    const { library, scenarios, adapter, calls, wallJobs } = setup()
+    const set = addPost(library, 'Nguồn group only')
+    const config = createScenarioConfig(set.id, {
+      postToWall: false,
+      postToGroups: true,
+      groupTargets: 'group-only',
+      groupPostsPerAccount: 1
+    })
+    const { scenario, action } = createPostAction(scenarios, set.id, config)
+    const prepared = adapter.prepareScenarioRun([scenario.id])
+    adapter.beginScenarioRun('scenario-test', [1], prepared)
+
+    const result = await adapter.run(workerJob(action.id, config))
+    const targets = result.summary.result.data?.targets as Record<string, { status: string }> | undefined
+
+    expect(result.summary.result.status).toBe('success')
+    expect(targets?.wall).toBeUndefined()
+    expect(targets?.group?.status).toBe('success')
+    expect(calls()).toEqual({ wallCalls: 0, groupCalls: 1 })
+    expect(wallJobs).toHaveLength(0)
 
     adapter.finishScenarioRun('scenario-test')
   })
