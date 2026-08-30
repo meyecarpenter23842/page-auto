@@ -6,6 +6,7 @@ import {
   type ActionResultStatus
 } from '../../shared/actionRegistry'
 import type { ActionLogEvent } from '../../shared/actionRuntime'
+import { getK435ValidationErrors } from '../../shared/k435GroupPostActionOverrides'
 import type { PostSelectionMode } from '../../shared/pageTabs'
 import type { PostingJobResult } from '../../shared/posting'
 import type { RunItem, RunSnapshot, RunSnapshotPost } from '../../shared/runs'
@@ -15,6 +16,7 @@ import {
   applyK452PostActionOverrides,
   getK452PostValidationErrors
 } from '../../shared/k452PostActionOverrides'
+import { ScenarioActionPostBindingRepository } from '../database/canonicalPostRepository'
 import { ContentLibraryRepository } from '../database/contentLibraryRepository'
 import { ScenarioRepository } from '../database/scenarioRepository'
 import { ScenarioGroupPostAdapter } from './scenarioGroupPostAdapter'
@@ -29,12 +31,25 @@ export interface PreparedScenarioPostAction {
   posts: RunSnapshotPost[]
 }
 
+export interface PreparedScenarioGroupPostAction {
+  scenarioId: number
+  actionId: number
+  posts: RunSnapshotPost[]
+}
+
 export interface PreparedScenarioPostRun {
   actions: Map<number, PreparedScenarioPostAction>
+  /** Optional for callers built before the canonical group_post cutover. */
+  groupActions?: Map<number, PreparedScenarioGroupPostAction>
+}
+
+interface PreparedScenarioPostScope {
+  actions: Map<number, PreparedScenarioPostAction>
+  groupActions: Map<number, PreparedScenarioGroupPostAction>
 }
 
 interface ScenarioPostScope {
-  prepared: PreparedScenarioPostRun
+  prepared: PreparedScenarioPostScope
   cancelledRunKeys: Set<string>
   wallOrdinals: Map<number, number>
 }
@@ -61,6 +76,17 @@ function stringConfig(config: ActionConfig, key: string, fallback = ''): string 
 
 function booleanConfig(config: ActionConfig, key: string): boolean {
   return config[key] === true
+}
+
+function actionConfigFromUnknown(value: unknown): ActionConfig {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  const config: ActionConfig = {}
+  for (const [key, entry] of Object.entries(value)) {
+    if (typeof entry === 'string' || typeof entry === 'number' || typeof entry === 'boolean') {
+      config[key] = entry
+    }
+  }
+  return config
 }
 
 function scenarioRunIdFromRunKey(runKey: string): string {
@@ -129,6 +155,7 @@ function targetLabel(status: ActionResultStatus): string {
 }
 
 export class ScenarioPostActionAdapter {
+  private readonly bindings: ScenarioActionPostBindingRepository
   private readonly library: ContentLibraryRepository
   private readonly scenarios: ScenarioRepository
   private readonly groupPost: ScenarioGroupPostAdapter
@@ -139,6 +166,7 @@ export class ScenarioPostActionAdapter {
     private readonly posting: PostingService
   ) {
     applyK452PostActionOverrides()
+    this.bindings = new ScenarioActionPostBindingRepository(database)
     this.library = new ContentLibraryRepository(database)
     this.scenarios = new ScenarioRepository(database)
     this.groupPost = new ScenarioGroupPostAdapter(database, posting)
@@ -150,51 +178,90 @@ export class ScenarioPostActionAdapter {
 
   prepareScenarioRun(scenarioIds: readonly number[]): PreparedScenarioPostRun {
     const actions = new Map<number, PreparedScenarioPostAction>()
+    const groupActions = new Map<number, PreparedScenarioGroupPostAction>()
+
     for (const scenarioId of scenarioIds) {
       const details = this.scenarios.get(scenarioId)
       if (!details) throw new Error(`Không tìm thấy kịch bản #${scenarioId}.`)
+
       for (const action of details.actions) {
-        if (!action.enabled || action.actionType !== 'post') continue
+        if (!action.enabled) continue
+
+        if (action.actionType === 'group_post') {
+          const bindingRows = this.bindings.list(action.id)
+          if (!bindingRows.length) continue
+          const posts = this.bindings.resolveSnapshotPosts(action.id)
+          if (!posts.length) {
+            throw new Error(`Kịch bản “${details.name}”, action “${action.label}”: bài viết liên kết không có bài đang bật và hợp lệ trước khi Start.`)
+          }
+          groupActions.set(action.id, {
+            scenarioId: details.id,
+            actionId: action.id,
+            posts: clonePosts(posts)
+          })
+          continue
+        }
+
+        if (action.actionType !== 'post') continue
         const rawConfig = parseActionConfig(details, action.id, action.configJson)
         const validation = validateActionConfig('post', rawConfig)
         const extraErrors = getK452PostValidationErrors('post', validation.value)
         if (!validation.valid || extraErrors.length) {
           throw new Error(`Kịch bản “${details.name}”, action “${action.label}”: ${[...validation.errors, ...extraErrors].join(' ')}`)
         }
+
         const contentSetId = Math.floor(numberConfig(validation.value, 'contentSetId', 0))
-        const source = this.library.get(contentSetId)
-        if (!source) {
-          throw new Error(`Kịch bản “${details.name}”, action “${action.label}”: nguồn bài viết #${contentSetId} không tồn tại trong Thư viện chung trước khi Start.`)
+        const bindingRows = this.bindings.list(action.id)
+        let contentSetName: string
+        let posts: RunSnapshotPost[]
+
+        if (bindingRows.length) {
+          posts = this.bindings.resolveSnapshotPosts(action.id)
+          contentSetName = this.library.get(contentSetId)?.name ?? 'Bài viết đã liên kết'
+          if (!posts.length) {
+            throw new Error(`Kịch bản “${details.name}”, action “${action.label}”: bài viết liên kết không có bài đang bật và hợp lệ trước khi Start.`)
+          }
+        } else {
+          const source = this.library.get(contentSetId)
+          if (!source) {
+            throw new Error(`Kịch bản “${details.name}”, action “${action.label}”: nguồn bài viết #${contentSetId} không tồn tại trong Thư viện chung trước khi Start.`)
+          }
+          contentSetName = source.name
+          posts = source.items
+            .filter((item) => item.enabled)
+            .map((item, index): RunSnapshotPost => ({
+              name: item.name,
+              enabled: true,
+              sortOrder: index,
+              variants: item.variants.map((variant) => variant.trim()).filter(Boolean),
+              image: { ...item.image, folderPath: item.image.folderPath.trim() }
+            }))
+            .filter((post) => post.variants.length > 0 || post.image.folderPath.length > 0)
+          if (!posts.length) {
+            throw new Error(`Kịch bản “${details.name}”, action “${action.label}”: nguồn “${source.name}” không có bài viết đang bật và hợp lệ.`)
+          }
         }
-        const posts = source.items
-          .filter((item) => item.enabled)
-          .map((item, index): RunSnapshotPost => ({
-            name: item.name,
-            enabled: true,
-            sortOrder: index,
-            variants: item.variants.map((variant) => variant.trim()).filter(Boolean),
-            image: { ...item.image, folderPath: item.image.folderPath.trim() }
-          }))
-          .filter((post) => post.variants.length > 0 || post.image.folderPath.length > 0)
-        if (!posts.length) {
-          throw new Error(`Kịch bản “${details.name}”, action “${action.label}”: nguồn “${source.name}” không có bài viết đang bật và hợp lệ.`)
-        }
+
         actions.set(action.id, {
           scenarioId: details.id,
           actionId: action.id,
           contentSetId,
-          contentSetName: source.name,
+          contentSetName,
           posts: clonePosts(posts)
         })
       }
     }
-    return { actions }
+
+    return { actions, groupActions }
   }
 
   beginScenarioRun(runId: string, accountIds: readonly number[], prepared: PreparedScenarioPostRun): void {
     for (const staleRunId of [...this.scopes.keys()]) this.finishScenarioRun(staleRunId)
     this.scopes.set(runId, {
-      prepared: { actions: new Map([...prepared.actions].map(([id, action]) => [id, { ...action, posts: clonePosts(action.posts) }])) },
+      prepared: {
+        actions: new Map([...prepared.actions].map(([id, action]) => [id, { ...action, posts: clonePosts(action.posts) }])),
+        groupActions: new Map([...(prepared.groupActions ?? new Map<number, PreparedScenarioGroupPostAction>())].map(([id, action]) => [id, { ...action, posts: clonePosts(action.posts) }]))
+      },
       cancelledRunKeys: new Set(),
       wallOrdinals: new Map()
     })
@@ -202,7 +269,7 @@ export class ScenarioPostActionAdapter {
   }
 
   async run(job: ScenarioActionWorkerJob, onLog?: (event: ActionLogEvent) => void): Promise<ScenarioActionWorkerResult> {
-    if (job.request.actionType === 'group_post') return this.groupPost.run(job, onLog)
+    if (job.request.actionType === 'group_post') return this.runGroupPost(job, onLog)
     return this.runCompositePost(job, onLog)
   }
 
@@ -223,6 +290,57 @@ export class ScenarioPostActionAdapter {
   closeAll(): void {
     this.groupPost.closeAll()
     this.scopes.clear()
+  }
+
+  private async runGroupPost(
+    job: ScenarioActionWorkerJob,
+    onLog?: (event: ActionLogEvent) => void
+  ): Promise<ScenarioActionWorkerResult> {
+    const actionId = job.request.scenarioActionId
+    if (typeof actionId !== 'number' || !Number.isSafeInteger(actionId) || actionId <= 0) {
+      return this.groupPost.run(job, onLog)
+    }
+
+    const runId = scenarioRunIdFromRunKey(job.request.runKey)
+    const prepared = this.scopes.get(runId)?.prepared.groupActions.get(actionId)
+    if (!prepared) return this.groupPost.run(job, onLog)
+
+    const startedAt = Date.now()
+    // Canonical bindings own content/media for this path. Keep validating the
+    // legacy action's target/count/delay fields, but do not require its inline
+    // content field just to execute a snapshot that was already frozen at Start.
+    const rawConfig = actionConfigFromUnknown(job.request.config)
+    const validationInput: ActionConfig = { ...rawConfig, content: '__canonical_snapshot__' }
+    const validation = validateActionConfig('group_post', validationInput)
+    const extraErrors = getK435ValidationErrors('group_post', validation.value)
+    if (!validation.valid || extraErrors.length) {
+      return workerResult(validation.value, {
+        status: 'failed',
+        code: 'action_config_invalid',
+        message: [...validation.errors, ...extraErrors].join(' ')
+      }, startedAt, 0)
+    }
+
+    const config: ActionConfig = {
+      ...validation.value,
+      content: typeof rawConfig.content === 'string' ? rawConfig.content : ''
+    }
+    const result = await this.groupPost.runWithSnapshot(job, {
+      groupTargets: stringConfig(config, 'sourceTargets'),
+      posts: prepared.posts,
+      postMode: stringConfig(config, 'postMode', 'sequential') as PostSelectionMode,
+      postsPerAccount: Math.max(1, Math.floor(numberConfig(config, 'postsPerAccount', 1))),
+      postDelayMinSeconds: numberConfig(config, 'postDelayMinSeconds', 0),
+      postDelayMaxSeconds: numberConfig(config, 'postDelayMaxSeconds', 0)
+    }, onLog)
+
+    return {
+      ...result,
+      summary: {
+        ...result.summary,
+        normalizedConfig: config
+      }
+    }
   }
 
   private async runCompositePost(

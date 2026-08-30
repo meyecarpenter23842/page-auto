@@ -1,4 +1,6 @@
 import type Database from 'better-sqlite3'
+import { POST_SELECTION_MODES, type PostSelectionMode } from '../../shared/pageTabs'
+import { PageTabPostBindingRepository } from './canonicalPostRepository'
 import { RunRepository as CoreRunRepository } from './runRepositoryCore'
 
 export type { RunRotationState } from './runRepositoryCore'
@@ -48,9 +50,17 @@ function parseClosedWindow(value: unknown): RunRotationWindowClosedState | null 
   }
 }
 
+function parsePostMode(value: unknown): PostSelectionMode {
+  const normalized = String(value ?? '') as PostSelectionMode
+  return POST_SELECTION_MODES.includes(normalized) ? normalized : 'sequential'
+}
+
 export class RunRepository extends CoreRunRepository {
+  private readonly canonicalPagePosts: PageTabPostBindingRepository
+
   constructor(private readonly windowStateClient: Database.Database) {
     super(windowStateClient)
+    this.canonicalPagePosts = new PageTabPostBindingRepository(windowStateClient)
   }
 
   override createForPageTab(pageTabId: number) {
@@ -74,7 +84,67 @@ export class RunRepository extends CoreRunRepository {
       throw new Error('Page Tab không có tài khoản được bật để chạy.')
     }
 
-    return super.createForPageTab(pageTabId)
+    // Runtime cutover is binding-first. Presence is checked separately from the
+    // resolved list so a Page with bindings that are all disabled does not fall
+    // back to stale legacy copies.
+    const canonicalBindings = this.canonicalPagePosts.list(pageTabId)
+    const canonicalPosts = canonicalBindings.length > 0
+      ? this.canonicalPagePosts.resolveSnapshotPosts(pageTabId)
+      : null
+    const modeRow = canonicalPosts === null
+      ? null
+      : this.windowStateClient.prepare(`
+          SELECT post_selection_mode AS mode
+          FROM page_tabs
+          WHERE id = ?
+        `).get(pageTabId) as { mode: unknown } | undefined
+
+    const created = super.createForPageTab(pageTabId)
+    if (canonicalPosts === null) return created
+
+    const snapshot = {
+      ...created.run.snapshot,
+      postMode: parsePostMode(modeRow?.mode),
+      posts: canonicalPosts.map((post) => ({
+        ...post,
+        variants: [...post.variants],
+        image: { ...post.image }
+      }))
+    }
+    const now = Date.now()
+    const updateSnapshot = this.windowStateClient.transaction(() => {
+      this.windowStateClient.prepare(`
+        UPDATE runs
+        SET snapshot_json = ?, updated_at = ?
+        WHERE id = ?
+      `).run(JSON.stringify(snapshot), now, created.run.id)
+
+      const event = this.windowStateClient.prepare(`
+        SELECT id, payload_json AS payloadJson
+        FROM run_events
+        WHERE run_id = ? AND event_type = 'run_created'
+        ORDER BY id DESC
+        LIMIT 1
+      `).get(created.run.id) as { id: number; payloadJson: string | null } | undefined
+      if (!event?.payloadJson) return
+      try {
+        const payload = JSON.parse(event.payloadJson) as Record<string, unknown>
+        payload.postCount = canonicalPosts.length
+        this.windowStateClient.prepare(`
+          UPDATE run_events
+          SET payload_json = ?
+          WHERE id = ?
+        `).run(JSON.stringify(payload), event.id)
+      } catch {
+        // Snapshot is the source of truth. Keep a malformed historical event
+        // untouched instead of failing an otherwise valid Start.
+      }
+    })
+    updateSnapshot()
+
+    const refreshed = this.get(created.run.id)
+    if (!refreshed) throw new Error('Không thể đọc lại phiên sau khi khóa snapshot bài viết canonical.')
+    return refreshed
   }
 
   getRotationWindowState(runId: number): RunRotationWindowState | null {
