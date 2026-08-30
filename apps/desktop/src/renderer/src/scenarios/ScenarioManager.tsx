@@ -10,6 +10,7 @@ import {
 } from '../../../shared/actionRegistry'
 import {
   scenarioCategoryLabels,
+  type ScenarioActionPostInput,
   type ScenarioActionRecord,
   type ScenarioDetails,
   type ScenarioSummary
@@ -30,6 +31,21 @@ function parseConfig(definition: ActionDefinition, configJson: string): ActionCo
   } catch {
     return createDefaultActionConfig(definition)
   }
+}
+
+function usesCanonicalPosts(actionType: string): boolean {
+  return actionType === 'post' || actionType === 'group_post'
+}
+
+function copyActionPosts(action: ScenarioActionRecord): ScenarioActionPostInput[] {
+  return (action.posts ?? []).map((post) => ({
+    postId: post.postId,
+    name: post.name,
+    enabled: post.enabled,
+    sortOrder: post.sortOrder,
+    variants: [...post.variants],
+    image: { ...post.image }
+  }))
 }
 
 export function ScenarioManager() {
@@ -133,7 +149,8 @@ export function ScenarioManager() {
       categoryLabel: scenarioCategoryLabels[definition.category],
       label: definition.label,
       enabled: true,
-      config: createDefaultActionConfig(definition)
+      config: createDefaultActionConfig(definition),
+      posts: []
     })
   }
 
@@ -146,7 +163,8 @@ export function ScenarioManager() {
       categoryLabel: definition ? scenarioCategoryLabels[definition.category] : scenarioCategoryLabels[action.category],
       label: action.label,
       enabled: action.enabled,
-      config: definition ? parseConfig(definition, action.configJson) : {}
+      config: definition ? parseConfig(definition, action.configJson) : {},
+      posts: copyActionPosts(action)
     })
   }
 
@@ -154,6 +172,7 @@ export function ScenarioManager() {
     if (!details) return
     if (!draft.label.trim()) return setError('Tên hành động không được để trống.')
     setActionEditor(null)
+    const posts = usesCanonicalPosts(draft.actionType) ? draft.posts : undefined
 
     if (draft.id === null) {
       if (!draft.definition || !normalizedConfig) return setError('Action chưa có trong registry K2.')
@@ -163,7 +182,8 @@ export function ScenarioManager() {
         label: draft.label,
         category: draft.definition!.category,
         enabled: draft.enabled,
-        configJson: JSON.stringify(normalizedConfig)
+        configJson: JSON.stringify(normalizedConfig),
+        ...(posts ? { posts } : {})
       }), details.id)
       return
     }
@@ -174,7 +194,8 @@ export function ScenarioManager() {
         label: draft.label,
         enabled: draft.enabled,
         ...(draft.definition && normalizedConfig ? { configJson: JSON.stringify(normalizedConfig) } : {})
-      }
+      },
+      ...(posts ? { posts } : {})
     }), details.id)
   }
 
@@ -227,7 +248,7 @@ export function ScenarioManager() {
 
           <div className="scenario-toolbar">
             <button className="scenario-button primary" type="button" disabled={!details || busy} onClick={() => setActionPickerOpen(true)}>+ Thêm hành động</button>
-            <span className="scenario-toolbar-note">{ACTION_REGISTRY.length} action · {ACTION_CATEGORIES.length} nhóm · chưa gắn Page/Tài khoản · chưa có executor.</span>
+            <span className="scenario-toolbar-note">{ACTION_REGISTRY.length} action · {ACTION_CATEGORIES.length} nhóm · action đăng bài dùng canonical post bindings.</span>
           </div>
 
           <div className="scenario-table-wrap">
@@ -240,7 +261,7 @@ export function ScenarioManager() {
                   return (
                     <tr key={action.id}>
                       <td className="scenario-order">{index + 1}</td>
-                      <td><button className="scenario-action-name" type="button" onClick={() => openEditAction(action)}><strong>{action.label}</strong><small>{action.actionType}</small></button></td>
+                      <td><button className="scenario-action-name" type="button" onClick={() => openEditAction(action)}><strong>{action.label}</strong><small>{action.actionType}{usesCanonicalPosts(action.actionType) ? ` · ${(action.posts ?? []).length} bài` : ''}</small></button></td>
                       <td><span className={`scenario-category category-${action.category}`}>{scenarioCategoryLabels[action.category]}</span></td>
                       <td>
                         <div className="scenario-status-stack">
@@ -283,7 +304,7 @@ export function ScenarioManager() {
                 <div><dt>Giới hạn</dt><dd>{details.runtimeLimitMinutes ? `${details.runtimeLimitMinutes} phút` : 'Không'}</dd></div>
                 <div><dt>Cập nhật</dt><dd>{formatTime(details.updatedAt)}</dd></div>
               </dl>
-              <div className="scenario-info-card"><strong>Common Action Modules</strong><p>K2 quản lý registry + schema cấu hình dùng chung. Page/Tài khoản chỉ là actor context ở lô sau.</p></div>
+              <div className="scenario-info-card"><strong>Common Action Modules</strong><p>Action đăng bài chỉ bind tới kho bài gốc; runtime vẫn snapshot khi Start.</p></div>
               <div className="scenario-safe-note"><span>✓</span><p>Login/session/2FA/checkpoint/Page switch không nằm trong từng action.</p></div>
             </div>
           ) : <div className="scenario-empty inspector-empty">Chọn hoặc tạo một kịch bản để bắt đầu.</div>}

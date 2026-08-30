@@ -1,3 +1,9 @@
+import type {
+  CanonicalPostSummary,
+  PageTabImageConfig,
+  PageTabPostBindingOverrides
+} from './pageTabs'
+
 export const SCENARIO_IPC = {
   list: 'scenarios:list',
   get: 'scenarios:get',
@@ -31,6 +37,24 @@ export interface ScenarioSummary {
   updatedAt: number
 }
 
+export interface ScenarioActionPostInput {
+  /** Existing canonical post identity. Null/undefined creates a new canonical post. */
+  postId?: number | null
+  name: string
+  enabled: boolean
+  sortOrder: number
+  variants: string[]
+  image: PageTabImageConfig
+}
+
+export interface ScenarioActionPostItem extends Omit<ScenarioActionPostInput, 'postId'> {
+  /** scenario_action_post_bindings.id */
+  id: number
+  postId: number
+  canonical: CanonicalPostSummary
+  overrides: PageTabPostBindingOverrides
+}
+
 export interface ScenarioActionRecord {
   id: number
   scenarioId: number
@@ -40,6 +64,8 @@ export interface ScenarioActionRecord {
   orderIndex: number
   configJson: string
   enabled: boolean
+  /** Canonical posts currently bound to this action. */
+  posts?: ScenarioActionPostItem[]
   createdAt: number
   updatedAt: number
 }
@@ -74,6 +100,8 @@ export interface CreateScenarioActionInput {
   category: ScenarioActionCategory
   enabled?: boolean
   configJson?: string
+  /** When supplied, replaces the canonical post bindings for the new action in the same transaction. */
+  posts?: ScenarioActionPostInput[]
 }
 
 export interface UpdateScenarioActionPayload {
@@ -85,6 +113,8 @@ export interface UpdateScenarioActionPayload {
     enabled?: boolean
     configJson?: string
   }
+  /** When supplied, replaces canonical bindings. Omit to leave bindings unchanged. */
+  posts?: ScenarioActionPostInput[]
 }
 
 export interface ScenarioActionIdPayload {
