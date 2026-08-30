@@ -1,24 +1,119 @@
-import { useMemo, useRef, useState, type ChangeEvent } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import type {
+  AiAgentCatalogView,
+  AiAgentInputField,
+  AiContentAction,
+  GenerateAiPostsResult
+} from '../../../shared/aiAgents'
+import { AiAgentManagerModal } from './AiAgentManagerModal'
+import { AiDraftResultsPanel, type AiIncomingDraftBatch } from './AiDraftResultsPanel'
 import { AI_POST_DELIMITER, parseAiPostOutput } from './aiPostOutputFormat'
-import { AiDraftResultsPanel } from './AiDraftResultsPanel'
 import './aiContentWorkspace.css'
 import './aiContentWorkspaceModes.css'
-
-type AgentFileState =
-  | { kind: 'idle' }
-  | { kind: 'valid'; fileName: string }
-  | { kind: 'invalid'; fileName: string; message: string }
-
-type AiContentAction = 'create' | 'random'
 
 const POST_TYPES = ['Bán hàng', 'Chia sẻ', 'Review', 'Giới thiệu'] as const
 const TONES = ['Tự nhiên', 'Gần gũi', 'Chuyên nghiệp', 'Ngắn gọn'] as const
 const STRUCTURES = ['Hook → Nội dung → CTA', 'Vấn đề → Giải pháp → CTA', 'Thông tin → Lợi ích → CTA', 'Tự do'] as const
 const LENGTHS = ['Ngắn', 'Trung bình', 'Dài'] as const
 
+const EMPTY_CATALOG: AiAgentCatalogView = {
+  agents: [],
+  defaultAgentId: null,
+  credentialConfigured: false
+}
+
+type ExtraFieldValue = string | number | boolean
+
+function errorMessage(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause)
+}
+
+function initialExtraFields(fields: readonly AiAgentInputField[]): Record<string, ExtraFieldValue> {
+  return Object.fromEntries(fields.map((field) => {
+    if (field.defaultValue !== null) return [field.key, field.defaultValue]
+    if (field.type === 'toggle') return [field.key, false]
+    if (field.type === 'number') return [field.key, 0]
+    return [field.key, '']
+  }))
+}
+
+function requiredExtraFieldMessage(fields: readonly AiAgentInputField[], values: Record<string, ExtraFieldValue>): string | null {
+  for (const field of fields) {
+    if (!field.required) continue
+    const value = values[field.key]
+    if (typeof value === 'string' && !value.trim()) return `Nhập ${field.label}.`
+    if (value === undefined || value === null) return `Nhập ${field.label}.`
+  }
+  return null
+}
+
+interface AgentDynamicFieldsProps {
+  fields: readonly AiAgentInputField[]
+  values: Record<string, ExtraFieldValue>
+  onChange: (key: string, value: ExtraFieldValue) => void
+}
+
+function AgentDynamicFields({ fields, values, onChange }: AgentDynamicFieldsProps) {
+  if (!fields.length) return null
+
+  return (
+    <section className="ai-form-section ai-agent-dynamic-section">
+      <div className="ai-section-heading compact">
+        <div><strong>Thông tin theo Agent</strong><small>Các trường được khai báo trong Agent JSON</small></div>
+      </div>
+      <div className="ai-agent-dynamic-grid">
+        {fields.map((field) => {
+          const value = values[field.key] ?? (field.type === 'toggle' ? false : field.type === 'number' ? 0 : '')
+          if (field.type === 'toggle') {
+            return (
+              <label key={field.key} className="ai-agent-toggle-field">
+                <input type="checkbox" checked={Boolean(value)} onChange={(event) => onChange(field.key, event.target.checked)} />
+                <span><b>{field.label}{field.required ? ' *' : ''}</b>{field.placeholder ? <small>{field.placeholder}</small> : null}</span>
+              </label>
+            )
+          }
+          if (field.type === 'textarea') {
+            return (
+              <label key={field.key} className="ai-field ai-agent-dynamic-wide">
+                <span>{field.label}{field.required ? <b> *</b> : null}</span>
+                <textarea value={String(value)} placeholder={field.placeholder} onChange={(event) => onChange(field.key, event.target.value)} />
+              </label>
+            )
+          }
+          if (field.type === 'select') {
+            return (
+              <label key={field.key} className="ai-field">
+                <span>{field.label}{field.required ? <b> *</b> : null}</span>
+                <select value={String(value)} onChange={(event) => onChange(field.key, event.target.value)}>
+                  {!field.required ? <option value="">Không chọn</option> : null}
+                  {field.options.map((option) => <option key={option} value={option}>{option}</option>)}
+                </select>
+              </label>
+            )
+          }
+          return (
+            <label key={field.key} className="ai-field">
+              <span>{field.label}{field.required ? <b> *</b> : null}</span>
+              <input
+                type={field.type === 'number' ? 'number' : 'text'}
+                value={typeof value === 'boolean' ? '' : value}
+                placeholder={field.placeholder}
+                onChange={(event) => onChange(field.key, field.type === 'number' ? Number(event.target.value) : event.target.value)}
+              />
+            </label>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
 export function AiContentWorkspace() {
   const [agentManagerOpen, setAgentManagerOpen] = useState(false)
+  const [catalog, setCatalog] = useState<AiAgentCatalogView>(EMPTY_CATALOG)
+  const [catalogError, setCatalogError] = useState<string | null>(null)
   const [selectedAgent, setSelectedAgent] = useState('')
+  const [extraFields, setExtraFields] = useState<Record<string, ExtraFieldValue>>({})
   const [action, setAction] = useState<AiContentAction>('create')
   const [subject, setSubject] = useState('')
   const [sourceInfo, setSourceInfo] = useState('')
@@ -32,14 +127,59 @@ export function AiContentWorkspace() {
   const [postCount, setPostCount] = useState(5)
   const [emoji, setEmoji] = useState(true)
   const [hashtag, setHashtag] = useState(false)
-  const [createImages, setCreateImages] = useState(false)
-  const [agentFile, setAgentFile] = useState<AgentFileState>({ kind: 'idle' })
-  const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const [generating, setGenerating] = useState(false)
+  const [generationError, setGenerationError] = useState<string | null>(null)
+  const [generationVersion, setGenerationVersion] = useState(0)
+  const [incomingBatch, setIncomingBatch] = useState<AiIncomingDraftBatch | null>(null)
 
+  const enabledAgents = useMemo(() => catalog.agents.filter((agent) => agent.enabled), [catalog.agents])
+  const currentAgent = useMemo(
+    () => enabledAgents.find((agent) => agent.id === selectedAgent) ?? null,
+    [enabledAgents, selectedAgent]
+  )
   const randomSourcePosts = useMemo(() => parseAiPostOutput(randomSource), [randomSource])
 
+  useEffect(() => {
+    let active = true
+    void window.pageAuto.getAiAgentCatalog()
+      .then((next) => {
+        if (!active) return
+        setCatalog(next)
+        setCatalogError(null)
+        const initial = next.defaultAgentId && next.agents.some((agent) => agent.id === next.defaultAgentId && agent.enabled)
+          ? next.defaultAgentId
+          : next.agents.find((agent) => agent.enabled)?.id ?? ''
+        setSelectedAgent(initial)
+      })
+      .catch((cause) => {
+        if (!active) return
+        setCatalogError(errorMessage(cause))
+      })
+    return () => { active = false }
+  }, [])
+
+  useEffect(() => {
+    setExtraFields(initialExtraFields(currentAgent?.inputFields ?? []))
+  }, [currentAgent?.id])
+
+  const applyCatalog = (next: AiAgentCatalogView) => {
+    setCatalog(next)
+    setCatalogError(null)
+    setSelectedAgent((current) => {
+      if (current && next.agents.some((agent) => agent.id === current && agent.enabled)) return current
+      if (next.defaultAgentId && next.agents.some((agent) => agent.id === next.defaultAgentId && agent.enabled)) return next.defaultAgentId
+      return next.agents.find((agent) => agent.enabled)?.id ?? ''
+    })
+  }
+
   const missingInput = useMemo(() => {
-    if (!selectedAgent) return 'Chọn Agent trước khi tạo bài.'
+    if (catalogError) return 'Không tải được Agent. Mở Quản lý Agent để kiểm tra.'
+    if (!selectedAgent) return 'Chọn hoặc import Agent trước khi tạo bài.'
+    if (!catalog.credentialConfigured) return 'Cấu hình Gemini API key trong Quản lý Agent.'
+    if (currentAgent) {
+      const dynamicMissing = requiredExtraFieldMessage(currentAgent.inputFields, extraFields)
+      if (dynamicMissing) return dynamicMissing
+    }
     if (action === 'random') {
       if (!randomSourcePosts.length) return 'Dán ít nhất một bài nguồn để Random.'
       return null
@@ -47,23 +187,37 @@ export function AiContentWorkspace() {
     if (!subject.trim()) return 'Nhập sản phẩm hoặc chủ đề.'
     if (!sourceInfo.trim()) return 'Nhập thông tin chính để AI có dữ liệu viết bài.'
     return null
-  }, [action, randomSourcePosts.length, selectedAgent, sourceInfo, subject])
+  }, [action, catalog.credentialConfigured, catalogError, currentAgent, extraFields, randomSourcePosts.length, selectedAgent, sourceInfo, subject])
 
-  const handleAgentFile = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
-    event.target.value = ''
-    if (!file) return
-
+  const generate = async () => {
+    if (missingInput || generating) return
+    setGenerating(true)
+    setGenerationError(null)
     try {
-      const value = JSON.parse(await file.text()) as unknown
-      if (!value || typeof value !== 'object') throw new Error('File JSON không có cấu trúc hợp lệ.')
-      setAgentFile({ kind: 'valid', fileName: file.name })
-    } catch (cause) {
-      setAgentFile({
-        kind: 'invalid',
-        fileName: file.name,
-        message: cause instanceof Error ? cause.message : 'Không đọc được file JSON.'
+      const result: GenerateAiPostsResult = await window.pageAuto.generateAiPosts({
+        agentId: selectedAgent,
+        action,
+        postCount,
+        subject,
+        sourceInfo,
+        highlight,
+        audience,
+        randomSourcePosts,
+        postType,
+        tone,
+        structure,
+        length,
+        emoji,
+        hashtag,
+        extraFields
       })
+      const version = generationVersion + 1
+      setGenerationVersion(version)
+      setIncomingBatch({ version, output: result.output, warning: result.warning })
+    } catch (cause) {
+      setGenerationError(errorMessage(cause))
+    } finally {
+      setGenerating(false)
     }
   }
 
@@ -75,13 +229,16 @@ export function AiContentWorkspace() {
         <div className="ai-agent-control">
           <span className="ai-control-label">Agent</span>
           <select value={selectedAgent} onChange={(event) => setSelectedAgent(event.target.value)} aria-label="Chọn Agent">
-            <option value="">Chưa có Agent</option>
+            <option value="">{enabledAgents.length ? 'Chọn Agent' : 'Chưa có Agent'}</option>
+            {enabledAgents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
           </select>
           <button className="ai-secondary-button" type="button" onClick={() => setAgentManagerOpen(true)}>
             <span aria-hidden="true">⚙</span> Quản lý Agent
           </button>
         </div>
-        <div className="ai-provider-state"><span />Chưa kết nối Agent</div>
+        <div className={catalog.credentialConfigured ? 'ai-provider-state connected' : 'ai-provider-state'}>
+          <span />{catalog.credentialConfigured ? 'Gemini đã kết nối' : 'Chưa cấu hình Gemini key'}
+        </div>
       </div>
 
       <div className="ai-content-layout">
@@ -168,6 +325,12 @@ export function AiContentWorkspace() {
               </section>
             )}
 
+            <AgentDynamicFields
+              fields={currentAgent?.inputFields ?? []}
+              values={extraFields}
+              onChange={(key, value) => setExtraFields((current) => ({ ...current, [key]: value }))}
+            />
+
             <section className="ai-form-section ai-generation-options">
               <div className="ai-section-heading compact"><div><strong>Cách viết</strong><small>Chọn nhanh, không cần viết prompt</small></div></div>
 
@@ -206,65 +369,25 @@ export function AiContentWorkspace() {
                 </div>
               </div>
 
-              <label className="ai-image-option">
-                <span><input type="checkbox" checked={createImages} onChange={(event) => setCreateImages(event.target.checked)} /><b>Tạo ảnh bằng AI</b></span>
-                <small>Ảnh sẽ được lưu local khi provider hỗ trợ.</small>
-              </label>
+              <div className="ai-image-option disabled" aria-disabled="true">
+                <span><input type="checkbox" disabled /><b>Tạo ảnh bằng AI</b></span>
+                <small>Chưa bật trong runtime text; không giả lập ảnh.</small>
+              </div>
             </section>
           </div>
 
           <div className="ai-compose-footer">
-            <span className={missingInput ? 'ai-form-hint' : 'ai-form-hint ready'}>{missingInput ?? `Đã đủ thông tin để ${action === 'create' ? 'tạo' : 'random'} bài.`}</span>
-            <button className="ai-generate-button" type="button" disabled={Boolean(missingInput)} title={missingInput ?? 'Provider thật sẽ được nối sau khi audit Agent JSON export.'}>
-              <span aria-hidden="true">✦</span> {actionVerb} {postCount} bài
+            <span className={missingInput || generationError ? 'ai-form-hint' : 'ai-form-hint ready'}>{generationError ?? missingInput ?? `Đã đủ thông tin để ${action === 'create' ? 'tạo' : 'random'} bài.`}</span>
+            <button className="ai-generate-button" type="button" disabled={Boolean(missingInput) || generating} title={missingInput ?? 'Tạo bài bằng Agent đã chọn'} onClick={() => void generate()}>
+              <span aria-hidden="true">✦</span> {generating ? 'Đang tạo...' : `${actionVerb} ${postCount} bài`}
             </button>
           </div>
         </aside>
 
-        <AiDraftResultsPanel expectedCount={postCount} actionLabel={actionVerb} />
+        <AiDraftResultsPanel expectedCount={postCount} actionLabel={actionVerb} incomingBatch={incomingBatch} />
       </div>
 
-      {agentManagerOpen ? (
-        <div className="ai-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setAgentManagerOpen(false) }}>
-          <section className="ai-agent-modal" role="dialog" aria-modal="true" aria-label="Quản lý Agent">
-            <header className="ai-agent-modal-header">
-              <div><p>AI / AGENT</p><h2>Quản lý Agent</h2><span>Import và chọn Agent dùng cho màn tạo bài.</span></div>
-              <button type="button" aria-label="Đóng" onClick={() => setAgentManagerOpen(false)}>×</button>
-            </header>
-
-            <div className="ai-agent-modal-body">
-              <aside className="ai-agent-list-panel">
-                <div className="ai-agent-list-heading"><strong>Agent đã import</strong><span>0</span></div>
-                <div className="ai-agent-list-empty"><span aria-hidden="true">◇</span><strong>Chưa có Agent</strong><p>Import file JSON để bắt đầu.</p></div>
-              </aside>
-
-              <section className="ai-agent-import-panel">
-                <div className="ai-agent-import-card">
-                  <div className="ai-import-icon" aria-hidden="true">⇧</div>
-                  <div><strong>Import Agent JSON</strong><p>Chọn file cấu hình Agent. Page-Auto chỉ hiển thị các Agent cần dùng; ID và metadata nội bộ sẽ không làm rối giao diện.</p></div>
-                  <button className="ai-primary-button" type="button" onClick={() => fileInputRef.current?.click()}>Chọn file JSON</button>
-                  <input ref={fileInputRef} className="ai-hidden-input" type="file" accept="application/json,.json" onChange={(event) => void handleAgentFile(event)} />
-                </div>
-
-                {agentFile.kind !== 'idle' ? (
-                  <div className={agentFile.kind === 'valid' ? 'ai-file-state valid' : 'ai-file-state invalid'}>
-                    <span aria-hidden="true">{agentFile.kind === 'valid' ? '✓' : '!'}</span>
-                    <div><strong>{agentFile.fileName}</strong><p>{agentFile.kind === 'valid' ? 'Đã đọc được file JSON. Cần file Agent export thật để nhận diện và lưu Agent đúng cấu trúc.' : agentFile.message}</p></div>
-                  </div>
-                ) : null}
-
-                <div className="ai-agent-policy">
-                  <div><strong>Giao diện gọn</strong><p>Chỉ hiện tên, mô tả và Agent được bật.</p></div>
-                  <div><strong>Ẩn phần kỹ thuật</strong><p>ID, global và metadata provider nằm phía trong.</p></div>
-                  <div><strong>Secret tách riêng</strong><p>Không nhét API key/token vào file Agent JSON.</p></div>
-                </div>
-              </section>
-            </div>
-
-            <footer className="ai-agent-modal-footer"><button type="button" onClick={() => setAgentManagerOpen(false)}>Đóng</button></footer>
-          </section>
-        </div>
-      ) : null}
+      {agentManagerOpen ? <AiAgentManagerModal catalog={catalog} onCatalogChange={applyCatalog} onClose={() => setAgentManagerOpen(false)} /> : null}
     </section>
   )
 }

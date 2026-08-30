@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   buildAiDraftBatch,
   CONTENT_LIBRARY_EXTERNAL_CHANGE_EVENT,
@@ -9,9 +9,16 @@ import {
 import { AI_POST_DELIMITER } from './aiPostOutputFormat'
 import './aiDraftResultsPanel.css'
 
+export interface AiIncomingDraftBatch {
+  version: number
+  output: string
+  warning: string | null
+}
+
 interface AiDraftResultsPanelProps {
   expectedCount: number
   actionLabel: string
+  incomingBatch?: AiIncomingDraftBatch | null
 }
 
 interface BatchNotice {
@@ -23,7 +30,7 @@ function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause)
 }
 
-export function AiDraftResultsPanel({ expectedCount, actionLabel }: AiDraftResultsPanelProps) {
+export function AiDraftResultsPanel({ expectedCount, actionLabel, incomingBatch = null }: AiDraftResultsPanelProps) {
   const [rawOutput, setRawOutput] = useState('')
   const [drafts, setDrafts] = useState<AiDraftResult[]>([])
   const [notice, setNotice] = useState<BatchNotice | null>(null)
@@ -33,16 +40,30 @@ export function AiDraftResultsPanel({ expectedCount, actionLabel }: AiDraftResul
   const savableCount = useMemo(() => countSavableAiDrafts(drafts), [drafts])
   const savedCount = useMemo(() => drafts.filter((draft) => draft.status === 'saved').length, [drafts])
 
-  const loadAgentOutput = () => {
-    if (!rawOutput.trim()) {
+  const applyRawOutput = (output: string, warning: string | null = null) => {
+    if (!output.trim()) {
       setDrafts([])
-      setNotice({ kind: 'error', message: 'Chưa có kết quả Agent để đọc.' })
+      setNotice({ kind: 'error', message: 'Agent không trả về nội dung để đọc.' })
       return
     }
-    const batch = buildAiDraftBatch(rawOutput, expectedCount)
+    const batch = buildAiDraftBatch(output, expectedCount)
+    setRawOutput(output)
     setDrafts(batch.drafts)
-    setNotice({ kind: batch.valid ? 'success' : 'warning', message: batch.message })
+    const messages = [batch.message, warning].filter((value): value is string => Boolean(value?.trim()))
+    setNotice({
+      kind: batch.valid && !warning ? 'success' : 'warning',
+      message: messages.join(' ')
+    })
   }
+
+  useEffect(() => {
+    if (!incomingBatch) return
+    applyRawOutput(incomingBatch.output, incomingBatch.warning)
+    // incomingBatch.version is the explicit signal for a new provider response.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [incomingBatch?.version])
+
+  const loadAgentOutput = () => applyRawOutput(rawOutput)
 
   const updateDraft = (id: string, patch: Partial<Pick<AiDraftResult, 'name' | 'content' | 'selected'>>) => {
     setDrafts((current) => current.map((draft) => {
@@ -138,7 +159,7 @@ export function AiDraftResultsPanel({ expectedCount, actionLabel }: AiDraftResul
       <div className="ai-preview-canvas ai-results-canvas">
         <details className="ai-agent-output-bridge" open={!drafts.length}>
           <summary>
-            <span><strong>Nhận kết quả từ Agent</strong><small>Tạm thời có thể dán kết quả Agent để kiểm tra.</small></span>
+            <span><strong>Kết quả Agent</strong><small>Agent chạy thật sẽ tự đổ vào đây; vẫn có thể dán output để kiểm tra.</small></span>
             <b>{expectedCount} bài</b>
           </summary>
           <div className="ai-agent-output-body">
