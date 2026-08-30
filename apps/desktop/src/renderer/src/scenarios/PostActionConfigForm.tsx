@@ -1,10 +1,13 @@
 import type { ActionConfig, ActionConfigValue } from '../../../shared/actionRegistry'
-import { ContentLibraryActionField } from './ContentLibraryActionField'
+import type { ScenarioActionPostInput } from '../../../shared/scenarios'
+import { ScenarioPostLibraryField } from './ScenarioPostLibraryField'
 import './postActionConfig.css'
 
 interface PostActionConfigFormProps {
   config: ActionConfig
+  posts: ScenarioActionPostInput[]
   onChange: (key: string, value: ActionConfigValue | undefined) => void
+  onPostsChange: (posts: ScenarioActionPostInput[]) => void
 }
 
 function numberValue(config: ActionConfig, key: string, fallback: number): number {
@@ -21,7 +24,7 @@ function toggleClass(enabled: boolean): string {
   return enabled ? 'post-target-card active' : 'post-target-card'
 }
 
-export function PostActionConfigForm({ config, onChange }: PostActionConfigFormProps) {
+export function PostActionConfigForm({ config, posts, onChange, onPostsChange }: PostActionConfigFormProps) {
   const postToWall = config.postToWall === true
   const postToGroups = config.postToGroups === true
   const selectionMode = stringValue(config, 'selectionMode') || 'sequential'
@@ -134,15 +137,12 @@ export function PostActionConfigForm({ config, onChange }: PostActionConfigFormP
           <span className="post-config-step">2</span>
           <div>
             <strong>Bài viết</strong>
-            <small>Chọn bộ bài thật sẽ dùng khi chạy kịch bản.</small>
+            <small>Tạo mới hoặc gắn bài có sẵn từ kho bài viết gốc.</small>
           </div>
         </div>
 
         <div className="post-content-layout">
-          <ContentLibraryActionField
-            value={config.contentSetId}
-            onChange={(value) => onChange('contentSetId', value)}
-          />
+          <ScenarioPostLibraryField posts={posts} onChange={onPostsChange} />
 
           <div className="post-selection-panel">
             <span>Lấy bài theo</span>
@@ -156,7 +156,7 @@ export function PostActionConfigForm({ config, onChange }: PostActionConfigFormP
                   onChange={() => onChange('selectionMode', 'sequential')}
                 />
                 <strong>Lần lượt</strong>
-                <small>Đi theo thứ tự trong bộ bài.</small>
+                <small>Đi theo thứ tự bài đã gắn.</small>
               </label>
               <label className={selectionMode === 'random' ? 'selected' : ''}>
                 <input
@@ -167,7 +167,7 @@ export function PostActionConfigForm({ config, onChange }: PostActionConfigFormP
                   onChange={() => onChange('selectionMode', 'random')}
                 />
                 <strong>Ngẫu nhiên</strong>
-                <small>Chọn bài ngẫu nhiên trong bộ.</small>
+                <small>Chọn ngẫu nhiên trong các bài đang bật.</small>
               </label>
             </div>
           </div>

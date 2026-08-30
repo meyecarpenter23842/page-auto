@@ -5,12 +5,14 @@ import {
   type CreateScenarioInput,
   type MoveScenarioActionPayload,
   type ScenarioActionCategory,
+  type ScenarioActionPostInput,
   type ScenarioActionRecord,
   type ScenarioDetails,
   type ScenarioSummary,
   type UpdateScenarioActionPayload,
   type UpdateScenarioPayload
 } from '../../shared/scenarios'
+import { ScenarioActionPostRepository } from './scenarioActionPostRepository'
 
 interface ScenarioRow {
   id: number
@@ -98,6 +100,16 @@ function normalizeConfigJson(value = '{}'): string {
   return JSON.stringify(parsed)
 }
 
+function supportsCanonicalPosts(actionType: string): boolean {
+  return actionType === 'post' || actionType === 'group_post'
+}
+
+function assertPostPayload(actionType: string, posts: readonly ScenarioActionPostInput[] | undefined): void {
+  if (posts !== undefined && !supportsCanonicalPosts(actionType)) {
+    throw new Error('Action này không hỗ trợ canonical post bindings.')
+  }
+}
+
 function toSummary(row: ScenarioRow): ScenarioSummary {
   return {
     id: row.id,
@@ -126,7 +138,11 @@ function toAction(row: ScenarioActionRow): ScenarioActionRecord {
 }
 
 export class ScenarioRepository {
-  constructor(private readonly client: Database.Database) {}
+  private readonly actionPosts: ScenarioActionPostRepository
+
+  constructor(private readonly client: Database.Database) {
+    this.actionPosts = new ScenarioActionPostRepository(client)
+  }
 
   list(): ScenarioSummary[] {
     const rows = this.client.prepare(`SELECT ${scenarioColumns} FROM scenarios s ORDER BY s.updated_at DESC, s.id DESC`).all() as ScenarioRow[]
@@ -137,7 +153,13 @@ export class ScenarioRepository {
     const row = this.client.prepare(`SELECT ${scenarioColumns} FROM scenarios s WHERE s.id = ?`).get(id) as ScenarioRow | undefined
     if (!row) return null
     const actions = this.client.prepare(`SELECT ${actionColumns} FROM scenario_actions WHERE scenario_id = ? ORDER BY order_index ASC, id ASC`).all(id) as ScenarioActionRow[]
-    return { ...toSummary(row), actions: actions.map(toAction) }
+    return {
+      ...toSummary(row),
+      actions: actions.map((action) => ({
+        ...toAction(action),
+        posts: supportsCanonicalPosts(action.actionType) ? this.actionPosts.list(action.id) : []
+      }))
+    }
   }
 
   create(input: CreateScenarioInput, now = Date.now()): ScenarioDetails {
@@ -173,12 +195,19 @@ export class ScenarioRepository {
     const actionType = normalizeActionType(input.actionType)
     const category = normalizeCategory(input.category)
     const configJson = normalizeConfigJson(input.configJson)
+    assertPostPayload(actionType, input.posts)
     const next = this.client.prepare('SELECT COALESCE(MAX(order_index), -1) + 1 AS next FROM scenario_actions WHERE scenario_id = ?').get(input.scenarioId) as { next: number }
-    this.client.prepare(`
-      INSERT INTO scenario_actions (scenario_id, action_type, label, category, order_index, config_json, enabled, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(input.scenarioId, actionType, label, category, next.next, configJson, input.enabled === false ? 0 : 1, now, now)
-    this.touch(input.scenarioId, now)
+
+    const transaction = this.client.transaction(() => {
+      const result = this.client.prepare(`
+        INSERT INTO scenario_actions (scenario_id, action_type, label, category, order_index, config_json, enabled, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(input.scenarioId, actionType, label, category, next.next, configJson, input.enabled === false ? 0 : 1, now, now)
+      const actionId = Number(result.lastInsertRowid)
+      if (input.posts !== undefined) this.actionPosts.save(actionId, input.posts, now)
+      this.touch(input.scenarioId, now)
+    })
+    transaction()
     return this.require(input.scenarioId)
   }
 
@@ -190,10 +219,16 @@ export class ScenarioRepository {
     const category = payload.patch.category === undefined ? current.category : normalizeCategory(payload.patch.category)
     const configJson = payload.patch.configJson === undefined ? current.configJson : normalizeConfigJson(payload.patch.configJson)
     const enabled = payload.patch.enabled ?? current.enabled
-    this.client.prepare(`
-      UPDATE scenario_actions SET action_type = ?, label = ?, category = ?, config_json = ?, enabled = ?, updated_at = ? WHERE id = ?
-    `).run(actionType, label, category, configJson, enabled ? 1 : 0, now, payload.id)
-    this.touch(current.scenarioId, now)
+    assertPostPayload(actionType, payload.posts)
+
+    const transaction = this.client.transaction(() => {
+      this.client.prepare(`
+        UPDATE scenario_actions SET action_type = ?, label = ?, category = ?, config_json = ?, enabled = ?, updated_at = ? WHERE id = ?
+      `).run(actionType, label, category, configJson, enabled ? 1 : 0, now, payload.id)
+      if (payload.posts !== undefined) this.actionPosts.save(payload.id, payload.posts, now)
+      this.touch(current.scenarioId, now)
+    })
+    transaction()
     return this.require(current.scenarioId)
   }
 
@@ -229,7 +264,11 @@ export class ScenarioRepository {
 
   private getAction(id: number): ScenarioActionRecord | null {
     const row = this.client.prepare(`SELECT ${actionColumns} FROM scenario_actions WHERE id = ?`).get(id) as ScenarioActionRow | undefined
-    return row ? toAction(row) : null
+    if (!row) return null
+    return {
+      ...toAction(row),
+      posts: supportsCanonicalPosts(row.actionType) ? this.actionPosts.list(row.id) : []
+    }
   }
 
   private normalizeOrder(scenarioId: number, now: number): void {

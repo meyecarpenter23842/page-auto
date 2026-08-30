@@ -10,7 +10,9 @@ import {
   getActionFieldUiMeta,
   getActionOverrideValidationErrors
 } from '../../../shared/actionOverrides'
+import type { ScenarioActionPostInput } from '../../../shared/scenarios'
 import { PostActionConfigForm } from './PostActionConfigForm'
+import { ScenarioPostLibraryField } from './ScenarioPostLibraryField'
 import './k41ActionConfig.css'
 
 applyActionOverrides()
@@ -23,6 +25,7 @@ export interface ActionEditorValue {
   label: string
   enabled: boolean
   config: ActionConfig
+  posts: ScenarioActionPostInput[]
 }
 
 interface ActionConfigModalProps {
@@ -39,6 +42,31 @@ const REACTION_ICONS: Record<string, string> = {
   reactionWow: '😮',
   reactionSad: '😢',
   reactionAngry: '😡'
+}
+
+const GROUP_POST_LEGACY_POST_FIELDS = new Set([
+  'content', 'imageFolderPath', 'imageMode', 'imagesPerPost', 'missingPolicy'
+])
+const LEGACY_CONTENT_SET_SENTINEL = 2_147_483_647
+const GROUP_POST_CONTENT_SENTINEL = '__scenario_canonical_posts__'
+
+function usesCanonicalPosts(actionType: string): boolean {
+  return actionType === 'post' || actionType === 'group_post'
+}
+
+function canonicalCompatibilityConfig(actionType: string, input: ActionConfig): ActionConfig {
+  const next = { ...input }
+  if (actionType === 'post') {
+    const source = next.contentSetId
+    if (typeof source !== 'number' || !Number.isSafeInteger(source) || source <= 0) {
+      next.contentSetId = LEGACY_CONTENT_SET_SENTINEL
+    }
+  }
+  if (actionType === 'group_post') {
+    const content = next.content
+    if (typeof content !== 'string' || !content.trim()) next.content = GROUP_POST_CONTENT_SENTINEL
+  }
+  return next
 }
 
 function isReactionField(field: ActionConfigFieldDefinition): boolean {
@@ -248,7 +276,12 @@ function buildFieldRenderItems(fields: ActionConfigFieldDefinition[]): FieldRend
 export function ActionConfigModal({ value, onClose, onSave }: ActionConfigModalProps) {
   const [label, setLabel] = useState(value.label)
   const [enabled, setEnabled] = useState(value.enabled)
-  const [config, setConfig] = useState<ActionConfig>(value.config)
+  const [config, setConfig] = useState<ActionConfig>(() => canonicalCompatibilityConfig(value.actionType, value.config))
+  const [posts, setPosts] = useState<ScenarioActionPostInput[]>(() => value.posts.map((post) => ({
+    ...post,
+    variants: [...post.variants],
+    image: { ...post.image }
+  })))
   const definition = value.definition
   const baseValidation = useMemo(
     () => definition ? validateActionConfig(definition.id, config) : { valid: true as const, value: config, errors: [] as [] },
@@ -258,11 +291,15 @@ export function ActionConfigModal({ value, onClose, onSave }: ActionConfigModalP
     () => definition ? getActionOverrideValidationErrors(definition.id, baseValidation.value) : [],
     [baseValidation.value, definition]
   )
-  const valid = baseValidation.valid && extraErrors.length === 0
+  const postBindingError = usesCanonicalPosts(value.actionType) && posts.length === 0
+    ? 'Cần ít nhất một bài viết đang gắn vào action.'
+    : null
+  const valid = baseValidation.valid && extraErrors.length === 0 && postBindingError === null
 
   const visibleSections = useMemo(() => {
     const sections = new Map<string, ActionConfigFieldDefinition[]>()
     for (const field of definition?.configSchema.fields ?? []) {
+      if (value.actionType === 'group_post' && GROUP_POST_LEGACY_POST_FIELDS.has(field.key)) continue
       const ui = getActionFieldUiMeta(definition?.id ?? '', field.key)
       if (ui?.visibleWhen && config[ui.visibleWhen.key] !== ui.visibleWhen.equals) continue
       const section = ui?.section ?? 'Cấu hình'
@@ -271,7 +308,7 @@ export function ActionConfigModal({ value, onClose, onSave }: ActionConfigModalP
       sections.set(section, current)
     }
     return [...sections.entries()]
-  }, [config, definition])
+  }, [config, definition, value.actionType])
 
   const setField = (key: string, nextValue: ActionConfig[string] | undefined) => {
     setConfig((current) => {
@@ -284,11 +321,43 @@ export function ActionConfigModal({ value, onClose, onSave }: ActionConfigModalP
 
   const submit = () => {
     if (!label.trim() || !valid) return
-    onSave({ ...value, label: label.trim(), enabled, config }, baseValidation.value)
+    onSave({ ...value, label: label.trim(), enabled, config, posts }, baseValidation.value)
   }
 
   const runtimeReady = definition?.runtimeStatus === 'ready'
   const isPostAction = value.actionType === 'post'
+  const isGroupPostAction = value.actionType === 'group_post'
+
+  const sections = visibleSections.length ? (
+    <div className="k41-action-sections">
+      {visibleSections.map(([section, fields]) => {
+        const reactions = fields.filter(isReactionField)
+        const regularFields = fields.filter((field) => !isReactionField(field))
+        const renderItems = buildFieldRenderItems(regularFields)
+        return (
+          <section className="k41-action-section" data-section={section} key={section}>
+            <div className="k41-action-section-title">{section}</div>
+            <div className="action-config-fields k41-action-grid">
+              {renderItems.map((item) => item.maxField ? (
+                <ConfigRange
+                  key={item.key}
+                  minField={item.field}
+                  maxField={item.maxField}
+                  minValue={config[item.field.key]}
+                  maxValue={config[item.maxField.key]}
+                  onMinChange={(next) => setField(item.field.key, next)}
+                  onMaxChange={(next) => setField(item.maxField!.key, next)}
+                />
+              ) : (
+                <ConfigField key={item.key} actionType={value.actionType} field={item.field} value={config[item.field.key]} onChange={(next) => setField(item.field.key, next)} />
+              ))}
+              {reactions.length ? <ReactionStrip fields={reactions} config={config} onChange={(key, next) => setField(key, next)} /> : null}
+            </div>
+          </section>
+        )
+      })}
+    </div>
+  ) : <div className="scenario-placeholder-note">Action này chưa có trường cấu hình nghiệp vụ.</div>
 
   return (
     <div className="scenario-modal-backdrop" role="presentation">
@@ -308,7 +377,7 @@ export function ActionConfigModal({ value, onClose, onSave }: ActionConfigModalP
           <div className="action-config-summary post-action-summary">
             <div>
               <strong>Đăng bài</strong>
-              <span>Chọn nơi đăng, bộ bài viết và thời gian chờ.</span>
+              <span>Chọn nơi đăng, bài viết canonical và thời gian chờ.</span>
             </div>
             <div className="action-config-badges">
               <span>Tường Page / Group</span>
@@ -333,46 +402,27 @@ export function ActionConfigModal({ value, onClose, onSave }: ActionConfigModalP
           </div>
 
           {isPostAction ? (
-            <PostActionConfigForm config={config} onChange={setField} />
-          ) : visibleSections.length ? (
-            <div className="k41-action-sections">
-              {visibleSections.map(([section, fields]) => {
-                const reactions = fields.filter(isReactionField)
-                const regularFields = fields.filter((field) => !isReactionField(field))
-                const renderItems = buildFieldRenderItems(regularFields)
-                return (
-                  <section className="k41-action-section" data-section={section} key={section}>
-                    <div className="k41-action-section-title">{section}</div>
-                    <div className="action-config-fields k41-action-grid">
-                      {renderItems.map((item) => item.maxField ? (
-                        <ConfigRange
-                          key={item.key}
-                          minField={item.field}
-                          maxField={item.maxField}
-                          minValue={config[item.field.key]}
-                          maxValue={config[item.maxField.key]}
-                          onMinChange={(next) => setField(item.field.key, next)}
-                          onMaxChange={(next) => setField(item.maxField!.key, next)}
-                        />
-                      ) : (
-                        <ConfigField key={item.key} actionType={value.actionType} field={item.field} value={config[item.field.key]} onChange={(next) => setField(item.field.key, next)} />
-                      ))}
-                      {reactions.length ? <ReactionStrip fields={reactions} config={config} onChange={(key, next) => setField(key, next)} /> : null}
-                    </div>
-                  </section>
-                )
-              })}
-            </div>
-          ) : <div className="scenario-placeholder-note">Action này chưa có trường cấu hình nghiệp vụ.</div>}
+            <PostActionConfigForm config={config} posts={posts} onChange={setField} onPostsChange={setPosts} />
+          ) : isGroupPostAction ? (
+            <>
+              <section className="k41-action-section" data-section="Bài viết">
+                <div className="k41-action-section-title">Bài viết</div>
+                <ScenarioPostLibraryField posts={posts} onChange={setPosts} />
+              </section>
+              {sections}
+            </>
+          ) : sections}
 
           {!definition ? <div className="scenario-placeholder-note warning">Action cũ không có trong registry. Có thể đổi tên/bật tắt, nhưng chưa chỉnh được config.</div> : null}
-          {!baseValidation.valid || extraErrors.length ? (
-            <div className="action-config-errors">{[...baseValidation.errors, ...extraErrors].map((item) => <span key={item}>{item}</span>)}</div>
+          {!baseValidation.valid || extraErrors.length || postBindingError ? (
+            <div className="action-config-errors">
+              {[...baseValidation.errors, ...extraErrors, ...(postBindingError ? [postBindingError] : [])].map((item) => <span key={item}>{item}</span>)}
+            </div>
           ) : null}
         </div>
 
         <div className="scenario-modal-actions">
-          <span className="scenario-toolbar-note">Config không lưu password, cookie, 2FA hoặc token.</span>
+          <span className="scenario-toolbar-note">Bài gốc nằm trong Thư viện chung; action chỉ lưu binding + config.</span>
           <button className="scenario-button" type="button" onClick={onClose}>Hủy</button>
           <button className="scenario-button primary" type="button" disabled={!label.trim() || !valid} onClick={submit}>{value.id === null ? 'Thêm hành động' : 'Lưu thay đổi'}</button>
         </div>
