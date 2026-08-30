@@ -4,36 +4,37 @@ import {
   IMAGE_MODES,
   MISSING_IMAGE_POLICIES,
   POST_SELECTION_MODES,
-  type ImageMode,
-  type MissingImagePolicy,
+  type CanonicalPostSummary,
   type PageTabImageConfig,
-  type PageTabPostInput,
   type PageTabPostItem,
   type PageTabPostLibrary,
   type PostSelectionMode,
+  type SavePageTabPostItemInput,
   type SavePageTabPostLibraryInput
 } from '../../shared/pageTabs'
+import {
+  CanonicalPostRepository,
+  PageTabPostBindingRepository,
+  type PostBindingOverrides,
+  type ResolvedPostBinding
+} from './canonicalPostRepository'
+import { LegacyCanonicalPostBridge } from './legacyCanonicalPostBridge'
 
-interface LegacyImageRow {
-  folderPath: string
-  mode: string
-  imagesPerPost: number
-  missingPolicy: string
+interface NormalizedPostInput extends SavePageTabPostItemInput {
+  name: string
+  variants: string[]
+  image: PageTabImageConfig
+  sortOrder: number
 }
 
-interface LegacyContentSetRow {
-  id: number
-  mode: string
-}
-
-function normalizeVariants(values: string[]): string[] {
+function normalizeVariants(values: readonly string[]): string[] {
   return values.map((value) => value.trim()).filter(Boolean)
 }
 
 function normalizeImage(image: PageTabImageConfig): PageTabImageConfig {
   if (!IMAGE_MODES.includes(image.mode)) throw new Error('Chế độ ảnh không hợp lệ.')
   if (!MISSING_IMAGE_POLICIES.includes(image.missingPolicy)) throw new Error('Policy thiếu ảnh không hợp lệ.')
-  if (!Number.isInteger(image.imagesPerPost) || image.imagesPerPost < 1 || image.imagesPerPost > 50) {
+  if (!Number.isSafeInteger(image.imagesPerPost) || image.imagesPerPost < 1 || image.imagesPerPost > 50) {
     throw new Error('Số ảnh mỗi bài phải từ 1 đến 50.')
   }
   return {
@@ -44,157 +45,162 @@ function normalizeImage(image: PageTabImageConfig): PageTabImageConfig {
   }
 }
 
-function parseVariants(raw: unknown): string[] {
-  try {
-    const parsed = JSON.parse(String(raw)) as unknown
-    if (!Array.isArray(parsed)) return []
-    return parsed.filter((item): item is string => typeof item === 'string').map((item) => item.trim()).filter(Boolean)
-  } catch {
-    return []
+function postErrorMessage(name: string, enabled: boolean): string {
+  return enabled
+    ? `“${name}” đang bật nhưng chưa có nội dung hoặc folder ảnh.`
+    : `“${name}” cần có nội dung hoặc folder ảnh.`
+}
+
+function normalizePost(input: SavePageTabPostItemInput, index: number): NormalizedPostInput {
+  const variants = normalizeVariants(input.variants)
+  const image = normalizeImage(input.image)
+  const name = input.name.trim() || `Bài viết ${index + 1}`
+  if (name.length > 160) throw new Error('Tên bài viết tối đa 160 ký tự.')
+  if (!variants.length && !image.folderPath) {
+    throw new Error(postErrorMessage(name, input.enabled))
+  }
+  if (input.postId !== undefined && input.postId !== null && (!Number.isSafeInteger(input.postId) || input.postId <= 0)) {
+    throw new Error('Post ID không hợp lệ.')
+  }
+  return { ...input, name, variants, image, sortOrder: index }
+}
+
+function sameStrings(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index])
+}
+
+function sameImage(left: PageTabImageConfig, right: PageTabImageConfig): boolean {
+  return left.folderPath === right.folderPath
+    && left.mode === right.mode
+    && left.imagesPerPost === right.imagesPerPost
+    && left.missingPolicy === right.missingPolicy
+}
+
+function matchesResolved(input: NormalizedPostInput, binding: ResolvedPostBinding): boolean {
+  return input.name === binding.name
+    && input.enabled === binding.enabled
+    && sameStrings(input.variants, binding.variants)
+    && sameImage(input.image, binding.image)
+}
+
+function canonicalSummary(post: ReturnType<CanonicalPostRepository['require']>): CanonicalPostSummary {
+  return {
+    postId: post.id,
+    name: post.name,
+    variants: [...post.variants],
+    image: { ...post.image },
+    createdAt: post.createdAt,
+    updatedAt: post.updatedAt
+  }
+}
+
+function overridePatch(input: NormalizedPostInput, canonical: ReturnType<CanonicalPostRepository['require']>): PostBindingOverrides {
+  return {
+    name: input.name === canonical.name ? null : input.name,
+    variants: sameStrings(input.variants, canonical.variants) ? null : [...input.variants],
+    imageFolderPath: input.image.folderPath === canonical.image.folderPath ? null : input.image.folderPath,
+    imageMode: input.image.mode === canonical.image.mode ? null : input.image.mode,
+    imagesPerPost: input.image.imagesPerPost === canonical.image.imagesPerPost ? null : input.image.imagesPerPost,
+    missingPolicy: input.image.missingPolicy === canonical.image.missingPolicy ? null : input.image.missingPolicy
   }
 }
 
 export class PageTabPostRepository {
-  constructor(private readonly client: Database.Database) {}
+  private readonly canonical: CanonicalPostRepository
+  private readonly bindings: PageTabPostBindingRepository
+  private readonly bridge: LegacyCanonicalPostBridge
+
+  constructor(private readonly client: Database.Database) {
+    this.canonical = new CanonicalPostRepository(client)
+    this.bindings = new PageTabPostBindingRepository(client)
+    this.bridge = new LegacyCanonicalPostBridge(client)
+  }
 
   get(pageTabId: number): PageTabPostLibrary {
-    const tab = this.client.prepare(`
-      SELECT id, post_selection_mode AS mode
-      FROM page_tabs
-      WHERE id = ?
-    `).get(pageTabId) as { id: number; mode: string } | undefined
-    if (!tab) throw new Error(`Không tìm thấy Page Tab #${pageTabId}.`)
-
-    const rows = this.client.prepare(`
-      SELECT
-        id,
-        name,
-        enabled,
-        variants_json AS variantsJson,
-        image_folder_path AS imageFolderPath,
-        image_mode AS imageMode,
-        images_per_post AS imagesPerPost,
-        missing_policy AS missingPolicy,
-        sort_order AS sortOrder
-      FROM page_tab_posts
-      WHERE page_tab_id = ?
-      ORDER BY sort_order, id
-    `).all(pageTabId) as Array<Record<string, unknown>>
-
-    if (rows.length > 0) {
-      return {
-        pageTabId,
-        mode: POST_SELECTION_MODES.includes(tab.mode as PostSelectionMode) ? tab.mode as PostSelectionMode : 'sequential',
-        legacyFallback: false,
-        posts: rows.map((row): PageTabPostItem => ({
-          id: Number(row.id),
-          name: String(row.name),
-          enabled: Number(row.enabled) === 1,
-          sortOrder: Number(row.sortOrder),
-          variants: parseVariants(row.variantsJson),
-          image: {
-            folderPath: String(row.imageFolderPath ?? ''),
-            mode: IMAGE_MODES.includes(String(row.imageMode) as ImageMode) ? String(row.imageMode) as ImageMode : 'random',
-            imagesPerPost: Math.max(1, Number(row.imagesPerPost) || 1),
-            missingPolicy: MISSING_IMAGE_POLICIES.includes(String(row.missingPolicy) as MissingImagePolicy)
-              ? String(row.missingPolicy) as MissingImagePolicy
-              : 'text_only'
-          }
-        }))
-      }
-    }
-
-    return this.fromLegacy(pageTabId)
+    const reconciledLegacy = this.bridge.reconcilePage(pageTabId)
+    this.bridge.syncAllGlobalSets()
+    return this.read(pageTabId, reconciledLegacy)
   }
 
   save(input: SavePageTabPostLibraryInput): PageTabPostLibrary {
     if (!POST_SELECTION_MODES.includes(input.mode)) throw new Error('Chế độ chọn bài không hợp lệ.')
-    const exists = this.client.prepare('SELECT id FROM page_tabs WHERE id = ?').get(input.pageTabId)
-    if (!exists) throw new Error(`Không tìm thấy Page Tab #${input.pageTabId}.`)
+    const page = this.client.prepare(`
+      SELECT id FROM page_tabs WHERE id = ?
+    `).get(input.pageTabId)
+    if (!page) throw new Error(`Không tìm thấy Page Tab #${input.pageTabId}.`)
 
-    const normalized: PageTabPostInput[] = input.posts.map((post, index) => {
-      const variants = normalizeVariants(post.variants)
-      const name = post.name.trim() || `Bài viết ${index + 1}`
-      if (post.enabled && variants.length === 0) {
-        throw new Error(`“${name}” đang bật nhưng chưa có nội dung.`)
-      }
-      return {
-        name,
-        enabled: post.enabled,
-        sortOrder: index,
-        variants,
-        image: normalizeImage(post.image)
-      }
-    })
+    this.bridge.reconcilePage(input.pageTabId)
+    this.bridge.syncAllGlobalSets()
 
+    const normalized = input.posts.map(normalizePost)
+    const current = this.bindings.list(input.pageTabId)
+    const compatibilitySource = this.inferDuplicateSource(input.pageTabId, normalized, current)
     const now = Date.now()
+
     const transaction = this.client.transaction(() => {
+      const desiredPostIds: number[] = []
+
+      normalized.forEach((post, index) => {
+        const compatibilityBinding = compatibilitySource?.[index]
+        const requestedPostId = post.postId ?? compatibilityBinding?.postId ?? null
+        let binding: ResolvedPostBinding
+
+        if (requestedPostId === null) {
+          binding = this.bindings.createAndBind(input.pageTabId, {
+            name: post.name,
+            variants: post.variants,
+            image: post.image
+          }, now)
+        } else {
+          const alreadyBound = this.bindings.list(input.pageTabId).find((item) => item.postId === requestedPostId)
+          binding = alreadyBound ?? this.bindings.bindExisting(input.pageTabId, requestedPostId, now)
+          const canonical = this.canonical.require(requestedPostId)
+          const overrides = compatibilityBinding?.postId === requestedPostId
+            ? compatibilityBinding.overrides
+            : overridePatch(post, canonical)
+          binding = this.bindings.updateOverrides(input.pageTabId, requestedPostId, overrides, now)
+        }
+
+        if (binding.enabled !== post.enabled) {
+          binding = this.bindings.setEnabled(input.pageTabId, binding.postId, post.enabled, now)
+        }
+        desiredPostIds.push(binding.postId)
+      })
+
+      const desired = new Set(desiredPostIds)
+      this.bindings.list(input.pageTabId)
+        .filter((binding) => !desired.has(binding.postId))
+        .forEach((binding) => this.bindings.unlink(input.pageTabId, binding.postId, now))
+
+      const updateOrder = this.client.prepare(`
+        UPDATE page_tab_post_bindings
+        SET sort_order = ?, updated_at = ?
+        WHERE page_tab_id = ? AND post_id = ?
+      `)
+      desiredPostIds.forEach((postId, index) => updateOrder.run(index, now, input.pageTabId, postId))
+
       this.client.prepare(`
         UPDATE page_tabs
         SET post_selection_mode = ?, updated_at = ?
         WHERE id = ?
       `).run(input.mode, now, input.pageTabId)
 
-      this.client.prepare('DELETE FROM page_tab_posts WHERE page_tab_id = ?').run(input.pageTabId)
-      const insert = this.client.prepare(`
-        INSERT INTO page_tab_posts (
-          page_tab_id, name, enabled, variants_json,
-          image_folder_path, image_mode, images_per_post, missing_policy,
-          sort_order, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `)
-      for (const post of normalized) {
-        insert.run(
-          input.pageTabId,
-          post.name,
-          post.enabled ? 1 : 0,
-          JSON.stringify(post.variants),
-          post.image.folderPath,
-          post.image.mode,
-          post.image.imagesPerPost,
-          post.image.missingPolicy,
-          post.sortOrder,
-          now,
-          now
-        )
-      }
-
-      // Keep legacy content/image rows in sync for older backups/builds.
-      const contentSet = this.client.prepare('SELECT id FROM content_sets WHERE page_tab_id = ?').get(input.pageTabId) as { id: number } | undefined
-      if (contentSet) {
-        this.client.prepare('UPDATE content_sets SET mode = ?, updated_at = ? WHERE id = ?').run(input.mode, now, contentSet.id)
-        this.client.prepare('DELETE FROM content_items WHERE content_set_id = ?').run(contentSet.id)
-        const insertLegacy = this.client.prepare('INSERT INTO content_items (content_set_id, content, sort_order) VALUES (?, ?, ?)')
-        normalized.forEach((post, index) => {
-          const firstVariant = post.variants[0]
-          if (firstVariant) insertLegacy.run(contentSet.id, firstVariant, index)
-        })
-      }
-
-      const firstImage = normalized.find((post) => post.enabled)?.image ?? normalized[0]?.image ?? DEFAULT_PAGE_TAB_IMAGE
-      this.client.prepare(`
-        UPDATE image_sources
-        SET folder_path = ?, mode = ?, images_per_post = ?, missing_policy = ?, updated_at = ?
-        WHERE page_tab_id = ?
-      `).run(
-        firstImage.folderPath,
-        firstImage.mode,
-        firstImage.imagesPerPost,
-        firstImage.missingPolicy,
-        now,
-        input.pageTabId
-      )
+      this.mirrorLegacyCompatibility(input.pageTabId, input.mode, normalized, now)
     })
     transaction()
-    return this.get(input.pageTabId)
+
+    return this.read(input.pageTabId)
   }
 
   copy(sourcePageTabId: number, targetPageTabId: number): PageTabPostLibrary {
-    const source = this.get(sourcePageTabId)
+    this.bridge.reconcilePage(sourcePageTabId)
+    this.bridge.reconcilePage(targetPageTabId)
+    const source = this.read(sourcePageTabId)
     return this.save({
       pageTabId: targetPageTabId,
       mode: source.mode,
       posts: source.posts.map((post, index) => ({
+        postId: post.postId,
         name: post.name,
         enabled: post.enabled,
         sortOrder: index,
@@ -204,58 +210,113 @@ export class PageTabPostRepository {
     })
   }
 
-  private fromLegacy(pageTabId: number): PageTabPostLibrary {
-    const contentSet = this.client.prepare(`
-      SELECT id, mode
-      FROM content_sets
-      WHERE page_tab_id = ?
-    `).get(pageTabId) as LegacyContentSetRow | undefined
+  private read(pageTabId: number, legacyFallback = false): PageTabPostLibrary {
+    const tab = this.client.prepare(`
+      SELECT id, post_selection_mode AS mode
+      FROM page_tabs
+      WHERE id = ?
+    `).get(pageTabId) as { id: number; mode: string } | undefined
+    if (!tab) throw new Error(`Không tìm thấy Page Tab #${pageTabId}.`)
 
-    const legacyContent = contentSet
-      ? this.client.prepare(`
-          SELECT content
-          FROM content_items
-          WHERE content_set_id = ?
-          ORDER BY sort_order, id
-        `).all(contentSet.id) as Array<{ content: string }>
-      : []
-
-    const imageRow = this.client.prepare(`
-      SELECT
-        folder_path AS folderPath,
-        mode,
-        images_per_post AS imagesPerPost,
-        missing_policy AS missingPolicy
-      FROM image_sources
-      WHERE page_tab_id = ?
-    `).get(pageTabId) as LegacyImageRow | undefined
-
-    const image: PageTabImageConfig = imageRow
-      ? {
-          folderPath: String(imageRow.folderPath ?? ''),
-          mode: IMAGE_MODES.includes(String(imageRow.mode) as ImageMode) ? String(imageRow.mode) as ImageMode : 'random',
-          imagesPerPost: Math.max(1, Number(imageRow.imagesPerPost) || 1),
-          missingPolicy: MISSING_IMAGE_POLICIES.includes(String(imageRow.missingPolicy) as MissingImagePolicy)
-            ? String(imageRow.missingPolicy) as MissingImagePolicy
-            : 'text_only'
+    const posts: PageTabPostItem[] = this.bindings.list(pageTabId).map((binding) => {
+      const canonical = this.canonical.require(binding.postId)
+      return {
+        id: binding.bindingId,
+        postId: binding.postId,
+        name: binding.name,
+        enabled: binding.enabled,
+        sortOrder: binding.sortOrder,
+        variants: [...binding.variants],
+        image: { ...binding.image },
+        canonical: canonicalSummary(canonical),
+        overrides: {
+          name: binding.overrides.name,
+          variants: binding.overrides.variants === null ? null : [...binding.overrides.variants],
+          imageFolderPath: binding.overrides.imageFolderPath,
+          imageMode: binding.overrides.imageMode,
+          imagesPerPost: binding.overrides.imagesPerPost,
+          missingPolicy: binding.overrides.missingPolicy
         }
-      : { ...DEFAULT_PAGE_TAB_IMAGE, mode: 'random' }
+      }
+    })
 
     return {
       pageTabId,
-      mode: contentSet?.mode === 'random' ? 'random' : 'sequential',
-      legacyFallback: true,
-      posts: legacyContent
-        .map((item) => item.content.trim())
-        .filter(Boolean)
-        .map((content, index) => ({
-          id: -(index + 1),
-          name: `Bài viết ${index + 1}`,
-          enabled: true,
-          sortOrder: index,
-          variants: [content],
-          image: { ...image }
-        }))
+      mode: POST_SELECTION_MODES.includes(tab.mode as PostSelectionMode) ? tab.mode as PostSelectionMode : 'sequential',
+      posts,
+      availablePosts: this.canonical.list().map(canonicalSummary),
+      legacyFallback
     }
+  }
+
+  private inferDuplicateSource(
+    targetPageTabId: number,
+    input: NormalizedPostInput[],
+    current: ResolvedPostBinding[]
+  ): ResolvedPostBinding[] | null {
+    if (current.length > 0 || input.length === 0 || input.some((post) => post.postId !== undefined && post.postId !== null)) {
+      return null
+    }
+
+    const target = this.client.prepare(`
+      SELECT id, name, page_uid AS pageUid, created_at AS createdAt
+      FROM page_tabs WHERE id = ?
+    `).get(targetPageTabId) as { id: number; name: string; pageUid: string; createdAt: number } | undefined
+    if (!target || !target.name.endsWith(' Copy')) return null
+
+    const sourceName = target.name.slice(0, -' Copy'.length)
+    const source = this.client.prepare(`
+      SELECT id
+      FROM page_tabs
+      WHERE id <> ? AND name = ? AND page_uid = ? AND created_at <= ?
+      ORDER BY id DESC
+      LIMIT 1
+    `).get(targetPageTabId, sourceName, target.pageUid, target.createdAt) as { id: number } | undefined
+    if (!source) return null
+
+    this.bridge.reconcilePage(source.id)
+    const sourceBindings = this.bindings.list(source.id)
+    if (sourceBindings.length !== input.length) return null
+    return input.every((post, index) => {
+      const sourceBinding = sourceBindings[index]
+      return sourceBinding ? matchesResolved(post, sourceBinding) : false
+    }) ? sourceBindings : null
+  }
+
+  private mirrorLegacyCompatibility(
+    pageTabId: number,
+    mode: PostSelectionMode,
+    posts: NormalizedPostInput[],
+    now: number
+  ): void {
+    const set = this.client.prepare(`
+      SELECT id FROM content_sets WHERE page_tab_id = ?
+    `).get(pageTabId) as { id: number } | undefined
+    if (set) {
+      this.client.prepare(`UPDATE content_sets SET mode = ?, updated_at = ? WHERE id = ?`).run(mode, now, set.id)
+      this.client.prepare('DELETE FROM content_items WHERE content_set_id = ?').run(set.id)
+      const insert = this.client.prepare(`
+        INSERT INTO content_items (content_set_id, content, sort_order)
+        VALUES (?, ?, ?)
+      `)
+      posts.forEach((post, index) => {
+        const first = post.variants[0]
+        if (first) insert.run(set.id, first, index)
+      })
+    }
+
+    const firstImage = posts.find((post) => post.enabled)?.image ?? posts[0]?.image ?? DEFAULT_PAGE_TAB_IMAGE
+    this.client.prepare(`
+      UPDATE image_sources
+      SET folder_path = ?, mode = ?, images_per_post = ?, missing_policy = ?, updated_at = ?
+      WHERE page_tab_id = ?
+    `).run(
+      firstImage.folderPath,
+      firstImage.mode,
+      firstImage.imagesPerPost,
+      firstImage.missingPolicy,
+      now,
+      pageTabId
+    )
   }
 }

@@ -96,6 +96,24 @@ export interface PageTabImageConfig {
   missingPolicy: MissingImagePolicy
 }
 
+export interface CanonicalPostSummary {
+  postId: number
+  name: string
+  variants: string[]
+  image: PageTabImageConfig
+  createdAt: number
+  updatedAt: number
+}
+
+export interface PageTabPostBindingOverrides {
+  name: string | null
+  variants: string[] | null
+  imageFolderPath: string | null
+  imageMode: ImageMode | null
+  imagesPerPost: number | null
+  missingPolicy: MissingImagePolicy | null
+}
+
 export interface PageTabPostInput {
   name: string
   enabled: boolean
@@ -105,20 +123,34 @@ export interface PageTabPostInput {
 }
 
 export interface PageTabPostItem extends PageTabPostInput {
+  /** Binding row ID. Kept as `id` for renderer compatibility. */
   id: number
+  /** Canonical post identity shared across Page/Scenario contexts. */
+  postId: number
+  canonical: CanonicalPostSummary
+  overrides: PageTabPostBindingOverrides
 }
 
 export interface PageTabPostLibrary {
   pageTabId: number
   mode: PostSelectionMode
+  /** Only posts currently bound to this Page. */
   posts: PageTabPostItem[]
+  /** Full canonical store used by “Chọn từ thư viện”. */
+  availablePosts: CanonicalPostSummary[]
+  /** Transitional compatibility flag; canonical UI always returns false after reconciliation. */
   legacyFallback: boolean
+}
+
+export interface SavePageTabPostItemInput extends PageTabPostInput {
+  /** Existing canonical post to bind/edit; null/undefined creates a new canonical post. */
+  postId?: number | null
 }
 
 export interface SavePageTabPostLibraryInput {
   pageTabId: number
   mode: PostSelectionMode
-  posts: PageTabPostInput[]
+  posts: SavePageTabPostItemInput[]
 }
 
 export interface PageTabSaveInput {
