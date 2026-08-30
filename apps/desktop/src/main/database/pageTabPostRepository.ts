@@ -114,6 +114,12 @@ export class PageTabPostRepository {
     this.canonical = new CanonicalPostRepository(client)
     this.bindings = new PageTabPostBindingRepository(client)
     this.bridge = new LegacyCanonicalPostBridge(client)
+
+    // Transitional guarantee: callers such as config backup may enumerate canonical
+    // posts before asking for a specific Page library. Reconcile legacy writers first
+    // so the canonical registry is already complete and deterministic.
+    this.bridge.reconcileAllPages()
+    this.bridge.syncAllGlobalSets()
   }
 
   get(pageTabId: number): PageTabPostLibrary {
@@ -129,22 +135,41 @@ export class PageTabPostRepository {
     `).get(input.pageTabId)
     if (!page) throw new Error(`Không tìm thấy Page Tab #${input.pageTabId}.`)
 
-    this.bridge.reconcilePage(input.pageTabId)
     this.bridge.syncAllGlobalSets()
 
     const normalized = input.posts.map(normalizePost)
-    const current = this.bindings.list(input.pageTabId)
-    const compatibilitySource = this.inferDuplicateSource(input.pageTabId, normalized, current)
-    const now = Date.now()
+    let current = this.bindings.list(input.pageTabId)
 
+    // The pre-cutover renderer did not send postId. Detect a just-duplicated Page
+    // before reconciling its copied legacy rows; otherwise those rows would create
+    // fresh canonical posts and destroy shared identity.
+    const compatibilitySource = this.inferDuplicateSource(input.pageTabId, normalized, current)
+    if (!compatibilitySource) {
+      this.bridge.reconcilePage(input.pageTabId)
+      current = this.bindings.list(input.pageTabId)
+    }
+
+    const now = Date.now()
     const transaction = this.client.transaction(() => {
       const desiredPostIds: number[] = []
 
       normalized.forEach((post, index) => {
-        const compatibilityBinding = compatibilitySource?.[index]
-        const requestedPostId = post.postId ?? compatibilityBinding?.postId ?? null
-        let binding: ResolvedPostBinding
+        const duplicateBinding = compatibilitySource?.[index]
+        const currentBinding = current[index]
+        const compatibilityBinding = post.postId === undefined
+          ? (duplicateBinding ?? currentBinding)
+          : undefined
 
+        // `null` is an explicit request from the canonical UI to create a new post.
+        // `undefined` is the old renderer contract, so preserve an existing identity
+        // when one can be inferred safely by context/order.
+        const requestedPostId = typeof post.postId === 'number'
+          ? post.postId
+          : post.postId === null
+            ? null
+            : compatibilityBinding?.postId ?? null
+
+        let binding: ResolvedPostBinding
         if (requestedPostId === null) {
           binding = this.bindings.createAndBind(input.pageTabId, {
             name: post.name,
@@ -155,8 +180,8 @@ export class PageTabPostRepository {
           const alreadyBound = this.bindings.list(input.pageTabId).find((item) => item.postId === requestedPostId)
           binding = alreadyBound ?? this.bindings.bindExisting(input.pageTabId, requestedPostId, now)
           const canonical = this.canonical.require(requestedPostId)
-          const overrides = compatibilityBinding?.postId === requestedPostId
-            ? compatibilityBinding.overrides
+          const overrides = duplicateBinding?.postId === requestedPostId
+            ? duplicateBinding.overrides
             : overridePatch(post, canonical)
           binding = this.bindings.updateOverrides(input.pageTabId, requestedPostId, overrides, now)
         }
@@ -194,7 +219,6 @@ export class PageTabPostRepository {
 
   copy(sourcePageTabId: number, targetPageTabId: number): PageTabPostLibrary {
     this.bridge.reconcilePage(sourcePageTabId)
-    this.bridge.reconcilePage(targetPageTabId)
     const source = this.read(sourcePageTabId)
     return this.save({
       pageTabId: targetPageTabId,
@@ -254,7 +278,7 @@ export class PageTabPostRepository {
     input: NormalizedPostInput[],
     current: ResolvedPostBinding[]
   ): ResolvedPostBinding[] | null {
-    if (current.length > 0 || input.length === 0 || input.some((post) => post.postId !== undefined && post.postId !== null)) {
+    if (current.length > 0 || input.length === 0 || input.some((post) => post.postId !== undefined)) {
       return null
     }
 
