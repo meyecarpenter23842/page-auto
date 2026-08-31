@@ -22,7 +22,7 @@ describe('Facebook common runtime', () => {
     })
   })
 
-  it('maps checkpoint session preparation to manual verification', () => {
+  it('maps checkpoint session preparation to a canonical unknown checkpoint instead of generic login', () => {
     const session = {
       accountId: 9,
       status: 'needs_login',
@@ -40,6 +40,7 @@ describe('Facebook common runtime', () => {
       sessionValidation: {
         phase: 'before_run',
         state: 'verification_required',
+        accountStatus: 'checkpoint_unknown',
         message: 'checkpoint'
       }
     })
@@ -63,20 +64,39 @@ describe('Facebook common runtime', () => {
       sessionValidation: {
         phase: 'before_run',
         state: 'verification_required',
+        accountStatus: 'checkpoint_282',
         message: 'Facebook yêu cầu checkpoint 282.',
         checkpointKind: '282'
       }
     })
   })
 
-  it('keeps Email Support failures typed instead of converting them to a generic checkpoint', () => {
+  it('keeps login and 2FA failure reasons distinct', () => {
+    const base = {
+      accountId: 12,
+      status: 'needs_login' as const,
+      cookie: null,
+      cookieStatus: 'needs_login' as const,
+      lastCookieCheck: 1,
+      message: 'failed'
+    }
+    expect(beforeRunFacebookSessionFailure({ ...base, reason: 'login_failed' }).sessionValidation?.accountStatus)
+      .toBe('login_failed')
+    expect(beforeRunFacebookSessionFailure({ ...base, reason: 'two_factor_missing' }).sessionValidation?.accountStatus)
+      .toBe('two_factor_required')
+    expect(beforeRunFacebookSessionFailure({ ...base, reason: 'two_factor_failed' }).sessionValidation?.accountStatus)
+      .toBe('two_factor_failed')
+  })
+
+  it('keeps Email Support failures typed instead of converting them to a generic login error', () => {
     expect(beforeRunFacebookEmailSupportFailure('email_auth_expired', 'OAuth cần kết nối lại.')).toEqual({
       status: 'needs_login',
       code: 'email_auth_expired',
       message: 'OAuth cần kết nối lại.',
       sessionValidation: {
         phase: 'before_run',
-        state: 'needs_login',
+        state: 'verification_required',
+        accountStatus: 'email_code_required',
         message: 'OAuth cần kết nối lại.'
       }
     })
@@ -109,6 +129,7 @@ describe('Facebook common runtime', () => {
     expect(interactionPacing).toContain('randomBrowserActionDelayMs')
     expect(commonRuntime).toContain('bootstrapFacebookSessionWithEmailSupport')
     expect(commonRuntime).toContain('detectFacebookCheckpointKind')
+    expect(commonRuntime).toContain('detectFacebookAccountStatus')
     expect(commonRuntime).not.toContain('groupUid')
     expect(commonRuntime).not.toContain('my_posted_content')
   })

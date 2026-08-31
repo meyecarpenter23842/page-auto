@@ -204,3 +204,21 @@
   margin-top: 4px;
   text-align: right;
 }
+
+/* Account health uses only the operator-approved palette: green = usable,
+   red = needs action, neutral = not checked yet. The text carries the detail. */
+.status-valid { color: #067647; }
+.status-unknown { color: #667085; }
+.status-needs_login,
+.status-login_failed,
+.status-two_factor_required,
+.status-two_factor_failed,
+.status-email_code_required,
+.status-checkpoint_282,
+.status-checkpoint_956,
+.status-identity_verification_required,
+.status-security_review_required,
+.status-locked,
+.status-disabled,
+.status-checkpoint_unknown,
+.status-needs_attention { color: #b42318; }

@@ -1,3 +1,4 @@
+import type { AccountStatus } from './accounts'
 import type { BrowserSettings, LoggingSettings, NetworkSettings, SessionSettings } from './appSettings'
 import type { BrowserWindowPlacement } from './browserWindowLayout'
 import type { RunDetails, RunItem } from './runs'
@@ -49,6 +50,7 @@ export type PostingCheckpointKind = (typeof POSTING_CHECKPOINT_KINDS)[number]
 export interface PostingSessionValidation {
   phase: PostingSessionPhase
   state: PostingSessionState
+  accountStatus?: AccountStatus
   message: string
   checkpointKind?: PostingCheckpointKind
 }
