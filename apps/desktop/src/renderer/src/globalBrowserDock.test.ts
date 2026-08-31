@@ -21,7 +21,8 @@ describe('global Chrome workspace entry point', () => {
 
   it('feeds the native dock from the shared slot pool without filtering to profile owner', () => {
     expect(slotPoolSource).toContain("'profile' | 'posting' | 'scenario'")
-    expect(ipcSource).toContain('const accountIds = display?.slotRuntime.assignments\n      .map((assignment) => assignment.accountId) ?? []')
+    expect(ipcSource).toContain('const accountIds = display?.slotRuntime.assignments')
+    expect(ipcSource).toContain('.map((assignment) => assignment.accountId) ?? []')
     expect(ipcSource).not.toContain(".filter((assignment) => assignment.owners.includes('profile'))")
   })
 })
