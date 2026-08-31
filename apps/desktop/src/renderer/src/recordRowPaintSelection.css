@@ -1,0 +1,9 @@
+/* Mouse-paint row selection shared by renderer tables.
+   Account Manager is excluded because it owns the reference implementation. */
+table:not(.account-grid) tbody tr[data-row-paint-selected='true'] > td {
+  background: #d7eaff !important;
+}
+
+.quick-page-row[data-row-paint-selected='true'] {
+  background: #d7eaff !important;
+}
