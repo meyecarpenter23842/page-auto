@@ -8,6 +8,7 @@ import { PageBusinessWorkspace } from './page-tabs/PageBusinessWorkspace'
 import { RotationWindowStatusPanel } from './page-tabs/RotationWindowStatusPanel'
 import { ScenarioWorkspace } from './scenarios/ScenarioWorkspace'
 import { SettingsPanel } from './settings/SettingsPanel'
+import './globalBrowserDock.css'
 
 type RouteId = 'overview' | 'accounts' | 'hotmail' | 'content-library' | 'page-tabs' | 'scenarios' | 'logs' | 'settings'
 
@@ -50,9 +51,22 @@ function RouteIcon({ id }: { id: RouteId }) {
 export function App() {
   const [activeRoute, setActiveRoute] = useState<RouteId>('page-tabs')
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null)
+  const [browserDockOpening, setBrowserDockOpening] = useState(false)
   const active = useMemo(() => routeDescriptions[activeRoute], [activeRoute])
 
   useEffect(() => { void window.pageAuto.getAppInfo().then(setAppInfo) }, [])
+
+  const openBrowserDock = async () => {
+    if (browserDockOpening) return
+    setBrowserDockOpening(true)
+    try {
+      await window.pageAuto.openAccountBrowserDock()
+    } catch (cause) {
+      console.error('[PAGE-AUTO browser-dock] open failed', cause)
+    } finally {
+      setBrowserDockOpening(false)
+    }
+  }
 
   const workspaceClass = activeRoute === 'page-tabs'
     ? 'workspace workspace-page-tabs'
@@ -100,7 +114,13 @@ export function App() {
       {activeRoute === 'page-tabs' ? <RotationWindowStatusPanel /> : null}
 
       <main key={activeRoute} className={`${workspaceClass} workspace-transition`}>
-        <header className="topbar"><div><p className="eyebrow">PAGE-AUTO / {activeRoute === 'hotmail' ? 'EMAIL' : activeRoute === 'scenarios' ? 'KỊCH BẢN' : activeRoute === 'content-library' ? 'BÀI VIẾT' : activeRoute.toUpperCase()}</p><h1>{active.title}</h1></div><div className="version-badge">{appInfo ? `v${appInfo.version}` : 'Loading...'}</div></header>
+        <header className="topbar">
+          <div><p className="eyebrow">PAGE-AUTO / {activeRoute === 'hotmail' ? 'EMAIL' : activeRoute === 'scenarios' ? 'KỊCH BẢN' : activeRoute === 'content-library' ? 'BÀI VIẾT' : activeRoute.toUpperCase()}</p><h1>{active.title}</h1></div>
+          <div className="topbar-actions">
+            <button className="button secondary global-browser-dock-button" type="button" disabled={browserDockOpening} onClick={() => void openBrowserDock()}>{browserDockOpening ? 'Đang mở…' : 'Cửa sổ Chrome'}</button>
+            <div className="version-badge">{appInfo ? `v${appInfo.version}` : 'Loading...'}</div>
+          </div>
+        </header>
 
         {activeRoute === 'accounts' ? <AccountManager /> : activeRoute === 'hotmail' ? <HotmailAuto /> : activeRoute === 'content-library' ? <ContentLibraryHub /> : activeRoute === 'page-tabs' ? <PageBusinessWorkspace /> : activeRoute === 'scenarios' ? <ScenarioWorkspace /> : activeRoute === 'logs' ? <ExecutionLogs /> : activeRoute === 'settings' ? <SettingsPanel appInfo={appInfo} /> : (
           <>

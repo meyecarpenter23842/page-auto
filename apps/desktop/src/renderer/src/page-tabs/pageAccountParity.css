@@ -1,5 +1,5 @@
-/* Page account tables intentionally mirror Account Manager row selection.
-   Selection is UI-only and stays separate from the Page account enabled flag. */
+/* Page run rows have one visible control: Bật/Tắt automation.
+   The account picker keeps its own temporary selection because it is a separate modal workflow. */
 .pt-account-grid tbody tr,
 .pt-account-picker-grid tbody tr {
   cursor: default;
@@ -16,35 +16,19 @@
   background: rgba(71, 84, 103, 0.10);
 }
 
-.pt-account-grid tbody tr.selected-row td,
 .pt-account-picker-grid tbody tr.selected td {
   background: #d7eaff;
 }
 
-.pt-account-grid tbody tr.selected-row:hover td,
 .pt-account-picker-grid tbody tr.selected:hover td {
   background: #cfe4fb;
 }
 
+/* Legacy run-list selection remains in the component for compatibility, but is not a UI concept anymore. */
 .pt-account-grid .pt-account-select {
-  position: sticky;
-  left: 0;
-  width: 26px;
-  min-width: 26px;
-  max-width: 26px;
-  padding: 0;
-  text-align: center;
+  display: none !important;
 }
 
-.pt-account-grid thead .pt-account-select {
-  z-index: 4;
-}
-
-.pt-account-grid tbody .pt-account-select {
-  z-index: 3;
-}
-
-.pt-account-grid .pt-account-select input,
 .pt-account-picker-grid .picker-check input {
   width: 12px;
   height: 12px;

@@ -1,5 +1,5 @@
 /* Mouse-paint row selection shared by renderer tables.
-   Account Manager and Page account grids own their explicit reference implementations. */
+   Page run rows use the controller only to paint the real Bật checkbox, so they keep no persistent selection fill. */
 table:not(.account-grid):not(.pt-account-grid):not(.pt-account-picker-grid) tbody tr[data-row-paint-selected='true'] > td {
   background: #d7eaff !important;
 }
