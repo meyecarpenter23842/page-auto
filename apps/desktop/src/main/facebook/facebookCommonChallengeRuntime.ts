@@ -1,6 +1,8 @@
 import type { BrowserContext, Page } from 'playwright-core'
+import type { AccountStatus } from '../../shared/accounts'
 import type { FacebookLocale } from '../../shared/appSettings'
 import type { EmailCodeProvider } from '../../shared/emailCode'
+import { accountStatusFromFacebookChallenge } from '../../shared/facebookAccountState'
 import type {
   FacebookCheckpoint282State,
   FacebookCommonChallengeType
@@ -30,6 +32,7 @@ import {
 export interface FacebookCommonChallengeRunResult {
   state: FacebookCheckpoint282State
   challengeType: FacebookCommonChallengeType
+  accountStatus: AccountStatus
   checkpointKind?: PostingCheckpointKind
   message: string
 }
@@ -74,6 +77,7 @@ function withClassification(
   return {
     state,
     challengeType: classification.type,
+    accountStatus: accountStatusFromFacebookChallenge(classification.type, classification.checkpointKind),
     ...(classification.checkpointKind ? { checkpointKind: classification.checkpointKind } : {}),
     message
   }
@@ -114,6 +118,18 @@ function manualClassificationResult(
         'needs_attention',
         fallbackMessage ?? 'Facebook yêu cầu security review. PAGE-AUTO dừng automation tại account này và không bypass.'
       )
+    case 'account_locked':
+      return withClassification(
+        classification,
+        'needs_attention',
+        fallbackMessage ?? 'Facebook báo tài khoản bị khóa. PAGE-AUTO dừng automation và giữ trạng thái account là Bị khóa.'
+      )
+    case 'account_disabled':
+      return withClassification(
+        classification,
+        'needs_attention',
+        fallbackMessage ?? 'Facebook báo tài khoản đã bị vô hiệu hóa. PAGE-AUTO dừng automation tại account này.'
+      )
     case 'unsupported_checkpoint':
       return withClassification(
         classification,
@@ -138,6 +154,7 @@ async function verifyIdentity(
   return {
     state: 'resolved',
     challengeType: 'checkpoint_cleared',
+    accountStatus: 'valid',
     message: identity.state === 'match'
       ? 'Checkpoint đã cleared và c_user khớp đúng UID account.'
       : 'Checkpoint đã cleared; UID không phải ID số nên tiếp tục theo session Facebook Common đã xác minh.'
@@ -159,20 +176,22 @@ async function continueSessionAfterCleared(
     return {
       state: 'needs_login',
       challengeType: 'checkpoint_cleared',
+      accountStatus: 'needs_attention',
       message: 'Session Facebook đã báo valid nhưng c_user/account identity không khớp; giữ account để operator kiểm tra.'
     }
   }
 
   const afterBootstrap = await deps.inspectChallenge(input.page)
   if (allowEmailContinuation && afterBootstrap.type === 'email_code_challenge') {
-    return continueEmailChallenge(input, deps)
+    return continueEmailChallenge(input, deps, afterBootstrap)
   }
   return manualClassificationResult(afterBootstrap, session.message)
 }
 
 async function continueEmailChallenge(
   input: FacebookCommonChallengeRuntimeInput,
-  deps: FacebookCommonChallengeRuntimeDependencies
+  deps: FacebookCommonChallengeRuntimeDependencies,
+  classification: FacebookCommonChallengeClassification
 ): Promise<FacebookCommonChallengeRunResult> {
   const emailResult = await deps.completeEmailChallenge(
     input.page,
@@ -206,6 +225,8 @@ async function continueEmailChallenge(
     return {
       state: 'waiting',
       challengeType: 'email_code_challenge',
+      accountStatus: 'email_code_required',
+      ...(classification.checkpointKind ? { checkpointKind: classification.checkpointKind } : {}),
       message: emailResult.message
     }
   }
@@ -213,6 +234,8 @@ async function continueEmailChallenge(
   return {
     state: 'needs_attention',
     challengeType: 'email_code_challenge',
+    accountStatus: 'email_code_required',
+    ...(classification.checkpointKind ? { checkpointKind: classification.checkpointKind } : {}),
     message: emailResult.message
   }
 }
@@ -237,7 +260,7 @@ export async function runFacebookCommonChallengeRuntime(
     case 'checkpoint_cleared':
       return continueSessionAfterCleared(input, deps, true)
     case 'email_code_challenge':
-      return continueEmailChallenge(input, deps)
+      return continueEmailChallenge(input, deps, classification)
     case 'totp_2fa_challenge':
     case 'login_reauth': {
       const session = await deps.bootstrapSession(input.context, input.page, input.account, input.locale)
@@ -250,6 +273,8 @@ export async function runFacebookCommonChallengeRuntime(
     }
     case 'identity_verification_required':
     case 'security_review_required':
+    case 'account_locked':
+    case 'account_disabled':
     case 'unsupported_checkpoint':
       return manualClassificationResult(classification)
   }

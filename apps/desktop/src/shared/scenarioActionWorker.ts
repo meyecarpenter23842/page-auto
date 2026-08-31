@@ -1,3 +1,4 @@
+import type { AccountStatus } from './accounts'
 import type { BrowserSettings, NetworkSettings, SessionSettings } from './appSettings'
 import type { BrowserWindowPlacement } from './browserWindowLayout'
 import type { ActionExecutionSummary, ActionLogEvent, ActionRunRequest } from './actionRuntime'
@@ -36,6 +37,7 @@ export interface ScenarioActionWorkerResult {
   sessionCookie: string | null
   accountName: string | null
   sessionState: 'valid' | 'needs_login' | 'verification_required' | null
+  accountStatus?: AccountStatus
 }
 
 export type ScenarioActionWorkerRequestMessage =

@@ -13,6 +13,7 @@ import {
   type BrowserWindowLayoutSettings,
   type BrowserWindowPlacement
 } from '../../shared/browserWindowLayout'
+import { accountStatusFromCheckpointKind } from '../../shared/facebookAccountState'
 import {
   pageWallPostTaskFromBase,
   type FacebookPostTaskJobRequest,
@@ -61,6 +62,14 @@ function hasInvalidSession(result: PostingJobResult): boolean {
 
 function hasValidSession(result: PostingJobResult): boolean {
   return result.sessionValidation?.state === 'valid' || result.status === 'success'
+}
+
+function invalidAccountStatus(result: PostingJobResult): AccountRecord['status'] {
+  if (result.sessionValidation?.accountStatus) return result.sessionValidation.accountStatus
+  if (result.sessionValidation?.state === 'verification_required') {
+    return accountStatusFromCheckpointKind(result.sessionValidation.checkpointKind)
+  }
+  return 'needs_login'
 }
 
 function shouldReleasePreflightItem(result: PostingJobResult): boolean {
@@ -329,7 +338,7 @@ export class PostingService {
     if (hasInvalidSession(result)) {
       this.accounts.update(account.id, {
         name: syncedName,
-        status: 'needs_login',
+        status: invalidAccountStatus(result),
         cookieStatus: 'needs_login',
         lastCookieCheck: now,
         lastUsedAt: now
@@ -344,6 +353,8 @@ export class PostingService {
         lastUsedAt: now
       })
     } else {
+      // Runtime/task failures (proxy, Page, Group, composer, publish, browser, worker)
+      // are not account-health evidence and must preserve the master account status.
       this.accounts.update(account.id, { name: syncedName, lastUsedAt: now })
     }
 

@@ -476,10 +476,11 @@ export class ScenarioRunnerService {
 
   private syncAccountSession(account: AccountRecord, result: ScenarioActionWorkerResult): void {
     const now = Date.now()
+    const nextName = result.accountName?.trim() || account.name
     if (result.sessionState === 'valid') {
       this.accounts.update(account.id, {
         status: 'valid',
-        name: result.accountName?.trim() || account.name,
+        name: nextName,
         cookie: result.sessionCookie?.trim() || account.cookie,
         cookieStatus: 'valid',
         lastCookieCheck: now,
@@ -489,11 +490,18 @@ export class ScenarioRunnerService {
     }
     if (result.sessionState === 'needs_login' || result.sessionState === 'verification_required') {
       this.accounts.update(account.id, {
-        status: 'needs_login',
+        status: result.accountStatus
+          ?? (result.sessionState === 'verification_required' ? 'checkpoint_unknown' : 'needs_login'),
+        name: nextName,
         cookieStatus: 'needs_login',
-        lastCookieCheck: now
+        lastCookieCheck: now,
+        lastUsedAt: now
       })
+      return
     }
+    // Action/network/Page/browser failures without session evidence do not mutate
+    // canonical account health. They only count as runtime history.
+    if (nextName !== account.name) this.accounts.update(account.id, { name: nextName, lastUsedAt: now })
   }
 
   private accountRuntime(active: ActiveScenarioRun, accountId: number): ScenarioRunnerAccountRuntime {

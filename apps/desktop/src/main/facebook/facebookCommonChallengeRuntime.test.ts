@@ -75,6 +75,7 @@ describe('Facebook Common Challenge runtime', () => {
 
     const result = await runFacebookCommonChallengeRuntime(input(), runtimeDeps)
     expect(result.state).toBe('resolved')
+    expect(result.accountStatus).toBe('valid')
     expect(calls).toEqual(['inspect', 'bootstrap', 'identity'])
   })
 
@@ -85,13 +86,31 @@ describe('Facebook Common Challenge runtime', () => {
       bootstrapSession: bootstrap
     }))
     expect(identityResult.state).toBe('needs_attention')
+    expect(identityResult.accountStatus).toBe('identity_verification_required')
     expect(bootstrap).not.toHaveBeenCalled()
 
     const securityResult = await runFacebookCommonChallengeRuntime(input(), deps({
-      inspectChallenge: vi.fn(async () => ({ type: 'security_review_required' as const, checkpointKind: '956_purple_lock' as const })),
+      inspectChallenge: vi.fn(async () => ({ type: 'security_review_required' as const, checkpointKind: '956' as const })),
       bootstrapSession: bootstrap
     }))
     expect(securityResult.state).toBe('needs_attention')
+    expect(securityResult.accountStatus).toBe('security_review_required')
+    expect(bootstrap).not.toHaveBeenCalled()
+  })
+
+  it('keeps locked and disabled accounts distinct from generic security review', async () => {
+    const bootstrap = vi.fn(async () => validSession())
+    const locked = await runFacebookCommonChallengeRuntime(input(), deps({
+      inspectChallenge: vi.fn(async () => ({ type: 'account_locked' as const, checkpointKind: '956_purple_lock' as const })),
+      bootstrapSession: bootstrap
+    }))
+    expect(locked).toMatchObject({ state: 'needs_attention', accountStatus: 'locked', checkpointKind: '956_purple_lock' })
+
+    const disabled = await runFacebookCommonChallengeRuntime(input(), deps({
+      inspectChallenge: vi.fn(async () => ({ type: 'account_disabled' as const, checkpointKind: 'disabled' as const })),
+      bootstrapSession: bootstrap
+    }))
+    expect(disabled).toMatchObject({ state: 'needs_attention', accountStatus: 'disabled', checkpointKind: 'disabled' })
     expect(bootstrap).not.toHaveBeenCalled()
   })
 
@@ -104,7 +123,16 @@ describe('Facebook Common Challenge runtime', () => {
       completeEmailChallenge: vi.fn(async () => ({ status: 'success' as const, message: 'email accepted' }))
     }))
     expect(result.state).toBe('resolved')
+    expect(result.accountStatus).toBe('valid')
     expect(inspect).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps an unresolved Email challenge as email_code_required instead of needs_login', async () => {
+    const result = await runFacebookCommonChallengeRuntime(input(), deps({
+      inspectChallenge: vi.fn(async () => ({ type: 'email_code_challenge' as const, checkpointKind: '282' as const })),
+      completeEmailChallenge: vi.fn(async () => ({ status: 'email_code_not_found' as const, message: 'waiting email' }))
+    }))
+    expect(result).toMatchObject({ state: 'waiting', accountStatus: 'email_code_required', checkpointKind: '282' })
   })
 
   it('allows safe login/TOTP continuation but keeps unresolved challenges typed', async () => {
@@ -126,5 +154,6 @@ describe('Facebook Common Challenge runtime', () => {
     }))
     expect(result.state).toBe('needs_login')
     expect(result.challengeType).toBe('totp_2fa_challenge')
+    expect(result.accountStatus).toBe('two_factor_required')
   })
 })

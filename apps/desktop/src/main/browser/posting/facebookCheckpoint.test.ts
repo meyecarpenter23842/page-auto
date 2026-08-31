@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   FACEBOOK_CHECKPOINT_CLASSIFY_TIMEOUT_MS,
   classifyFacebookCommonChallengeSignals,
+  detectFacebookAccountStatus,
   detectFacebookCheckpointKind,
   facebookCheckpointKindFromText,
   facebookCheckpointKindFromUrl,
@@ -11,13 +12,18 @@ import {
 } from './facebookCheckpoint'
 
 function bodyLocator(text: string): Locator {
-  return { innerText: async () => text } as unknown as Locator
+  return {
+    innerText: async () => text,
+    first: () => ({ isVisible: async () => false })
+  } as unknown as Locator
 }
 
 function pageAt(url: string, text = ''): Page {
   return {
     url: () => url,
-    locator: () => bodyLocator(text),
+    locator: (selector: string) => selector === 'body'
+      ? bodyLocator(text)
+      : ({ first: () => ({ isVisible: async () => false }) } as unknown as Locator),
     waitForTimeout: async () => undefined
   } as unknown as Page
 }
@@ -74,14 +80,14 @@ describe('Facebook checkpoint classifier', () => {
     })).toEqual({ type: 'totp_2fa_challenge' })
   })
 
-  it('maps lock/disabled to operator-only security review and distinguishes cleared state', () => {
+  it('keeps lock and disabled as first-class account challenges', () => {
     expect(classifyFacebookCommonChallengeSignals({
       url: 'https://www.facebook.com/checkpoint/1234567890956/',
       bodyText: 'Your account has been locked',
       codeInputVisible: false,
       passwordInputVisible: false,
       loginControlVisible: false
-    })).toEqual({ type: 'security_review_required', checkpointKind: '956_purple_lock' })
+    })).toEqual({ type: 'account_locked', checkpointKind: '956_purple_lock' })
 
     expect(classifyFacebookCommonChallengeSignals({
       url: 'https://www.facebook.com/checkpoint/disabled/',
@@ -89,7 +95,7 @@ describe('Facebook checkpoint classifier', () => {
       codeInputVisible: false,
       passwordInputVisible: false,
       loginControlVisible: false
-    })).toEqual({ type: 'security_review_required', checkpointKind: 'disabled' })
+    })).toEqual({ type: 'account_disabled', checkpointKind: 'disabled' })
 
     expect(classifyFacebookCommonChallengeSignals({
       url: 'https://www.facebook.com/',
@@ -108,6 +114,15 @@ describe('Facebook checkpoint classifier', () => {
       passwordInputVisible: false,
       loginControlVisible: true
     }).type).toBe('identity_verification_required')
+  })
+
+  it('maps live challenge surfaces to canonical account status', async () => {
+    await expect(detectFacebookAccountStatus(
+      pageAt('https://www.facebook.com/checkpoint/1234567890956/', 'Your account has been locked')
+    )).resolves.toBe('locked')
+    await expect(detectFacebookAccountStatus(
+      pageAt('https://www.facebook.com/checkpoint/1501092823525282/', 'Checkpoint')
+    )).resolves.toBe('checkpoint_282')
   })
 
   it('classifies a known checkpoint immediately and keeps the default observation window at 10 seconds', async () => {

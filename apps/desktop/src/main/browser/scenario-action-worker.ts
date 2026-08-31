@@ -1,25 +1,30 @@
-import type { FacebookSessionResult } from './facebookSession'
-import type { PostingJobResult } from '../../shared/posting'
+import type { AccountStatus } from '../../shared/accounts'
 import type { ActionExecutionSummary, ActionRunControl } from '../../shared/actionRuntime'
+import { accountStatusFromFacebookSessionReason } from '../../shared/facebookAccountState'
+import type { PostingJobResult } from '../../shared/posting'
 import type {
   ScenarioActionWorkerJob,
   ScenarioActionWorkerRequestMessage,
   ScenarioActionWorkerResult
 } from '../../shared/scenarioActionWorker'
-import { inspectFacebookAccountIdentity } from './facebookAccountIdentity'
-import { ensureFacebookProfileIdentity } from './facebookProfileIdentity'
-import { bootstrapFacebookSession } from './facebookSession'
 import { FacebookCommonActionHost } from './actionRuntime/facebookCommonActionHost'
 import { createK4ActionExecutorRegistry } from './actionRuntime/actions'
-import { ActionRunner } from '../services/actionRunner'
-import { FacebookCommonRuntime } from '../facebook/facebookCommonRuntime'
-import { withoutFacebookInteractionPacing } from '../facebook/facebookInteractionPacing'
-import { detectFacebookCheckpointKind, withFacebookCheckpointKind } from './posting/facebookCheckpoint'
+import { inspectFacebookAccountIdentity } from './facebookAccountIdentity'
+import { ensureFacebookProfileIdentity } from './facebookProfileIdentity'
+import { bootstrapFacebookSession, type FacebookSessionResult } from './facebookSession'
 import {
   closeManagedPostingBrowser,
   installManagedBrowserReuse,
   setManagedBrowserPlacement
 } from './managedBrowserBridge'
+import {
+  detectFacebookAccountStatus,
+  detectFacebookCheckpointKind,
+  withFacebookCheckpointKind
+} from './posting/facebookCheckpoint'
+import { ActionRunner } from '../services/actionRunner'
+import { FacebookCommonRuntime } from '../facebook/facebookCommonRuntime'
+import { withoutFacebookInteractionPacing } from '../facebook/facebookInteractionPacing'
 
 const parentPort = process.parentPort
 if (!parentPort) throw new Error('Scenario action worker phải chạy dưới Electron utilityProcess.')
@@ -124,6 +129,10 @@ function actionDependencies(runtime: FacebookCommonRuntime, job: ScenarioActionW
   }
 }
 
+async function liveAccountStatus(runtime: FacebookCommonRuntime, fallback: AccountStatus): Promise<AccountStatus> {
+  return detectFacebookAccountStatus(runtime.page).catch(() => fallback)
+}
+
 async function execute(job: ScenarioActionWorkerJob): Promise<ScenarioActionWorkerResult> {
   setManagedBrowserPlacement(job.browserPlacement ?? null)
   const opened = await FacebookCommonRuntime.open({
@@ -143,7 +152,10 @@ async function execute(job: ScenarioActionWorkerJob): Promise<ScenarioActionWork
       accountName: null,
       sessionState: opened.result.code === 'verification_required'
         ? 'verification_required'
-        : opened.result.status === 'needs_login' ? 'needs_login' : null
+        : opened.result.status === 'needs_login' ? 'needs_login' : null,
+      ...(opened.result.sessionValidation?.accountStatus
+        ? { accountStatus: opened.result.sessionValidation.accountStatus }
+        : {})
     }
   }
 
@@ -158,9 +170,13 @@ async function execute(job: ScenarioActionWorkerJob): Promise<ScenarioActionWork
   }
 
   let latestSession: FacebookSessionResult | null = null
+  let latestAccountStatus: AccountStatus | null = null
   const host = new FacebookCommonActionHost({
     ensureSession: async () => {
       latestSession = await ensureProfileSession(job, runtime)
+      latestAccountStatus = latestSession.reason === 'checkpoint'
+        ? await liveAccountStatus(runtime, 'checkpoint_unknown')
+        : accountStatusFromFacebookSessionReason(latestSession.reason)
       return latestSession
     },
     ensureProfile: async () => {
@@ -173,6 +189,11 @@ async function execute(job: ScenarioActionWorkerJob): Promise<ScenarioActionWork
       if (result.code === 'verification_required') {
         const kind = await detectFacebookCheckpointKind(runtime.page).catch(() => null)
         result = { ...result, message: withFacebookCheckpointKind(result.message, kind) }
+        latestAccountStatus = await liveAccountStatus(runtime, 'checkpoint_unknown')
+      } else if (result.code === 'needs_login') {
+        latestAccountStatus = 'needs_login'
+      } else if (result.status === 'success') {
+        latestAccountStatus = 'valid'
       }
       if (result.status === 'success' && result.sessionCookie && latestSession?.status === 'valid') {
         latestSession = { ...latestSession, cookie: result.sessionCookie }
@@ -191,6 +212,7 @@ async function execute(job: ScenarioActionWorkerJob): Promise<ScenarioActionWork
     const after = await runtime.validateAfterTask().catch(() => null)
     if (after) {
       sessionState = after.sessionValidation.state
+      latestAccountStatus = after.sessionValidation.accountStatus
       if (after.sessionValidation.state !== 'valid') {
         summary = {
           ...summary,
@@ -211,6 +233,11 @@ async function execute(job: ScenarioActionWorkerJob): Promise<ScenarioActionWork
   if (sessionState === null && summary.result.code === 'session_needs_login') sessionState = 'needs_login'
   if (sessionState === null && preparedSession?.status === 'valid') sessionState = 'valid'
   if (sessionState === null && metadata.sessionValidated) sessionState = 'valid'
+  if (latestAccountStatus === null && sessionState === 'valid') latestAccountStatus = 'valid'
+  if (latestAccountStatus === null && sessionState === 'needs_login') latestAccountStatus = 'needs_login'
+  if (latestAccountStatus === null && sessionState === 'verification_required') {
+    latestAccountStatus = await liveAccountStatus(runtime, 'checkpoint_unknown')
+  }
   const sessionCookie = metadata.sessionCookie ?? (preparedSession?.status === 'valid' ? preparedSession.cookie : null)
   await runtime.close().catch(() => undefined)
   stoppedRunKeys.delete(job.request.runKey)
@@ -218,7 +245,8 @@ async function execute(job: ScenarioActionWorkerJob): Promise<ScenarioActionWork
     summary,
     sessionCookie,
     accountName: metadata.accountName ?? job.sessionAccount.name?.trim() ?? null,
-    sessionState
+    sessionState,
+    ...(latestAccountStatus ? { accountStatus: latestAccountStatus } : {})
   }
 }
 
