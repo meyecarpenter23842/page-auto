@@ -12,12 +12,11 @@ export function applyStoryMigration(db: Database.Database) {
       CREATE TABLE IF NOT EXISTS story_items (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
-        enabled INTEGER NOT NULL DEFAULT 1,
-        sort_order INTEGER NOT NULL DEFAULT 0,
-        text_template TEXT NOT NULL DEFAULT '',
-        media_type TEXT NOT NULL DEFAULT 'none',
+        content TEXT NOT NULL DEFAULT '',
+        media_source_type TEXT NOT NULL DEFAULT 'none',
         media_path TEXT NOT NULL DEFAULT '',
-        media_mode TEXT NOT NULL DEFAULT 'sequential',
+        media_kind TEXT NOT NULL DEFAULT 'auto',
+        folder_mode TEXT NOT NULL DEFAULT 'sequential',
         link_url TEXT NOT NULL DEFAULT '',
         random_background INTEGER NOT NULL DEFAULT 1,
         random_font INTEGER NOT NULL DEFAULT 1,
@@ -25,8 +24,8 @@ export function applyStoryMigration(db: Database.Database) {
         updated_at INTEGER NOT NULL
       );
 
-      CREATE INDEX IF NOT EXISTS idx_story_items_sort
-        ON story_items(sort_order, id);
+      CREATE INDEX IF NOT EXISTS idx_story_items_updated
+        ON story_items(updated_at DESC, id DESC);
     `)
     db.prepare(`
       INSERT INTO __page_auto_migrations(version, name, applied_at)
