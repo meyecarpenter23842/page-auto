@@ -39,6 +39,7 @@ export interface ActionRunRequest {
   label: string
   actor: ActionActorContext
   config: unknown
+  runtimeData?: unknown
   retry?: Partial<ActionRetryPolicy>
 }
 

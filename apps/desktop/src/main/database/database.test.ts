@@ -58,6 +58,9 @@ describe('initializeDatabase', () => {
     const accountGroupsTable = runtime.client
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'account_groups'")
       .get() as { name: string } | undefined
+    const storyItemsTable = runtime.client
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'story_items'")
+      .get() as { name: string } | undefined
 
     expect(existsSync(databaseFile)).toBe(true)
     expect(migrations).toEqual([
@@ -76,9 +79,10 @@ describe('initializeDatabase', () => {
       { version: 13, name: 'global_content_library' },
       { version: 14, name: 'canonical_post_library' },
       { version: 15, name: 'copy_post_history' },
-      { version: 16, name: 'page_tab_group_order_mode' }
+      { version: 16, name: 'page_tab_group_order_mode' },
+      { version: 17, name: 'story_library' }
     ])
-    expect(schemaVersion?.value).toBe('16')
+    expect(schemaVersion?.value).toBe('17')
     expect(executionLogsTable?.name).toBe('execution_logs')
     expect(postLibraryTable?.name).toBe('page_tab_posts')
     expect(pageTabColumns.some((column) => column.name === 'account_order_mode')).toBe(true)
@@ -92,6 +96,7 @@ describe('initializeDatabase', () => {
     expect(emailProfileSettingsTable?.name).toBe('email_profile_settings')
     expect(emailProxySettingsTable?.name).toBe('email_proxy_settings')
     expect(accountGroupsTable?.name).toBe('account_groups')
+    expect(storyItemsTable?.name).toBe('story_items')
 
     runtime.close()
   })
@@ -105,7 +110,7 @@ describe('initializeDatabase', () => {
       .prepare('SELECT COUNT(*) AS count FROM __page_auto_migrations')
       .get() as { count: number }
 
-    expect(count.count).toBe(16)
+    expect(count.count).toBe(17)
     reopened.close()
   })
 

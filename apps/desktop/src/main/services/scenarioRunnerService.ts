@@ -10,6 +10,7 @@ import type {
   ScenarioRunnerStartPayload
 } from '../../shared/scenarioRunnerRuntime'
 import type { ScenarioActionRecord, ScenarioDetails } from '../../shared/scenarios'
+import { parseStoryIds, type StoryRuntimeData } from '../../shared/story'
 import { resolveFacebookProfileDirectory } from '../browser/facebookProfileResolver'
 import { BrowserWindowLayoutManager } from '../browser/browserWindowLayoutManager'
 import { resolveAccountProxyState } from '../browser/proxyConfig'
@@ -17,6 +18,7 @@ import { ScenarioActionWorkerManager } from '../browser/scenarioActionWorkerMana
 import { AccountRepository } from '../database/accountRepository'
 import { BrowserWindowLayoutRepository } from '../database/browserWindowLayoutRepository'
 import { ScenarioRepository } from '../database/scenarioRepository'
+import { StoryRepository } from '../database/storyRepository'
 import { AccountExecutionCoordinator } from './accountExecutionCoordinator'
 import { redactExecutionText } from './executionLogSanitizer'
 
@@ -26,6 +28,7 @@ interface ActiveScenarioRun {
   runningKeys: Map<number, string>
   completedAccounts: number
   accountPauseUntil: number
+  storyRuntimeByActionId: Map<number, StoryRuntimeData>
 }
 
 function uniqueIds(values: readonly number[]): number[] {
@@ -82,6 +85,7 @@ function isNeedsAttention(result: ScenarioActionWorkerResult): boolean {
 export class ScenarioRunnerService {
   private readonly accounts: AccountRepository
   private readonly scenarios: ScenarioRepository
+  private readonly stories: StoryRepository
   private readonly browserWindowLayout = new BrowserWindowLayoutManager()
   private readonly browserWindowLayoutSettings: BrowserWindowLayoutRepository
   private active: ActiveScenarioRun | null = null
@@ -96,6 +100,7 @@ export class ScenarioRunnerService {
   ) {
     this.accounts = new AccountRepository(database)
     this.scenarios = new ScenarioRepository(database)
+    this.stories = new StoryRepository(database)
     this.browserWindowLayoutSettings = new BrowserWindowLayoutRepository(database)
   }
 
@@ -143,12 +148,21 @@ export class ScenarioRunnerService {
       logs: [],
       message: null
     }
+    const storyRuntimeByActionId = new Map<number, StoryRuntimeData>()
+    for (const scenario of scenarios) {
+      for (const action of scenario.actions) {
+        if (action.actionType !== 'post_story') continue
+        storyRuntimeByActionId.set(action.id, this.storyRuntimeData(this.parseConfig(action)))
+      }
+    }
+
     const active: ActiveScenarioRun = {
       snapshot,
       stopRequested: false,
       runningKeys: new Map(),
       completedAccounts: 0,
-      accountPauseUntil: 0
+      accountPauseUntil: 0,
+      storyRuntimeByActionId
     }
     this.active = active
     this.log(active, 'info', `Bắt đầu phiên ${runId}: ${accounts.length} tài khoản, ${scenarios.length} kịch bản.`)
@@ -340,14 +354,15 @@ export class ScenarioRunnerService {
             runtime.currentActionLabel = action.label
             const runKey = `${active.snapshot.runId}:a${account.id}:s${scenario.id}:r${repeatIndex}:x${action.id}:n${attempted}`
             active.runningKeys.set(account.id, runKey)
-
+            const parsedConfig = this.parseConfig(action)
             const request: ActionRunRequest = {
               runKey,
               scenarioActionId: action.id,
               actionType: action.actionType,
               label: action.label,
               actor: { kind: 'profile', accountId: account.id, accountUid: account.uid },
-              config: this.parseConfig(action),
+              config: parsedConfig,
+              ...(action.actionType === 'post_story' ? { runtimeData: active.storyRuntimeByActionId.get(action.id) ?? { stories: [] } } : {}),
               retry: { maxAttempts: 1, delayMs: 0, retryableCodes: [] }
             }
             const job = this.buildWorkerJob(account, request)
@@ -472,6 +487,13 @@ export class ScenarioRunnerService {
 
   private parseConfig(action: ScenarioActionRecord): unknown {
     try { return JSON.parse(action.configJson) as unknown } catch { return {} }
+  }
+
+  private storyRuntimeData(config: unknown): StoryRuntimeData {
+    const storyIds = config && typeof config === 'object'
+      ? parseStoryIds((config as Record<string, unknown>).storyIds)
+      : []
+    return { stories: this.stories.getByIds(storyIds) }
   }
 
   private syncAccountSession(account: AccountRecord, result: ScenarioActionWorkerResult): void {
