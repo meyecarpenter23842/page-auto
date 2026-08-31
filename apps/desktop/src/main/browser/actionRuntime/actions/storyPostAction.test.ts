@@ -3,7 +3,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { StoryRecord } from '../../../../shared/story'
-import { expandStorySpintax, resolveStoryMediaPath } from './storyPostAction'
+import {
+  classifyStoryMediaUi,
+  expandStorySpintax,
+  resolveStoryMediaPath,
+  STORY_POST_SELECTORS,
+  waitForStoryCondition
+} from './storyPostAction'
 
 const directories: string[] = []
 afterEach(() => {
@@ -58,5 +64,46 @@ describe('StoryPostAction helpers', () => {
 
     const mismatchedFile = story({ mediaSourceType: 'file', mediaPath: join(directory, '01.jpg'), mediaKind: 'video' })
     expect(await resolveStoryMediaPath(mismatchedFile, 0)).toBeNull()
+  })
+
+  it('polls delayed Facebook UI readiness instead of failing on the first probe', async () => {
+    let attempts = 0
+    let clock = 0
+    const result = await waitForStoryCondition(async () => {
+      attempts += 1
+      return attempts >= 4 ? 'ready' : null
+    }, {
+      timeoutMs: 1_000,
+      intervalMs: 100,
+      now: () => clock,
+      sleep: async (delayMs) => { clock += delayMs }
+    })
+
+    expect(result).toBe('ready')
+    expect(attempts).toBe(4)
+  })
+
+  it('times out delayed readiness deterministically', async () => {
+    let clock = 0
+    const result = await waitForStoryCondition(async () => null, {
+      timeoutMs: 300,
+      intervalMs: 100,
+      now: () => clock,
+      sleep: async (delayMs) => { clock += delayMs }
+    })
+    expect(result).toBeNull()
+    expect(clock).toBe(300)
+  })
+
+  it('treats video trim as a blocking intermediate state before publish readiness', () => {
+    expect(classifyStoryMediaUi(true, true, true)).toBe('trim')
+    expect(classifyStoryMediaUi(false, true, false)).toBe('ready')
+    expect(classifyStoryMediaUi(false, false, true)).toBe('ready')
+    expect(classifyStoryMediaUi(false, false, false)).toBe('waiting')
+  })
+
+  it('covers the current Facebook Trim video labels and confirmation controls', () => {
+    expect(STORY_POST_SELECTORS.trimSurface.join(' ')).toContain('Trim video')
+    expect(STORY_POST_SELECTORS.trimConfirm.join(' ')).toMatch(/Done|Save|Confirm|Xong|Lưu/)
   })
 })
