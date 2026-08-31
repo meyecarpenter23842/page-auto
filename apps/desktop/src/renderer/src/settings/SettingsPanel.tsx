@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { AppInfo } from '../../../ipc/channels'
 import { AdvancedSettingsSection } from './AdvancedSettingsSection'
+import { AppearanceSettingsSection } from './AppearanceSettingsSection'
 import { BrowserSettingsSection } from './BrowserSettingsSection'
 import { BrowserSlotsSettingsSection } from './BrowserSlotsSettingsSection'
 import { CaptchaSettingsSection } from './CaptchaSettingsSection'
@@ -13,9 +14,10 @@ import './settings.css'
 import './settingsScrollFix.css'
 
 interface SettingsPanelProps { appInfo: AppInfo | null }
-type SettingsSection = 'browser' | 'slots' | 'session' | 'network' | 'runtime' | 'logs' | 'captcha' | 'advanced' | 'health'
+type SettingsSection = 'appearance' | 'browser' | 'slots' | 'session' | 'network' | 'runtime' | 'logs' | 'captcha' | 'advanced' | 'health'
 
 const sections: Array<{ id: SettingsSection; label: string; mark: string }> = [
+  { id: 'appearance', label: 'Giao diện', mark: 'UI' },
   { id: 'browser', label: 'Trình duyệt', mark: 'BR' },
   { id: 'slots', label: 'Chrome Slots', mark: 'SL' },
   { id: 'session', label: 'Đăng nhập', mark: 'SS' },
@@ -31,7 +33,8 @@ export function SettingsPanel({ appInfo }: SettingsPanelProps) {
   const [activeSection, setActiveSection] = useState<SettingsSection>('browser')
 
   let panel = <BrowserSettingsSection appInfo={appInfo} />
-  if (activeSection === 'slots') panel = <BrowserSlotsSettingsSection />
+  if (activeSection === 'appearance') panel = <AppearanceSettingsSection />
+  else if (activeSection === 'slots') panel = <BrowserSlotsSettingsSection />
   else if (activeSection === 'session') panel = <SessionSettingsPanel />
   else if (activeSection === 'network') panel = <NetworkSettingsPanel />
   else if (activeSection === 'runtime') panel = <RuntimeSettingsPanel />
@@ -41,22 +44,26 @@ export function SettingsPanel({ appInfo }: SettingsPanelProps) {
   else if (activeSection === 'health') panel = <HealthSettingsSection appInfo={appInfo} />
 
   const active = sections.find((section) => section.id === activeSection)
-  const heading = activeSection === 'browser'
-    ? 'Thiết lập trình duyệt'
-    : activeSection === 'slots'
-      ? 'Theo dõi sức chứa & slot Chrome'
-      : active?.label
-  const footer = activeSection === 'session'
-    ? 'Session, locale và policy được lưu local và dùng trực tiếp bởi worker.'
-    : activeSection === 'network'
-      ? 'Proxy preflight, timeout và policy mạng được dùng trực tiếp bởi posting runtime.'
-      : activeSection === 'runtime'
-        ? 'Giới hạn tab, launch spacing, timeout và retry policy được Main áp dụng trực tiếp.'
-        : activeSection === 'logs'
-          ? 'Mức log, evidence và retention được áp dụng trực tiếp cho posting/runtime log.'
-          : activeSection === 'slots'
-            ? 'Slot map chỉ đọc trạng thái mỗi giây; chỉ nút Sắp xếp lại Chrome mới compact vị trí.'
-            : 'Thay đổi được lưu bằng nút trong màn cài đặt đang mở.'
+  const heading = activeSection === 'appearance'
+    ? 'Chế độ sáng & tối'
+    : activeSection === 'browser'
+      ? 'Thiết lập trình duyệt'
+      : activeSection === 'slots'
+        ? 'Theo dõi sức chứa & slot Chrome'
+        : active?.label
+  const footer = activeSection === 'appearance'
+    ? 'Giao diện được lưu local và tự áp dụng ở lần mở app tiếp theo.'
+    : activeSection === 'session'
+      ? 'Session, locale và policy được lưu local và dùng trực tiếp bởi worker.'
+      : activeSection === 'network'
+        ? 'Proxy preflight, timeout và policy mạng được dùng trực tiếp bởi posting runtime.'
+        : activeSection === 'runtime'
+          ? 'Giới hạn tab, launch spacing, timeout và retry policy được Main áp dụng trực tiếp.'
+          : activeSection === 'logs'
+            ? 'Mức log, evidence và retention được áp dụng trực tiếp cho posting/runtime log.'
+            : activeSection === 'slots'
+              ? 'Slot map chỉ đọc trạng thái mỗi giây; chỉ nút Sắp xếp lại Chrome mới compact vị trí.'
+              : 'Thay đổi được lưu bằng nút trong màn cài đặt đang mở.'
 
   return <div className="settings-shell">
     <aside className="settings-menu" aria-label="Nhóm cài đặt">
