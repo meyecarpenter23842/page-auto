@@ -34,6 +34,7 @@ import { AccountBrowserDockManager } from './browser/accountBrowserDockManager'
 import { BrowserEngineService } from './browser/browserEngineService'
 import { BrowserProfileManager } from './browser/browserProfileManager'
 import { BrowserWindowLayoutManager } from './browser/browserWindowLayoutManager'
+import { persistedCheckLiveAccountStatus } from './browser/checkLiveStatusPersistence'
 import { resolveFacebookProfileDirectory } from './browser/facebookProfileResolver'
 import { AccountRepository } from './database/accountRepository'
 import { AppSettingsRepository } from './database/appSettingsRepository'
@@ -94,7 +95,7 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
       : null
     accounts.update(session.accountId, {
       name: profileName ?? current.name,
-      status: session.status === 'valid' || session.status === 'needs_login' ? session.status : current.status,
+      status: persistedCheckLiveAccountStatus(current.status, session),
       cookie: session.status === 'valid' && session.cookie ? session.cookie : current.cookie,
       cookieStatus: session.cookieStatus,
       lastCookieCheck: session.lastCookieCheck,

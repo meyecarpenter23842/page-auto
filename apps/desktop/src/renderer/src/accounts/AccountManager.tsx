@@ -34,6 +34,7 @@ import {
   type ContextMenuState,
   type GridColumn
 } from './accountManagerModel'
+import { checkLiveSummaryBucket } from './checkLiveSummary'
 import { Checkpoint282Dialog } from './Checkpoint282Dialog'
 import { Checkpoint956Dialog } from './Checkpoint956Dialog'
 import './accounts.css'
@@ -305,14 +306,15 @@ export function AccountManager() {
           }
         }
       }))
-      const live = outcomes.filter((item) => item.status !== 'error' && item.sessionStatus === 'valid')
-      const needsAttention = outcomes.filter((item) => item.status !== 'error' && item.sessionStatus === 'needs_login')
+      const live = outcomes.filter((item) => item.status !== 'error' && checkLiveSummaryBucket(item.sessionStatus) === 'live')
+      const needsAttention = outcomes.filter((item) => item.status !== 'error' && checkLiveSummaryBucket(item.sessionStatus) === 'problem')
       const failed = outcomes.filter((item) => item.status === 'error')
-      const unknown = outcomes.filter((item) => item.status !== 'error' && item.sessionStatus !== 'valid' && item.sessionStatus !== 'needs_login')
-      const firstIssue = outcomes.find((item) => item.status === 'error' || item.sessionStatus !== 'valid')
+      const unknown = outcomes.filter((item) => item.status !== 'error' && checkLiveSummaryBucket(item.sessionStatus) === 'unknown')
+      const firstIssue = outcomes.find((item) => item.status === 'error' || checkLiveSummaryBucket(item.sessionStatus) !== 'live')
+      const firstIssueLabel = firstIssue?.sessionStatus ? accountStatusLabels[firstIssue.sessionStatus] : null
       setNotice(
-        `Check Live ${outcomes.length} tài khoản: hoạt động ${live.length}, cần đăng nhập/xử lý ${needsAttention.length}, chưa xác định ${unknown.length}, lỗi ${failed.length}.`
-        + (firstIssue ? ` · ${firstIssue.uid}: ${firstIssue.message ?? 'chưa xác định trạng thái'}` : '')
+        `Check Live ${outcomes.length} tài khoản: hoạt động ${live.length}, cần xử lý ${needsAttention.length}, chưa xác định ${unknown.length}, lỗi ${failed.length}.`
+        + (firstIssue ? ` · ${firstIssue.uid}: ${firstIssueLabel ? `${firstIssueLabel} · ` : ''}${firstIssue.message ?? 'chưa xác định trạng thái'}` : '')
       )
       await loadAccounts()
     } finally {

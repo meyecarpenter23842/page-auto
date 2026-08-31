@@ -12,6 +12,7 @@ import type {
 import type { PostingProxyConfig } from '../../shared/posting'
 import { createEmailCodeWorkerRpc } from '../email/emailCodeWorkerRpc'
 import { runFacebookCommonChallengeRuntime } from '../facebook/facebookCommonChallengeRuntime'
+import { resolveCheckLiveAccountStatus } from './checkLiveAccountStatus'
 import { inspectFacebookAccountIdentity } from './facebookAccountIdentity'
 import { readFacebookDisplayName } from './facebookProfileInfo'
 import {
@@ -142,11 +143,12 @@ function identityFailure(
   accountId: number,
   identity: Awaited<ReturnType<typeof inspectFacebookAccountIdentity>>
 ): SessionResultMessage {
+  const missing = identity.state === 'missing'
   return {
     type: 'session-result',
     accountId,
-    status: 'needs_login',
-    reason: identity.state === 'missing' ? 'login_required' : 'unknown',
+    status: missing ? 'needs_login' : 'needs_attention',
+    reason: missing ? 'login_required' : 'unknown',
     cookie: null,
     cookieStatus: 'needs_login',
     lastCookieCheck: Date.now(),
@@ -619,6 +621,7 @@ async function run(): Promise<void> {
           await applyBrowserWindowPlacement(activeContext, page, activePlacement).catch(() => undefined)
         }
         const session = await bootstrapFacebookSession(activeContext, page, command.account, command.session.facebookLocale)
+        session.status = await resolveCheckLiveAccountStatus(page, session)
         if (session.status === 'valid') {
           const identity = await inspectFacebookAccountIdentity(activeContext, command.account.uid)
           if (identity.state === 'mismatch' || identity.state === 'missing') {
