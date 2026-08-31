@@ -10,6 +10,7 @@ import './page-tabs/postLibraryModalLayout.css'
 import './mainWorkspaceLayout.css'
 import './recordRowPaintSelection.css'
 import './theme.css'
+import './darkThemeCoverage.css'
 
 const root = document.getElementById('root')
 
