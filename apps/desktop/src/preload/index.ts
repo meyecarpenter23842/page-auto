@@ -121,6 +121,12 @@ import {
   type ScenarioRunnerSnapshot,
   type ScenarioRunnerStartPayload
 } from '../shared/scenarioRunnerRuntime'
+import {
+  STORY_IPC,
+  type CreateStoryInput,
+  type StoryRecord,
+  type UpdateStoryInput
+} from '../shared/story'
 
 const api = {
   getAppInfo: (): Promise<AppInfo> => ipcRenderer.invoke(IPC_CHANNELS.appInfo) as Promise<AppInfo>,
@@ -161,6 +167,11 @@ const api = {
   scanCopyPosts: (input: CopyPostScanRequest): Promise<CopyPostScanItem[]> => ipcRenderer.invoke(COPY_POST_IPC.scan, input) as Promise<CopyPostScanItem[]>,
   pickCopyPostMediaFolder: (): Promise<string | null> => ipcRenderer.invoke(COPY_POST_IPC.pickMediaFolder) as Promise<string | null>,
   saveCopyPosts: (input: CopyPostSaveRequest): Promise<CopyPostSaveResult> => ipcRenderer.invoke(COPY_POST_IPC.saveSelected, input) as Promise<CopyPostSaveResult>,
+  listStories: (): Promise<StoryRecord[]> => ipcRenderer.invoke(STORY_IPC.list) as Promise<StoryRecord[]>,
+  createStory: (input: CreateStoryInput): Promise<StoryRecord> => ipcRenderer.invoke(STORY_IPC.create, input) as Promise<StoryRecord>,
+  updateStory: (input: UpdateStoryInput): Promise<StoryRecord> => ipcRenderer.invoke(STORY_IPC.update, input) as Promise<StoryRecord>,
+  pickStoryMediaFile: (): Promise<string | null> => ipcRenderer.invoke(STORY_IPC.pickMediaFile) as Promise<string | null>,
+  pickStoryMediaFolder: (): Promise<string | null> => ipcRenderer.invoke(STORY_IPC.pickMediaFolder) as Promise<string | null>,
   openAccountProfile: (payload: AccountOpenProfilePayload): Promise<BrowserProfileResult> => ipcRenderer.invoke(IPC_CHANNELS.accountOpenProfile, payload) as Promise<BrowserProfileResult>,
   openAccountBrowserDock: (): Promise<AccountBrowserDockOpenResult> => ipcRenderer.invoke(ACCOUNT_BROWSER_DOCK_IPC.open) as Promise<AccountBrowserDockOpenResult>,
   runFacebookCheckpoint282: (payload: FacebookCheckpoint282RunPayload): Promise<FacebookCheckpoint282Result> => ipcRenderer.invoke(IPC_CHANNELS.facebookCheckpoint282Run, payload) as Promise<FacebookCheckpoint282Result>,

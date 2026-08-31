@@ -4,6 +4,7 @@ import { applyK431JoinGroupActionOverrides } from '../../../../shared/k431JoinGr
 import { applyK432InviteFriendsGroupActionOverrides } from '../../../../shared/k432InviteFriendsGroupActionOverrides'
 import { applyK433GroupInteractionActionOverrides } from '../../../../shared/k433GroupInteractionActionOverrides'
 import { applyK434LeaveGroupActionOverrides } from '../../../../shared/k434LeaveGroupActionOverrides'
+import { applyK454StoryPostActionOverrides } from '../../../../shared/k454StoryPostActionOverrides'
 import { ActionExecutorRegistry } from '../../../services/actionRunner'
 import { ViewNewsfeedActionExecutor, type ViewNewsfeedDependencies } from './viewNewsfeedAction'
 import { ViewStoryActionExecutor, type ViewStoryDependencies } from './viewStoryAction'
@@ -23,6 +24,7 @@ import type { InviteFriendsToGroupActionDependencies } from './inviteFriendsToGr
 import { GroupInteractionActionExecutor } from './groupInteractionAction'
 import type { GroupInteractionActionDependencies } from './groupInteractionActionSupport'
 import { LeaveGroupActionExecutor, type LeaveGroupActionDependencies } from './leaveGroupAction'
+import { StoryPostActionExecutor } from './storyPostAction'
 
 export interface K41ViewActionDependencies {
   newsfeed: ViewNewsfeedDependencies
@@ -176,6 +178,8 @@ export function createK4ActionExecutorRegistry(dependencies: K4ActionDependencie
   registerK434LeaveGroupActionExecutors(registry, {
     leaveGroup: dependencies.groups.leaveGroup ?? dependencies.groups.groupInteraction ?? dependencies.groups.joinGroup
   })
+  applyK454StoryPostActionOverrides()
+  registry.register(new StoryPostActionExecutor(dependencies.view.story))
   return registry
 }
 
@@ -197,3 +201,4 @@ export * from './inviteFriendsToGroupAction'
 export * from './groupInteractionActionSupport'
 export * from './groupInteractionAction'
 export * from './leaveGroupAction'
+export * from './storyPostAction'

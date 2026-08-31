@@ -12,6 +12,11 @@ import {
   getK453CopyPostFieldUiMeta,
   getK453CopyPostValidationErrors
 } from './k453CopyPostActionOverrides'
+import {
+  applyK454StoryPostActionOverrides,
+  getK454StoryFieldUiMeta,
+  getK454StoryValidationErrors
+} from './k454StoryPostActionOverrides'
 
 export interface ActionFieldUiMeta {
   section: string
@@ -32,10 +37,12 @@ export function applyActionOverrides(): void {
   applyK435GroupPostActionOverrides()
   applyK452PostActionOverrides()
   applyK453CopyPostActionOverrides()
+  applyK454StoryPostActionOverrides()
 }
 
 export function getActionFieldUiMeta(actionType: string, fieldKey: string): ActionFieldUiMeta | undefined {
-  return getK453CopyPostFieldUiMeta(actionType, fieldKey)
+  return getK454StoryFieldUiMeta(actionType, fieldKey)
+    ?? getK453CopyPostFieldUiMeta(actionType, fieldKey)
     ?? getK452PostFieldUiMeta(actionType, fieldKey)
     ?? getK435FieldUiMeta(actionType, fieldKey)
     ?? getK434FieldUiMeta(actionType, fieldKey)
@@ -56,7 +63,8 @@ export function getActionOverrideValidationErrors(actionType: string, config: Ac
     ...getK434ValidationErrors(actionType, config),
     ...getK435ValidationErrors(actionType, config),
     ...getK452PostValidationErrors(actionType, config),
-    ...getK453CopyPostValidationErrors(actionType, config)
+    ...getK453CopyPostValidationErrors(actionType, config),
+    ...getK454StoryValidationErrors(actionType, config)
   ]
 }
 

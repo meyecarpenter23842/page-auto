@@ -12,6 +12,7 @@ import { createLogger } from './logger'
 import { registerPostLibraryIpcHandlers, type PostLibraryIpcRuntime } from './postLibraryIpc'
 import { registerScenarioIpcHandlers, type ScenarioIpcRuntime } from './scenarioIpc'
 import { registerScenarioRunnerIpcHandlers, type ScenarioRunnerIpcRuntime } from './scenarioRunnerIpc'
+import { registerStoryIpcHandlers, type StoryIpcRuntime } from './storyIpc'
 import { ensureDataDirectoryLayout, resolveDataDirectory } from './services/portablePaths'
 
 let mainWindow: BrowserWindow | null = null
@@ -22,6 +23,7 @@ let aiAgentIpcRuntime: AiAgentIpcRuntime | null = null
 let checkpoint282WorkbenchIpcRuntime: Checkpoint282WorkbenchIpcRuntime | null = null
 let contentLibraryIpcRuntime: ContentLibraryIpcRuntime | null = null
 let copyPostIpcRuntime: CopyPostIpcRuntime | null = null
+let storyIpcRuntime: StoryIpcRuntime | null = null
 let hotmailIpcRuntime: HotmailIpcRuntime | null = null
 let postLibraryIpcRuntime: PostLibraryIpcRuntime | null = null
 let scenarioIpcRuntime: ScenarioIpcRuntime | null = null
@@ -80,6 +82,7 @@ app.whenReady().then(() => {
     aiAgentIpcRuntime = registerAiAgentIpcHandlers(databaseRuntime.client)
     contentLibraryIpcRuntime = registerContentLibraryIpcHandlers(databaseRuntime.client)
     copyPostIpcRuntime = registerCopyPostIpcHandlers(databaseRuntime.client)
+    storyIpcRuntime = registerStoryIpcHandlers(databaseRuntime.client)
     checkpoint282WorkbenchIpcRuntime = registerCheckpoint282WorkbenchIpcHandlers({ database: databaseRuntime.client, dataDirectory })
     hotmailIpcRuntime = registerHotmailIpcHandlers(databaseRuntime.client)
     postLibraryIpcRuntime = registerPostLibraryIpcHandlers(databaseRuntime.client)
@@ -101,6 +104,8 @@ app.whenReady().then(() => {
     scenarioIpcRuntime = null
     checkpoint282WorkbenchIpcRuntime?.dispose()
     checkpoint282WorkbenchIpcRuntime = null
+    storyIpcRuntime?.dispose()
+    storyIpcRuntime = null
     copyPostIpcRuntime?.dispose()
     copyPostIpcRuntime = null
     contentLibraryIpcRuntime?.dispose()
@@ -132,6 +137,8 @@ app.on('before-quit', () => {
   scenarioIpcRuntime = null
   checkpoint282WorkbenchIpcRuntime?.dispose()
   checkpoint282WorkbenchIpcRuntime = null
+  storyIpcRuntime?.dispose()
+  storyIpcRuntime = null
   copyPostIpcRuntime?.dispose()
   copyPostIpcRuntime = null
   contentLibraryIpcRuntime?.dispose()

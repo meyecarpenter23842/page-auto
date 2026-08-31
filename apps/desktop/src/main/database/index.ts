@@ -11,6 +11,7 @@ import { HOTMAIL_SCHEMA_VERSION, applyHotmailMigration } from './hotmailMigratio
 import { latestSchemaVersion, migrations } from './migrations'
 import { PAGE_WALL_SCHEMA_VERSION, applyPageWallMigration } from './pageWallMigration'
 import { SCENARIO_SCHEMA_VERSION, applyScenarioMigration } from './scenarioMigration'
+import { STORY_SCHEMA_VERSION, applyStoryMigration } from './storyMigration'
 
 export interface DatabaseRuntime {
   client: Database.Database
@@ -65,6 +66,7 @@ export function initializeDatabase(databaseFile: string): DatabaseRuntime {
   applyContentLibraryMigration(client)
   applyCanonicalPostMigration(client)
   applyCopyPostMigration(client)
+  applyStoryMigration(client)
 
   const schemaVersion = Math.max(
     latestSchemaVersion,
@@ -74,7 +76,8 @@ export function initializeDatabase(databaseFile: string): DatabaseRuntime {
     ACCOUNT_GROUP_SCHEMA_VERSION,
     CONTENT_LIBRARY_SCHEMA_VERSION,
     CANONICAL_POST_SCHEMA_VERSION,
-    COPY_POST_SCHEMA_VERSION
+    COPY_POST_SCHEMA_VERSION,
+    STORY_SCHEMA_VERSION
   )
   const orm = drizzle(client)
   orm
