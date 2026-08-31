@@ -1,6 +1,6 @@
 /* Mouse-paint row selection shared by renderer tables.
-   Account Manager is excluded because it owns the reference implementation. */
-table:not(.account-grid) tbody tr[data-row-paint-selected='true'] > td {
+   Account Manager and Page account grids own their explicit reference implementations. */
+table:not(.account-grid):not(.pt-account-grid):not(.pt-account-picker-grid) tbody tr[data-row-paint-selected='true'] > td {
   background: #d7eaff !important;
 }
 

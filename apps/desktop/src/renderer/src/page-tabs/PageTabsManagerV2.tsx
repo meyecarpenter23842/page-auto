@@ -1,5 +1,13 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
-import type { AccountRecord, AccountStatus } from '../../../shared/accounts'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type FormEvent,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode
+} from 'react'
+import { ACCOUNT_STATUSES, type AccountRecord, type AccountStatus } from '../../../shared/accounts'
 import type {
   CreatePageTabInput,
   PageTabAccountRef,
@@ -10,6 +18,7 @@ import type {
   PageTabSummary
 } from '../../../shared/pageTabs'
 import type { RotationRuntimeSnapshot } from '../../../shared/rotation'
+import { accountStatusLabels } from '../accounts/accountManagerModel'
 import { PostLibraryModal } from './PostLibraryModal'
 import {
   accountRuntimeLabel,
@@ -24,6 +33,7 @@ import './pageTabs.css'
 import './pageTabsWorkspace.css'
 import './postLibrary.css'
 import './scheduleEditor.css'
+import './pageAccountParity.css'
 
 const dayLabels = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7']
 type ConfigSection = 'accounts' | 'identity' | 'rotation' | 'schedule' | 'groups'
@@ -182,6 +192,7 @@ function AccountPicker({ accounts, selectedIds, onClose, onApply }: AccountPicke
   const [status, setStatus] = useState<AccountPickerStatus>('all')
   const [category, setCategory] = useState('all')
   const [selected, setSelected] = useState(() => new Set(selectedIds))
+  const [paintValue, setPaintValue] = useState<boolean | null>(null)
 
   const categories = useMemo(() => Array.from(new Set(accounts.map((account) => account.category?.trim()).filter((value): value is string => Boolean(value)))).sort(), [accounts])
   const filtered = useMemo(() => {
@@ -193,6 +204,18 @@ function AccountPicker({ accounts, selectedIds, onClose, onApply }: AccountPicke
     })
   }, [accounts, category, search, status])
 
+  useEffect(() => {
+    const stopPaint = () => setPaintValue(null)
+    window.addEventListener('pointerup', stopPaint)
+    window.addEventListener('pointercancel', stopPaint)
+    window.addEventListener('blur', stopPaint)
+    return () => {
+      window.removeEventListener('pointerup', stopPaint)
+      window.removeEventListener('pointercancel', stopPaint)
+      window.removeEventListener('blur', stopPaint)
+    }
+  }, [])
+
   const toggle = (id: number, checked: boolean) => setSelected((current) => {
     const next = new Set(current)
     if (checked) next.add(id)
@@ -200,19 +223,50 @@ function AccountPicker({ accounts, selectedIds, onClose, onApply }: AccountPicke
     return next
   })
 
+  const beginPaint = (event: ReactPointerEvent<HTMLElement>, accountId: number) => {
+    if (event.button !== 0 || event.detail > 1) return
+    event.preventDefault()
+    const value = !selected.has(accountId)
+    toggle(accountId, value)
+    setPaintValue(value)
+  }
+
+  const paintRow = (accountId: number) => {
+    if (paintValue === null) return
+    toggle(accountId, paintValue)
+  }
+
+  const allFilteredSelected = filtered.length > 0 && filtered.every((account) => selected.has(account.id))
+
   return (
     <div className="page-tab-modal-backdrop" role="presentation" onMouseDown={onClose}>
       <section className="page-tab-modal pt-account-picker-modal" role="dialog" aria-modal="true" aria-label="Chọn tài khoản" onMouseDown={(event) => event.stopPropagation()}>
         <div className="page-tab-modal-header"><div><p className="eyebrow">Account Manager</p><h2>Chọn tài khoản cho Page Tab</h2></div><button type="button" className="page-tab-icon-button" onClick={onClose}>×</button></div>
         <div className="pt-account-picker-filters">
           <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Tìm UID, tên, email, note…" />
-          <select value={status} onChange={(event) => setStatus(event.target.value as AccountPickerStatus)}><option value="all">Tất cả status</option><option value="unknown">unknown</option><option value="valid">valid</option><option value="needs_login">needs_login</option><option value="disabled">disabled</option></select>
+          <select value={status} onChange={(event) => setStatus(event.target.value as AccountPickerStatus)}><option value="all">Tất cả trạng thái</option>{ACCOUNT_STATUSES.map((item) => <option key={item} value={item}>{accountStatusLabels[item]}</option>)}</select>
           <select value={category} onChange={(event) => setCategory(event.target.value)}><option value="all">Tất cả category</option>{categories.map((item) => <option key={item} value={item}>{item}</option>)}</select>
           <button className="pt-button secondary" type="button" onClick={() => setSelected((current) => new Set([...current, ...filtered.map((item) => item.id)]))}>Chọn đang lọc</button>
         </div>
         <div className="pt-account-picker-grid-wrap">
-          <table className="pt-account-picker-grid"><thead><tr><th>Chọn</th><th>UID / UserName</th><th>Tên</th><th>Status</th><th>Category</th><th>Note</th></tr></thead><tbody>
-            {filtered.map((account) => <tr key={account.id} className={selected.has(account.id) ? 'selected' : ''}><td><input type="checkbox" checked={selected.has(account.id)} onChange={(event) => toggle(account.id, event.target.checked)} /></td><td className="picker-uid">{account.uid}{account.username ? ` / ${account.username}` : ''}</td><td>{account.name ?? '—'}</td><td><span className={`pt-account-status status-${account.status}`}>{account.status}</span></td><td>{account.category ?? '—'}</td><td>{account.note ?? '—'}</td></tr>)}
+          <table className="pt-account-picker-grid"><thead><tr><th className="picker-check"><input type="checkbox" aria-label="Chọn tất cả tài khoản đang lọc" checked={allFilteredSelected} onChange={(event) => setSelected((current) => {
+            const next = new Set(current)
+            for (const account of filtered) {
+              if (event.target.checked) next.add(account.id)
+              else next.delete(account.id)
+            }
+            return next
+          })} /></th><th>UID / UserName</th><th>Tên</th><th>Trạng thái</th><th>Category</th><th>Note</th></tr></thead><tbody>
+            {filtered.map((account) => <tr
+              key={account.id}
+              className={selected.has(account.id) ? 'selected' : ''}
+              onPointerDown={(event) => {
+                const target = event.target as HTMLElement
+                if (target.closest('input,button,select,a')) return
+                beginPaint(event, account.id)
+              }}
+              onPointerEnter={() => paintRow(account.id)}
+            ><td className="picker-check"><input type="checkbox" checked={selected.has(account.id)} onChange={() => undefined} onPointerDown={(event) => { event.stopPropagation(); beginPaint(event, account.id) }} /></td><td className="picker-uid">{account.uid}{account.username ? ` / ${account.username}` : ''}</td><td>{account.name ?? '—'}</td><td><span className={`status-text status-${account.status}`}>{accountStatusLabels[account.status]}</span></td><td>{account.category ?? '—'}</td><td>{account.note ?? '—'}</td></tr>)}
             {filtered.length === 0 ? <tr><td colSpan={6} className="pt-account-empty">Không có tài khoản phù hợp.</td></tr> : null}
           </tbody></table>
         </div>
@@ -229,6 +283,8 @@ export function PageTabsManager() {
   const [postLibrary, setPostLibrary] = useState<PageTabPostLibrary | null>(null)
   const [accounts, setAccounts] = useState<AccountRecord[]>([])
   const [runtimeByTab, setRuntimeByTab] = useState<Record<number, RotationRuntimeSnapshot>>({})
+  const [selectedAccountIds, setSelectedAccountIds] = useState<Set<number>>(() => new Set())
+  const [paintValue, setPaintValue] = useState<boolean | null>(null)
   const [loading, setLoading] = useState(true)
   const [savingSection, setSavingSection] = useState<ConfigSection | 'all' | null>(null)
   const [dirtySections, setDirtySections] = useState<Set<ConfigSection>>(() => new Set())
@@ -258,10 +314,24 @@ export function PageTabsManager() {
   }, [])
 
   useEffect(() => {
+    const stopPaint = () => setPaintValue(null)
+    window.addEventListener('pointerup', stopPaint)
+    window.addEventListener('pointercancel', stopPaint)
+    window.addEventListener('blur', stopPaint)
+    return () => {
+      window.removeEventListener('pointerup', stopPaint)
+      window.removeEventListener('pointercancel', stopPaint)
+      window.removeEventListener('blur', stopPaint)
+    }
+  }, [])
+
+  useEffect(() => {
     if (activeId === null) {
       setConfig(null)
       setPostLibrary(null)
       setDirtySections(new Set())
+      setSelectedAccountIds(new Set())
+      setPaintValue(null)
       return
     }
     let cancelled = false
@@ -275,6 +345,8 @@ export function PageTabsManager() {
       setConfig({ ...nextConfig, schedules: collapseEveryDaySchedules(nextConfig.schedules) })
       setPostLibrary(nextLibrary)
       setDirtySections(new Set())
+      setSelectedAccountIds(new Set())
+      setPaintValue(null)
       setEditorModal(null)
       setPostLibraryOpen(false)
       setAccountPickerOpen(false)
@@ -291,8 +363,14 @@ export function PageTabsManager() {
     let cancelled = false
     const refreshRuntime = async () => {
       try {
-        const runtimes = await window.pageAuto.listPageTabRotations()
-        if (!cancelled) setRuntimeByTab(indexRotationRuntimes(runtimes))
+        const [runtimes, liveAccounts] = await Promise.all([
+          window.pageAuto.listPageTabRotations(),
+          window.pageAuto.listAccounts()
+        ])
+        if (!cancelled) {
+          setRuntimeByTab(indexRotationRuntimes(runtimes))
+          setAccounts(liveAccounts)
+        }
       } catch (cause) {
         if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause))
       }
@@ -304,6 +382,11 @@ export function PageTabsManager() {
       window.clearInterval(timer)
     }
   }, [])
+
+  useEffect(() => {
+    const validIds = new Set(config?.accounts.map((item) => item.accountId) ?? [])
+    setSelectedAccountIds((current) => new Set([...current].filter((id) => validIds.has(id))))
+  }, [config?.accounts])
 
   const markDirty = (section: ConfigSection) => setDirtySections((current) => new Set(current).add(section))
   const patchConfig = (section: ConfigSection, patch: Partial<PageTabConfig>) => {
@@ -389,6 +472,8 @@ export function PageTabsManager() {
     setNotice(`Đã xóa ${config.name}.`)
     setConfig(null)
     setPostLibrary(null)
+    setSelectedAccountIds(new Set())
+    setPaintValue(null)
     setRuntimeByTab((current) => {
       const next = { ...current }
       delete next[deletedId]
@@ -406,12 +491,36 @@ export function PageTabsManager() {
     for (const item of config.accounts) if (selected.has(item.accountId)) next.push({ ...item, sortOrder: next.length })
     for (const account of accounts) if (selected.has(account.id) && !currentById.has(account.id)) next.push(accountRef(account, next.length))
     patchConfig('accounts', { accounts: next })
+    setSelectedAccountIds(new Set())
+    setPaintValue(null)
     setAccountPickerOpen(false)
   }
 
   const updateAccount = (index: number, patch: Partial<PageTabAccountRef>) => {
     if (!config) return
     patchConfig('accounts', { accounts: config.accounts.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item) })
+  }
+
+  const setPageAccountSelected = (accountId: number, value: boolean) => {
+    setSelectedAccountIds((current) => {
+      const next = new Set(current)
+      if (value) next.add(accountId)
+      else next.delete(accountId)
+      return next
+    })
+  }
+
+  const beginPageAccountPaint = (event: ReactPointerEvent<HTMLElement>, accountId: number) => {
+    if (event.button !== 0 || event.detail > 1) return
+    event.preventDefault()
+    const value = !selectedAccountIds.has(accountId)
+    setPageAccountSelected(accountId, value)
+    setPaintValue(value)
+  }
+
+  const paintPageAccountRow = (accountId: number) => {
+    if (paintValue === null) return
+    setPageAccountSelected(accountId, paintValue)
   }
 
   const addSchedule = () => {
@@ -443,9 +552,12 @@ export function PageTabsManager() {
   const imagePostCount = postLibrary?.posts.filter((item) => item.image.folderPath.trim()).length ?? 0
   const dirty = dirtySections.size > 0
   const runtimeStateByAccount = new Map((runtime?.accountStates ?? []).map((item) => [item.accountId, item]))
+  const liveAccountById = new Map(accounts.map((account) => [account.id, account] as const))
   const preview = runtime?.currentPostPreview ?? null
   const progress = runtimeProgressLabel(runtime)
-  const currentAccount = config?.accounts.find((item) => item.accountId === runtime?.currentAccountId)
+  const currentAccountRef = config?.accounts.find((item) => item.accountId === runtime?.currentAccountId)
+  const currentAccount = currentAccountRef ? (liveAccountById.get(currentAccountRef.accountId) ?? currentAccountRef) : null
+  const allPageAccountsSelected = Boolean(config?.accounts.length) && config!.accounts.every((account) => selectedAccountIds.has(account.accountId))
 
   return (
     <section className="page-tabs-manager">
@@ -476,14 +588,30 @@ export function PageTabsManager() {
           <div className="page-tab-two-column">
             <div className="page-tab-left-pane">
               <section className="pt-panel pt-account-panel pt-account-panel-tall">
-                <div className="pt-panel-heading"><div><p className="eyebrow">Tài khoản</p><h3>Danh sách chạy</h3></div><div className="pt-account-heading-actions"><span className="pt-count-chip">{enabledAccountCount}/{config.accounts.length} bật</span><button className="pt-button secondary" type="button" disabled={!dirtySections.has('accounts') || savingSection !== null} onClick={() => void saveSectionOnly('accounts')}>Lưu</button><button className="pt-button primary" type="button" onClick={() => setAccountPickerOpen(true)}>Chọn tài khoản</button></div></div>
-                <div className="pt-account-grid-wrap"><table className="pt-account-grid"><thead><tr><th>#</th><th>Bật</th><th>UID</th><th>Tên</th><th>TK</th><th>Hoạt động</th><th>Nhóm</th><th>Bài/lượt</th><th>Thứ tự</th><th>Xóa</th></tr></thead><tbody>
+                <div className="pt-panel-heading"><div><p className="eyebrow">Tài khoản</p><h3>Danh sách chạy</h3></div><div className="pt-account-heading-actions"><span className="pt-count-chip">{enabledAccountCount}/{config.accounts.length} bật · {selectedAccountIds.size} chọn</span><button className="pt-button secondary" type="button" disabled={!dirtySections.has('accounts') || savingSection !== null} onClick={() => void saveSectionOnly('accounts')}>Lưu</button><button className="pt-button primary" type="button" onClick={() => setAccountPickerOpen(true)}>Chọn tài khoản</button></div></div>
+                <div className="pt-account-grid-wrap"><table className="pt-account-grid"><thead><tr><th className="pt-account-select"><input type="checkbox" aria-label="Chọn tất cả tài khoản trong Page" checked={allPageAccountsSelected} onChange={(event) => setSelectedAccountIds(event.target.checked ? new Set(config.accounts.map((account) => account.accountId)) : new Set())} /></th><th>#</th><th>Bật</th><th>UID</th><th>Tên</th><th>Trạng thái</th><th>Hoạt động</th><th>Nhóm</th><th>Bài/lượt</th><th>Thứ tự</th><th>Xóa</th></tr></thead><tbody>
                   {config.accounts.map((account, index) => {
                     const activity = runtimeStateByAccount.get(account.accountId)
                     const activityStatus = activity?.status ?? 'not_run'
-                    return <tr key={account.accountId} className={`pt-account-run-row run-${activityStatus}`} title={activity?.message ?? undefined}><td>{index + 1}</td><td><input type="checkbox" checked={account.enabled} onChange={(event) => updateAccount(index, { enabled: event.target.checked })} /></td><td className="pt-account-uid">{account.uid}</td><td>{account.name ?? '—'}</td><td><span className={`pt-account-status status-${account.status}`}>{account.status}</span></td><td className="pt-account-activity"><span className={`pt-run-status run-${activityStatus}`}>{accountRuntimeLabel(activityStatus, activity?.checkpointKind)}</span></td><td>{account.category ?? '—'}</td><td className="pt-account-posts"><input type="number" min="1" title="Để trống sẽ dùng Mặc định bài/lượt ở card Vòng chạy." placeholder={String(config.rotation.postsPerAccount)} value={account.postsPerTurn ?? ''} onChange={(event) => updateAccount(index, { postsPerTurn: event.target.value === '' ? null : Number(event.target.value) })} /></td><td className="pt-account-order"><button type="button" onClick={() => patchConfig('accounts', { accounts: moveItem(config.accounts, index, -1) })} disabled={index === 0}>↑</button><button type="button" onClick={() => patchConfig('accounts', { accounts: moveItem(config.accounts, index, 1) })} disabled={index === config.accounts.length - 1}>↓</button></td><td><button className="pt-remove-button" type="button" onClick={() => patchConfig('accounts', { accounts: config.accounts.filter((_, itemIndex) => itemIndex !== index) })}>×</button></td></tr>
+                    const liveAccount = liveAccountById.get(account.accountId)
+                    const liveStatus = liveAccount?.status ?? account.status as AccountStatus
+                    const displayUid = liveAccount?.uid ?? account.uid
+                    const displayName = liveAccount?.name ?? account.name
+                    const displayCategory = liveAccount?.category ?? account.category
+                    const selected = selectedAccountIds.has(account.accountId)
+                    return <tr
+                      key={account.accountId}
+                      className={`${selected ? 'selected-row ' : ''}pt-account-run-row run-${activityStatus}`}
+                      title={activity?.message ?? undefined}
+                      onPointerDown={(event) => {
+                        const target = event.target as HTMLElement
+                        if (target.closest('input,button,select,a')) return
+                        beginPageAccountPaint(event, account.accountId)
+                      }}
+                      onPointerEnter={() => paintPageAccountRow(account.accountId)}
+                    ><td className="pt-account-select"><input type="checkbox" checked={selected} onChange={() => undefined} onPointerDown={(event) => { event.stopPropagation(); beginPageAccountPaint(event, account.accountId) }} /></td><td>{index + 1}</td><td><input type="checkbox" checked={account.enabled} onChange={(event) => updateAccount(index, { enabled: event.target.checked })} /></td><td className="pt-account-uid">{displayUid}</td><td>{displayName ?? '—'}</td><td><span className={`status-text status-${liveStatus}`}>{accountStatusLabels[liveStatus]}</span></td><td className="pt-account-activity"><span className={`pt-run-status run-${activityStatus}`}>{accountRuntimeLabel(activityStatus, activity?.checkpointKind)}</span></td><td>{displayCategory ?? '—'}</td><td className="pt-account-posts"><input type="number" min="1" title="Để trống sẽ dùng Mặc định bài/lượt ở card Vòng chạy." placeholder={String(config.rotation.postsPerAccount)} value={account.postsPerTurn ?? ''} onChange={(event) => updateAccount(index, { postsPerTurn: event.target.value === '' ? null : Number(event.target.value) })} /></td><td className="pt-account-order"><button type="button" onClick={() => patchConfig('accounts', { accounts: moveItem(config.accounts, index, -1) })} disabled={index === 0}>↑</button><button type="button" onClick={() => patchConfig('accounts', { accounts: moveItem(config.accounts, index, 1) })} disabled={index === config.accounts.length - 1}>↓</button></td><td><button className="pt-remove-button" type="button" onClick={() => patchConfig('accounts', { accounts: config.accounts.filter((_, itemIndex) => itemIndex !== index) })}>×</button></td></tr>
                   })}
-                  {config.accounts.length === 0 ? <tr><td colSpan={10} className="pt-account-empty">Tab chưa có tài khoản.</td></tr> : null}
+                  {config.accounts.length === 0 ? <tr><td colSpan={11} className="pt-account-empty">Tab chưa có tài khoản.</td></tr> : null}
                 </tbody></table></div>
               </section>
 
