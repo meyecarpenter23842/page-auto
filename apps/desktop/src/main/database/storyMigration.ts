@@ -4,11 +4,10 @@ export const STORY_SCHEMA_VERSION = 17
 export const STORY_MIGRATION_NAME = 'story_library'
 
 export function applyStoryMigration(db: Database.Database) {
-  const row = db.prepare("SELECT value FROM app_settings WHERE key = 'schema_version'").get() as { value?: string } | undefined
-  const current = Number(row?.value ?? 0)
-  if (current >= STORY_SCHEMA_VERSION) return
+  const migrate = db.transaction(() => {
+    const exists = db.prepare('SELECT 1 FROM __page_auto_migrations WHERE version = ?').get(STORY_SCHEMA_VERSION)
+    if (exists) return
 
-  db.transaction(() => {
     db.exec(`
       CREATE TABLE IF NOT EXISTS story_items (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -29,10 +28,11 @@ export function applyStoryMigration(db: Database.Database) {
       CREATE INDEX IF NOT EXISTS idx_story_items_sort
         ON story_items(sort_order, id);
     `)
-    db.prepare("INSERT OR REPLACE INTO app_settings(key, value) VALUES('schema_version', ?)").run(String(STORY_SCHEMA_VERSION))
     db.prepare(`
-      INSERT OR REPLACE INTO __page_auto_migrations(version, name, applied_at)
+      INSERT INTO __page_auto_migrations(version, name, applied_at)
       VALUES (?, ?, ?)
     `).run(STORY_SCHEMA_VERSION, STORY_MIGRATION_NAME, Date.now())
-  })()
+  })
+
+  migrate()
 }
