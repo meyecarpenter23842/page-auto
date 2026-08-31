@@ -88,106 +88,65 @@ function successItem(runId: number): RunItem {
 }
 
 describe('RotationService checkpoint account-turn terminal order', () => {
-  it.each(['282', 'disabled'] as const)('closes terminal checkpoint %s account, waits account delay, then starts the next account', async (checkpointKind) => {
-    const store = new Store()
-    const events: string[] = []
-    let service!: RotationService
+  it.each(['282', '956', 'disabled', 'unknown'] as const)(
+    'closes checkpoint %s account, waits account delay, then starts the next account',
+    async (checkpointKind) => {
+      const store = new Store()
+      const events: string[] = []
+      let service!: RotationService
 
-    const posting = {
-      executeSingle: async (payload: { runId: number; accountId?: number }): Promise<ExecuteSinglePostingJobResult> => {
-        const accountId = payload.accountId ?? -1
-        events.push(`execute:${accountId}`)
-        if (accountId === 101) {
-          return {
-            accountId,
-            item: null,
-            result: {
-              status: 'needs_login',
-              code: 'verification_required',
-              message: `checkpoint ${checkpointKind}`,
-              sessionValidation: {
-                phase: 'before_run',
-                state: 'verification_required',
+      const posting = {
+        executeSingle: async (payload: { runId: number; accountId?: number }): Promise<ExecuteSinglePostingJobResult> => {
+          const accountId = payload.accountId ?? -1
+          events.push(`execute:${accountId}`)
+          if (accountId === 101) {
+            return {
+              accountId,
+              item: null,
+              result: {
+                status: 'needs_login',
+                code: 'verification_required',
                 message: `checkpoint ${checkpointKind}`,
-                checkpointKind
-              }
-            },
-            run: store.details
-          }
-        }
-
-        const run = store.finishSuccess()
-        return { accountId, item: successItem(payload.runId), result: { status: 'success', message: 'ok' }, run }
-      },
-      releaseAccount: async (accountId: number): Promise<void> => {
-        events.push(`release:${accountId}`)
-      }
-    }
-
-    service = new RotationService(store, posting, {
-      now: () => new Date(2026, 7, 24, 10, 30),
-      random: () => 0,
-      sleep: async (milliseconds) => {
-        if (service.status({ pageTabId: 10 }).status === 'waiting_window') return new Promise<void>(() => undefined)
-        events.push(`sleep:${milliseconds}`)
-      }
-    })
-
-    service.start({ pageTabId: 10 })
-    await service.waitForSettled()
-
-    expect(events.slice(0, 4)).toEqual([
-      'execute:101',
-      'release:101',
-      'sleep:1000',
-      'execute:202'
-    ])
-    expect(events.indexOf('release:101')).toBeLessThan(events.indexOf('execute:202'))
-    service.dispose()
-  })
-
-  it('pauses on an unidentified checkpoint and never starts the next account', async () => {
-    const store = new Store()
-    const calls: number[] = []
-    const posting = {
-      executeSingle: async (payload: { runId: number; accountId?: number }): Promise<ExecuteSinglePostingJobResult> => {
-        const accountId = payload.accountId ?? -1
-        calls.push(accountId)
-        return {
-          accountId,
-          item: null,
-          result: {
-            status: 'needs_login',
-            code: 'verification_required',
-            message: 'unknown checkpoint',
-            sessionValidation: {
-              phase: 'before_run',
-              state: 'verification_required',
-              message: 'unknown checkpoint',
-              checkpointKind: 'unknown'
+                sessionValidation: {
+                  phase: 'before_run',
+                  state: 'verification_required',
+                  message: `checkpoint ${checkpointKind}`,
+                  checkpointKind
+                }
+              },
+              run: store.details
             }
-          },
-          run: store.details
+          }
+
+          const run = store.finishSuccess()
+          return { accountId, item: successItem(payload.runId), result: { status: 'success', message: 'ok' }, run }
+        },
+        releaseAccount: async (accountId: number): Promise<void> => {
+          events.push(`release:${accountId}`)
         }
-      },
-      releaseAccount: async () => undefined
-    }
-    let service!: RotationService
-    let paused!: () => void
-    const pausedSignal = new Promise<void>((resolve) => { paused = resolve })
-    service = new RotationService(store, posting, {
-      now: () => new Date(2026, 7, 24, 10, 30),
-      random: () => 0,
-      sleep: async () => {
-        if (service.status({ pageTabId: 10 }).status === 'paused') paused()
       }
-    })
 
-    service.start({ pageTabId: 10 })
-    await pausedSignal
+      service = new RotationService(store, posting, {
+        now: () => new Date(2026, 7, 24, 10, 30),
+        random: () => 0,
+        sleep: async (milliseconds) => {
+          if (service.status({ pageTabId: 10 }).status === 'waiting_window') return new Promise<void>(() => undefined)
+          events.push(`sleep:${milliseconds}`)
+        }
+      })
 
-    expect(calls).toEqual([101])
-    expect(service.status({ pageTabId: 10 }).status).toBe('paused')
-    service.dispose()
-  })
+      service.start({ pageTabId: 10 })
+      await service.waitForSettled()
+
+      expect(events.slice(0, 4)).toEqual([
+        'execute:101',
+        'release:101',
+        'sleep:1000',
+        'execute:202'
+      ])
+      expect(events.indexOf('release:101')).toBeLessThan(events.indexOf('execute:202'))
+      expect(service.status({ pageTabId: 10 }).status).not.toBe('paused')
+      service.dispose()
+    }
+  )
 })
