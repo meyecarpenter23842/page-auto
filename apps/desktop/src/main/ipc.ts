@@ -106,7 +106,6 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
   const browserDock = new AccountBrowserDockManager(() => {
     const display = browserWindowLayout.listDisplays()[0] as (ReturnType<BrowserWindowLayoutManager['listDisplays']>[number] & BrowserDisplaySlotRuntimeExtension) | undefined
     const accountIds = display?.slotRuntime.assignments
-      .filter((assignment) => assignment.owners.includes('profile'))
       .map((assignment) => assignment.accountId) ?? []
     const browserSettings = appSettings.get().browser
     return accountIds.flatMap((accountId) => {

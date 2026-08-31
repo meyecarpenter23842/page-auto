@@ -7,21 +7,21 @@ const accountCss = readFileSync(new URL('./accounts/accounts.css', import.meta.u
 const mainEntry = readFileSync(new URL('./main.tsx', import.meta.url), 'utf8')
 
 describe('record row mouse-paint selection contract', () => {
-  it('uses the same pointer paint lifecycle as Account Manager for generic tables', () => {
-    expect(controller).toContain("table:not(.account-grid):not(.pt-account-grid):not(.pt-account-picker-grid) tbody tr, .quick-page-row")
-    expect(controller).toContain("addEventListener('pointerdown'")
-    expect(controller).toContain("addEventListener('pointerover'")
-    expect(controller).toContain("addEventListener('pointerup'")
-    expect(controller).toContain("addEventListener('pointercancel'")
-    expect(controller).toContain("addEventListener('blur'")
+  it('keeps generic row selection and routes Page run rows to the real enabled checkbox', () => {
+    expect(controller).toContain("table:not(.account-grid):not(.pt-account-picker-grid) tbody tr, .quick-page-row")
+    expect(controller).toContain("table.pt-account-grid")
+    expect(controller).toContain("header.textContent?.trim() === 'Bật'")
+    expect(controller).toContain('checkbox.click()')
     expect(controller).toContain('paintValue = !rowPaintSelected(row)')
   })
 
-  it('leaves Account Manager and Page account grids to their explicit selection implementations', () => {
-    expect(controller).toContain(':not(.account-grid)')
-    expect(controller).toContain(':not(.pt-account-grid)')
-    expect(controller).toContain(':not(.pt-account-picker-grid)')
-    expect(css).toContain(':not(.pt-account-grid):not(.pt-account-picker-grid)')
+  it('captures Page run pointer paint before the old row-selection handler can fire', () => {
+    expect(controller).toContain("addEventListener('pointerdown', onPointerDown, true)")
+    expect(controller).toContain("addEventListener('pointerover', onPointerOver, true)")
+    expect(controller).toContain('if (pageAccount) event.stopPropagation()')
+    expect(controller).toContain("addEventListener('pointerup'")
+    expect(controller).toContain("addEventListener('pointercancel'")
+    expect(controller).toContain("addEventListener('blur'")
   })
 
   it('does not steal pointer-down from controls inside a row', () => {
@@ -29,13 +29,9 @@ describe('record row mouse-paint selection contract', () => {
     expect(controller).toContain('target.closest(INTERACTIVE_SELECTOR)')
   })
 
-  it('syncs a real first-column selection checkbox when the table exposes a Chọn column', () => {
-    expect(controller).toContain("headerLabel.includes('chọn')")
-    expect(controller).toContain("input[type=\"checkbox\"]")
-    expect(controller).toContain('checkbox.click()')
-  })
-
-  it('uses the exact Account selected-row fill and no fake hover overlay', () => {
+  it('shows Page enabled count only and keeps generic selected-row fill unchanged', () => {
+    expect(controller).toContain('const summary = `${enabled}/${rows.length} bật`')
+    expect(controller).toContain('MutationObserver')
     expect(accountCss).toMatch(/\.account-grid\s+tbody\s+tr\.selected-row\s+td\s*\{[^}]*background:\s*#d7eaff;/s)
     expect(css).toContain('background: #d7eaff !important;')
     expect(css).not.toContain(':hover')
