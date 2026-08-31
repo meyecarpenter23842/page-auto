@@ -1,5 +1,11 @@
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import darkThemeCoverage from './darkThemeCoverage.css?raw'
+
+const darkThemeCoverage = readFileSync(
+  fileURLToPath(new URL('./darkThemeCoverage.css', import.meta.url)),
+  'utf8'
+)
 
 const requiredDarkSurfaces = [
   '.account-context-menu',
