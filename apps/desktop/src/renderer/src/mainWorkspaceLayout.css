@@ -1,0 +1,106 @@
+/*
+ * Main workspace invariant:
+ * - the route/page frame itself never scrolls;
+ * - the top bar stays fixed in the available renderer viewport;
+ * - long content scrolls only inside the route's own cards/panels/grids.
+ *
+ * This file is imported last from main.tsx so it can normalize legacy
+ * viewport-height rules without changing each business component's DOM.
+ */
+.workspace {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+.workspace > .topbar {
+  flex: 0 0 auto;
+}
+
+/* Every main route gets exactly the height left below the fixed top bar. */
+.workspace > .account-manager,
+.workspace > .email-shell,
+.workspace > .content-library-hub,
+.workspace > .page-tabs-route,
+.workspace > .scenario-runner-page,
+.workspace > .scenario-manager-mode,
+.workspace > .execution-logs-shell,
+.workspace > .settings-shell {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+}
+
+/* Account Manager: toolbar/filter stay visible; only the data grid scrolls. */
+.account-manager {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.account-grid-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.account-grid-panel > .data-grid-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+/* Email already owns an internal scrolling grid; remove the brittle 100vh math. */
+.workspace > .email-shell {
+  height: auto;
+}
+
+/* Scenario panels already own their table/settings/log scroll areas. */
+.workspace > .scenario-runner-page,
+.workspace > .scenario-manager-mode {
+  height: auto;
+}
+
+/* Runtime Logs: toolbar/summary stay fixed; the table card is the scroll owner. */
+.execution-logs-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.execution-logs-toolbar,
+.execution-log-notice,
+.execution-log-error,
+.execution-log-summary {
+  flex: 0 0 auto;
+}
+
+.execution-log-table-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+/* Overview has no dedicated business grid, so its cards become the scroll owners
+   when window height is tight instead of disappearing below a clipped page. */
+.workspace > .hero-card {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.workspace > .content-card {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}

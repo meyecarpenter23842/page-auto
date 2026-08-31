@@ -5,6 +5,7 @@ import { ErrorBoundary } from './components/ErrorBoundary'
 import './styles.css'
 import './iconMapping.css'
 import './page-tabs/postLibraryModalLayout.css'
+import './mainWorkspaceLayout.css'
 
 const root = document.getElementById('root')
 
