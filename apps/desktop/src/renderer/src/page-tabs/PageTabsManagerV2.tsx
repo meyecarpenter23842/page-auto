@@ -73,6 +73,7 @@ function toSaveInput(config: PageTabConfig): PageTabSaveInput {
       sortOrder: index
     })),
     groupUids: parseGroupText(config.groupUids.join('\n')),
+    groupOrderMode: config.groupOrderMode ?? 'sequential',
     contentMode: config.contentMode,
     contents: [...config.contents],
     image: { ...config.image }
@@ -109,7 +110,7 @@ function mergeSavedSection(draft: PageTabConfig, saved: PageTabConfig, section: 
   if (section === 'identity') return { ...draft, name: saved.name, pageUid: saved.pageUid }
   if (section === 'rotation') return { ...draft, rotation: saved.rotation }
   if (section === 'schedule') return { ...draft, schedules: collapseEveryDaySchedules(saved.schedules) }
-  return { ...draft, groupUids: saved.groupUids }
+  return { ...draft, groupUids: saved.groupUids, groupOrderMode: saved.groupOrderMode ?? 'sequential' }
 }
 
 interface CreateTabModalProps {
@@ -329,7 +330,10 @@ export function PageTabsManager() {
       else if (section === 'identity') { input.name = config.name; input.pageUid = config.pageUid }
       else if (section === 'rotation') input.rotation = { ...config.rotation }
       else if (section === 'schedule') input.schedules = toSaveInput(config).schedules
-      else input.groupUids = parseGroupText(config.groupUids.join('\n'))
+      else {
+        input.groupUids = parseGroupText(config.groupUids.join('\n'))
+        input.groupOrderMode = config.groupOrderMode ?? 'sequential'
+      }
 
       const invalidScheduleCount = section === 'schedule' ? config.schedules.filter(scheduleIsInvalid).length : 0
       const saved = await window.pageAuto.updatePageTab({ id: config.id, config: input })
@@ -507,7 +511,7 @@ export function PageTabsManager() {
                 <div className="pt-panel-heading"><div><p className="eyebrow">Cấu hình nghiệp vụ</p><h3>Đăng Nhóm</h3></div><span className="pt-business-state">Mỗi mục lưu riêng</span></div>
                 <div className="pt-business-list">
                   <div className="pt-business-row"><div className="pt-business-icon">L</div><div className="pt-business-copy"><span>Lịch chạy</span><strong>{enabledScheduleCount} khung đang bật</strong><small>Ngày chạy và nhiều khung giờ trong ngày</small></div>{dirtySections.has('schedule') ? <span className="pt-business-unsaved">Chưa lưu</span> : null}<button type="button" onClick={() => setEditorModal('schedule')}>Chỉnh</button></div>
-                  <div className="pt-business-row"><div className="pt-business-icon">G</div><div className="pt-business-copy"><span>Group Set</span><strong>{groupCount} group</strong><small>Nguồn Group gốc · run tự snapshot riêng</small></div>{dirtySections.has('groups') ? <span className="pt-business-unsaved">Chưa lưu</span> : null}<button type="button" onClick={() => setEditorModal('groups')}>Quản lý</button></div>
+                  <div className="pt-business-row"><div className="pt-business-icon">G</div><div className="pt-business-copy"><span>Group Set</span><strong>{groupCount} group</strong><small>Nguồn Group gốc · run snapshot riêng · {(config.groupOrderMode ?? 'sequential') === 'random' ? 'ngẫu nhiên' : 'lần lượt'}</small></div>{dirtySections.has('groups') ? <span className="pt-business-unsaved">Chưa lưu</span> : null}<button type="button" onClick={() => setEditorModal('groups')}>Quản lý</button></div>
                   <div className="pt-business-row featured"><div className="pt-business-icon">B</div><div className="pt-business-copy"><span>Bài viết</span><strong>{enabledPostCount}/{postLibrary?.posts.length ?? 0} bài bật · {variantCount} biến thể</strong><small>{postLibrary?.mode === 'random' ? 'Lấy bài ngẫu nhiên' : 'Lấy bài lần lượt'} · {imagePostCount} bài có folder ảnh</small></div><button type="button" className="primary" onClick={() => setPostLibraryOpen(true)}>Quản lý bài viết</button></div>
                 </div>
               </section>
@@ -526,7 +530,7 @@ export function PageTabsManager() {
       </ConfigModal> : null}
 
       {config && editorModal === 'groups' ? <ConfigModal eyebrow="Group Set" title="Danh sách Group UID" onClose={() => setEditorModal(null)} actions={<><button className="pt-button secondary" type="button" onClick={() => void importGroups()}>Import TXT/CSV</button><button className="pt-button primary" type="button" disabled={!dirtySections.has('groups') || savingSection !== null} onClick={() => void saveSectionOnly('groups')}>{savingSection === 'groups' ? 'Đang lưu…' : 'Lưu Group'}</button></>}>
-        <div className="pt-modal-toolbar"><span>{groupCount} group sau khi trim + chống trùng</span></div><textarea className="pt-source-textarea pt-modal-textarea" rows={18} value={config.groupUids.join('\n')} onChange={(event) => patchConfig('groups', { groupUids: event.target.value.split(/\r?\n/) })} placeholder={'123456789\n987654321\n...'} /><p className="pt-help">Danh sách gốc luôn được giữ; mỗi phiên chạy clone sang run_items.</p>
+        <div className="pt-modal-toolbar"><span>{groupCount} group sau khi trim + chống trùng</span><label className="pt-count-chip" title="Bật để mỗi phiên khóa một thứ tự Group ngẫu nhiên trong run_items; pause/resume vẫn giữ nguyên thứ tự của phiên."><input type="checkbox" checked={(config.groupOrderMode ?? 'sequential') === 'random'} onChange={(event) => patchConfig('groups', { groupOrderMode: event.target.checked ? 'random' : 'sequential' })} /> Ngẫu nhiên Group</label></div><textarea className="pt-source-textarea pt-modal-textarea" rows={18} value={config.groupUids.join('\n')} onChange={(event) => patchConfig('groups', { groupUids: event.target.value.split(/\r?\n/) })} placeholder={'123456789\n987654321\n...'} /><p className="pt-help">Danh sách gốc luôn được giữ; mỗi phiên clone sang run_items. Nếu bật ngẫu nhiên, chỉ thứ tự run_items của phiên được xáo và được giữ nguyên khi pause/resume.</p>
       </ConfigModal> : null}
 
       {config && postLibrary && postLibraryOpen ? <PostLibraryModal pageTabId={config.id} initialLibrary={postLibrary} onClose={() => setPostLibraryOpen(false)} onSaved={(saved) => { setPostLibrary(saved); setNotice('Đã lưu thư viện bài viết.'); void refreshTabs(config.id) }} /> : null}

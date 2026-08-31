@@ -75,12 +75,14 @@ describe('initializeDatabase', () => {
       { version: 12, name: 'account_group_manager' },
       { version: 13, name: 'global_content_library' },
       { version: 14, name: 'canonical_post_library' },
-      { version: 15, name: 'copy_post_history' }
+      { version: 15, name: 'copy_post_history' },
+      { version: 16, name: 'page_tab_group_order_mode' }
     ])
-    expect(schemaVersion?.value).toBe('15')
+    expect(schemaVersion?.value).toBe('16')
     expect(executionLogsTable?.name).toBe('execution_logs')
     expect(postLibraryTable?.name).toBe('page_tab_posts')
     expect(pageTabColumns.some((column) => column.name === 'account_order_mode')).toBe(true)
+    expect(pageTabColumns.some((column) => column.name === 'group_order_mode')).toBe(true)
     expect(emailStateTable?.name).toBe('account_email_state')
     expect(emailStateColumns.map((column) => column.name)).toEqual(expect.arrayContaining([
       'oauth_client_id',
@@ -103,7 +105,7 @@ describe('initializeDatabase', () => {
       .prepare('SELECT COUNT(*) AS count FROM __page_auto_migrations')
       .get() as { count: number }
 
-    expect(count.count).toBe(15)
+    expect(count.count).toBe(16)
     reopened.close()
   })
 

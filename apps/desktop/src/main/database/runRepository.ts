@@ -1,5 +1,10 @@
 import type Database from 'better-sqlite3'
-import { POST_SELECTION_MODES, type PostSelectionMode } from '../../shared/pageTabs'
+import {
+  GROUP_ORDER_MODES,
+  POST_SELECTION_MODES,
+  type GroupOrderMode,
+  type PostSelectionMode
+} from '../../shared/pageTabs'
 import { PageTabPostBindingRepository } from './canonicalPostRepository'
 import { RunRepository as CoreRunRepository } from './runRepositoryCore'
 
@@ -55,6 +60,24 @@ function parsePostMode(value: unknown): PostSelectionMode {
   return POST_SELECTION_MODES.includes(normalized) ? normalized : 'sequential'
 }
 
+function parseGroupMode(value: unknown): GroupOrderMode {
+  const normalized = String(value ?? '') as GroupOrderMode
+  return GROUP_ORDER_MODES.includes(normalized) ? normalized : 'sequential'
+}
+
+function shuffle<T>(items: readonly T[]): T[] {
+  const next = [...items]
+  for (let index = next.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1))
+    const current = next[index]
+    const swap = next[swapIndex]
+    if (current === undefined || swap === undefined) continue
+    next[index] = swap
+    next[swapIndex] = current
+  }
+  return next
+}
+
 export class RunRepository extends CoreRunRepository {
   private readonly canonicalPagePosts: PageTabPostBindingRepository
 
@@ -98,52 +121,86 @@ export class RunRepository extends CoreRunRepository {
           FROM page_tabs
           WHERE id = ?
         `).get(pageTabId) as { mode: unknown } | undefined
+    const groupModeRow = this.windowStateClient.prepare(`
+      SELECT group_order_mode AS mode
+      FROM page_tabs
+      WHERE id = ?
+    `).get(pageTabId) as { mode: unknown } | undefined
+    const groupOrderMode = parseGroupMode(groupModeRow?.mode)
 
     const created = super.createForPageTab(pageTabId)
-    if (canonicalPosts === null) return created
-
     const snapshot = {
       ...created.run.snapshot,
-      postMode: parsePostMode(modeRow?.mode),
-      posts: canonicalPosts.map((post) => ({
-        ...post,
-        variants: [...post.variants],
-        image: { ...post.image }
-      }))
+      groupOrderMode,
+      ...(canonicalPosts === null
+        ? {}
+        : {
+            postMode: parsePostMode(modeRow?.mode),
+            posts: canonicalPosts.map((post) => ({
+              ...post,
+              variants: [...post.variants],
+              image: { ...post.image }
+            }))
+          })
     }
     const now = Date.now()
-    const updateSnapshot = this.windowStateClient.transaction(() => {
-      this.windowStateClient.prepare(`
-        UPDATE runs
-        SET snapshot_json = ?, updated_at = ?
-        WHERE id = ?
-      `).run(JSON.stringify(snapshot), now, created.run.id)
 
-      const event = this.windowStateClient.prepare(`
-        SELECT id, payload_json AS payloadJson
-        FROM run_events
-        WHERE run_id = ? AND event_type = 'run_created'
-        ORDER BY id DESC
-        LIMIT 1
-      `).get(created.run.id) as { id: number; payloadJson: string | null } | undefined
-      if (!event?.payloadJson) return
-      try {
-        const payload = JSON.parse(event.payloadJson) as Record<string, unknown>
-        payload.postCount = canonicalPosts.length
+    try {
+      const lockRunSnapshot = this.windowStateClient.transaction(() => {
+        if (groupOrderMode === 'random') {
+          const runItems = this.windowStateClient.prepare(`
+            SELECT id
+            FROM run_items
+            WHERE run_id = ?
+            ORDER BY sort_order, id
+          `).all(created.run.id) as Array<{ id: number }>
+          const shuffled = shuffle(runItems)
+          const updateOrder = this.windowStateClient.prepare(`
+            UPDATE run_items
+            SET sort_order = ?, updated_at = ?
+            WHERE id = ? AND run_id = ?
+          `)
+          shuffled.forEach((item, index) => updateOrder.run(index, now, item.id, created.run.id))
+        }
+
         this.windowStateClient.prepare(`
-          UPDATE run_events
-          SET payload_json = ?
+          UPDATE runs
+          SET snapshot_json = ?, updated_at = ?
           WHERE id = ?
-        `).run(JSON.stringify(payload), event.id)
-      } catch {
-        // Snapshot is the source of truth. Keep a malformed historical event
-        // untouched instead of failing an otherwise valid Start.
-      }
-    })
-    updateSnapshot()
+        `).run(JSON.stringify(snapshot), now, created.run.id)
+
+        const event = this.windowStateClient.prepare(`
+          SELECT id, payload_json AS payloadJson
+          FROM run_events
+          WHERE run_id = ? AND event_type = 'run_created'
+          ORDER BY id DESC
+          LIMIT 1
+        `).get(created.run.id) as { id: number; payloadJson: string | null } | undefined
+        if (!event?.payloadJson) return
+        try {
+          const payload = JSON.parse(event.payloadJson) as Record<string, unknown>
+          payload.groupOrderMode = groupOrderMode
+          if (canonicalPosts !== null) payload.postCount = canonicalPosts.length
+          this.windowStateClient.prepare(`
+            UPDATE run_events
+            SET payload_json = ?
+            WHERE id = ?
+          `).run(JSON.stringify(payload), event.id)
+        } catch {
+          // Snapshot/run_items are the source of truth. Keep a malformed
+          // historical event untouched instead of failing an otherwise valid Start.
+        }
+      })
+      lockRunSnapshot()
+    } catch (error) {
+      // Core creation already committed. Roll it back if locking the per-run
+      // Group order/snapshot fails so a broken active run cannot block Start.
+      this.windowStateClient.prepare('DELETE FROM runs WHERE id = ?').run(created.run.id)
+      throw error
+    }
 
     const refreshed = this.get(created.run.id)
-    if (!refreshed) throw new Error('Không thể đọc lại phiên sau khi khóa snapshot bài viết canonical.')
+    if (!refreshed) throw new Error('Không thể đọc lại phiên sau khi khóa snapshot cấu hình runtime.')
     return refreshed
   }
 

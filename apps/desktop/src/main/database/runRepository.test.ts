@@ -1,7 +1,8 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { GroupOrderMode } from '../../shared/pageTabs'
 import { AccountRepository } from './accountRepository'
 import { initializeDatabase } from './index'
 import { PageTabRepository } from './pageTabRepository'
@@ -10,6 +11,7 @@ import { RunRepository } from './runRepository'
 const tempDirectories: string[] = []
 
 afterEach(() => {
+  vi.restoreAllMocks()
   for (const directory of tempDirectories.splice(0)) {
     rmSync(directory, { recursive: true, force: true })
   }
@@ -21,7 +23,7 @@ function createRuntime() {
   return initializeDatabase(join(directory, 'page-auto.sqlite'))
 }
 
-function configureTab(groupUids: string[]) {
+function configureTab(groupUids: string[], groupOrderMode: GroupOrderMode = 'sequential') {
   const runtime = createRuntime()
   const accounts = new AccountRepository(runtime.client)
   const tabs = new PageTabRepository(runtime.client)
@@ -42,6 +44,7 @@ function configureTab(groupUids: string[]) {
     accounts: [{ accountId: account.id, enabled: true, sortOrder: 0, postsPerTurn: null }],
     schedules: [{ dayOfWeek: 1, startMinute: 480, endMinute: 720, enabled: true, sortOrder: 0 }],
     groupUids,
+    groupOrderMode,
     contentMode: 'sequential',
     contents: ['original content'],
     image: { folderPath: 'D:\\images', mode: 'sequential', imagesPerPost: 1, missingPolicy: 'text_only' }
@@ -66,6 +69,7 @@ describe('RunRepository', () => {
 
     const firstRun = runs.createForPageTab(tab.id)
     expect(firstRun.metrics).toMatchObject({ total: 600, pending: 600, success: 0, remaining: 600 })
+    expect(firstRun.run.snapshot.groupOrderMode).toBe('sequential')
 
     const firstItems = runs.listItems(firstRun.run.id)
     expect(firstItems).toHaveLength(600)
@@ -93,6 +97,36 @@ describe('RunRepository', () => {
 
     runtime.close()
   }, 15_000)
+
+  it('randomizes only the run_items snapshot and keeps the persisted order across resume/repository restart', () => {
+    const groupUids = ['g1', 'g2', 'g3', 'g4']
+    const { runtime, tabs, runs, tab } = configureTab(groupUids, 'random')
+    vi.spyOn(Math, 'random').mockReturnValue(0)
+
+    const created = runs.createForPageTab(tab.id)
+    const randomized = runs.listItems(created.run.id).map((item) => item.groupUid)
+    expect(created.run.snapshot.groupOrderMode).toBe('random')
+    expect(randomized).toEqual(['g2', 'g3', 'g4', 'g1'])
+    expect(tabs.get(tab.id)?.groupUids).toEqual(groupUids)
+
+    runs.resume(created.run.id)
+    const first = runs.claimNext(created.run.id)
+    expect(first?.groupUid).toBe('g2')
+    if (!first) throw new Error('Expected first randomized item.')
+    runs.completeItem({ runId: created.run.id, itemId: first.id, status: 'success' })
+    runs.pause(created.run.id)
+
+    const restartedRuns = new RunRepository(runtime.client)
+    expect(restartedRuns.listItems(created.run.id).map((item) => item.groupUid)).toEqual(randomized)
+    restartedRuns.resume(created.run.id)
+    const second = restartedRuns.claimNext(created.run.id)
+    expect(second?.groupUid).toBe('g3')
+    expect(second?.groupUid).not.toBe(first.groupUid)
+    expect(restartedRuns.metrics(created.run.id).success).toBe(1)
+    expect(tabs.get(tab.id)?.groupUids).toEqual(groupUids)
+
+    runtime.close()
+  })
 
   it('preserves an in-flight processing item across pause/resume and keeps the original snapshot immutable', () => {
     const { runtime, tabs, runs, tab } = configureTab(['g1', 'g2', 'g3'])
@@ -125,6 +159,7 @@ describe('RunRepository', () => {
       accounts: current.accounts,
       schedules: current.schedules,
       groupUids: ['new-1', 'new-2'],
+      groupOrderMode: current.groupOrderMode ?? 'sequential',
       contentMode: current.contentMode,
       contents: ['changed content'],
       image: current.image

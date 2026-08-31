@@ -278,6 +278,13 @@ export const migrations: Migration[] = [
     sql: `
       ALTER TABLE page_tabs ADD COLUMN account_order_mode TEXT NOT NULL DEFAULT 'sequential';
     `
+  },
+  {
+    version: 16,
+    name: 'page_tab_group_order_mode',
+    sql: `
+      ALTER TABLE page_tabs ADD COLUMN group_order_mode TEXT NOT NULL DEFAULT 'sequential';
+    `
   }
 ]
 
