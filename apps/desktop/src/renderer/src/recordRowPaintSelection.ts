@@ -1,4 +1,4 @@
-const ROW_SELECTOR = 'table:not(.account-grid) tbody tr, .quick-page-row'
+const ROW_SELECTOR = 'table:not(.account-grid):not(.pt-account-grid):not(.pt-account-picker-grid) tbody tr, .quick-page-row'
 const INTERACTIVE_SELECTOR = 'input,button,select,a,textarea,[contenteditable="true"]'
 
 function isEmptyTableRow(row: HTMLElement): boolean {

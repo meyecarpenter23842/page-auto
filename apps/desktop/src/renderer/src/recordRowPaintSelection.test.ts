@@ -7,14 +7,21 @@ const accountCss = readFileSync(new URL('./accounts/accounts.css', import.meta.u
 const mainEntry = readFileSync(new URL('./main.tsx', import.meta.url), 'utf8')
 
 describe('record row mouse-paint selection contract', () => {
-  it('uses the same pointer paint lifecycle as Account Manager for every other table', () => {
-    expect(controller).toContain("table:not(.account-grid) tbody tr, .quick-page-row")
+  it('uses the same pointer paint lifecycle as Account Manager for generic tables', () => {
+    expect(controller).toContain("table:not(.account-grid):not(.pt-account-grid):not(.pt-account-picker-grid) tbody tr, .quick-page-row")
     expect(controller).toContain("addEventListener('pointerdown'")
     expect(controller).toContain("addEventListener('pointerover'")
     expect(controller).toContain("addEventListener('pointerup'")
     expect(controller).toContain("addEventListener('pointercancel'")
     expect(controller).toContain("addEventListener('blur'")
     expect(controller).toContain('paintValue = !rowPaintSelected(row)')
+  })
+
+  it('leaves Account Manager and Page account grids to their explicit selection implementations', () => {
+    expect(controller).toContain(':not(.account-grid)')
+    expect(controller).toContain(':not(.pt-account-grid)')
+    expect(controller).toContain(':not(.pt-account-picker-grid)')
+    expect(css).toContain(':not(.pt-account-grid):not(.pt-account-picker-grid)')
   })
 
   it('does not steal pointer-down from controls inside a row', () => {

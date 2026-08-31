@@ -1,0 +1,78 @@
+/* Page account tables intentionally mirror Account Manager row selection.
+   Selection is UI-only and stays separate from the Page account enabled flag. */
+.pt-account-grid tbody tr,
+.pt-account-picker-grid tbody tr {
+  cursor: default;
+  user-select: none;
+}
+
+.pt-account-grid tbody tr td,
+.pt-account-picker-grid tbody tr td {
+  transition: background-color 120ms ease, box-shadow 120ms ease;
+}
+
+.pt-account-grid tbody tr:hover td,
+.pt-account-picker-grid tbody tr:hover td {
+  background: rgba(71, 84, 103, 0.10);
+}
+
+.pt-account-grid tbody tr.selected-row td,
+.pt-account-picker-grid tbody tr.selected td {
+  background: #d7eaff;
+}
+
+.pt-account-grid tbody tr.selected-row:hover td,
+.pt-account-picker-grid tbody tr.selected:hover td {
+  background: #cfe4fb;
+}
+
+.pt-account-grid .pt-account-select {
+  position: sticky;
+  left: 0;
+  width: 26px;
+  min-width: 26px;
+  max-width: 26px;
+  padding: 0;
+  text-align: center;
+}
+
+.pt-account-grid thead .pt-account-select {
+  z-index: 4;
+}
+
+.pt-account-grid tbody .pt-account-select {
+  z-index: 3;
+}
+
+.pt-account-grid .pt-account-select input,
+.pt-account-picker-grid .picker-check input {
+  width: 12px;
+  height: 12px;
+  margin: 0;
+}
+
+.pt-account-picker-grid .picker-check {
+  width: 32px;
+  min-width: 32px;
+  max-width: 32px;
+  padding: 0;
+  text-align: center;
+}
+
+.pt-account-grid .status-text,
+.pt-account-picker-grid .status-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 700;
+}
+
+.pt-account-grid .status-text::before,
+.pt-account-picker-grid .status-text::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: currentColor;
+}
