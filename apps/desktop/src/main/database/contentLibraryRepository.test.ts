@@ -27,7 +27,7 @@ function setup() {
 }
 
 describe('K4.5.1 global content library', () => {
-  it('applies schema v17 and keeps global sets separate from legacy Page Tab content', () => {
+  it('applies schema v18 and keeps global sets separate from legacy Page Tab content', () => {
     const { runtime, library, tabs } = setup()
     const tab = tabs.create({ name: 'Page A', pageUid: '90001' })
     const global = library.createSet({ name: 'Nguồn chung' }, 1000)
@@ -36,7 +36,7 @@ describe('K4.5.1 global content library', () => {
     const rows = runtime.client.prepare('SELECT id, page_tab_id AS pageTabId FROM content_sets ORDER BY id').all() as Array<{ id: number; pageTabId: number | null }>
     const pageTabColumn = runtime.client.prepare('PRAGMA table_info(content_sets)').all() as Array<{ name: string; notnull: number }>
 
-    expect(schemaVersion.value).toBe('17')
+    expect(schemaVersion.value).toBe('18')
     expect(rows).toEqual([
       expect.objectContaining({ pageTabId: tab.id }),
       expect.objectContaining({ id: global.id, pageTabId: null })
