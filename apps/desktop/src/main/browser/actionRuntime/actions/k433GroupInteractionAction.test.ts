@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { createK4ActionExecutorRegistry, createK433GroupInteractionActionExecutorRegistry } from './index'
 import {
   groupInteractionTargetsSatisfied,
+  groupRestrictionBlocksOperation,
   type GroupInteractionStats,
   type GroupTargets
 } from './groupInteractionAction'
@@ -79,6 +80,15 @@ describe('K4.3.3 group interaction executor', () => {
     expect(classifyGroupRestriction('Bạn không thể đăng trong nhóm này.')).toBe('posting_blocked')
     expect(classifyGroupRestriction('Your account is temporarily restricted.')).toBe('temporarily_restricted')
     expect(classifyGroupRestriction('Bài viết bình thường trong nhóm.')).toBeNull()
+  })
+
+  it('does not let a comment/post restriction suppress a valid reaction', () => {
+    expect(groupRestrictionBlocksOperation('comment_blocked', 'reaction')).toBe(false)
+    expect(groupRestrictionBlocksOperation('comment_blocked', 'comment')).toBe(true)
+    expect(groupRestrictionBlocksOperation('posting_blocked', 'reaction')).toBe(false)
+    expect(groupRestrictionBlocksOperation('posting_blocked', 'share_group')).toBe(true)
+    expect(groupRestrictionBlocksOperation('temporarily_restricted', 'reaction')).toBe(true)
+    expect(groupRestrictionBlocksOperation('temporarily_restricted', 'view')).toBe(true)
   })
 
   it('requires every configured interaction target before treating the action as complete', () => {
