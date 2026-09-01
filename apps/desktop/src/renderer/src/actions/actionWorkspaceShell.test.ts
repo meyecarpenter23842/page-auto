@@ -15,18 +15,25 @@ describe('Action workspace shell', () => {
     expect(appSource).toContain("activeRoute === 'actions' ? <ActionWorkspace />")
   })
 
-  it('keeps Kịch bản as the fixed default tab and turns + Tab into a workspace picker', () => {
+  it('keeps Kịch bản fixed and persists dynamic workspace tabs through typed preload APIs', () => {
     expect(workspaceSource).toContain('<ScenarioWorkspace />')
     expect(workspaceSource).toContain('Kịch bản')
     expect(workspaceSource).toContain('+ Tab')
     expect(workspaceSource).toContain('Chọn tab nghiệp vụ')
-    expect(workspaceSource).toContain('<InteractionWorkspace instanceLabel={tab.label} />')
+    expect(workspaceSource).toContain('window.pageAuto.listActionWorkspaces()')
+    expect(workspaceSource).toContain('window.pageAuto.createActionWorkspace')
+    expect(workspaceSource).toContain('window.pageAuto.deleteActionWorkspace')
+    expect(workspaceSource).toContain('<InteractionWorkspace workspace={tab} availableAccounts={accounts}')
     expect(registrySource).toContain("id: 'interaction'")
     expect(registrySource).toContain("label: 'Tương tác'")
   })
 
-  it('makes Tương tác a checkbox composition workspace instead of another atomic action picker', () => {
-    expect(interactionSource).toContain('Đối tượng tương tác')
+  it('binds real Account Manager rows and saves checkbox composition config to DB', () => {
+    expect(interactionSource).toContain('Tài khoản chạy')
+    expect(interactionSource).toContain('availableAccounts')
+    expect(interactionSource).toContain('Thứ tự chạy')
+    expect(interactionSource).toContain('window.pageAuto.updateActionWorkspace')
+    expect(interactionSource).toContain('Lưu cấu hình')
     expect(interactionModelSource).toContain("label: 'Like / Reaction'")
     expect(interactionModelSource).toContain("label: 'Reply comment'")
     expect(interactionModelSource).toContain("label: 'Tag trong comment'")

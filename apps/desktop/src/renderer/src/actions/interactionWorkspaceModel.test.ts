@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { buildInteractionWorkspacePlan, DEFAULT_INTERACTION_WORKSPACE_DRAFT, type InteractionWorkspaceDraft } from './interactionWorkspaceModel'
+import {
+  buildInteractionWorkspacePlan,
+  DEFAULT_INTERACTION_WORKSPACE_DRAFT,
+  parseInteractionWorkspaceDraft,
+  serializeInteractionWorkspaceDraft,
+  type InteractionWorkspaceDraft
+} from './interactionWorkspaceModel'
 
 function draft(overrides: Partial<InteractionWorkspaceDraft> = {}): InteractionWorkspaceDraft {
   return {
@@ -60,5 +66,39 @@ describe('interaction workspace composition model', () => {
     }))
     expect(plan.errors).toContain('Comment đang bật nhưng chưa có nội dung.')
     expect(plan.warnings.some((message) => message.includes('không hỗ trợ actor Page'))).toBe(true)
+  })
+
+  it('round-trips persisted workspace config and safely fills missing fields', () => {
+    const source = draft({
+      actor: 'page',
+      targetMode: 'uid_limit',
+      targetValues: '10001|10002',
+      delayMinSeconds: 7,
+      delayMaxSeconds: 12,
+      actions: { ...DEFAULT_INTERACTION_WORKSPACE_DRAFT.actions, comment: true },
+      commentTemplates: 'Xin chào'
+    })
+    expect(parseInteractionWorkspaceDraft(serializeInteractionWorkspaceDraft(source))).toEqual(source)
+
+    const legacy = parseInteractionWorkspaceDraft(JSON.stringify({ targetMode: 'groups', targetValues: '123' }))
+    expect(legacy.targetMode).toBe('groups')
+    expect(legacy.actions).toEqual(DEFAULT_INTERACTION_WORKSPACE_DRAFT.actions)
+    expect(legacy.reactions).toEqual(DEFAULT_INTERACTION_WORKSPACE_DRAFT.reactions)
+  })
+
+  it('falls back to defaults for corrupt or invalid persisted values', () => {
+    expect(parseInteractionWorkspaceDraft('{')).toEqual(DEFAULT_INTERACTION_WORKSPACE_DRAFT)
+    const parsed = parseInteractionWorkspaceDraft(JSON.stringify({
+      actor: 'invalid',
+      targetMode: 'invalid',
+      targetLimit: -1,
+      delayMinSeconds: -2,
+      actions: { reaction: 'yes' }
+    }))
+    expect(parsed.actor).toBe('profile')
+    expect(parsed.targetMode).toBe('friends')
+    expect(parsed.targetLimit).toBe(DEFAULT_INTERACTION_WORKSPACE_DRAFT.targetLimit)
+    expect(parsed.delayMinSeconds).toBe(DEFAULT_INTERACTION_WORKSPACE_DRAFT.delayMinSeconds)
+    expect(parsed.actions.reaction).toBe(true)
   })
 })

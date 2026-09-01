@@ -1,18 +1,24 @@
 import { useMemo, useState } from 'react'
+import type { AccountRecord } from '../../../shared/accounts'
+import type { ActionWorkspaceAccountInput, ActionWorkspaceRecord } from '../../../shared/actionWorkspaces'
 import {
   buildInteractionWorkspacePlan,
-  DEFAULT_INTERACTION_WORKSPACE_DRAFT,
   INTERACTION_ACTION_OPTIONS,
   INTERACTION_TARGET_OPTIONS,
   interactionTargetNeedsText,
+  parseInteractionWorkspaceDraft,
+  serializeInteractionWorkspaceDraft,
   type InteractionActionKey,
   type InteractionReactionKey,
   type InteractionWorkspaceDraft
 } from './interactionWorkspaceModel'
 import './interactionWorkspace.css'
+import './interactionWorkspacePersistence.css'
 
 interface InteractionWorkspaceProps {
-  instanceLabel: string
+  workspace: ActionWorkspaceRecord
+  availableAccounts: AccountRecord[]
+  onWorkspaceSaved: (workspace: ActionWorkspaceRecord) => void
 }
 
 const REACTIONS: Array<{ key: InteractionReactionKey; label: string; emoji: string }> = [
@@ -25,46 +31,168 @@ const REACTIONS: Array<{ key: InteractionReactionKey; label: string; emoji: stri
   { key: 'angry', label: 'Angry', emoji: '😡' }
 ]
 
-export function InteractionWorkspace({ instanceLabel }: InteractionWorkspaceProps) {
-  const [draft, setDraft] = useState<InteractionWorkspaceDraft>(() => ({
-    ...DEFAULT_INTERACTION_WORKSPACE_DRAFT,
-    actions: { ...DEFAULT_INTERACTION_WORKSPACE_DRAFT.actions },
-    reactions: { ...DEFAULT_INTERACTION_WORKSPACE_DRAFT.reactions }
-  }))
+function bindingInputs(workspace: ActionWorkspaceRecord): ActionWorkspaceAccountInput[] {
+  return [...workspace.accounts]
+    .sort((left, right) => left.sortOrder - right.sortOrder)
+    .map((binding) => ({ accountId: binding.accountId, enabled: binding.enabled }))
+}
+
+function persistenceSignature(draft: InteractionWorkspaceDraft, accounts: ActionWorkspaceAccountInput[]): string {
+  return JSON.stringify({ configJson: serializeInteractionWorkspaceDraft(draft), accounts })
+}
+
+export function InteractionWorkspace({ workspace, availableAccounts, onWorkspaceSaved }: InteractionWorkspaceProps) {
+  const initialDraft = useMemo(() => parseInteractionWorkspaceDraft(workspace.configJson), [workspace.id])
+  const initialBindings = useMemo(() => bindingInputs(workspace), [workspace.id])
+  const [draft, setDraft] = useState<InteractionWorkspaceDraft>(initialDraft)
+  const [accountBindings, setAccountBindings] = useState<ActionWorkspaceAccountInput[]>(initialBindings)
+  const [accountSearch, setAccountSearch] = useState('')
+  const [savedSignature, setSavedSignature] = useState(() => persistenceSignature(initialDraft, initialBindings))
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const [saveError, setSaveError] = useState<string | null>(null)
+
   const plan = useMemo(() => buildInteractionWorkspacePlan(draft), [draft])
   const targetOption = INTERACTION_TARGET_OPTIONS.find((option) => option.id === draft.targetMode)
+  const currentSignature = useMemo(() => persistenceSignature(draft, accountBindings), [draft, accountBindings])
+  const isDirty = currentSignature !== savedSignature
+  const selectedIds = useMemo(() => new Set(accountBindings.map((item) => item.accountId)), [accountBindings])
+  const accountById = useMemo(() => new Map(availableAccounts.map((account) => [account.id, account])), [availableAccounts])
+  const filteredAccounts = useMemo(() => {
+    const query = accountSearch.trim().toLowerCase()
+    if (!query) return availableAccounts
+    return availableAccounts.filter((account) => [account.uid, account.name, account.status, account.category]
+      .some((value) => value?.toLowerCase().includes(query)))
+  }, [accountSearch, availableAccounts])
 
   const setAction = (key: InteractionActionKey, checked: boolean) => {
     setDraft((current) => ({ ...current, actions: { ...current.actions, [key]: checked } }))
+    setSaveStatus('idle')
   }
 
   const setReaction = (key: InteractionReactionKey, checked: boolean) => {
     setDraft((current) => ({ ...current, reactions: { ...current.reactions, [key]: checked } }))
+    setSaveStatus('idle')
+  }
+
+  const toggleAccount = (accountId: number, checked: boolean) => {
+    setAccountBindings((current) => checked
+      ? (current.some((item) => item.accountId === accountId) ? current : [...current, { accountId, enabled: true }])
+      : current.filter((item) => item.accountId !== accountId))
+    setSaveStatus('idle')
+  }
+
+  const setAccountEnabled = (accountId: number, enabled: boolean) => {
+    setAccountBindings((current) => current.map((item) => item.accountId === accountId ? { ...item, enabled } : item))
+    setSaveStatus('idle')
+  }
+
+  const moveAccount = (accountId: number, direction: -1 | 1) => {
+    setAccountBindings((current) => {
+      const index = current.findIndex((item) => item.accountId === accountId)
+      const targetIndex = index + direction
+      if (index < 0 || targetIndex < 0 || targetIndex >= current.length) return current
+      const next = [...current]
+      const [item] = next.splice(index, 1)
+      if (!item) return current
+      next.splice(targetIndex, 0, item)
+      return next
+    })
+    setSaveStatus('idle')
+  }
+
+  const saveWorkspace = async () => {
+    if (saveStatus === 'saving') return
+    setSaveStatus('saving')
+    setSaveError(null)
+    try {
+      const saved = await window.pageAuto.updateActionWorkspace({
+        id: workspace.id,
+        patch: {
+          configJson: serializeInteractionWorkspaceDraft(draft),
+          accounts: accountBindings
+        }
+      })
+      const savedDraft = parseInteractionWorkspaceDraft(saved.configJson)
+      const savedAccounts = bindingInputs(saved)
+      setDraft(savedDraft)
+      setAccountBindings(savedAccounts)
+      setSavedSignature(persistenceSignature(savedDraft, savedAccounts))
+      setSaveStatus('saved')
+      onWorkspaceSaved(saved)
+    } catch (error) {
+      setSaveStatus('error')
+      setSaveError(error instanceof Error ? error.message : String(error))
+    }
   }
 
   return (
-    <section className="interaction-workspace" aria-label={instanceLabel}>
+    <section className="interaction-workspace" aria-label={workspace.label}>
       <div className="interaction-workspace-head">
         <div>
           <p className="interaction-kicker">WORKSPACE NGHIỆP VỤ</p>
-          <h2>{instanceLabel}</h2>
-          <p>Chọn nguồn target và tích các hành động cần compose. Tab này hiện lưu config trong memory; chưa nối DB/runner.</p>
+          <h2>{workspace.label}</h2>
+          <p>Tab và cấu hình được lưu trong SQLite. Danh sách account bên dưới binding trực tiếp tới Account Manager; runner vẫn chưa nối.</p>
         </div>
-        <div className="interaction-actor-switch" aria-label="Actor chạy">
-          <span>Actor</span>
-          <button type="button" className={draft.actor === 'profile' ? 'active' : ''} onClick={() => setDraft((current) => ({ ...current, actor: 'profile' }))}>Profile</button>
-          <button type="button" className={draft.actor === 'page' ? 'active' : ''} onClick={() => setDraft((current) => ({ ...current, actor: 'page' }))}>Page</button>
+        <div className="interaction-head-actions">
+          <div className="interaction-save-state" data-state={saveStatus}>{saveStatus === 'saving' ? 'Đang lưu…' : isDirty ? 'Chưa lưu' : saveStatus === 'saved' ? 'Đã lưu' : 'Đã đồng bộ'}</div>
+          <button className="interaction-save-button" type="button" disabled={!isDirty || saveStatus === 'saving'} onClick={() => void saveWorkspace()}>Lưu cấu hình</button>
+          <div className="interaction-actor-switch" aria-label="Actor chạy">
+            <span>Actor</span>
+            <button type="button" className={draft.actor === 'profile' ? 'active' : ''} onClick={() => { setDraft((current) => ({ ...current, actor: 'profile' })); setSaveStatus('idle') }}>Profile</button>
+            <button type="button" className={draft.actor === 'page' ? 'active' : ''} onClick={() => { setDraft((current) => ({ ...current, actor: 'page' })); setSaveStatus('idle') }}>Page</button>
+          </div>
         </div>
       </div>
+      {saveError ? <div className="interaction-save-error">{saveError}</div> : null}
 
       <div className="interaction-layout">
         <div className="interaction-main-column">
+          <section className="interaction-card interaction-account-card">
+            <div className="interaction-card-head"><div><span>01</span><h3>Tài khoản chạy</h3></div><small>{accountBindings.filter((item) => item.enabled).length}/{accountBindings.length} account đang bật · thứ tự được lưu theo tab.</small></div>
+            <div className="interaction-account-binding-layout">
+              <div className="interaction-account-picker">
+                <div className="interaction-account-picker-toolbar">
+                  <input value={accountSearch} onChange={(event) => setAccountSearch(event.target.value)} placeholder="Tìm UID, tên, trạng thái, nhóm…" />
+                  <span>{filteredAccounts.length}/{availableAccounts.length}</span>
+                </div>
+                <div className="interaction-account-table" role="list" aria-label="Account Manager">
+                  {filteredAccounts.map((account) => (
+                    <label className={selectedIds.has(account.id) ? 'interaction-account-row selected' : 'interaction-account-row'} key={account.id}>
+                      <input type="checkbox" checked={selectedIds.has(account.id)} onChange={(event) => toggleAccount(account.id, event.target.checked)} />
+                      <span className="interaction-account-identity"><strong>{account.uid}</strong><small>{account.name || 'Chưa có tên'}</small></span>
+                      <span className="interaction-account-meta"><b>{account.status}</b><small>{account.category || 'Không nhóm'}</small></span>
+                    </label>
+                  ))}
+                  {!filteredAccounts.length ? <div className="interaction-account-empty">Không có account phù hợp.</div> : null}
+                </div>
+              </div>
+
+              <div className="interaction-account-order">
+                <div className="interaction-account-order-head"><strong>Thứ tự chạy</strong><small>Trong lô runner, account sẽ lấy theo thứ tự này.</small></div>
+                <div className="interaction-account-order-list">
+                  {accountBindings.map((binding, index) => {
+                    const account = accountById.get(binding.accountId)
+                    return (
+                      <div className="interaction-account-order-row" key={binding.accountId}>
+                        <span className="interaction-account-order-index">{index + 1}</span>
+                        <span className="interaction-account-order-name"><strong>{account?.uid ?? `#${binding.accountId}`}</strong><small>{account?.name || account?.status || 'Account đã bị xóa'}</small></span>
+                        <label className="interaction-account-enabled"><input type="checkbox" checked={binding.enabled} onChange={(event) => setAccountEnabled(binding.accountId, event.target.checked)} /><span>Bật</span></label>
+                        <span className="interaction-account-order-controls"><button type="button" disabled={index === 0} onClick={() => moveAccount(binding.accountId, -1)}>↑</button><button type="button" disabled={index === accountBindings.length - 1} onClick={() => moveAccount(binding.accountId, 1)}>↓</button></span>
+                      </div>
+                    )
+                  })}
+                  {!accountBindings.length ? <div className="interaction-account-empty">Tích account ở danh sách bên trái để binding vào tab này.</div> : null}
+                </div>
+              </div>
+            </div>
+          </section>
+
           <section className="interaction-card">
-            <div className="interaction-card-head"><div><span>01</span><h3>Đối tượng tương tác</h3></div><small>{targetOption?.hint}</small></div>
+            <div className="interaction-card-head"><div><span>02</span><h3>Đối tượng tương tác</h3></div><small>{targetOption?.hint}</small></div>
             <div className="interaction-target-grid">
               {INTERACTION_TARGET_OPTIONS.map((option) => (
                 <label className={draft.targetMode === option.id ? 'interaction-target-option active' : 'interaction-target-option'} key={option.id}>
-                  <input type="radio" name={`${instanceLabel}-target`} checked={draft.targetMode === option.id} onChange={() => setDraft((current) => ({ ...current, targetMode: option.id }))} />
+                  <input type="radio" name={`${workspace.id}-target`} checked={draft.targetMode === option.id} onChange={() => { setDraft((current) => ({ ...current, targetMode: option.id })); setSaveStatus('idle') }} />
                   <span><strong>{option.label}</strong><small>{option.hint}</small></span>
                 </label>
               ))}
@@ -72,20 +200,20 @@ export function InteractionWorkspace({ instanceLabel }: InteractionWorkspaceProp
             {interactionTargetNeedsText(draft.targetMode) ? (
               <label className="interaction-field interaction-field-wide">
                 <span>Danh sách target</span>
-                <textarea value={draft.targetValues} onChange={(event) => setDraft((current) => ({ ...current, targetValues: event.target.value }))} rows={4} placeholder="Mỗi dòng hoặc dấu | là một UID / URL / Group..." />
+                <textarea value={draft.targetValues} onChange={(event) => { setDraft((current) => ({ ...current, targetValues: event.target.value })); setSaveStatus('idle') }} rows={4} placeholder="Mỗi dòng hoặc dấu | là một UID / URL / Group..." />
               </label>
             ) : null}
             {draft.targetMode === 'uid_account_file' ? (
               <label className="interaction-field interaction-field-wide">
                 <span>Đường dẫn file UID</span>
-                <input value={draft.uidFilePath} onChange={(event) => setDraft((current) => ({ ...current, uidFilePath: event.target.value }))} placeholder="F:\\data\\uids\\acc-01.txt" />
-                <small>File picker và mapping file → account sẽ nối ở lô persistence/runner.</small>
+                <input value={draft.uidFilePath} onChange={(event) => { setDraft((current) => ({ ...current, uidFilePath: event.target.value })); setSaveStatus('idle') }} placeholder="F:\\data\\uids\\acc-01.txt" />
+                <small>Đường dẫn được lưu theo tab; file picker và distribution 1 account → 1 file sẽ nối ở lô runner.</small>
               </label>
             ) : null}
           </section>
 
           <section className="interaction-card">
-            <div className="interaction-card-head"><div><span>02</span><h3>Hành động</h3></div><small>Tích nhiều mục để compose trong cùng workspace.</small></div>
+            <div className="interaction-card-head"><div><span>03</span><h3>Hành động</h3></div><small>Tích nhiều mục để compose trong cùng workspace.</small></div>
             <div className="interaction-action-grid">
               {INTERACTION_ACTION_OPTIONS.map((option) => (
                 <label className={draft.actions[option.key] ? 'interaction-action-option active' : 'interaction-action-option'} key={option.key}>
@@ -109,47 +237,48 @@ export function InteractionWorkspace({ instanceLabel }: InteractionWorkspaceProp
 
           {(draft.actions.comment || draft.actions.replyComment || draft.actions.reactComment || draft.actions.commentTag) ? (
             <section className="interaction-card">
-              <div className="interaction-card-head"><div><span>03</span><h3>Cấu hình nội dung</h3></div><small>Chỉ hiện field của hành động đang được tích.</small></div>
+              <div className="interaction-card-head"><div><span>04</span><h3>Cấu hình nội dung</h3></div><small>Chỉ hiện field của hành động đang được tích.</small></div>
               <div className="interaction-form-grid">
                 {(draft.actions.replyComment || draft.actions.reactComment) ? (
-                  <label className="interaction-field interaction-field-wide"><span>Nội dung comment cần tìm</span><input value={draft.commentMatch} onChange={(event) => setDraft((current) => ({ ...current, commentMatch: event.target.value }))} placeholder="Để trống = comment phù hợp đầu tiên" /></label>
+                  <label className="interaction-field interaction-field-wide"><span>Nội dung comment cần tìm</span><input value={draft.commentMatch} onChange={(event) => { setDraft((current) => ({ ...current, commentMatch: event.target.value })); setSaveStatus('idle') }} placeholder="Để trống = comment phù hợp đầu tiên" /></label>
                 ) : null}
                 {draft.actions.comment ? (
-                  <label className="interaction-field interaction-field-wide"><span>Nội dung comment</span><textarea rows={4} value={draft.commentTemplates} onChange={(event) => setDraft((current) => ({ ...current, commentTemplates: event.target.value }))} placeholder="Mỗi dòng hoặc dấu | là một nội dung" /></label>
+                  <label className="interaction-field interaction-field-wide"><span>Nội dung comment</span><textarea rows={4} value={draft.commentTemplates} onChange={(event) => { setDraft((current) => ({ ...current, commentTemplates: event.target.value })); setSaveStatus('idle') }} placeholder="Mỗi dòng hoặc dấu | là một nội dung" /></label>
                 ) : null}
                 {draft.actions.replyComment ? (
-                  <label className="interaction-field interaction-field-wide"><span>Nội dung reply</span><textarea rows={4} value={draft.replyTemplates} onChange={(event) => setDraft((current) => ({ ...current, replyTemplates: event.target.value }))} placeholder="Mỗi dòng hoặc dấu | là một nội dung trả lời" /></label>
+                  <label className="interaction-field interaction-field-wide"><span>Nội dung reply</span><textarea rows={4} value={draft.replyTemplates} onChange={(event) => { setDraft((current) => ({ ...current, replyTemplates: event.target.value })); setSaveStatus('idle') }} placeholder="Mỗi dòng hoặc dấu | là một nội dung trả lời" /></label>
                 ) : null}
                 {draft.actions.commentTag ? (
-                  <label className="interaction-field interaction-field-wide"><span>Tên / UID cần tag</span><textarea rows={3} value={draft.tagTargets} onChange={(event) => setDraft((current) => ({ ...current, tagTargets: event.target.value }))} placeholder="Mỗi dòng hoặc dấu | là một target" /></label>
+                  <label className="interaction-field interaction-field-wide"><span>Tên / UID cần tag</span><textarea rows={3} value={draft.tagTargets} onChange={(event) => { setDraft((current) => ({ ...current, tagTargets: event.target.value })); setSaveStatus('idle') }} placeholder="Mỗi dòng hoặc dấu | là một target" /></label>
                 ) : null}
               </div>
             </section>
           ) : null}
 
           <section className="interaction-card">
-            <div className="interaction-card-head"><div><span>04</span><h3>Điều phối</h3></div><small>Đây là orchestration, không tạo thêm action Facebook giả.</small></div>
+            <div className="interaction-card-head"><div><span>05</span><h3>Điều phối</h3></div><small>Đây là orchestration, không tạo thêm action Facebook giả.</small></div>
             <div className="interaction-form-grid compact">
-              <label className="interaction-field"><span>Limit target / lượt</span><input type="number" min={1} value={draft.targetLimit} onChange={(event) => setDraft((current) => ({ ...current, targetLimit: Number(event.target.value) }))} /></label>
-              <label className="interaction-field"><span>Số bài / target</span><input type="number" min={1} value={draft.postsPerTarget} onChange={(event) => setDraft((current) => ({ ...current, postsPerTarget: Number(event.target.value) }))} /></label>
-              <label className="interaction-field"><span>Delay từ (giây)</span><input type="number" min={0} value={draft.delayMinSeconds} onChange={(event) => setDraft((current) => ({ ...current, delayMinSeconds: Number(event.target.value) }))} /></label>
-              <label className="interaction-field"><span>Delay đến (giây)</span><input type="number" min={0} value={draft.delayMaxSeconds} onChange={(event) => setDraft((current) => ({ ...current, delayMaxSeconds: Number(event.target.value) }))} /></label>
-              <label className="interaction-toggle"><input type="checkbox" checked={draft.repeat} onChange={(event) => setDraft((current) => ({ ...current, repeat: event.target.checked }))} /><span><strong>Repeat</strong><small>Lặp lại workflow sau khi hết lượt.</small></span></label>
+              <label className="interaction-field"><span>Limit target / lượt</span><input type="number" min={1} value={draft.targetLimit} onChange={(event) => { setDraft((current) => ({ ...current, targetLimit: Number(event.target.value) })); setSaveStatus('idle') }} /></label>
+              <label className="interaction-field"><span>Số bài / target</span><input type="number" min={1} value={draft.postsPerTarget} onChange={(event) => { setDraft((current) => ({ ...current, postsPerTarget: Number(event.target.value) })); setSaveStatus('idle') }} /></label>
+              <label className="interaction-field"><span>Delay từ (giây)</span><input type="number" min={0} value={draft.delayMinSeconds} onChange={(event) => { setDraft((current) => ({ ...current, delayMinSeconds: Number(event.target.value) })); setSaveStatus('idle') }} /></label>
+              <label className="interaction-field"><span>Delay đến (giây)</span><input type="number" min={0} value={draft.delayMaxSeconds} onChange={(event) => { setDraft((current) => ({ ...current, delayMaxSeconds: Number(event.target.value) })); setSaveStatus('idle') }} /></label>
+              <label className="interaction-toggle"><input type="checkbox" checked={draft.repeat} onChange={(event) => { setDraft((current) => ({ ...current, repeat: event.target.checked })); setSaveStatus('idle') }} /><span><strong>Repeat</strong><small>Lặp lại workflow sau khi hết lượt.</small></span></label>
             </div>
           </section>
         </div>
 
         <aside className="interaction-plan-card">
           <div className="interaction-plan-head"><div><p className="interaction-kicker">COMPOSITION</p><h3>Kế hoạch module</h3></div><span>{plan.modules.filter((module) => module.runtimeStatus === 'ready').length}/{plan.modules.length} ready</span></div>
-          <p className="interaction-plan-copy">UI này không tạo executor mới. Nó compose các module nhỏ trong Action Registry theo target + checkbox đã chọn.</p>
+          <p className="interaction-plan-copy">Config và account binding đã được lưu thật. Panel này vẫn compose module nhỏ từ Action Registry; chưa tự chạy Facebook.</p>
           <div className="interaction-module-list">
             {plan.modules.length ? plan.modules.map((module) => (
               <div className="interaction-module-row" key={module.actionType}><span><strong>{module.label}</strong><code>{module.actionType}</code></span><small className={module.runtimeStatus === 'ready' ? 'ready' : ''}>{module.runtimeStatus === 'ready' ? 'Executor ready' : 'Chưa chạy'}</small></div>
             )) : <div className="interaction-plan-empty">Chưa có module nào trong composition.</div>}
           </div>
-          {plan.errors.length ? <div className="interaction-plan-messages error"><strong>Cần chỉnh</strong>{plan.errors.map((message) => <p key={message}>{message}</p>)}</div> : null}
+          {plan.errors.length ? <div className="interaction-plan-messages error"><strong>Cần chỉnh trước khi chạy</strong>{plan.errors.map((message) => <p key={message}>{message}</p>)}</div> : null}
           {plan.warnings.length ? <div className="interaction-plan-messages warning"><strong>Lưu ý kiến trúc</strong>{plan.warnings.map((message) => <p key={message}>{message}</p>)}</div> : null}
-          <div className="interaction-run-boundary"><button type="button" disabled>Runner chưa nối</button><small>Account binding + persistence DB + start/pause/resume sẽ làm ở lô tiếp theo sau khi chốt UX/model tab.</small></div>
+          <div className="interaction-binding-summary"><strong>Account binding</strong><span>{accountBindings.length} đã chọn</span><span>{accountBindings.filter((item) => item.enabled).length} đang bật</span></div>
+          <div className="interaction-run-boundary"><button type="button" disabled>Runner chưa nối</button><small>Persistence DB + account binding đã sẵn sàng. Lô tiếp theo mới tạo run snapshot và nối Start/Pause/Resume vào các module đã compose.</small></div>
         </aside>
       </div>
     </section>

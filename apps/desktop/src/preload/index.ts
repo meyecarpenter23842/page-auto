@@ -32,6 +32,13 @@ import {
   type RenameAccountGroupInput
 } from '../shared/accountGroups'
 import {
+  ACTION_WORKSPACE_IPC,
+  type ActionWorkspaceIdPayload,
+  type ActionWorkspaceRecord,
+  type CreateActionWorkspaceInput,
+  type UpdateActionWorkspacePayload
+} from '../shared/actionWorkspaces'
+import {
   AI_AGENT_IPC,
   type AiAgentCatalogView,
   type AiAgentEnabledPayload,
@@ -145,6 +152,10 @@ const api = {
   renameAccountGroup: (input: RenameAccountGroupInput): Promise<AccountGroupRecord> => ipcRenderer.invoke(ACCOUNT_GROUP_IPC.rename, input) as Promise<AccountGroupRecord>,
   deleteAccountGroup: (payload: AccountGroupIdPayload): Promise<boolean> => ipcRenderer.invoke(ACCOUNT_GROUP_IPC.delete, payload) as Promise<boolean>,
   assignAccountsToGroup: (input: AssignAccountsToGroupInput): Promise<number> => ipcRenderer.invoke(ACCOUNT_GROUP_IPC.assign, input) as Promise<number>,
+  listActionWorkspaces: (): Promise<ActionWorkspaceRecord[]> => ipcRenderer.invoke(ACTION_WORKSPACE_IPC.list) as Promise<ActionWorkspaceRecord[]>,
+  createActionWorkspace: (input: CreateActionWorkspaceInput): Promise<ActionWorkspaceRecord> => ipcRenderer.invoke(ACTION_WORKSPACE_IPC.create, input) as Promise<ActionWorkspaceRecord>,
+  updateActionWorkspace: (payload: UpdateActionWorkspacePayload): Promise<ActionWorkspaceRecord> => ipcRenderer.invoke(ACTION_WORKSPACE_IPC.update, payload) as Promise<ActionWorkspaceRecord>,
+  deleteActionWorkspace: (payload: ActionWorkspaceIdPayload): Promise<boolean> => ipcRenderer.invoke(ACTION_WORKSPACE_IPC.delete, payload) as Promise<boolean>,
   getAiAgentCatalog: (): Promise<AiAgentCatalogView> => ipcRenderer.invoke(AI_AGENT_IPC.catalog) as Promise<AiAgentCatalogView>,
   importAiAgentJson: (): Promise<AiAgentImportResult | null> => ipcRenderer.invoke(AI_AGENT_IPC.importJson) as Promise<AiAgentImportResult | null>,
   setAiAgentEnabled: (payload: AiAgentEnabledPayload): Promise<AiAgentCatalogView> => ipcRenderer.invoke(AI_AGENT_IPC.setEnabled, payload) as Promise<AiAgentCatalogView>,
