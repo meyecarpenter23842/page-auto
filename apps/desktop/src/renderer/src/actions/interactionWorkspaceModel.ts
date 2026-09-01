@@ -2,6 +2,7 @@ import { getActionDefinition, type ActionRuntimeStatus } from '../../../shared/a
 import { applyActionOverrides } from '../../../shared/actionOverrides'
 import {
   DEFAULT_INTERACTION_WORKSPACE_DRAFT,
+  MAX_INTERACTION_ACCOUNT_CONCURRENCY,
   parseInteractionWorkspaceDraft,
   serializeInteractionWorkspaceDraft,
   type InteractionActionKey,
@@ -13,6 +14,7 @@ import {
 
 export {
   DEFAULT_INTERACTION_WORKSPACE_DRAFT,
+  MAX_INTERACTION_ACCOUNT_CONCURRENCY,
   parseInteractionWorkspaceDraft,
   serializeInteractionWorkspaceDraft
 } from '../../../shared/interactionWorkspaceConfig'
@@ -86,6 +88,9 @@ export function buildInteractionWorkspacePlan(draft: InteractionWorkspaceDraft):
   if (draft.delayMinSeconds > draft.delayMaxSeconds) errors.push('Delay từ phải nhỏ hơn hoặc bằng delay đến.')
   if (draft.targetLimit < 1) errors.push('Limit target phải lớn hơn 0.')
   if (draft.postsPerTarget < 1) errors.push('Số bài / target phải lớn hơn 0.')
+  if (!Number.isInteger(draft.accountConcurrency) || draft.accountConcurrency < 1 || draft.accountConcurrency > MAX_INTERACTION_ACCOUNT_CONCURRENCY) {
+    errors.push(`TK song song phải từ 1 đến ${MAX_INTERACTION_ACCOUNT_CONCURRENCY}.`)
+  }
   if (draft.actor === 'page' && !draft.pageUid.trim()) errors.push('Actor Page cần nhập Page UID.')
 
   if (LIST_TARGETS.has(draft.targetMode) && !draft.targetValues.trim()) {

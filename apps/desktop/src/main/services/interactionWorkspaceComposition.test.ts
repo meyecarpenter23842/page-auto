@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_INTERACTION_WORKSPACE_DRAFT,
+  MAX_INTERACTION_ACCOUNT_CONCURRENCY,
   type InteractionWorkspaceDraft
 } from '../../shared/interactionWorkspaceConfig'
 import {
@@ -56,6 +57,16 @@ describe('interaction workspace run composition', () => {
       commentEnabled: true,
       commentTemplates: 'Xin chào'
     })
+  })
+
+  it('validates rolling account concurrency bounds before launch', () => {
+    expect(validateInteractionWorkspaceRun(draft({ accountConcurrency: 4 }), 8)).toEqual([])
+    expect(validateInteractionWorkspaceRun(draft({ accountConcurrency: 0 }), 8)).toContain(
+      `TK song song phải từ 1 đến ${MAX_INTERACTION_ACCOUNT_CONCURRENCY}.`
+    )
+    expect(validateInteractionWorkspaceRun(draft({ accountConcurrency: MAX_INTERACTION_ACCOUNT_CONCURRENCY + 1 }), 8)).toContain(
+      `TK song song phải từ 1 đến ${MAX_INTERACTION_ACCOUNT_CONCURRENCY}.`
+    )
   })
 
   it('prepends Switch Page for Page actor without creating a switch-only turn', () => {

@@ -8,6 +8,7 @@ import {
   INTERACTION_ACTION_OPTIONS,
   INTERACTION_TARGET_OPTIONS,
   interactionTargetNeedsText,
+  MAX_INTERACTION_ACCOUNT_CONCURRENCY,
   parseInteractionWorkspaceDraft,
   serializeInteractionWorkspaceDraft,
   type InteractionActionKey,
@@ -80,6 +81,12 @@ export function InteractionWorkspace({ workspace, availableAccounts, onWorkspace
   const activeRun = runSnapshot && ['running', 'paused', 'stopping'].includes(runSnapshot.state)
   const allModulesReady = plan.modules.length > 0 && plan.modules.every((module) => module.runtimeStatus === 'ready')
   const canStart = !activeRun && !isDirty && plan.errors.length === 0 && enabledAccountCount > 0 && allModulesReady && !runBusy
+  const runConcurrency = useMemo(
+    () => runSnapshot
+      ? parseInteractionWorkspaceDraft(runSnapshot.frozen.configJson).accountConcurrency
+      : draft.accountConcurrency,
+    [draft.accountConcurrency, runSnapshot]
+  )
 
   useEffect(() => {
     let disposed = false
@@ -311,13 +318,13 @@ export function InteractionWorkspace({ workspace, availableAccounts, onWorkspace
           ) : null}
 
           <section className="interaction-card">
-            <div className="interaction-card-head"><div><span>05</span><h3>Điều phối</h3></div><small>Account trong workflow vẫn chạy tuần tự theo baseline hiện tại.</small></div>
+            <div className="interaction-card-head"><div><span>05</span><h3>Điều phối</h3></div><small>Pool cuốn chiếu: slot nào xong sẽ nhận account kế tiếp ngay, không đợi cả nhóm.</small></div>
             <div className="interaction-orchestration-grid">
               <label className="interaction-field"><span>Limit target / lượt</span><input type="number" min={1} value={draft.targetLimit} onChange={(event) => { setDraft((current) => ({ ...current, targetLimit: Number(event.target.value) })); markDirty() }} /></label>
               <label className="interaction-field"><span>Số bài / target</span><input type="number" min={1} value={draft.postsPerTarget} onChange={(event) => { setDraft((current) => ({ ...current, postsPerTarget: Number(event.target.value) })); markDirty() }} /></label>
               <label className="interaction-field"><span>Delay từ (giây)</span><input type="number" min={0} value={draft.delayMinSeconds} onChange={(event) => { setDraft((current) => ({ ...current, delayMinSeconds: Number(event.target.value) })); markDirty() }} /></label>
               <label className="interaction-field"><span>Delay đến (giây)</span><input type="number" min={0} value={draft.delayMaxSeconds} onChange={(event) => { setDraft((current) => ({ ...current, delayMaxSeconds: Number(event.target.value) })); markDirty() }} /></label>
-              <label className="interaction-concurrency-locked" title="PROJECT_PLAN hiện khóa account trong cùng workflow chạy tuần tự."><span>TK song song</span><input type="number" value={1} disabled /><small>Khóa = 1</small></label>
+              <label className="interaction-concurrency-field"><span>TK song song</span><input type="number" min={1} max={MAX_INTERACTION_ACCOUNT_CONCURRENCY} value={draft.accountConcurrency} onChange={(event) => { setDraft((current) => ({ ...current, accountConcurrency: Number(event.target.value) })); markDirty() }} /><small>1–{MAX_INTERACTION_ACCOUNT_CONCURRENCY}</small></label>
               <label className="interaction-toggle interaction-repeat-inline"><input type="checkbox" checked={draft.repeat} onChange={(event) => { setDraft((current) => ({ ...current, repeat: event.target.checked })); markDirty() }} /><span><strong>Repeat</strong><small>Lặp workflow cho account hiện tại đến khi Stop.</small></span></label>
             </div>
           </section>
@@ -344,7 +351,7 @@ export function InteractionWorkspace({ workspace, availableAccounts, onWorkspace
               <>
                 <div className="interaction-runtime-summary">
                   <span>{runSnapshot.frozen.accountIds.length} account snapshot</span>
-                  <span>{runSnapshot.frozen.actionTypes.length} module</span>
+                  <span>Tối đa {runConcurrency} TK song song</span>
                   <span>{runSnapshot.accountRuntimes.reduce((sum, item) => sum + item.success, 0)} success</span>
                 </div>
                 <div className="interaction-runtime-accounts">
@@ -361,7 +368,7 @@ export function InteractionWorkspace({ workspace, availableAccounts, onWorkspace
                   ))}
                 </div>
               </>
-            ) : <p className="interaction-runtime-empty">Bấm Start để tạo snapshot và bắt đầu account đầu tiên.</p>}
+            ) : <p className="interaction-runtime-empty">Bấm Start để tạo snapshot và lấp các slot account đang chạy.</p>}
           </section>
 
           <div className="interaction-run-controls">

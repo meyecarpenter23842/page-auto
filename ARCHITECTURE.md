@@ -27,7 +27,8 @@ Quy tắc ngắn gọn:
 - Electron Main sở hữu DB, filesystem, scheduler và worker lifecycle.
 - Playwright chạy ngoài renderer; browser lỗi không được kéo treo UI.
 - Account là session/profile thật; Page là identity được switch từ account.
-- Một phiên/nghiệp vụ trong Page chạy account tuần tự; nhiều Page Tab có thể chạy song song.
+- Concurrency là policy orchestration của từng workflow, không phải giả định cố định toàn app. `group_post` Page Tab hiện vẫn chạy account tuần tự; workspace `Tương tác` có thể chạy rolling concurrency theo config đã snapshot.
+- Dù có nhiều workspace/Page Tab chạy song song, cùng một account không được bị hai flow điều khiển đồng thời; account-level execution coordinator là lock dùng chung toàn Main.
 - Secret không log plaintext.
 - Checkpoint/xác minh danh tính không được tự động bypass.
 - Không thêm anti-detection/evasion.
@@ -50,7 +51,8 @@ Electron Main
   +--> SQLite / Repositories
   |
   +--> Run Orchestration -----------------------------+
-  |      scheduler / account turn / delay / status    |
+  |      scheduler / account turn / concurrency       |
+  |      rolling pool / delay / status                |
   |      pause / resume / stop / worker lifecycle     |
   |                                                   |
   +--> Facebook Common Runtime <------------------+    |
@@ -140,14 +142,17 @@ Orchestration điều khiển **khi nào/ai chạy**, không điều khiển **F
 Nó sở hữu:
 
 - account list và thứ tự của phiên;
-- account hiện tại;
+- policy tuần tự/concurrency của workflow;
+- account hiện tại hoặc tập account active;
 - account đã hoàn thành lượt;
+- rolling pool/slot refill nếu workflow cho phép concurrency;
+- global account execution lease để cùng một account không chạy trùng giữa workflow;
 - số task/bài mỗi account;
 - delay giữa bài;
 - delay đổi account;
 - pause/resume/stop;
 - hết lượt account;
-- đổi account;
+- đổi/account refill slot;
 - hết phiên;
 - scheduler/time windows;
 - worker allocation/lifecycle;
@@ -166,6 +171,19 @@ Orchestration không được chứa:
 - code mở composer/upload media/publish cụ thể.
 
 Nếu `rotationService` hoặc service orchestration phải biết selector Facebook để chạy được, boundary đang bị sai.
+
+### 5.3. Rolling concurrency của workspace Tương tác
+
+`Tương tác` là workspace đầu tiên có concurrency account cấu hình được. Invariant hiện hành:
+
+- config `accountConcurrency` thuộc orchestration và được validate `1..20`;
+- config legacy thiếu field phải parse về `1`;
+- Start freeze config + account order vào run snapshot;
+- runner dùng **rolling pool**, không chia batch: khi một slot hoàn tất thì slot đó lấy account kế tiếp ngay dù các slot còn lại vẫn đang chạy;
+- account đang bị workflow khác giữ global execution lease không được làm mất slot nếu queue còn account khác acquire được; orchestration có thể bỏ qua tạm và quay lại account bị lock sau;
+- Pause ngăn cấp account/action mới và cooperative-pause các action đang active; Resume tiếp tục snapshot cũ; Stop dừng active worker và không cấp account mới;
+- `AccountExecutionCoordinator` vẫn là global account lock dùng chung giữa Scenario/Page/Action flows;
+- thay đổi này **không đổi** `group_post` rotation hiện hành: Group Page Tab vẫn tuần tự cho tới một batch riêng chủ đích thay semantics đó.
 
 ---
 
@@ -334,7 +352,8 @@ Ví dụ hiện tại `PublishResultDetector` trong `postingEngine.ts` dùng Gro
 
 `apps/desktop/src/main/services/accountExecutionCoordinator.ts`
 
-- coordination account-level; ownership mục tiêu: Orchestration.
+- coordination account-level; ownership mục tiêu: Orchestration;
+- lock table là global trong Electron Main; rolling pool phải acquire lease trước khi chiếm slot thực thi để cùng account không chạy trùng giữa workflow.
 
 `apps/desktop/src/main/services/pageTabWorkerManager.ts`
 
@@ -647,6 +666,8 @@ Test bằng fake task/common adapter khi có thể:
 - schedule windows;
 - worker crash/recovery;
 - per-run account statuses;
+- rolling pool không có batch barrier: slot xong phải refill account kế tiếp ngay;
+- account global-lock không được chiếm mất concurrency slot nếu còn account khác runnable;
 - không cần selector Facebook.
 
 ### Business Group
@@ -972,3 +993,50 @@ Các invariant bắt buộc:
 Ranh giới quan trọng:
 
 > Facebook Common chuẩn bị browser/session/Page identity; Content Library chỉ cung cấp dữ liệu đầu vào. Business task không được đọc live Content Library trong lúc publish, và Content Library không được biết selector Facebook hay trạng thái worker.
+
+---
+
+## 25. Workspace Tương tác — rolling account pool
+
+Lô rolling concurrency của workspace `Tương tác` bổ sung orchestration policy mà không tạo Facebook selector/runtime riêng.
+
+Source ownership:
+
+- `shared/interactionWorkspaceConfig.ts` sở hữu `accountConcurrency` + compatibility/default;
+- `main/services/rollingAccountPool.ts` là helper orchestration generic: quản lý queue/slot/refill, không biết Facebook selector;
+- `main/services/interactionWorkspaceRunnerService.ts` snapshot config/account, acquire `AccountExecutionCoordinator` lease và chạy account qua worker/Common Runtime hiện hữu;
+- UI Tương tác chỉ chỉnh config/hiển thị runtime, không trực tiếp mở browser/DB.
+
+Semantics bắt buộc:
+
+```text
+accountConcurrency = 4
+
+A  B  C  D  -> active
+|        |
+A xong   D vẫn chạy
+|
+v
+E vào ngay slot A
+
+B/C/D không cần kết thúc trước khi E bắt đầu.
+```
+
+Đây là **rolling/worker-pool concurrency**, không phải `chunk(4)` rồi `await Promise.all(batch)`.
+
+Account-level safety:
+
+- pool chỉ coi account là chiếm slot sau khi acquire được global account lease;
+- account đang bận ở Page/Scenario/workspace khác có thể được bỏ qua tạm để account kế tiếp lấp slot;
+- khi lease được giải phóng, account bị bỏ qua vẫn nằm queue và được xét lại;
+- business/Common Runtime không tự tạo lock thứ hai cạnh tranh với coordinator.
+
+UI account selection cho workspace phải giữ parity với picker Account Manager/Page Tab: search UID/tên/email/note, filter status/category, chọn đang lọc, dense grid, multi-select và Apply; không tạo một card-list picker khác chỉ cho Tương tác.
+
+Regression tối thiểu:
+
+- concurrency 2: account 1 và 2 bắt đầu; account 1 xong trong khi account 2 còn pending -> account 3 phải bắt đầu ngay;
+- locked account không làm pool tụt từ N slot xuống N-1 nếu còn account runnable khác;
+- legacy config -> concurrency 1;
+- Pause/Resume/Stop không tạo account mới sai trạng thái;
+- `group_post` sequential invariant vẫn xanh.
