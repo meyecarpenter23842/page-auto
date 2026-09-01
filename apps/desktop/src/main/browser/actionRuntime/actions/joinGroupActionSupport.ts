@@ -149,7 +149,9 @@ function localeMatches(text: string, locale: string): boolean {
 export function groupTextMatchesFilters(text: string, config: ActionConfig): boolean {
   if (configBoolean(config, 'memberFilterEnabled')) {
     const members = extractGroupMemberCount(text)
-    if (members === null || members < configNumber(config, 'memberMin', 0)) return false
+    const minimum = configNumber(config, 'memberMin', 0)
+    const maximum = configNumber(config, 'memberMax', 0)
+    if (members === null || members < minimum || (maximum > 0 && members > maximum)) return false
   }
 
   const privacy = detectGroupPrivacy(text)
@@ -175,6 +177,7 @@ export function configuredGroupTargets(config: ActionConfig): string[] {
 }
 
 async function candidateContainer(button: Locator): Promise<Locator | null> {
+  // Discovery-card fallback only. It is not the Group Interaction post-scope contract.
   const article = button.locator('xpath=ancestor::*[@role="article"][1]')
   if (await article.count().catch(() => 0)) return article
   const groupCard = button.locator('xpath=ancestor::div[.//a[contains(@href,"/groups/")]][1]')
@@ -315,6 +318,17 @@ export async function submitJoinAttempt(
   }
 
   return verifyJoinOutcome(page, candidateIdentity)
+}
+
+export async function pauseAfterJoinOutcome(
+  context: ActionExecutorContext,
+  config: ActionConfig,
+  outcome: JoinAttemptOutcome
+): Promise<boolean> {
+  if (outcome !== 'unverified') return true
+  const pauseMs = configNumber(config, 'errorPauseMinutes', 0) * 60_000
+  if (pauseMs <= 0) return true
+  return sleepWithControl(context.control, pauseMs)
 }
 
 export async function paceJoinGroup(

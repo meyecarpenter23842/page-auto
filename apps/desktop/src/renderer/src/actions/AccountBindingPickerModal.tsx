@@ -15,11 +15,12 @@ interface AccountBindingPickerModalProps {
   selectedIds: ReadonlySet<number>
   onApply: (accountIds: number[]) => void
   onClose: () => void
+  contextLabel?: string
 }
 
 type AccountPickerStatus = AccountStatus | 'all'
 
-export function AccountBindingPickerModal({ accounts, selectedIds, onApply, onClose }: AccountBindingPickerModalProps) {
+export function AccountBindingPickerModal({ accounts, selectedIds, onApply, onClose, contextLabel = 'Tương tác' }: AccountBindingPickerModalProps) {
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState<AccountPickerStatus>('all')
   const [category, setCategory] = useState('all')
@@ -79,7 +80,7 @@ export function AccountBindingPickerModal({ accounts, selectedIds, onApply, onCl
   return (
     <div className="page-tab-modal-backdrop" role="presentation" onMouseDown={onClose}>
       <section className="page-tab-modal pt-account-picker-modal" role="dialog" aria-modal="true" aria-label="Chọn tài khoản" onMouseDown={(event) => event.stopPropagation()}>
-        <div className="page-tab-modal-header"><div><p className="eyebrow">Account Manager</p><h2>Chọn tài khoản cho Tương tác</h2></div><button type="button" className="page-tab-icon-button" onClick={onClose}>×</button></div>
+        <div className="page-tab-modal-header"><div><p className="eyebrow">Account Manager</p><h2>Chọn tài khoản cho {contextLabel}</h2></div><button type="button" className="page-tab-icon-button" onClick={onClose}>×</button></div>
         <div className="pt-account-picker-filters">
           <input autoFocus value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Tìm UID, tên, email, note…" />
           <select value={status} onChange={(event) => setStatus(event.target.value as AccountPickerStatus)}><option value="all">Tất cả trạng thái</option>{ACCOUNT_STATUSES.map((item) => <option key={item} value={item}>{accountStatusLabels[item]}</option>)}</select>
