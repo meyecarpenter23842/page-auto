@@ -84,6 +84,35 @@ describe('interaction workspace run composition', () => {
     expect(composeInteractionActions(config, [])).toEqual([])
   })
 
+  it('keeps explicit Group targets in the whitelist and applies posts-per-target per Group', () => {
+    const config = draft({
+      targetMode: 'groups',
+      targetValues: '1527231867322980\nhttps://facebook.com/groups/20002',
+      postsPerTarget: 3,
+      actions: {
+        reaction: true,
+        comment: true,
+        replyComment: false,
+        reactComment: false,
+        commentTag: false,
+        poke: false
+      },
+      commentTemplates: 'Xin chào'
+    })
+    const actions = composeInteractionActions(config, ['1527231867322980', 'https://facebook.com/groups/20002'])
+    expect(actions.map((item) => item.actionType)).toEqual(['group_interaction'])
+    expect(actions[0]?.config).toMatchObject({
+      sourceMode: 'joined_groups',
+      joinedGroupMin: 2,
+      joinedGroupMax: 2,
+      groupWhitelist: '1527231867322980\nhttps://facebook.com/groups/20002',
+      reactionMin: 3,
+      reactionMax: 3,
+      commentMin: 3,
+      commentMax: 3
+    })
+  })
+
   it('composes group + comment-level actions in stable order', () => {
     const config = draft({
       targetMode: 'groups',

@@ -8,6 +8,7 @@ import {
 import {
   classifyGroupRestriction,
   configuredGroupWhitelist,
+  directGroupUrlsFromWhitelist,
   groupIdentityAllowed,
   hasConfiguredGroupReaction
 } from './groupInteractionActionSupport'
@@ -48,6 +49,15 @@ describe('K4.3.3 group interaction executor', () => {
     expect(groupIdentityAllowed('123', whitelist)).toBe(true)
     expect(groupIdentityAllowed('other', whitelist)).toBe(false)
     expect(groupIdentityAllowed(null, [])).toBe(true)
+  })
+
+  it('turns an explicit Group whitelist into direct Group URLs before scraping joined-group links', () => {
+    expect(directGroupUrlsFromWhitelist(['1527231867322980', 'testslug'], 2)).toEqual([
+      'https://www.facebook.com/groups/1527231867322980/',
+      'https://www.facebook.com/groups/testslug/'
+    ])
+    expect(directGroupUrlsFromWhitelist(['1', '2'], 1)).toEqual(['https://www.facebook.com/groups/1/'])
+    expect(directGroupUrlsFromWhitelist([], 5)).toEqual([])
   })
 
   it('never treats the reaction enable flag itself as an implicit Like choice', () => {
