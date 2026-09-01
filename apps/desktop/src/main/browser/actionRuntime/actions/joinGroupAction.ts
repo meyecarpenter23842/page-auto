@@ -17,6 +17,7 @@ import {
   joinCandidateText,
   normalizeGroupUrl,
   paceJoinGroup,
+  pauseAfterJoinOutcome,
   submitJoinAttempt,
   type JoinAttemptOutcome,
   type JoinGroupActionDependencies
@@ -66,6 +67,7 @@ async function runJoinButton(
   const outcome = await submitJoinAttempt(page, button, context, config)
   recordOutcome(stats, outcome)
 
+  if (!await pauseAfterJoinOutcome(context, config, outcome)) return false
   if (context.control.isStopped() || !canAttemptAnotherJoin(stats.attempted, target)) {
     return !context.control.isStopped()
   }

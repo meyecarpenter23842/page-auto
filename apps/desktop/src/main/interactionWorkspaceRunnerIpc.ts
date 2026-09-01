@@ -7,7 +7,9 @@ import {
 } from '../shared/interactionWorkspaceRunner'
 import { ScenarioActionWorkerManager } from './browser/scenarioActionWorkerManager'
 import { AppSettingsRepository } from './database/appSettingsRepository'
+import { ActionWorkspaceRepository } from './database/actionWorkspaceRepository'
 import { AccountExecutionCoordinator } from './services/accountExecutionCoordinator'
+import { GroupWorkspaceRunnerService } from './services/groupWorkspaceRunnerService'
 import { InteractionWorkspaceRunnerService } from './services/interactionWorkspaceRunnerService'
 
 export interface InteractionWorkspaceRunnerIpcRuntime { dispose: () => void }
@@ -22,38 +24,54 @@ export function registerInteractionWorkspaceRunnerIpcHandlers(
 ): InteractionWorkspaceRunnerIpcRuntime {
   const appSettings = new AppSettingsRepository(options.database)
   const workers = new ScenarioActionWorkerManager(() => appSettings.get().runtime)
-  const service = new InteractionWorkspaceRunnerService(
+  const accountExecution = new AccountExecutionCoordinator()
+  const workspaces = new ActionWorkspaceRepository(options.database)
+  const interactionService = new InteractionWorkspaceRunnerService(
     options.database,
     workers,
-    new AccountExecutionCoordinator(),
+    accountExecution,
+    options.dataDirectory,
+    () => appSettings.get()
+  )
+  const groupService = new GroupWorkspaceRunnerService(
+    options.database,
+    workers,
+    accountExecution,
     options.dataDirectory,
     () => appSettings.get()
   )
 
+  const serviceFor = (workspaceId: number) => {
+    const workspace = workspaces.get(workspaceId)
+    if (!workspace) throw new Error(`Không tìm thấy workspace #${workspaceId}.`)
+    return workspace.type === 'group' ? groupService : interactionService
+  }
+
   ipcMain.handle(
     INTERACTION_WORKSPACE_RUNNER_IPC.start,
-    (_event, payload: InteractionWorkspaceRunStartPayload) => service.start(payload.workspaceId)
+    (_event, payload: InteractionWorkspaceRunStartPayload) => serviceFor(payload.workspaceId).start(payload.workspaceId)
   )
   ipcMain.handle(
     INTERACTION_WORKSPACE_RUNNER_IPC.status,
-    (_event, payload: InteractionWorkspaceRunIdPayload) => service.status(payload.workspaceId)
+    (_event, payload: InteractionWorkspaceRunIdPayload) => serviceFor(payload.workspaceId).status(payload.workspaceId)
   )
   ipcMain.handle(
     INTERACTION_WORKSPACE_RUNNER_IPC.pause,
-    (_event, payload: InteractionWorkspaceRunIdPayload) => service.pause(payload.workspaceId)
+    (_event, payload: InteractionWorkspaceRunIdPayload) => serviceFor(payload.workspaceId).pause(payload.workspaceId)
   )
   ipcMain.handle(
     INTERACTION_WORKSPACE_RUNNER_IPC.resume,
-    (_event, payload: InteractionWorkspaceRunIdPayload) => service.resume(payload.workspaceId)
+    (_event, payload: InteractionWorkspaceRunIdPayload) => serviceFor(payload.workspaceId).resume(payload.workspaceId)
   )
   ipcMain.handle(
     INTERACTION_WORKSPACE_RUNNER_IPC.stop,
-    (_event, payload: InteractionWorkspaceRunIdPayload) => service.stop(payload.workspaceId)
+    (_event, payload: InteractionWorkspaceRunIdPayload) => serviceFor(payload.workspaceId).stop(payload.workspaceId)
   )
 
   return {
     dispose: () => {
-      service.dispose()
+      groupService.dispose()
+      interactionService.dispose()
       for (const channel of Object.values(INTERACTION_WORKSPACE_RUNNER_IPC)) ipcMain.removeHandler(channel)
     }
   }

@@ -18,7 +18,16 @@ const PACING: readonly ActionConfigFieldDefinition[] = [
   { key: 'itemDelayMinSeconds', label: 'Delay từ', kind: 'number', defaultValue: 200, min: 0, max: 3600, help: 'giây' },
   { key: 'itemDelayMaxSeconds', label: 'Delay đến', kind: 'number', defaultValue: 300, min: 0, max: 3600, help: 'giây' },
   { key: 'pauseAfterCount', label: 'Sau khi chạy', kind: 'number', defaultValue: 30, min: 0, max: 10000, help: 'lượt' },
-  { key: 'pauseMinutes', label: 'Tạm dừng', kind: 'number', defaultValue: 15, min: 0, max: 1440, help: 'phút' }
+  { key: 'pauseMinutes', label: 'Tạm dừng', kind: 'number', defaultValue: 15, min: 0, max: 1440, help: 'phút' },
+  {
+    key: 'errorPauseMinutes',
+    label: 'Tạm nghỉ khi lượt join lỗi',
+    kind: 'number',
+    defaultValue: 0,
+    min: 0,
+    max: 1440,
+    help: 'phút; cộng thêm sau kết quả không verify được'
+  }
 ]
 
 const JOIN_GROUP_SCHEMA: ActionConfigSchema = {
@@ -64,6 +73,15 @@ const JOIN_GROUP_SCHEMA: ActionConfigSchema = {
     { key: 'joinMax', label: 'Số nhóm đến', kind: 'number', defaultValue: 200, min: 1, max: 5000 },
     { key: 'memberFilterEnabled', label: 'Lọc theo số thành viên', kind: 'boolean', defaultValue: false },
     { key: 'memberMin', label: 'Thành viên tối thiểu', kind: 'number', defaultValue: 5000, min: 0, max: 1000000000 },
+    {
+      key: 'memberMax',
+      label: 'Thành viên tối đa',
+      kind: 'number',
+      defaultValue: 0,
+      min: 0,
+      max: 1000000000,
+      help: '0 = không giới hạn trên'
+    },
     { key: 'privacyOpen', label: 'Công khai (OPEN)', kind: 'boolean', defaultValue: true },
     { key: 'privacyClosed', label: 'Riêng tư (CLOSED)', kind: 'boolean', defaultValue: true },
     {
@@ -71,7 +89,7 @@ const JOIN_GROUP_SCHEMA: ActionConfigSchema = {
       label: 'Bỏ qua nhóm phải duyệt',
       kind: 'boolean',
       defaultValue: false,
-      help: 'Mặc định sẽ gửi yêu cầu và chờ duyệt. Chỉ bật mục này khi muốn bỏ qua nhóm cần quản trị viên phê duyệt.'
+      help: 'Chỉ bỏ qua khi không có nội dung trả lời. Nếu đã cấu hình câu trả lời text, action vẫn gửi yêu cầu tham gia.'
     },
     { key: 'locationEnabled', label: 'Lọc location', kind: 'boolean', defaultValue: false },
     {
@@ -110,6 +128,7 @@ const UI: Record<string, K431FieldUiMeta> = {
   joinMax: { section: 'Số lượng' },
   memberFilterEnabled: { section: 'Điều kiện' },
   memberMin: { section: 'Điều kiện', visibleWhen: { key: 'memberFilterEnabled', equals: true } },
+  memberMax: { section: 'Điều kiện', visibleWhen: { key: 'memberFilterEnabled', equals: true } },
   privacyOpen: { section: 'Điều kiện' },
   privacyClosed: { section: 'Điều kiện' },
   skipApprovalRequired: { section: 'Câu hỏi nhóm kín / cần duyệt' },
@@ -120,7 +139,8 @@ const UI: Record<string, K431FieldUiMeta> = {
   itemDelayMinSeconds: { section: 'Thiết lập' },
   itemDelayMaxSeconds: { section: 'Thiết lập' },
   pauseAfterCount: { section: 'Thiết lập' },
-  pauseMinutes: { section: 'Thiết lập' }
+  pauseMinutes: { section: 'Thiết lập' },
+  errorPauseMinutes: { section: 'Thiết lập' }
 }
 
 let applied = false
@@ -154,6 +174,9 @@ export function getK431ValidationErrors(actionType: string, config: ActionConfig
   }
   if (number('itemDelayMinSeconds') > number('itemDelayMaxSeconds')) {
     errors.push('Delay: giá trị từ phải nhỏ hơn hoặc bằng giá trị đến.')
+  }
+  if (bool('memberFilterEnabled') && number('memberMax') > 0 && number('memberMin') > number('memberMax')) {
+    errors.push('Số thành viên: giá trị từ phải nhỏ hơn hoặc bằng giá trị đến.')
   }
 
   const mode = text('sourceMode')

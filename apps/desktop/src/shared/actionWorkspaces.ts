@@ -1,4 +1,4 @@
-export const ACTION_WORKSPACE_TYPES = ['interaction'] as const
+export const ACTION_WORKSPACE_TYPES = ['interaction', 'group'] as const
 export type ActionWorkspaceType = (typeof ACTION_WORKSPACE_TYPES)[number]
 
 export const ACTION_WORKSPACE_IPC = {

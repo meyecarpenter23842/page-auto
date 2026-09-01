@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
 import type { AccountRecord } from '../../../shared/accounts'
 import type { ActionWorkspaceRecord, ActionWorkspaceType } from '../../../shared/actionWorkspaces'
+import { DEFAULT_GROUP_WORKSPACE_DRAFT, serializeGroupWorkspaceDraft } from '../../../shared/groupWorkspaceConfig'
 import { ScenarioWorkspace } from '../scenarios/ScenarioWorkspace'
+import { GroupWorkspace } from './GroupWorkspace'
 import { InteractionWorkspace } from './InteractionWorkspace'
 import { ACTION_WORKSPACE_DEFINITIONS, getActionWorkspaceDefinition } from './actionWorkspaceRegistry'
 import { DEFAULT_INTERACTION_WORKSPACE_DRAFT, serializeInteractionWorkspaceDraft } from './interactionWorkspaceModel'
@@ -16,6 +18,7 @@ function workspaceTabId(id: number): string {
 
 function defaultConfigJson(type: ActionWorkspaceType): string {
   if (type === 'interaction') return serializeInteractionWorkspaceDraft(DEFAULT_INTERACTION_WORKSPACE_DRAFT)
+  if (type === 'group') return serializeGroupWorkspaceDraft(DEFAULT_GROUP_WORKSPACE_DRAFT)
   return '{}'
 }
 
@@ -163,6 +166,7 @@ export function ActionWorkspace() {
         {tabs.map((tab) => (
           <div className="action-workspace-panel" role="tabpanel" aria-label={tab.label} hidden={activeTabId !== workspaceTabId(tab.id)} key={tab.id}>
             {tab.type === 'interaction' ? <InteractionWorkspace workspace={tab} availableAccounts={accounts} onWorkspaceSaved={handleWorkspaceSaved} /> : null}
+            {tab.type === 'group' ? <GroupWorkspace workspace={tab} availableAccounts={accounts} onWorkspaceSaved={handleWorkspaceSaved} /> : null}
           </div>
         ))}
       </div>
