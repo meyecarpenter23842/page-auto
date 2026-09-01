@@ -138,6 +138,10 @@ export const ACTION_REGISTRY: readonly ActionDefinition[] = [
   action('facebook_search', 'interaction', 'Tìm kiếm', 'Tìm kiếm nội dung theo từ khóa.', { configSchema: SEARCH_SCHEMA }),
   action('like_comment_seeding', 'interaction', 'Like Comment Seeding', 'Tương tác like/comment theo cấu hình seeding.'),
   action('keyword_interaction', 'interaction', 'Tương tác theo từ khóa', 'Tìm và tương tác theo từ khóa.', { configSchema: SEARCH_SCHEMA }),
+  action('react_comment', 'interaction', 'Thả cảm xúc comment', 'Thả Like/cảm xúc vào comment phù hợp.'),
+  action('reply_comment', 'interaction', 'Trả lời comment', 'Trả lời một comment phù hợp.', { supportsMedia: true }),
+  action('comment_tag', 'interaction', 'Comment tag', 'Đăng comment có tag/mention target phù hợp.'),
+  action('target_uid_interaction', 'interaction', 'Tương tác theo UID', 'Tương tác theo danh sách UID/URL cụ thể.', { supportsMedia: true }),
 
   action('friend_interaction', 'friends', 'Tương tác bạn bè', 'Tương tác với danh sách bạn bè.', { actors: PROFILE_ONLY }),
   action('poke_friend', 'friends', 'Chọc bạn bè', 'Chọc bạn bè.', { actors: PROFILE_ONLY }),
