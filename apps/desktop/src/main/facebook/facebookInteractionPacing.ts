@@ -1,4 +1,4 @@
-import type { FrameLocator, Keyboard, Locator, Mouse, Page } from 'playwright-core'
+import type { FileChooser, FrameLocator, Keyboard, Locator, Mouse, Page } from 'playwright-core'
 import { randomBrowserActionDelayMs, type BrowserSettings } from '../../shared/appSettings'
 
 export type FacebookInteractionBoundary = string
@@ -12,7 +12,8 @@ const PAGE_PACE_STATES = new WeakMap<Page, FacebookInteractionPaceState>()
 
 const LOCATOR_ACTION_METHODS = new Set([
   'click', 'dblclick', 'tap', 'fill', 'clear', 'type', 'pressSequentially', 'press',
-  'check', 'uncheck', 'setChecked', 'selectOption', 'setInputFiles', 'hover', 'focus', 'dragTo'
+  'check', 'uncheck', 'setChecked', 'selectOption', 'setInputFiles', 'hover', 'focus', 'dragTo',
+  'dispatchEvent', 'selectText'
 ])
 const PAGE_ACTION_METHODS = new Set([
   'goto', 'reload', 'goBack', 'goForward',
@@ -31,12 +32,24 @@ const FRAME_LOCATOR_FACTORY_METHODS = new Set([
   'locator', 'getByAltText', 'getByLabel', 'getByPlaceholder', 'getByRole', 'getByTestId',
   'getByText', 'getByTitle'
 ])
-const KEYBOARD_ACTION_METHODS = new Set(['insertText', 'press', 'type'])
-const MOUSE_ACTION_METHODS = new Set(['click', 'dblclick', 'wheel'])
+const KEYBOARD_ACTION_METHODS = new Set(['insertText', 'press', 'type', 'down', 'up'])
+const MOUSE_ACTION_METHODS = new Set(['click', 'dblclick', 'wheel', 'down', 'up'])
+const FILE_CHOOSER_ACTION_METHODS = new Set(['setFiles'])
+const TIME_CRITICAL_AUTH_INPUT_SELECTOR = [
+  'input[name="approvals_code"]',
+  'input[name="approvalsCode"]',
+  'input[autocomplete="one-time-code"]',
+  'input[name*="otp" i]'
+].join(',')
 
 function methodValue(target: object, property: PropertyKey): ((...args: unknown[]) => unknown) | null {
   const value = Reflect.get(target, property, target)
   return typeof value === 'function' ? value as (...args: unknown[]) => unknown : null
+}
+
+async function isTimeCriticalAuthenticationSurface(page: Page): Promise<boolean> {
+  if (page.url().toLowerCase().includes('/two_step_verification/')) return true
+  return page.locator(TIME_CRITICAL_AUTH_INPUT_SELECTOR).first().isVisible().catch(() => false)
 }
 
 function wrapFrameLocator(frameLocator: FrameLocator, pace: FacebookInteractionPace): FrameLocator {
@@ -114,6 +127,23 @@ function wrapMouse(mouse: Mouse, pace: FacebookInteractionPace): Mouse {
   })
 }
 
+function wrapFileChooser(fileChooser: FileChooser, pace: FacebookInteractionPace): FileChooser {
+  return new Proxy(fileChooser, {
+    get(target, property) {
+      const method = methodValue(target, property)
+      if (!method) return Reflect.get(target, property, target)
+      const name = String(property)
+      if (FILE_CHOOSER_ACTION_METHODS.has(name)) {
+        return async (...args: unknown[]) => {
+          await pace(`filechooser.${name}`)
+          return Reflect.apply(method, target, args)
+        }
+      }
+      return method.bind(target)
+    }
+  })
+}
+
 export function createFacebookInteractionPace(
   page: Page,
   browser: BrowserSettings,
@@ -121,8 +151,8 @@ export function createFacebookInteractionPace(
   state: FacebookInteractionPaceState = { suspended: 0 }
 ): FacebookInteractionPace {
   return async (boundary) => {
-    if (state.suspended > 0) {
-      diagnostic?.(`interaction=${boundary} delay=bypassed`)
+    if (state.suspended > 0 && await isTimeCriticalAuthenticationSurface(page)) {
+      diagnostic?.(`interaction=${boundary} delay=bypassed reason=time-critical-auth`)
       return
     }
     const delayMs = randomBrowserActionDelayMs(browser)
@@ -133,9 +163,9 @@ export function createFacebookInteractionPace(
 }
 
 /**
- * Run a time-critical Facebook step without operator pacing. This is intentionally narrow and is
- * used for short-lived authentication credentials (TOTP) so a code is not expired by a long UI delay.
- * It does not bypass login/checkpoint verification.
+ * Request a pacing bypass for a short-lived authentication credential. The common pacing layer only
+ * honors the request while Facebook is actually on a TOTP/one-time-code surface; login navigation,
+ * password entry and every normal Facebook business action keep the operator-configured delay.
  */
 export async function withoutFacebookInteractionPacing<T>(page: Page, run: () => Promise<T>): Promise<T> {
   const state = PAGE_PACE_STATES.get(page)
@@ -184,6 +214,14 @@ export function createPacedFacebookPage(
       }
       if (name === 'frameLocator') {
         return (...args: unknown[]) => wrapFrameLocator(Reflect.apply(method, target, args) as FrameLocator, pace)
+      }
+      if (name === 'waitForEvent') {
+        return async (...args: unknown[]) => {
+          const result = await Reflect.apply(method, target, args)
+          return args[0] === 'filechooser' && result
+            ? wrapFileChooser(result as FileChooser, pace)
+            : result
+        }
       }
       return method.bind(target)
     }

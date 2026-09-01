@@ -12,14 +12,14 @@ function candidateList(items: Locator[]): Locator {
   return {
     count: async () => items.length,
     nth: (index: number) => items[index]!,
-    first: () => items[0]!
+    first: () => items[0] ?? candidate(false)
   } as unknown as Locator
 }
 
-function textCandidate(visible: boolean, clickable: Locator): Locator {
+function textCandidate(visible: boolean, clickable?: Locator): Locator {
   return {
     isVisible: async () => visible,
-    locator: () => candidateList([clickable])
+    locator: () => candidateList(clickable ? [clickable] : [])
   } as unknown as Locator
 }
 
@@ -75,5 +75,17 @@ describe('actionSupport firstVisible', () => {
     } as unknown as Page
 
     await expect(firstVisible(scope, ['[role="button"][aria-label="Thích"]'])).resolves.toBe(clickable)
+  })
+
+  it('falls back to clicking the visible Like text itself when the live wrapper exposes no button semantics', async () => {
+    const visibleText = textCandidate(true)
+    const empty = candidateList([])
+    const scope = {
+      locator: () => empty,
+      getByRole: () => empty,
+      getByText: () => candidateList([visibleText])
+    } as unknown as Page
+
+    await expect(firstVisible(scope, ['[role="button"][aria-label="Thích"]'])).resolves.toBe(visibleText)
   })
 })
