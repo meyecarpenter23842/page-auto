@@ -70,10 +70,43 @@ export async function sleepWithControl(control: ActionRunControl, delayMs: numbe
   return !control.isStopped()
 }
 
+const MAX_VISIBLE_CANDIDATES_PER_SELECTOR = 32
+
+function exactAriaButtonName(selector: string): string | null {
+  return selector.match(/^\[role="button"\]\[aria-label="([^"]+)"\]$/)?.[1] ?? null
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+async function firstVisibleCandidate(locator: Locator): Promise<Locator | null> {
+  const count = Math.min(await locator.count().catch(() => 0), MAX_VISIBLE_CANDIDATES_PER_SELECTOR)
+  for (let index = 0; index < count; index += 1) {
+    const candidate = locator.nth(index)
+    if (await candidate.isVisible().catch(() => false)) return candidate
+  }
+  return null
+}
+
+async function accessibleButtonFallback(scope: Page | Locator, name: string): Promise<Locator | null> {
+  const exact = await firstVisibleCandidate(scope.getByRole('button', { name, exact: true }))
+  if (exact) return exact
+
+  if (!/^(?:Like|Thích)$/i.test(name)) return null
+  const prefix = new RegExp(`^${escapeRegExp(name)}(?:$|\\s|[:.,])`, 'i')
+  return firstVisibleCandidate(scope.getByRole('button', { name: prefix }))
+}
+
 export async function firstVisible(page: Page | Locator, selectors: readonly string[]): Promise<Locator | null> {
   for (const selector of selectors) {
-    const locator = page.locator(selector).first()
-    if (await locator.isVisible().catch(() => false)) return locator
+    const direct = await firstVisibleCandidate(page.locator(selector))
+    if (direct) return direct
+
+    const accessibleName = exactAriaButtonName(selector)
+    if (!accessibleName) continue
+    const fallback = await accessibleButtonFallback(page, accessibleName)
+    if (fallback) return fallback
   }
   return null
 }
