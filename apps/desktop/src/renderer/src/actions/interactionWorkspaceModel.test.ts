@@ -42,18 +42,22 @@ describe('interaction workspace composition model', () => {
     expect(plan.modules.every((module) => module.runtimeStatus === 'ready')).toBe(true)
   })
 
-  it('keeps placeholder modules visible and explains missing target adapters', () => {
+  it('keeps placeholder modules visible and blocks missing target adapters', () => {
     const seeding = buildInteractionWorkspacePlan(draft({ targetMode: 'seeding', targetValues: 'post-01' }))
     expect(seeding.modules[0]).toMatchObject({ actionType: 'like_comment_seeding', runtimeStatus: 'placeholder' })
     expect(seeding.warnings.some((message) => message.includes('chưa có executor'))).toBe(true)
 
     const friendRequest = buildInteractionWorkspacePlan(draft({ targetMode: 'friend_requests' }))
-    expect(friendRequest.warnings.some((message) => message.includes('target collector'))).toBe(true)
+    expect(friendRequest.errors.some((message) => message.includes('target collector'))).toBe(true)
   })
 
-  it('validates conditional config and actor compatibility', () => {
+  it('validates conditional config, Page UID and actor compatibility', () => {
+    const missingPage = buildInteractionWorkspacePlan(draft({ actor: 'page' }))
+    expect(missingPage.errors).toContain('Actor Page cần nhập Page UID.')
+
     const plan = buildInteractionWorkspacePlan(draft({
       actor: 'page',
+      pageUid: '123456',
       actions: {
         reaction: true,
         comment: true,
@@ -65,12 +69,13 @@ describe('interaction workspace composition model', () => {
       commentTemplates: ''
     }))
     expect(plan.errors).toContain('Comment đang bật nhưng chưa có nội dung.')
-    expect(plan.warnings.some((message) => message.includes('không hỗ trợ actor Page'))).toBe(true)
+    expect(plan.errors.some((message) => message.includes('không hỗ trợ actor Page'))).toBe(true)
   })
 
   it('round-trips persisted workspace config and safely fills missing fields', () => {
     const source = draft({
       actor: 'page',
+      pageUid: '987654321',
       targetMode: 'uid_limit',
       targetValues: '10001|10002',
       delayMinSeconds: 7,
@@ -82,6 +87,7 @@ describe('interaction workspace composition model', () => {
 
     const legacy = parseInteractionWorkspaceDraft(JSON.stringify({ targetMode: 'groups', targetValues: '123' }))
     expect(legacy.targetMode).toBe('groups')
+    expect(legacy.pageUid).toBe('')
     expect(legacy.actions).toEqual(DEFAULT_INTERACTION_WORKSPACE_DRAFT.actions)
     expect(legacy.reactions).toEqual(DEFAULT_INTERACTION_WORKSPACE_DRAFT.reactions)
   })

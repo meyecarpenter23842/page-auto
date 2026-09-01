@@ -23,7 +23,10 @@ import {
   withFacebookCheckpointKind
 } from './posting/facebookCheckpoint'
 import { ActionRunner } from '../services/actionRunner'
-import { FacebookCommonRuntime } from '../facebook/facebookCommonRuntime'
+import {
+  FacebookCommonRuntime,
+  type FacebookCommonStepResult
+} from '../facebook/facebookCommonRuntime'
 import { withoutFacebookInteractionPacing } from '../facebook/facebookInteractionPacing'
 
 const parentPort = process.parentPort
@@ -33,6 +36,7 @@ installManagedBrowserReuse()
 let queue = Promise.resolve()
 let shuttingDown = false
 const stoppedRunKeys = new Set<string>()
+const pausedRunKeys = new Set<string>()
 
 function messagePayload(event: unknown): unknown {
   return event && typeof event === 'object' && 'data' in event
@@ -73,11 +77,12 @@ async function ensureProfileSession(job: ScenarioActionWorkerJob, runtime: Faceb
   return session
 }
 
-function unsupportedPageSwitch(): PostingJobResult {
+function commonStepToPosting(result: FacebookCommonStepResult): PostingJobResult {
+  if (result.status === 'success') return { status: 'success', message: result.message }
   return {
-    status: 'failed',
-    code: 'page_navigation_failed',
-    message: 'Scenario Runner profile không thực hiện Page switch. Page sẽ được nối ở runtime Page riêng.'
+    status: result.status === 'needs_login' ? 'needs_login' : 'failed',
+    ...(result.code ? { code: result.code } : {}),
+    message: result.message
   }
 }
 
@@ -133,11 +138,29 @@ async function liveAccountStatus(runtime: FacebookCommonRuntime, fallback: Accou
   return detectFacebookAccountStatus(runtime.page).catch(() => fallback)
 }
 
+async function waitIfRunPaused(runKey: string): Promise<void> {
+  while (pausedRunKeys.has(runKey) && !stoppedRunKeys.has(runKey)) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 100))
+  }
+}
+
+async function sleepWithRunControl(runKey: string, delayMs: number): Promise<void> {
+  let remaining = Math.max(0, delayMs)
+  while (remaining > 0 && !stoppedRunKeys.has(runKey)) {
+    await waitIfRunPaused(runKey)
+    if (stoppedRunKeys.has(runKey)) return
+    const chunk = Math.min(100, remaining)
+    await new Promise<void>((resolve) => setTimeout(resolve, chunk))
+    remaining -= chunk
+  }
+}
+
 async function execute(job: ScenarioActionWorkerJob): Promise<ScenarioActionWorkerResult> {
   setManagedBrowserPlacement(job.browserPlacement ?? null)
+  const pageUid = job.request.actor.kind === 'page' ? job.request.actor.pageUid.trim() : ''
   const opened = await FacebookCommonRuntime.open({
     profileDirectory: job.profileDirectory,
-    pageUid: '',
+    pageUid,
     browser: job.browser,
     session: job.session,
     network: job.network,
@@ -162,11 +185,8 @@ async function execute(job: ScenarioActionWorkerJob): Promise<ScenarioActionWork
   const runtime = opened.runtime
   const control: ActionRunControl = {
     isStopped: () => stoppedRunKeys.has(job.request.runKey),
-    waitIfPaused: async () => undefined,
-    sleep: async (delayMs) => {
-      if (delayMs <= 0) return
-      await new Promise<void>((resolve) => setTimeout(resolve, delayMs))
-    }
+    waitIfPaused: () => waitIfRunPaused(job.request.runKey),
+    sleep: (delayMs) => sleepWithRunControl(job.request.runKey, delayMs)
   }
 
   let latestSession: FacebookSessionResult | null = null
@@ -200,7 +220,7 @@ async function execute(job: ScenarioActionWorkerJob): Promise<ScenarioActionWork
       }
       return result
     },
-    switchPage: async () => unsupportedPageSwitch()
+    switchPage: async () => commonStepToPosting(await runtime.prepareForPage())
   })
   const runner = new ActionRunner(host, createK4ActionExecutorRegistry(actionDependencies(runtime, job)), (event) => {
     parentPort.postMessage({ type: 'log', event })
@@ -241,6 +261,7 @@ async function execute(job: ScenarioActionWorkerJob): Promise<ScenarioActionWork
   const sessionCookie = metadata.sessionCookie ?? (preparedSession?.status === 'valid' ? preparedSession.cookie : null)
   await runtime.close().catch(() => undefined)
   stoppedRunKeys.delete(job.request.runKey)
+  pausedRunKeys.delete(job.request.runKey)
   return {
     summary,
     sessionCookie,
@@ -259,7 +280,16 @@ parentPort.on('message', (event) => {
   const payload = messagePayload(event) as ScenarioActionWorkerRequestMessage | undefined
   if (!payload || typeof payload !== 'object') return
 
+  if (payload.type === 'pause') {
+    pausedRunKeys.add(payload.runKey)
+    return
+  }
+  if (payload.type === 'resume') {
+    pausedRunKeys.delete(payload.runKey)
+    return
+  }
   if (payload.type === 'stop') {
+    pausedRunKeys.delete(payload.runKey)
     stoppedRunKeys.add(payload.runKey)
     return
   }

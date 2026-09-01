@@ -15,7 +15,9 @@ interface PendingAction {
   runKey: string
   resolve: (result: ScenarioActionWorkerResult) => void
   onLog?: (event: ActionLogEvent) => void
-  timer: NodeJS.Timeout
+  timer: NodeJS.Timeout | null
+  timeoutStartedAt: number
+  remainingTimeoutMs: number
   sent: boolean
 }
 interface WorkerEntry {
@@ -30,6 +32,8 @@ interface WorkerEntry {
 export interface ScenarioActionSpecialHandler {
   handles(actionType: string): boolean
   run(job: ScenarioActionWorkerJob, onLog?: (event: ActionLogEvent) => void): Promise<ScenarioActionWorkerResult>
+  pause?(accountId: number, runKey: string): void
+  resume?(accountId: number, runKey: string): void
   stop?(accountId: number, runKey: string): void
   closeAccount?(accountId: number): Promise<void>
   closeAll?(): void
@@ -58,15 +62,10 @@ export class ScenarioActionWorkerManager {
 
   async run(job: ScenarioActionWorkerJob, onLog?: (event: ActionLogEvent) => void): Promise<ScenarioActionWorkerResult> {
     if (this.specialHandler?.handles(job.request.actionType)) {
-      // A persistent profile cannot be driven by the normal Scenario worker and
-      // the real posting worker at the same time. Handoff ownership first.
       await this.closeWorkerProcess(job.accountId)
       return this.specialHandler.run(job, onLog)
     }
 
-    // Symmetric handoff when the next action returns from real group posting to
-    // a normal Scenario action. Successful posting workers are intentionally
-    // reusable within group_post, but must release the profile before this worker opens it.
     await this.specialHandler?.closeAccount?.(job.accountId)
 
     const runtime = { ...this.getRuntimeSettings() }
@@ -98,18 +97,35 @@ export class ScenarioActionWorkerManager {
     if (entry.pending) return failedWorkerResult(job, 'browser_unavailable', `Action worker account #${job.accountId} đang bận.`)
     return new Promise<ScenarioActionWorkerResult>((resolve) => {
       const timeoutMs = Math.max(60_000, runtime.maxAccountRuntimeSeconds * 1000)
-      const timer = setTimeout(() => {
-        if (!entry?.pending || entry.pending.runKey !== job.request.runKey) return
-        const pending = entry.pending
-        entry.pending = null
-        entry.shuttingDown = true
-        this.workers.delete(job.accountId)
-        entry.process.kill()
-        pending.resolve(failedWorkerResult(job, 'network_timeout', 'Action worker vượt giới hạn runtime cho phép.'))
-      }, timeoutMs)
-      entry.pending = { job, runKey: job.request.runKey, resolve, ...(onLog ? { onLog } : {}), timer, sent: false }
+      entry.pending = {
+        job,
+        runKey: job.request.runKey,
+        resolve,
+        ...(onLog ? { onLog } : {}),
+        timer: null,
+        timeoutStartedAt: 0,
+        remainingTimeoutMs: timeoutMs,
+        sent: false
+      }
+      this.armTimeout(entry)
       this.dispatch(entry, job)
     })
+  }
+
+  pause(accountId: number, runKey: string): void {
+    this.specialHandler?.pause?.(accountId, runKey)
+    const entry = this.workers.get(accountId)
+    if (!entry || entry.shuttingDown || entry.pending?.runKey !== runKey) return
+    this.pauseTimeout(entry.pending)
+    try { entry.process.postMessage({ type: 'pause', runKey }) } catch { /* worker exit settles pending */ }
+  }
+
+  resume(accountId: number, runKey: string): void {
+    this.specialHandler?.resume?.(accountId, runKey)
+    const entry = this.workers.get(accountId)
+    if (!entry || entry.shuttingDown || entry.pending?.runKey !== runKey) return
+    this.armTimeout(entry)
+    try { entry.process.postMessage({ type: 'resume', runKey }) } catch { /* worker exit settles pending */ }
   }
 
   stop(accountId: number, runKey: string): void {
@@ -166,7 +182,7 @@ export class ScenarioActionWorkerManager {
       entry.shuttingDown = true
       const pending = entry.pending
       entry.pending = null
-      if (pending) { clearTimeout(pending.timer); pending.resolve(failedWorkerResult(pending.job, 'browser_unavailable', `Action worker đã thoát (code ${code}).`)) }
+      if (pending) { if (pending.timer) clearTimeout(pending.timer); pending.resolve(failedWorkerResult(pending.job, 'browser_unavailable', `Action worker đã thoát (code ${code}).`)) }
       if (this.workers.get(job.accountId) === entry) this.workers.delete(job.accountId)
     })
     return entry
@@ -177,7 +193,7 @@ export class ScenarioActionWorkerManager {
     if (!pending || pending.sent || !entry.ready || entry.shuttingDown) return
     pending.sent = true
     try { entry.process.postMessage({ type: 'execute', job }) } catch (error) {
-      clearTimeout(pending.timer); entry.pending = null; pending.resolve(failedWorkerResult(job, 'browser_unavailable', error instanceof Error ? error.message : String(error)))
+      if (pending.timer) clearTimeout(pending.timer); entry.pending = null; pending.resolve(failedWorkerResult(job, 'browser_unavailable', error instanceof Error ? error.message : String(error)))
     }
   }
 
@@ -188,6 +204,30 @@ export class ScenarioActionWorkerManager {
     if (payload.type === 'log') { entry.pending?.onLog?.(payload.event); return }
     const pending = entry.pending
     if (!pending || pending.runKey !== payload.runKey) return
-    clearTimeout(pending.timer); entry.pending = null; pending.resolve(payload.result)
+    if (pending.timer) clearTimeout(pending.timer)
+    entry.pending = null
+    pending.resolve(payload.result)
+  }
+
+  private pauseTimeout(pending: PendingAction): void {
+    if (!pending.timer) return
+    clearTimeout(pending.timer)
+    pending.timer = null
+    const elapsed = Math.max(0, Date.now() - pending.timeoutStartedAt)
+    pending.remainingTimeoutMs = Math.max(1, pending.remainingTimeoutMs - elapsed)
+  }
+
+  private armTimeout(entry: WorkerEntry): void {
+    const pending = entry.pending
+    if (!pending || pending.timer || entry.shuttingDown) return
+    pending.timeoutStartedAt = Date.now()
+    pending.timer = setTimeout(() => {
+      if (!entry.pending || entry.pending !== pending || entry.pending.runKey !== pending.runKey) return
+      entry.pending = null
+      entry.shuttingDown = true
+      this.workers.delete(entry.accountId)
+      entry.process.kill()
+      pending.resolve(failedWorkerResult(pending.job, 'network_timeout', 'Action worker vượt giới hạn runtime cho phép.'))
+    }, pending.remainingTimeoutMs)
   }
 }

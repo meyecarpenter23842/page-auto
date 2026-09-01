@@ -1,5 +1,28 @@
 import { getActionDefinition, type ActionRuntimeStatus } from '../../../shared/actionRegistry'
 import { applyActionOverrides } from '../../../shared/actionOverrides'
+import {
+  DEFAULT_INTERACTION_WORKSPACE_DRAFT,
+  parseInteractionWorkspaceDraft,
+  serializeInteractionWorkspaceDraft,
+  type InteractionActionKey,
+  type InteractionActor,
+  type InteractionReactionKey,
+  type InteractionTargetMode,
+  type InteractionWorkspaceDraft
+} from '../../../shared/interactionWorkspaceConfig'
+
+export {
+  DEFAULT_INTERACTION_WORKSPACE_DRAFT,
+  parseInteractionWorkspaceDraft,
+  serializeInteractionWorkspaceDraft
+} from '../../../shared/interactionWorkspaceConfig'
+export type {
+  InteractionActionKey,
+  InteractionActor,
+  InteractionReactionKey,
+  InteractionTargetMode,
+  InteractionWorkspaceDraft
+} from '../../../shared/interactionWorkspaceConfig'
 
 applyActionOverrides()
 
@@ -8,13 +31,10 @@ export const INTERACTION_TARGET_OPTIONS = [
   { id: 'friend_requests', label: 'Người gửi yêu cầu kết bạn', hint: 'Dùng người đã gửi lời mời kết bạn làm nguồn target.' },
   { id: 'uid_distribute', label: 'UID · chia đều', hint: 'Chia danh sách UID/URL cho các account theo lượt.' },
   { id: 'uid_limit', label: 'UID · theo limit', hint: 'Mỗi account lấy số UID theo limit cấu hình.' },
-  { id: 'uid_account_file', label: '1 account · 1 file UID', hint: 'Mỗi account sử dụng một file UID riêng.' },
+  { id: 'uid_account_file', label: '1 account · 1 file UID', hint: 'Mỗi account sử dụng file UID riêng theo UID account.' },
   { id: 'groups', label: 'Group', hint: 'Tương tác nội dung trong danh sách Group.' },
-  { id: 'seeding', label: 'Seeding', hint: 'Luồng like/comment seeding; module hiện vẫn được hiển thị nếu chưa có executor.' }
-] as const
-
-export type InteractionTargetMode = typeof INTERACTION_TARGET_OPTIONS[number]['id']
-export type InteractionActor = 'profile' | 'page'
+  { id: 'seeding', label: 'Seeding', hint: 'Luồng like/comment seeding; module vẫn hiện nếu chưa có executor.' }
+] as const satisfies ReadonlyArray<{ id: InteractionTargetMode; label: string; hint: string }>
 
 export const INTERACTION_ACTION_OPTIONS = [
   { key: 'reaction', label: 'Like / Reaction' },
@@ -23,28 +43,7 @@ export const INTERACTION_ACTION_OPTIONS = [
   { key: 'reactComment', label: 'Like / Reaction comment' },
   { key: 'commentTag', label: 'Tag trong comment' },
   { key: 'poke', label: 'Chọc bạn bè' }
-] as const
-
-export type InteractionActionKey = typeof INTERACTION_ACTION_OPTIONS[number]['key']
-export type InteractionReactionKey = 'like' | 'love' | 'care' | 'haha' | 'wow' | 'sad' | 'angry'
-
-export interface InteractionWorkspaceDraft {
-  actor: InteractionActor
-  targetMode: InteractionTargetMode
-  targetValues: string
-  uidFilePath: string
-  actions: Record<InteractionActionKey, boolean>
-  reactions: Record<InteractionReactionKey, boolean>
-  commentMatch: string
-  commentTemplates: string
-  replyTemplates: string
-  tagTargets: string
-  targetLimit: number
-  postsPerTarget: number
-  delayMinSeconds: number
-  delayMaxSeconds: number
-  repeat: boolean
-}
+] as const satisfies ReadonlyArray<{ key: InteractionActionKey; label: string }>
 
 export interface InteractionModulePlanItem {
   actionType: string
@@ -58,39 +57,6 @@ export interface InteractionWorkspacePlan {
   warnings: string[]
 }
 
-export const DEFAULT_INTERACTION_WORKSPACE_DRAFT: InteractionWorkspaceDraft = {
-  actor: 'profile',
-  targetMode: 'friends',
-  targetValues: '',
-  uidFilePath: '',
-  actions: {
-    reaction: true,
-    comment: false,
-    replyComment: false,
-    reactComment: false,
-    commentTag: false,
-    poke: false
-  },
-  reactions: {
-    like: true,
-    love: false,
-    care: false,
-    haha: false,
-    wow: false,
-    sad: false,
-    angry: false
-  },
-  commentMatch: '',
-  commentTemplates: '',
-  replyTemplates: '',
-  tagTargets: '',
-  targetLimit: 20,
-  postsPerTarget: 1,
-  delayMinSeconds: 2,
-  delayMaxSeconds: 5,
-  repeat: false
-}
-
 const DRIVER_BY_TARGET: Record<InteractionTargetMode, string> = {
   friends: 'friend_interaction',
   friend_requests: 'friend_interaction',
@@ -102,80 +68,6 @@ const DRIVER_BY_TARGET: Record<InteractionTargetMode, string> = {
 }
 
 const LIST_TARGETS = new Set<InteractionTargetMode>(['uid_distribute', 'uid_limit', 'groups', 'seeding'])
-const ACTION_KEYS = INTERACTION_ACTION_OPTIONS.map((option) => option.key)
-const REACTION_KEYS: InteractionReactionKey[] = ['like', 'love', 'care', 'haha', 'wow', 'sad', 'angry']
-const TARGET_MODES = new Set<string>(INTERACTION_TARGET_OPTIONS.map((option) => option.id))
-
-function cloneDefaultDraft(): InteractionWorkspaceDraft {
-  return {
-    ...DEFAULT_INTERACTION_WORKSPACE_DRAFT,
-    actions: { ...DEFAULT_INTERACTION_WORKSPACE_DRAFT.actions },
-    reactions: { ...DEFAULT_INTERACTION_WORKSPACE_DRAFT.reactions }
-  }
-}
-
-function objectValue(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null
-}
-
-function stringValue(value: unknown, fallback: string): string {
-  return typeof value === 'string' ? value : fallback
-}
-
-function positiveNumber(value: unknown, fallback: number): number {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 1 ? value : fallback
-}
-
-function nonNegativeNumber(value: unknown, fallback: number): number {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback
-}
-
-export function parseInteractionWorkspaceDraft(configJson: string): InteractionWorkspaceDraft {
-  const fallback = cloneDefaultDraft()
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(configJson)
-  } catch {
-    return fallback
-  }
-  const raw = objectValue(parsed)
-  if (!raw) return fallback
-
-  const rawActions = objectValue(raw.actions)
-  const rawReactions = objectValue(raw.reactions)
-  const actions = { ...fallback.actions }
-  const reactions = { ...fallback.reactions }
-  for (const key of ACTION_KEYS) {
-    if (typeof rawActions?.[key] === 'boolean') actions[key] = rawActions[key] as boolean
-  }
-  for (const key of REACTION_KEYS) {
-    if (typeof rawReactions?.[key] === 'boolean') reactions[key] = rawReactions[key] as boolean
-  }
-
-  return {
-    actor: raw.actor === 'page' ? 'page' : 'profile',
-    targetMode: typeof raw.targetMode === 'string' && TARGET_MODES.has(raw.targetMode)
-      ? raw.targetMode as InteractionTargetMode
-      : fallback.targetMode,
-    targetValues: stringValue(raw.targetValues, fallback.targetValues),
-    uidFilePath: stringValue(raw.uidFilePath, fallback.uidFilePath),
-    actions,
-    reactions,
-    commentMatch: stringValue(raw.commentMatch, fallback.commentMatch),
-    commentTemplates: stringValue(raw.commentTemplates, fallback.commentTemplates),
-    replyTemplates: stringValue(raw.replyTemplates, fallback.replyTemplates),
-    tagTargets: stringValue(raw.tagTargets, fallback.tagTargets),
-    targetLimit: positiveNumber(raw.targetLimit, fallback.targetLimit),
-    postsPerTarget: positiveNumber(raw.postsPerTarget, fallback.postsPerTarget),
-    delayMinSeconds: nonNegativeNumber(raw.delayMinSeconds, fallback.delayMinSeconds),
-    delayMaxSeconds: nonNegativeNumber(raw.delayMaxSeconds, fallback.delayMaxSeconds),
-    repeat: typeof raw.repeat === 'boolean' ? raw.repeat : fallback.repeat
-  }
-}
-
-export function serializeInteractionWorkspaceDraft(draft: InteractionWorkspaceDraft): string {
-  return JSON.stringify(draft)
-}
 
 function selectedActionCount(draft: InteractionWorkspaceDraft): number {
   return Object.values(draft.actions).filter(Boolean).length
@@ -194,12 +86,13 @@ export function buildInteractionWorkspacePlan(draft: InteractionWorkspaceDraft):
   if (draft.delayMinSeconds > draft.delayMaxSeconds) errors.push('Delay từ phải nhỏ hơn hoặc bằng delay đến.')
   if (draft.targetLimit < 1) errors.push('Limit target phải lớn hơn 0.')
   if (draft.postsPerTarget < 1) errors.push('Số bài / target phải lớn hơn 0.')
+  if (draft.actor === 'page' && !draft.pageUid.trim()) errors.push('Actor Page cần nhập Page UID.')
 
   if (LIST_TARGETS.has(draft.targetMode) && !draft.targetValues.trim()) {
     errors.push('Danh sách UID/URL/Group không được để trống với nguồn target này.')
   }
   if (draft.targetMode === 'uid_account_file' && !draft.uidFilePath.trim()) {
-    errors.push('Cần nhập đường dẫn file UID cho chế độ 1 account · 1 file UID.')
+    errors.push('Cần nhập folder hoặc đường dẫn mẫu file UID cho chế độ 1 account · 1 file UID.')
   }
   if (draft.actions.reaction && !Object.values(draft.reactions).some(Boolean)) {
     errors.push('Like / Reaction cần chọn ít nhất một cảm xúc.')
@@ -221,10 +114,16 @@ export function buildInteractionWorkspacePlan(draft: InteractionWorkspaceDraft):
   if (draft.actions.poke) pushModule(actionTypes, 'poke_friend')
 
   if (draft.targetMode === 'friend_requests' && (draft.actions.reaction || draft.actions.comment)) {
-    warnings.push('Nguồn “người gửi yêu cầu kết bạn” chưa có target collector riêng; khi nối runner cần bổ sung tầng lấy target trước friend_interaction.')
+    errors.push('Nguồn “người gửi yêu cầu kết bạn” chưa có target collector riêng; chưa thể Start tổ hợp này.')
   }
   if (draft.targetMode === 'uid_account_file') {
-    warnings.push('Chia 1 file UID cho từng account đã được lưu cùng workspace; file picker/distribution sẽ nối ở lô runner.')
+    warnings.push('Runner đọc <UID>.txt trong folder đã cấu hình; có thể dùng {uid} trong đường dẫn mẫu.')
+  }
+  if (
+    (draft.targetMode === 'friends' || draft.targetMode === 'friend_requests')
+    && (draft.actions.reactComment || draft.actions.replyComment || draft.actions.commentTag)
+  ) {
+    errors.push('Các action cấp comment cần URL/UID target cụ thể; hãy dùng nguồn UID/Group/Seeding hoặc file UID.')
   }
 
   const modules: InteractionModulePlanItem[] = actionTypes.flatMap((actionType) => {
@@ -235,7 +134,7 @@ export function buildInteractionWorkspacePlan(draft: InteractionWorkspaceDraft):
     }
     if (definition.runtimeStatus !== 'ready') warnings.push(`${definition.label}: module chưa có executor.`)
     if (!definition.capabilities.actors.includes(draft.actor)) {
-      warnings.push(`${definition.label}: không hỗ trợ actor ${draft.actor === 'page' ? 'Page' : 'Profile'}.`)
+      errors.push(`${definition.label}: không hỗ trợ actor ${draft.actor === 'page' ? 'Page' : 'Profile'}.`)
     }
     return [{ actionType, label: definition.label, runtimeStatus: definition.runtimeStatus }]
   })
