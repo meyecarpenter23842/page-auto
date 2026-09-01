@@ -11,7 +11,8 @@ import {
   configuredGroupWhitelist,
   directGroupUrlsFromWhitelist,
   groupIdentityAllowed,
-  hasConfiguredGroupReaction
+  hasConfiguredGroupReaction,
+  isAppliedReactionAriaLabel
 } from './groupInteractionActionSupport'
 
 describe('K4.3.3 group interaction executor', () => {
@@ -73,6 +74,15 @@ describe('K4.3.3 group interaction executor', () => {
       reactionAngry: false
     })).toBe(false)
     expect(hasConfiguredGroupReaction({ reactionEnabled: true, reactionLove: true })).toBe(true)
+  })
+
+  it('recognizes the live Facebook aria transition only after a reaction is applied', () => {
+    expect(isAppliedReactionAriaLabel('Like')).toBe(false)
+    expect(isAppliedReactionAriaLabel('Thích')).toBe(false)
+    expect(isAppliedReactionAriaLabel('Remove Like')).toBe(true)
+    expect(isAppliedReactionAriaLabel('Remove Love')).toBe(true)
+    expect(isAppliedReactionAriaLabel('Bỏ Thích')).toBe(true)
+    expect(isAppliedReactionAriaLabel(null)).toBe(false)
   })
 
   it('classifies Facebook restriction messages without bypassing them', () => {
