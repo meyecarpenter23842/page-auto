@@ -18,7 +18,12 @@ export interface GroupInteractionActionDependencies extends BaseViewActionDepend
 
 const ARTICLE_SELECTOR = 'div[role="article"]'
 const GROUP_LINK_SELECTOR = 'a[href*="/groups/"]'
-const LIKE_SELECTORS = ['[role="button"][aria-label="Like"]', '[role="button"][aria-label="Thích"]'] as const
+const LIVE_REACTION_BUTTON_SELECTOR = '[role="button"]:has([data-ad-rendering-role="like_button"])'
+const LIKE_SELECTORS = [
+  LIVE_REACTION_BUTTON_SELECTOR,
+  '[role="button"][aria-label="Like"]',
+  '[role="button"][aria-label="Thích"]'
+] as const
 const COMMENT_BOX_SELECTORS = [
   '[contenteditable="true"][aria-label*="comment" i]',
   '[contenteditable="true"][aria-label*="bình luận" i]'
@@ -47,6 +52,9 @@ const REACTION_SELECTORS: Record<string, readonly string[]> = {
   sad: ['[role="button"][aria-label="Sad"]', '[role="button"][aria-label="Buồn"]'],
   angry: ['[role="button"][aria-label="Angry"]', '[role="button"][aria-label="Phẫn nộ"]']
 }
+const APPLIED_REACTION_LABEL_PATTERN = /^(?:Remove(?:\s|$)|Unlike(?:\s|$)|Bỏ(?:\s|$)|Gỡ(?:\s|$)|Xóa(?:\s|$))/i
+const REACTION_VERIFY_TIMEOUT_MS = 3000
+const REACTION_VERIFY_POLL_MS = 150
 
 const RESTRICTION_PATTERNS: readonly { code: GroupRestrictionCode; pattern: RegExp }[] = [
   { code: 'comment_blocked', pattern: /(?:you (?:can(?:not|'t)|are unable to) comment|comments? (?:are|have been) turned off|bạn không thể bình luận|đã tắt bình luận|bị chặn bình luận)/i },
@@ -89,6 +97,10 @@ export function groupIdentityAllowed(identity: string | null, whitelist: readonl
 
 export function hasConfiguredGroupReaction(config: ActionConfig): boolean {
   return REACTION_CONFIG_KEYS.some((key) => config[key] === true)
+}
+
+export function isAppliedReactionAriaLabel(label: string | null | undefined): boolean {
+  return Boolean(label && APPLIED_REACTION_LABEL_PATTERN.test(label.trim()))
 }
 
 export function classifyGroupRestriction(text: string): GroupRestrictionCode | null {
@@ -152,16 +164,65 @@ export async function sortGroupFeedByRecent(page: Page): Promise<boolean> {
   return newest.click({ timeout: 5000 }).then(() => true).catch(() => false)
 }
 
+async function waitForAppliedReaction(page: Page, control: Locator, timeoutMs = REACTION_VERIFY_TIMEOUT_MS): Promise<boolean> {
+  const deadline = Date.now() + Math.max(0, timeoutMs)
+  while (true) {
+    const label = await control.getAttribute('aria-label').catch(() => null)
+    if (isAppliedReactionAriaLabel(label)) return true
+    if (Date.now() >= deadline) return false
+    await page.waitForTimeout(REACTION_VERIFY_POLL_MS).catch(() => undefined)
+  }
+}
+
+async function clickReactionTargetAndVerify(page: Page, target: Locator, control: Locator): Promise<boolean> {
+  await target.scrollIntoViewIfNeeded().catch(() => undefined)
+
+  try {
+    await target.click({ timeout: 5000 })
+    if (await waitForAppliedReaction(page, control)) return true
+  } catch {
+    if (await waitForAppliedReaction(page, control, 750)) return true
+  }
+
+  try {
+    await target.click({ timeout: 5000, force: true })
+    if (await waitForAppliedReaction(page, control)) return true
+  } catch {
+    if (await waitForAppliedReaction(page, control, 750)) return true
+  }
+
+  try {
+    await target.dispatchEvent('click')
+  } catch {
+    return false
+  }
+  return waitForAppliedReaction(page, control)
+}
+
+async function openReactionPicker(control: Locator): Promise<boolean> {
+  if (await control.hover({ timeout: 5000 }).then(() => true).catch(() => false)) return true
+  return control.hover({ timeout: 5000, force: true }).then(() => true).catch(() => false)
+}
+
 export async function reactToGroupArticle(page: Page, article: Locator, config: ActionConfig): Promise<boolean> {
   if (!hasConfiguredGroupReaction(config)) return false
   const like = await firstVisible(article, LIKE_SELECTORS)
   if (!like) return false
+
+  const beforeLabel = await like.getAttribute('aria-label').catch(() => null)
+  if (isAppliedReactionAriaLabel(beforeLabel)) return false
+
   const reaction = pickOne(selectedReactions(config))
   if (!reaction) return false
-  if (reaction === 'like') return like.click({ timeout: 5000 }).then(() => true).catch(() => false)
-  if (!await like.hover({ timeout: 5000 }).then(() => true).catch(() => false)) return false
-  const choice = await firstVisible(page, REACTION_SELECTORS[reaction] ?? LIKE_SELECTORS)
-  return choice ? choice.click({ timeout: 5000 }).then(() => true).catch(() => false) : false
+  if (reaction === 'like') return clickReactionTargetAndVerify(page, like, like)
+
+  if (!await openReactionPicker(like)) return false
+  let choice = await firstVisible(page, REACTION_SELECTORS[reaction] ?? LIKE_SELECTORS)
+  if (!choice) {
+    await like.hover({ timeout: 5000, force: true }).catch(() => undefined)
+    choice = await firstVisible(page, REACTION_SELECTORS[reaction] ?? LIKE_SELECTORS)
+  }
+  return choice ? clickReactionTargetAndVerify(page, choice, like) : false
 }
 
 export async function commentOnGroupArticle(
