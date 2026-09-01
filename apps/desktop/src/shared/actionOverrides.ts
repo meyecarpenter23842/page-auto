@@ -17,6 +17,11 @@ import {
   getK454StoryFieldUiMeta,
   getK454StoryValidationErrors
 } from './k454StoryPostActionOverrides'
+import {
+  applyInteractionAtomicActionOverrides,
+  getInteractionAtomicFieldUiMeta,
+  getInteractionAtomicValidationErrors
+} from './interactionAtomicActionOverrides'
 
 export interface ActionFieldUiMeta {
   section: string
@@ -38,10 +43,12 @@ export function applyActionOverrides(): void {
   applyK452PostActionOverrides()
   applyK453CopyPostActionOverrides()
   applyK454StoryPostActionOverrides()
+  applyInteractionAtomicActionOverrides()
 }
 
 export function getActionFieldUiMeta(actionType: string, fieldKey: string): ActionFieldUiMeta | undefined {
-  return getK454StoryFieldUiMeta(actionType, fieldKey)
+  return getInteractionAtomicFieldUiMeta(actionType, fieldKey)
+    ?? getK454StoryFieldUiMeta(actionType, fieldKey)
     ?? getK453CopyPostFieldUiMeta(actionType, fieldKey)
     ?? getK452PostFieldUiMeta(actionType, fieldKey)
     ?? getK435FieldUiMeta(actionType, fieldKey)
@@ -64,7 +71,8 @@ export function getActionOverrideValidationErrors(actionType: string, config: Ac
     ...getK435ValidationErrors(actionType, config),
     ...getK452PostValidationErrors(actionType, config),
     ...getK453CopyPostValidationErrors(actionType, config),
-    ...getK454StoryValidationErrors(actionType, config)
+    ...getK454StoryValidationErrors(actionType, config),
+    ...getInteractionAtomicValidationErrors(actionType, config)
   ]
 }
 

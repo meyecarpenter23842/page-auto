@@ -5,6 +5,7 @@ import { applyK432InviteFriendsGroupActionOverrides } from '../../../../shared/k
 import { applyK433GroupInteractionActionOverrides } from '../../../../shared/k433GroupInteractionActionOverrides'
 import { applyK434LeaveGroupActionOverrides } from '../../../../shared/k434LeaveGroupActionOverrides'
 import { applyK454StoryPostActionOverrides } from '../../../../shared/k454StoryPostActionOverrides'
+import { applyInteractionAtomicActionOverrides } from '../../../../shared/interactionAtomicActionOverrides'
 import { ActionExecutorRegistry } from '../../../services/actionRunner'
 import { ViewNewsfeedActionExecutor, type ViewNewsfeedDependencies } from './viewNewsfeedAction'
 import { ViewStoryActionExecutor, type ViewStoryDependencies } from './viewStoryAction'
@@ -17,6 +18,10 @@ import { CancelSentFriendRequestsActionExecutor } from './cancelSentFriendReques
 import { UnfriendActionExecutor } from './unfriendAction'
 import { FriendFromEngagementActionExecutor } from './friendFromEngagementAction'
 import type { FriendActionDependencies } from './friendActionSupport'
+import { ReactCommentActionExecutor } from './reactCommentAction'
+import { ReplyCommentActionExecutor } from './replyCommentAction'
+import { CommentTagActionExecutor } from './commentTagAction'
+import { TargetUidInteractionActionExecutor } from './targetUidInteractionAction'
 import { JoinGroupActionExecutor } from './joinGroupAction'
 import type { JoinGroupActionDependencies } from './joinGroupActionSupport'
 import { InviteFriendsToGroupActionExecutor } from './inviteFriendsToGroupAction'
@@ -79,6 +84,7 @@ export function registerK41ViewActionExecutors(registry: ActionExecutorRegistry,
 
 export function registerK42FriendActionExecutors(registry: ActionExecutorRegistry, dependencies: K42FriendActionDependencies): void {
   applyK42FriendActionOverrides()
+  applyInteractionAtomicActionOverrides()
   registry.register(new FriendInteractionActionExecutor(dependencies.friendInteraction))
   registry.register(new PokeFriendActionExecutor(dependencies.pokeFriend))
   registry.register(new SendFriendRequestActionExecutor(dependencies.sendFriendRequest))
@@ -86,6 +92,10 @@ export function registerK42FriendActionExecutors(registry: ActionExecutorRegistr
   registry.register(new CancelSentFriendRequestsActionExecutor(dependencies.cancelSentFriendRequests))
   registry.register(new UnfriendActionExecutor(dependencies.unfriend))
   registry.register(new FriendFromEngagementActionExecutor(dependencies.friendFromEngagement))
+  registry.register(new ReactCommentActionExecutor(dependencies.friendInteraction))
+  registry.register(new ReplyCommentActionExecutor(dependencies.friendInteraction))
+  registry.register(new CommentTagActionExecutor(dependencies.friendInteraction))
+  registry.register(new TargetUidInteractionActionExecutor(dependencies.friendInteraction))
 }
 
 export function registerK431JoinGroupActionExecutors(
@@ -194,6 +204,11 @@ export * from './acceptFriendRequestAction'
 export * from './cancelSentFriendRequestsAction'
 export * from './unfriendAction'
 export * from './friendFromEngagementAction'
+export * from './commentInteractionActionSupport'
+export * from './reactCommentAction'
+export * from './replyCommentAction'
+export * from './commentTagAction'
+export * from './targetUidInteractionAction'
 export * from './joinGroupActionSupport'
 export * from './joinGroupAction'
 export * from './inviteFriendsToGroupActionSupport'
