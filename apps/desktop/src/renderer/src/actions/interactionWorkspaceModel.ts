@@ -102,6 +102,80 @@ const DRIVER_BY_TARGET: Record<InteractionTargetMode, string> = {
 }
 
 const LIST_TARGETS = new Set<InteractionTargetMode>(['uid_distribute', 'uid_limit', 'groups', 'seeding'])
+const ACTION_KEYS = INTERACTION_ACTION_OPTIONS.map((option) => option.key)
+const REACTION_KEYS: InteractionReactionKey[] = ['like', 'love', 'care', 'haha', 'wow', 'sad', 'angry']
+const TARGET_MODES = new Set<string>(INTERACTION_TARGET_OPTIONS.map((option) => option.id))
+
+function cloneDefaultDraft(): InteractionWorkspaceDraft {
+  return {
+    ...DEFAULT_INTERACTION_WORKSPACE_DRAFT,
+    actions: { ...DEFAULT_INTERACTION_WORKSPACE_DRAFT.actions },
+    reactions: { ...DEFAULT_INTERACTION_WORKSPACE_DRAFT.reactions }
+  }
+}
+
+function objectValue(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null
+}
+
+function stringValue(value: unknown, fallback: string): string {
+  return typeof value === 'string' ? value : fallback
+}
+
+function positiveNumber(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 1 ? value : fallback
+}
+
+function nonNegativeNumber(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback
+}
+
+export function parseInteractionWorkspaceDraft(configJson: string): InteractionWorkspaceDraft {
+  const fallback = cloneDefaultDraft()
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(configJson)
+  } catch {
+    return fallback
+  }
+  const raw = objectValue(parsed)
+  if (!raw) return fallback
+
+  const rawActions = objectValue(raw.actions)
+  const rawReactions = objectValue(raw.reactions)
+  const actions = { ...fallback.actions }
+  const reactions = { ...fallback.reactions }
+  for (const key of ACTION_KEYS) {
+    if (typeof rawActions?.[key] === 'boolean') actions[key] = rawActions[key] as boolean
+  }
+  for (const key of REACTION_KEYS) {
+    if (typeof rawReactions?.[key] === 'boolean') reactions[key] = rawReactions[key] as boolean
+  }
+
+  return {
+    actor: raw.actor === 'page' ? 'page' : 'profile',
+    targetMode: typeof raw.targetMode === 'string' && TARGET_MODES.has(raw.targetMode)
+      ? raw.targetMode as InteractionTargetMode
+      : fallback.targetMode,
+    targetValues: stringValue(raw.targetValues, fallback.targetValues),
+    uidFilePath: stringValue(raw.uidFilePath, fallback.uidFilePath),
+    actions,
+    reactions,
+    commentMatch: stringValue(raw.commentMatch, fallback.commentMatch),
+    commentTemplates: stringValue(raw.commentTemplates, fallback.commentTemplates),
+    replyTemplates: stringValue(raw.replyTemplates, fallback.replyTemplates),
+    tagTargets: stringValue(raw.tagTargets, fallback.tagTargets),
+    targetLimit: positiveNumber(raw.targetLimit, fallback.targetLimit),
+    postsPerTarget: positiveNumber(raw.postsPerTarget, fallback.postsPerTarget),
+    delayMinSeconds: nonNegativeNumber(raw.delayMinSeconds, fallback.delayMinSeconds),
+    delayMaxSeconds: nonNegativeNumber(raw.delayMaxSeconds, fallback.delayMaxSeconds),
+    repeat: typeof raw.repeat === 'boolean' ? raw.repeat : fallback.repeat
+  }
+}
+
+export function serializeInteractionWorkspaceDraft(draft: InteractionWorkspaceDraft): string {
+  return JSON.stringify(draft)
+}
 
 function selectedActionCount(draft: InteractionWorkspaceDraft): number {
   return Object.values(draft.actions).filter(Boolean).length
@@ -150,7 +224,7 @@ export function buildInteractionWorkspacePlan(draft: InteractionWorkspaceDraft):
     warnings.push('Nguồn “người gửi yêu cầu kết bạn” chưa có target collector riêng; khi nối runner cần bổ sung tầng lấy target trước friend_interaction.')
   }
   if (draft.targetMode === 'uid_account_file') {
-    warnings.push('Chia 1 file UID cho từng account mới là draft UI; file picker/distribution sẽ nối ở lô persistence + runner.')
+    warnings.push('Chia 1 file UID cho từng account đã được lưu cùng workspace; file picker/distribution sẽ nối ở lô runner.')
   }
 
   const modules: InteractionModulePlanItem[] = actionTypes.flatMap((actionType) => {

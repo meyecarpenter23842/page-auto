@@ -80,9 +80,10 @@ describe('initializeDatabase', () => {
       { version: 14, name: 'canonical_post_library' },
       { version: 15, name: 'copy_post_history' },
       { version: 16, name: 'page_tab_group_order_mode' },
-      { version: 17, name: 'story_library' }
+      { version: 17, name: 'story_library' },
+      { version: 18, name: 'action_workspace_persistence' }
     ])
-    expect(schemaVersion?.value).toBe('17')
+    expect(schemaVersion?.value).toBe('18')
     expect(executionLogsTable?.name).toBe('execution_logs')
     expect(postLibraryTable?.name).toBe('page_tab_posts')
     expect(pageTabColumns.some((column) => column.name === 'account_order_mode')).toBe(true)
@@ -110,7 +111,7 @@ describe('initializeDatabase', () => {
       .prepare('SELECT COUNT(*) AS count FROM __page_auto_migrations')
       .get() as { count: number }
 
-    expect(count.count).toBe(17)
+    expect(count.count).toBe(18)
     reopened.close()
   })
 
