@@ -71,6 +71,7 @@ export async function sleepWithControl(control: ActionRunControl, delayMs: numbe
 }
 
 const MAX_VISIBLE_CANDIDATES_PER_SELECTOR = 32
+const CLICKABLE_TEXT_ANCESTOR = 'xpath=ancestor-or-self::*[self::button or @role="button" or @tabindex="0" or self::a][1]'
 
 function exactAriaButtonName(selector: string): string | null {
   return selector.match(/^\[role="button"\]\[aria-label="([^"]+)"\]$/)?.[1] ?? null
@@ -95,8 +96,14 @@ async function clickableTextFallback(scope: Page | Locator, name: string): Promi
   for (let index = 0; index < count; index += 1) {
     const text = textMatches.nth(index)
     if (!await text.isVisible().catch(() => false)) continue
-    const clickable = text.locator('xpath=ancestor-or-self::*[self::button or @role="button"][1]').first()
+
+    const clickable = text.locator(CLICKABLE_TEXT_ANCESTOR).first()
     if (await clickable.isVisible().catch(() => false)) return clickable
+
+    // Facebook sometimes puts the visible Like/Thích text inside a clickable wrapper that exposes
+    // neither role=button nor a stable aria-label/tabindex. Clicking the visible text itself still
+    // bubbles through the real control, and is safer than guessing another unstable selector.
+    return text
   }
   return null
 }
