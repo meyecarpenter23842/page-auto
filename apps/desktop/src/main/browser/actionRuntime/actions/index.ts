@@ -1,3 +1,4 @@
+import { applyCommonRuntimeActionOverrides } from '../../../../shared/commonRuntimeActionOverrides'
 import { applyK41ActionOverrides } from '../../../../shared/k41ActionOverrides'
 import { applyK42FriendActionOverrides } from '../../../../shared/k42FriendActionOverrides'
 import { applyK431JoinGroupActionOverrides } from '../../../../shared/k431JoinGroupActionOverrides'
@@ -7,6 +8,7 @@ import { applyK434LeaveGroupActionOverrides } from '../../../../shared/k434Leave
 import { applyK454StoryPostActionOverrides } from '../../../../shared/k454StoryPostActionOverrides'
 import { applyInteractionAtomicActionOverrides } from '../../../../shared/interactionAtomicActionOverrides'
 import { ActionExecutorRegistry } from '../../../services/actionRunner'
+import { SwitchPageActionExecutor } from './switchPageAction'
 import { ViewNewsfeedActionExecutor, type ViewNewsfeedDependencies } from './viewNewsfeedAction'
 import { ViewStoryActionExecutor, type ViewStoryDependencies } from './viewStoryAction'
 import { ViewReelActionExecutor, type ViewReelDependencies } from './viewReelAction'
@@ -73,6 +75,11 @@ export interface K4ActionDependencies {
   view: K41ViewActionDependencies
   friends: K42FriendActionDependencies
   groups: K43GroupActionDependencies
+}
+
+export function registerCommonRuntimeActionExecutors(registry: ActionExecutorRegistry): void {
+  applyCommonRuntimeActionOverrides()
+  registry.register(new SwitchPageActionExecutor())
 }
 
 export function registerK41ViewActionExecutors(registry: ActionExecutorRegistry, dependencies: K41ViewActionDependencies): void {
@@ -176,6 +183,7 @@ export function createK434LeaveGroupActionExecutorRegistry(
 
 export function createK4ActionExecutorRegistry(dependencies: K4ActionDependencies): ActionExecutorRegistry {
   const registry = new ActionExecutorRegistry()
+  registerCommonRuntimeActionExecutors(registry)
   registerK41ViewActionExecutors(registry, dependencies.view)
   registerK42FriendActionExecutors(registry, dependencies.friends)
   registerK431JoinGroupActionExecutors(registry, dependencies.groups)
@@ -193,6 +201,7 @@ export function createK4ActionExecutorRegistry(dependencies: K4ActionDependencie
   return registry
 }
 
+export * from './switchPageAction'
 export * from './viewNewsfeedAction'
 export * from './viewStoryAction'
 export * from './viewReelAction'

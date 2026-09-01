@@ -6,6 +6,7 @@ const workspaceSource = readFileSync(new URL('./ActionWorkspace.tsx', import.met
 const registrySource = readFileSync(new URL('./actionWorkspaceRegistry.ts', import.meta.url), 'utf8')
 const interactionSource = readFileSync(new URL('./InteractionWorkspace.tsx', import.meta.url), 'utf8')
 const interactionModelSource = readFileSync(new URL('./interactionWorkspaceModel.ts', import.meta.url), 'utf8')
+const accountPickerSource = readFileSync(new URL('./AccountBindingPickerModal.tsx', import.meta.url), 'utf8')
 
 describe('Action workspace shell', () => {
   it('uses Hành động as the semantic main route', () => {
@@ -15,7 +16,7 @@ describe('Action workspace shell', () => {
     expect(appSource).toContain("activeRoute === 'actions' ? <ActionWorkspace />")
   })
 
-  it('keeps Kịch bản fixed and persists dynamic workspace tabs through typed preload APIs', () => {
+  it('keeps Kịch bản fixed, persists workspace tabs and restores the last active tab', () => {
     expect(workspaceSource).toContain('<ScenarioWorkspace />')
     expect(workspaceSource).toContain('Kịch bản')
     expect(workspaceSource).toContain('+ Tab')
@@ -23,25 +24,31 @@ describe('Action workspace shell', () => {
     expect(workspaceSource).toContain('window.pageAuto.listActionWorkspaces()')
     expect(workspaceSource).toContain('window.pageAuto.createActionWorkspace')
     expect(workspaceSource).toContain('window.pageAuto.deleteActionWorkspace')
+    expect(workspaceSource).toContain("ACTIVE_TAB_STORAGE_KEY = 'page-auto:actions:active-tab'")
+    expect(workspaceSource).toContain('window.localStorage.getItem(ACTIVE_TAB_STORAGE_KEY)')
+    expect(workspaceSource).toContain('window.localStorage.setItem(ACTIVE_TAB_STORAGE_KEY, activeTabId)')
     expect(workspaceSource).toContain('<InteractionWorkspace workspace={tab} availableAccounts={accounts}')
     expect(registrySource).toContain("id: 'interaction'")
     expect(registrySource).toContain("label: 'Tương tác'")
   })
 
-  it('binds Account Manager rows, persists composition and exposes runner controls', () => {
-    expect(interactionSource).toContain('Tài khoản chạy')
-    expect(interactionSource).toContain('availableAccounts')
-    expect(interactionSource).toContain('Thứ tự chạy')
+  it('uses a compact account picker, compact targets and Page actor controls while preserving runtime controls', () => {
+    expect(interactionSource).toContain('+ Thêm tài khoản')
+    expect(interactionSource).toContain('<AccountBindingPickerModal')
+    expect(accountPickerSource).toContain('Thêm tài khoản từ Account Manager')
+    expect(interactionSource).toContain('interaction-target-compact')
+    expect(interactionSource).toContain('Chạy bằng Page')
+    expect(interactionSource).toContain('Nhập UID Page')
+    expect(interactionSource).toContain('TK song song')
+    expect(interactionSource).toContain('Khóa = 1')
     expect(interactionSource).toContain('window.pageAuto.updateActionWorkspace')
     expect(interactionSource).toContain('Lưu cấu hình')
     expect(interactionModelSource).toContain("label: 'Like / Reaction'")
-    expect(interactionModelSource).toContain("label: 'Reply comment'")
-    expect(interactionModelSource).toContain("label: 'Tag trong comment'")
+    expect(interactionModelSource).toContain("pushModule(actionTypes, 'switch_page')")
     expect(interactionSource).toContain('Kế hoạch module')
     expect(interactionSource).toContain("runCommand('start')")
     expect(interactionSource).toContain("runCommand('pause')")
     expect(interactionSource).toContain("runCommand('resume')")
     expect(interactionSource).toContain("runCommand('stop')")
-    expect(interactionSource).not.toContain('Runner chưa nối')
   })
 })

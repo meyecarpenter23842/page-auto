@@ -69,6 +69,7 @@ export type ActionConfigValidation =
 
 const BOTH_ACTORS = ['profile', 'page'] as const
 const PROFILE_ONLY = ['profile'] as const
+const PAGE_ONLY = ['page'] as const
 const EMPTY_SCHEMA: ActionConfigSchema = { version: 1, fields: [] }
 const VIEW_SCHEMA: ActionConfigSchema = {
   version: 1,
@@ -175,7 +176,8 @@ export const ACTION_REGISTRY: readonly ActionDefinition[] = [
   action('view_link', 'other', 'View Link', 'Mở và xem một đường dẫn.', { configSchema: VIEW_LINK_SCHEMA }),
   action('block_uid', 'other', 'Block Uid', 'Chặn UID theo cấu hình.'),
   action('spam_appeal', 'other', 'Kháng spam', 'Mở luồng kháng spam khi phù hợp.'),
-  action('xlike_cross_interaction', 'other', 'XLike - Tương tác chéo', 'Tương tác chéo theo cấu hình XLike.')
+  action('xlike_cross_interaction', 'other', 'XLike - Tương tác chéo', 'Tương tác chéo theo cấu hình XLike.'),
+  action('switch_page', 'other', 'Switch Page', 'Chuyển sang Page UID của actor bằng Facebook Common Runtime.', { actors: PAGE_ONLY, requiresNavigation: false })
 ] as const
 
 const ACTION_BY_ID = new Map(ACTION_REGISTRY.map((definition) => [definition.id, definition] as const))

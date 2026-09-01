@@ -13,14 +13,19 @@ describe('actionRegistry', () => {
     expect(ACTION_CATEGORIES.map((item) => item.id)).toEqual([
       'interaction', 'friends', 'groups', 'marketplace', 'publishing', 'other'
     ])
-    expect(ACTION_REGISTRY).toHaveLength(43)
-    expect(ACTION_CATEGORIES.map((category) => ACTION_REGISTRY.filter((item) => item.category === category.id).length)).toEqual([14, 7, 5, 4, 5, 8])
+    expect(ACTION_REGISTRY).toHaveLength(44)
+    expect(ACTION_CATEGORIES.map((category) => ACTION_REGISTRY.filter((item) => item.category === category.id).length)).toEqual([14, 7, 5, 4, 5, 9])
     expect(new Set(ACTION_REGISTRY.map((item) => item.id)).size).toBe(ACTION_REGISTRY.length)
     expect(getActionDefinition('group_post')).toMatchObject({ category: 'groups', label: 'Đăng bài nhóm' })
     expect(getActionDefinition('react_comment')).toMatchObject({ category: 'interaction', label: 'Thả cảm xúc comment' })
     expect(getActionDefinition('reply_comment')).toMatchObject({ category: 'interaction', label: 'Trả lời comment' })
     expect(getActionDefinition('comment_tag')).toMatchObject({ category: 'interaction', label: 'Comment tag' })
     expect(getActionDefinition('target_uid_interaction')).toMatchObject({ category: 'interaction', label: 'Tương tác theo UID' })
+    expect(getActionDefinition('switch_page')).toMatchObject({
+      category: 'other',
+      label: 'Switch Page',
+      capabilities: { actors: ['page'], requiresNavigation: false }
+    })
     expect(getActionDefinition('birthday_greeting')).toBeUndefined()
     expect(ACTION_REGISTRY.every((item) => item.runtimeStatus === 'placeholder')).toBe(true)
   })

@@ -107,6 +107,7 @@ export function buildInteractionWorkspacePlan(draft: InteractionWorkspaceDraft):
     errors.push('Tag trong comment đang bật nhưng chưa có target cần tag.')
   }
 
+  if (draft.actor === 'page') pushModule(actionTypes, 'switch_page')
   if (draft.actions.reaction || draft.actions.comment) pushModule(actionTypes, DRIVER_BY_TARGET[draft.targetMode])
   if (draft.actions.reactComment) pushModule(actionTypes, 'react_comment')
   if (draft.actions.replyComment) pushModule(actionTypes, 'reply_comment')

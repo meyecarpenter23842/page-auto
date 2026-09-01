@@ -32,17 +32,24 @@ function pacing(draft: InteractionWorkspaceDraft): Record<string, number> {
   }
 }
 
+function actionItem(
+  actionType: string,
+  config: Record<string, string | number | boolean>
+): InteractionComposedAction {
+  const definition = getActionDefinition(actionType)
+  return {
+    actionType,
+    label: definition?.label ?? actionType,
+    config
+  }
+}
+
 function pushAction(
   actions: InteractionComposedAction[],
   actionType: string,
   config: Record<string, string | number | boolean>
 ): void {
-  const definition = getActionDefinition(actionType)
-  actions.push({
-    actionType,
-    label: definition?.label ?? actionType,
-    config
-  })
+  actions.push(actionItem(actionType, config))
 }
 
 export function interactionWorkspaceActionTypes(draft: InteractionWorkspaceDraft): string[] {
@@ -51,6 +58,7 @@ export function interactionWorkspaceActionTypes(draft: InteractionWorkspaceDraft
     if (!result.includes(value)) result.push(value)
   }
 
+  if (draft.actor === 'page') push('switch_page')
   if (draft.actions.reaction || draft.actions.comment) {
     if (draft.targetMode === 'friends' || draft.targetMode === 'friend_requests') push('friend_interaction')
     else if (draft.targetMode === 'groups') push('group_interaction')
@@ -72,7 +80,7 @@ export function validateInteractionWorkspaceRun(
   const actionTypes = interactionWorkspaceActionTypes(draft)
 
   if (enabledAccountCount < 1) errors.push('Chưa có account được bật để chạy.')
-  if (actionTypes.length < 1) errors.push('Cần chọn ít nhất một hành động.')
+  if (!Object.values(draft.actions).some(Boolean)) errors.push('Cần chọn ít nhất một hành động.')
   if (draft.actor === 'page' && !draft.pageUid.trim()) errors.push('Actor Page cần Page UID.')
   if (draft.delayMinSeconds > draft.delayMaxSeconds) errors.push('Delay từ phải nhỏ hơn hoặc bằng delay đến.')
   if (draft.targetLimit < 1) errors.push('Limit target phải lớn hơn 0.')
@@ -261,6 +269,10 @@ export function composeInteractionActions(
       pauseAfterCount: 0,
       pauseMinutes: 0
     })
+  }
+
+  if (draft.actor === 'page' && actions.length > 0) {
+    actions.unshift(actionItem('switch_page', {}))
   }
 
   return actions

@@ -1,3 +1,5 @@
+@import './interactionWorkspaceCompact.css';
+
 .interaction-head-actions {
   display: flex;
   align-items: center;
@@ -47,121 +49,43 @@
   font-size: 10px;
 }
 
-.interaction-account-binding-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(320px, .82fr);
-  gap: 10px;
-}
-
-.interaction-account-picker,
-.interaction-account-order {
-  min-width: 0;
-  overflow: hidden;
-  border: 1px solid #e1e6ed;
-  border-radius: 9px;
-  background: #fafbfc;
-}
-
-.interaction-account-picker-toolbar,
-.interaction-account-order-head {
-  min-height: 38px;
-  padding: 7px 9px;
+.interaction-account-toolbar {
+  min-height: 34px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
-  border-bottom: 1px solid #e8ecf1;
 }
 
-.interaction-account-picker-toolbar input {
-  min-width: 0;
-  flex: 1;
-  height: 28px;
-  padding: 0 8px;
-  border: 1px solid #d7dde6;
+.interaction-add-account-button {
+  height: 30px;
+  padding: 0 11px;
+  border: 1px solid #2f6db4;
   border-radius: 7px;
-  background: #fff;
-  color: #1d2939;
+  background: #2f6db4;
+  color: #fff;
   font: inherit;
-  font-size: 10px;
+  font-size: 9.5px;
+  font-weight: 800;
+  cursor: pointer;
 }
 
-.interaction-account-picker-toolbar > span,
-.interaction-account-order-head small {
+.interaction-account-toolbar > span {
   color: #667085;
   font-size: 9px;
 }
 
-.interaction-account-order-head {
-  align-items: flex-start;
-  flex-direction: column;
-  justify-content: center;
-  gap: 1px;
-}
-
-.interaction-account-order-head strong { font-size: 10px; }
-
-.interaction-account-table,
-.interaction-account-order-list {
-  max-height: 248px;
+.interaction-account-compact-list {
+  margin-top: 8px;
+  max-height: 176px;
   overflow: auto;
+  border: 1px solid #e1e6ed;
+  border-radius: 8px;
+  background: #fafbfc;
 }
 
-.interaction-account-row {
-  min-height: 44px;
-  padding: 6px 9px;
-  display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 7px;
-  border-bottom: 1px solid #eef1f5;
-  cursor: pointer;
-}
-
-.interaction-account-row:last-child { border-bottom: 0; }
-.interaction-account-row.selected { background: #f0f6ff; }
-
-.interaction-account-identity,
-.interaction-account-meta,
-.interaction-account-order-name {
-  min-width: 0;
-  display: grid;
-  gap: 2px;
-}
-
-.interaction-account-identity strong,
-.interaction-account-order-name strong {
-  overflow: hidden;
-  color: #344054;
-  font-size: 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.interaction-account-identity small,
-.interaction-account-meta small,
-.interaction-account-order-name small {
-  overflow: hidden;
-  color: #667085;
-  font-size: 8.5px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.interaction-account-meta {
-  max-width: 130px;
-  text-align: right;
-}
-
-.interaction-account-meta b {
-  color: #475467;
-  font-size: 8.5px;
-  font-weight: 750;
-}
-
-.interaction-account-order-row {
-  min-height: 44px;
-  padding: 6px 8px;
+.interaction-account-compact-row {
+  min-height: 38px;
+  padding: 5px 7px;
   display: grid;
   grid-template-columns: 24px minmax(0, 1fr) auto auto;
   align-items: center;
@@ -169,7 +93,7 @@
   border-bottom: 1px solid #eef1f5;
 }
 
-.interaction-account-order-row:last-child { border-bottom: 0; }
+.interaction-account-compact-row:last-child { border-bottom: 0; }
 
 .interaction-account-order-index {
   width: 22px;
@@ -182,6 +106,28 @@
   color: #2b65ad;
   font-size: 8.5px;
   font-weight: 850;
+}
+
+.interaction-account-order-name {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.interaction-account-order-name strong {
+  overflow: hidden;
+  color: #344054;
+  font-size: 9.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.interaction-account-order-name small {
+  overflow: hidden;
+  color: #667085;
+  font-size: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .interaction-account-enabled {
@@ -199,15 +145,19 @@
 }
 
 .interaction-account-order-controls button {
-  width: 25px;
-  height: 25px;
+  width: 24px;
+  height: 24px;
   border: 1px solid #d8dee7;
   border-radius: 6px;
   background: #fff;
   color: #475467;
   font: inherit;
-  font-size: 11px;
+  font-size: 10px;
   cursor: pointer;
+}
+
+.interaction-account-order-controls button.remove {
+  color: #b42318;
 }
 
 .interaction-account-order-controls button:disabled {
@@ -217,7 +167,7 @@
 }
 
 .interaction-account-empty {
-  padding: 18px 10px;
+  padding: 16px 10px;
   color: #98a2b3;
   font-size: 9.5px;
   text-align: center;
@@ -271,11 +221,8 @@
   color: #475467;
 }
 
-@media (max-width: 1180px) {
-  .interaction-account-binding-layout { grid-template-columns: 1fr; }
-}
-
-html[data-theme='dark'] .interaction-save-button {
+html[data-theme='dark'] .interaction-save-button,
+html[data-theme='dark'] .interaction-add-account-button {
   border-color: #22c55e;
   background: #22c55e;
   color: #07140b;
@@ -288,10 +235,7 @@ html[data-theme='dark'] .interaction-save-button:disabled {
 }
 
 html[data-theme='dark'] .interaction-save-state,
-html[data-theme='dark'] .interaction-account-picker-toolbar > span,
-html[data-theme='dark'] .interaction-account-order-head small,
-html[data-theme='dark'] .interaction-account-identity small,
-html[data-theme='dark'] .interaction-account-meta small,
+html[data-theme='dark'] .interaction-account-toolbar > span,
 html[data-theme='dark'] .interaction-account-order-name small,
 html[data-theme='dark'] .interaction-binding-summary span { color: var(--pa-dark-muted); }
 
@@ -300,30 +244,21 @@ html[data-theme='dark'] .interaction-save-state[data-state='error'] { color: #fc
 html[data-theme='dark'] .interaction-save-error,
 html[data-theme='dark'] .action-workspace-persistence-error { color: #fecaca; background: rgba(127, 29, 29, .23); border-color: #7f1d1d; }
 
-html[data-theme='dark'] .interaction-account-picker,
-html[data-theme='dark'] .interaction-account-order,
+html[data-theme='dark'] .interaction-account-compact-list,
 html[data-theme='dark'] .interaction-binding-summary {
   background: var(--pa-dark-surface-2);
   border-color: var(--pa-dark-border-strong);
 }
 
-html[data-theme='dark'] .interaction-account-picker-toolbar,
-html[data-theme='dark'] .interaction-account-order-head,
-html[data-theme='dark'] .interaction-account-row,
-html[data-theme='dark'] .interaction-account-order-row { border-color: var(--pa-dark-border); }
-
-html[data-theme='dark'] .interaction-account-picker-toolbar input,
+html[data-theme='dark'] .interaction-account-compact-row { border-color: var(--pa-dark-border); }
+html[data-theme='dark'] .interaction-account-order-name strong,
+html[data-theme='dark'] .interaction-account-enabled { color: var(--pa-dark-text-soft); }
+html[data-theme='dark'] .interaction-account-order-index { color: #bbf7d0; background: #183522; }
 html[data-theme='dark'] .interaction-account-order-controls button {
   background: var(--pa-dark-surface);
   border-color: var(--pa-dark-border-strong);
   color: var(--pa-dark-text);
 }
-
-html[data-theme='dark'] .interaction-account-row.selected { background: #173421; }
-html[data-theme='dark'] .interaction-account-identity strong,
-html[data-theme='dark'] .interaction-account-order-name strong,
-html[data-theme='dark'] .interaction-account-meta b,
-html[data-theme='dark'] .interaction-account-enabled { color: var(--pa-dark-text-soft); }
-html[data-theme='dark'] .interaction-account-order-index { color: #bbf7d0; background: #183522; }
+html[data-theme='dark'] .interaction-account-order-controls button.remove { color: #fca5a5; }
 html[data-theme='dark'] .interaction-account-order-controls button:disabled { color: var(--pa-dark-faint); background: #171717; }
 html[data-theme='dark'] .action-workspace-loading { border-color: var(--pa-dark-border); background: var(--pa-dark-surface-2); color: var(--pa-dark-muted); }
