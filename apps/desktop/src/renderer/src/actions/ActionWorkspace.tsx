@@ -8,6 +8,7 @@ import { DEFAULT_INTERACTION_WORKSPACE_DRAFT, serializeInteractionWorkspaceDraft
 import './actionWorkspace.css'
 
 const SCENARIO_TAB_ID = 'scenario'
+const ACTIVE_TAB_STORAGE_KEY = 'page-auto:actions:active-tab'
 
 function workspaceTabId(id: number): string {
   return `workspace-${id}`
@@ -25,6 +26,17 @@ function nextWorkspaceLabel(type: ActionWorkspaceType, workspaces: ActionWorkspa
   let instance = 1
   while (usedLabels.has(instance === 1 ? definition.label : `${definition.label} ${instance}`)) instance += 1
   return instance === 1 ? definition.label : `${definition.label} ${instance}`
+}
+
+function restoreActiveTab(workspaces: ActionWorkspaceRecord[]): string {
+  try {
+    const stored = window.localStorage.getItem(ACTIVE_TAB_STORAGE_KEY)
+    if (stored === SCENARIO_TAB_ID) return SCENARIO_TAB_ID
+    if (stored && workspaces.some((workspace) => workspaceTabId(workspace.id) === stored)) return stored
+  } catch {
+    // localStorage can be unavailable in hardened renderer environments.
+  }
+  return workspaces[0] ? workspaceTabId(workspaces[0].id) : SCENARIO_TAB_ID
 }
 
 export function ActionWorkspace() {
@@ -46,6 +58,7 @@ export function ActionWorkspace() {
       ])
       setTabs(savedWorkspaces)
       setAccounts(accountRows)
+      setActiveTabId(restoreActiveTab(savedWorkspaces))
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : String(loadError))
     } finally {
@@ -56,6 +69,15 @@ export function ActionWorkspace() {
   useEffect(() => {
     void loadWorkspaceState()
   }, [])
+
+  useEffect(() => {
+    if (loading) return
+    try {
+      window.localStorage.setItem(ACTIVE_TAB_STORAGE_KEY, activeTabId)
+    } catch {
+      // Tab records still live in SQLite; failing to remember the last active tab is non-fatal.
+    }
+  }, [activeTabId, loading])
 
   const createWorkspaceTab = async (type: ActionWorkspaceType) => {
     const definition = getActionWorkspaceDefinition(type)
@@ -82,7 +104,7 @@ export function ActionWorkspace() {
   const closeWorkspaceTab = async (workspace: ActionWorkspaceRecord) => {
     if (mutating || !window.confirm(`Xóa tab “${workspace.label}” và cấu hình đã lưu?`)) return
     const index = tabs.findIndex((tab) => tab.id === workspace.id)
-    const fallback = index > 0 ? tabs[index - 1] : null
+    const fallback = index > 0 ? tabs[index - 1] : tabs[index + 1] ?? null
     setMutating(true)
     setError(null)
     try {
@@ -112,7 +134,7 @@ export function ActionWorkspace() {
           {tabs.map((tab) => (
             <div className={activeTabId === workspaceTabId(tab.id) ? 'action-workspace-tab-wrap active' : 'action-workspace-tab-wrap'} key={tab.id}>
               <button className="action-workspace-tab" type="button" role="tab" aria-selected={activeTabId === workspaceTabId(tab.id)} onClick={() => setActiveTabId(workspaceTabId(tab.id))}>{tab.label}</button>
-              <button className="action-workspace-close-tab" type="button" aria-label={`Đóng tab ${tab.label}`} disabled={mutating} onClick={() => void closeWorkspaceTab(tab)}>×</button>
+              <button className="action-workspace-close-tab" type="button" aria-label={`Xóa tab ${tab.label}`} title="Xóa tab và cấu hình đã lưu" disabled={mutating} onClick={() => void closeWorkspaceTab(tab)}>×</button>
             </div>
           ))}
         </div>
@@ -127,7 +149,7 @@ export function ActionWorkspace() {
                   <button type="button" disabled={mutating} key={definition.id} onClick={() => void createWorkspaceTab(definition.id)}><span><strong>{definition.label}</strong><small>{definition.description}</small></span><b>+</b></button>
                 ))}
               </div>
-              <p>Tab nghiệp vụ được lưu trong SQLite. Action nhỏ vẫn lấy từ Action Registry và có thể compose nhiều module trong cùng tab.</p>
+              <p>Tab nghiệp vụ được lưu trong SQLite và tự khôi phục khi mở lại app. Action nhỏ vẫn lấy từ Action Registry.</p>
             </div>
           ) : null}
         </div>

@@ -1,0 +1,173 @@
+.interaction-page-actor-row {
+  margin-bottom: 10px;
+  display: grid;
+  grid-template-columns: auto minmax(220px, 360px) minmax(0, 1fr);
+  align-items: end;
+  gap: 8px;
+}
+
+.interaction-page-actor-check {
+  height: 34px;
+  padding: 0 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #d7dde6;
+  border-radius: 8px;
+  background: #fafbfc;
+  color: #475467;
+  font-size: 9.5px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.interaction-page-uid-inline {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  color: #475467;
+  font-size: 9.5px;
+  font-weight: 750;
+}
+
+.interaction-page-uid-inline input {
+  width: 100%;
+  height: 34px;
+  box-sizing: border-box;
+  padding: 0 9px;
+  border: 1px solid #d7dde6;
+  border-radius: 8px;
+  background: #fff;
+  color: #1d2939;
+  font: inherit;
+  font-size: 10px;
+}
+
+.interaction-page-uid-inline input:disabled {
+  background: #f2f4f7;
+  color: #98a2b3;
+}
+
+.interaction-page-actor-row > small {
+  align-self: center;
+  color: #667085;
+  font-size: 8.5px;
+  line-height: 1.35;
+}
+
+.interaction-target-compact {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 13px;
+}
+
+.interaction-target-compact label {
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #475467;
+  font-size: 9.5px;
+  font-weight: 750;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.interaction-target-compact label.active {
+  color: #1f5fa8;
+}
+
+.interaction-target-compact input {
+  margin: 0;
+}
+
+.interaction-target-hint {
+  margin: 5px 0 0;
+  color: #667085;
+  font-size: 8.5px;
+}
+
+.interaction-orchestration-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(108px, 150px)) minmax(180px, 1fr);
+  align-items: end;
+  gap: 8px;
+}
+
+.interaction-orchestration-grid .interaction-field input {
+  max-width: 150px;
+}
+
+.interaction-concurrency-locked {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 5px 6px;
+  color: #667085;
+  font-size: 9px;
+  font-weight: 750;
+}
+
+.interaction-concurrency-locked > span {
+  grid-column: 1 / -1;
+}
+
+.interaction-concurrency-locked input {
+  width: 72px;
+  height: 34px;
+  box-sizing: border-box;
+  padding: 0 8px;
+  border: 1px solid #d7dde6;
+  border-radius: 8px;
+  background: #f2f4f7;
+  color: #667085;
+  font: inherit;
+}
+
+.interaction-concurrency-locked small {
+  align-self: center;
+  color: #98a2b3;
+  font-size: 8px;
+  white-space: nowrap;
+}
+
+.interaction-repeat-inline {
+  min-height: 34px;
+  grid-column: auto;
+  padding: 6px 8px;
+}
+
+@media (max-width: 1320px) {
+  .interaction-orchestration-grid { grid-template-columns: repeat(3, minmax(110px, 1fr)); }
+  .interaction-orchestration-grid .interaction-field input { max-width: none; }
+}
+
+@media (max-width: 900px) {
+  .interaction-page-actor-row { grid-template-columns: 1fr; align-items: stretch; }
+  .interaction-page-actor-check { justify-self: start; }
+  .interaction-page-uid-inline { grid-template-columns: 80px minmax(0, 1fr); }
+  .interaction-orchestration-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+html[data-theme='dark'] .interaction-page-actor-check,
+html[data-theme='dark'] .interaction-page-uid-inline input,
+html[data-theme='dark'] .interaction-concurrency-locked input {
+  background: var(--pa-dark-surface-2);
+  border-color: var(--pa-dark-border-strong);
+  color: var(--pa-dark-text-soft);
+}
+
+html[data-theme='dark'] .interaction-page-uid-inline input:disabled,
+html[data-theme='dark'] .interaction-concurrency-locked input {
+  background: #171717;
+  color: var(--pa-dark-faint);
+}
+
+html[data-theme='dark'] .interaction-page-actor-row > small,
+html[data-theme='dark'] .interaction-target-hint,
+html[data-theme='dark'] .interaction-concurrency-locked { color: var(--pa-dark-muted); }
+html[data-theme='dark'] .interaction-target-compact label { color: var(--pa-dark-text-soft); }
+html[data-theme='dark'] .interaction-target-compact label.active { color: #86efac; }

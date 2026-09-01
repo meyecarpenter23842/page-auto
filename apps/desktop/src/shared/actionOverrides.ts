@@ -1,4 +1,5 @@
 import type { ActionConfig } from './actionRegistry'
+import { applyCommonRuntimeActionOverrides } from './commonRuntimeActionOverrides'
 import { applyK41ActionOverrides, getK41FieldUiMeta, getK41ValidationErrors } from './k41ActionOverrides'
 import { applyK42FriendActionOverrides, getK42FieldUiMeta, getK42ValidationErrors } from './k42FriendActionOverrides'
 import { applyK431JoinGroupActionOverrides, getK431FieldUiMeta, getK431ValidationErrors } from './k431JoinGroupActionOverrides'
@@ -33,6 +34,7 @@ export interface ActionFieldUiMeta {
 }
 
 export function applyActionOverrides(): void {
+  applyCommonRuntimeActionOverrides()
   applyK41ActionOverrides()
   applyK42FriendActionOverrides()
   applyK431JoinGroupActionOverrides()

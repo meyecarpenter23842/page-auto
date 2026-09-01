@@ -1,0 +1,217 @@
+.account-binding-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  padding: 28px;
+  display: grid;
+  place-items: center;
+  background: rgba(15, 23, 42, .42);
+}
+
+.account-binding-modal {
+  width: min(760px, 92vw);
+  max-height: min(720px, 88vh);
+  display: grid;
+  grid-template-rows: auto auto minmax(180px, 1fr) auto;
+  overflow: hidden;
+  border: 1px solid #d9e0e8;
+  border-radius: 14px;
+  background: #fff;
+  color: #1d2939;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, .24);
+}
+
+.account-binding-modal > header,
+.account-binding-modal > footer {
+  padding: 13px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.account-binding-modal > header {
+  border-bottom: 1px solid #e8ecf1;
+}
+
+.account-binding-modal > header > div {
+  min-width: 0;
+}
+
+.account-binding-modal > header small {
+  color: #2f6db4;
+  font-size: 8.5px;
+  font-weight: 850;
+  letter-spacing: .11em;
+}
+
+.account-binding-modal > header h3 {
+  margin: 2px 0 0;
+  font-size: 15px;
+}
+
+.account-binding-modal > header p {
+  margin: 4px 0 0;
+  color: #667085;
+  font-size: 9.5px;
+}
+
+.account-binding-modal > header > button {
+  width: 30px;
+  height: 30px;
+  border: 1px solid #d8dee7;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #475467;
+  font: inherit;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.account-binding-modal-search {
+  padding: 9px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid #edf0f4;
+  background: #fafbfc;
+}
+
+.account-binding-modal-search input {
+  min-width: 0;
+  flex: 1;
+  height: 32px;
+  padding: 0 9px;
+  border: 1px solid #d7dde6;
+  border-radius: 8px;
+  background: #fff;
+  color: #1d2939;
+  font: inherit;
+  font-size: 10px;
+}
+
+.account-binding-modal-search span {
+  color: #667085;
+  font-size: 9px;
+  font-weight: 750;
+}
+
+.account-binding-modal-list {
+  min-height: 0;
+  overflow: auto;
+}
+
+.account-binding-modal-list > label {
+  min-height: 44px;
+  padding: 6px 12px;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) minmax(120px, auto);
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid #eef1f5;
+  cursor: pointer;
+}
+
+.account-binding-modal-list > label.selected {
+  background: #f0f6ff;
+}
+
+.account-binding-modal-list > label > span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.account-binding-modal-list strong,
+.account-binding-modal-list b {
+  overflow: hidden;
+  color: #344054;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-binding-modal-list small {
+  overflow: hidden;
+  color: #667085;
+  font-size: 8.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-binding-modal-list .meta {
+  text-align: right;
+}
+
+.account-binding-modal-empty {
+  padding: 28px 12px;
+  color: #98a2b3;
+  font-size: 10px;
+  text-align: center;
+}
+
+.account-binding-modal > footer {
+  border-top: 1px solid #e8ecf1;
+  justify-content: flex-end;
+}
+
+.account-binding-modal > footer > span {
+  margin-right: auto;
+  color: #667085;
+  font-size: 9px;
+}
+
+.account-binding-modal > footer button {
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid #d8dee7;
+  border-radius: 8px;
+  background: #fff;
+  color: #475467;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.account-binding-modal > footer button.primary {
+  border-color: #2f6db4;
+  background: #2f6db4;
+  color: #fff;
+}
+
+html[data-theme='dark'] .account-binding-modal {
+  background: var(--pa-dark-surface);
+  color: var(--pa-dark-text);
+  border-color: var(--pa-dark-border-strong);
+  box-shadow: 0 28px 80px rgba(0, 0, 0, .55);
+}
+
+html[data-theme='dark'] .account-binding-modal > header,
+html[data-theme='dark'] .account-binding-modal > footer,
+html[data-theme='dark'] .account-binding-modal-search,
+html[data-theme='dark'] .account-binding-modal-list > label {
+  border-color: var(--pa-dark-border);
+}
+
+html[data-theme='dark'] .account-binding-modal-search {
+  background: var(--pa-dark-surface-2);
+}
+
+html[data-theme='dark'] .account-binding-modal-search input,
+html[data-theme='dark'] .account-binding-modal > header > button,
+html[data-theme='dark'] .account-binding-modal > footer button {
+  background: var(--pa-dark-surface-2);
+  color: var(--pa-dark-text-soft);
+  border-color: var(--pa-dark-border-strong);
+}
+
+html[data-theme='dark'] .account-binding-modal > header small { color: #4ade80; }
+html[data-theme='dark'] .account-binding-modal > header p,
+html[data-theme='dark'] .account-binding-modal-search span,
+html[data-theme='dark'] .account-binding-modal-list small,
+html[data-theme='dark'] .account-binding-modal > footer > span { color: var(--pa-dark-muted); }
+html[data-theme='dark'] .account-binding-modal-list strong,
+html[data-theme='dark'] .account-binding-modal-list b { color: var(--pa-dark-text-soft); }
+html[data-theme='dark'] .account-binding-modal-list > label.selected { background: #173421; }
+html[data-theme='dark'] .account-binding-modal > footer button.primary { background: #22c55e; border-color: #22c55e; color: #07140b; }

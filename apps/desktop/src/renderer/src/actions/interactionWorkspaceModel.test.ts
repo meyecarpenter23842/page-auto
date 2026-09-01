@@ -23,6 +23,17 @@ describe('interaction workspace composition model', () => {
     expect(plan.modules[0]?.runtimeStatus).toBe('ready')
   })
 
+  it('adds the common Switch Page module first when Page actor is enabled', () => {
+    const plan = buildInteractionWorkspacePlan(draft({
+      actor: 'page',
+      pageUid: '987654321',
+      targetMode: 'uid_limit',
+      targetValues: '10001'
+    }))
+    expect(plan.modules.map((module) => module.actionType)).toEqual(['switch_page', 'target_uid_interaction'])
+    expect(plan.modules[0]).toMatchObject({ label: 'Switch Page', runtimeStatus: 'ready' })
+  })
+
   it('composes the four atomic comment modules without duplicating target drivers', () => {
     const plan = buildInteractionWorkspacePlan(draft({
       targetMode: 'groups',

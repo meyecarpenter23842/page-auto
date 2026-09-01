@@ -27,7 +27,6 @@ describe('interaction workspace run composition', () => {
     expect(allocateInteractionTargets(config, targets, 1, 2)).toEqual(['2', '4'])
   })
 
-
   it('does not create target-required actions for an account with no distributed targets', () => {
     const config = draft({ targetMode: 'uid_distribute', targetValues: '10001', targetLimit: 20 })
     expect(allocateInteractionTargets(config, ['10001'], 1, 2)).toEqual([])
@@ -57,6 +56,21 @@ describe('interaction workspace run composition', () => {
       commentEnabled: true,
       commentTemplates: 'Xin chào'
     })
+  })
+
+  it('prepends Switch Page for Page actor without creating a switch-only turn', () => {
+    const config = draft({
+      actor: 'page',
+      pageUid: '20002',
+      targetMode: 'uid_distribute',
+      targetValues: '10001'
+    })
+    expect(interactionWorkspaceActionTypes(config)).toEqual(['switch_page', 'target_uid_interaction'])
+    expect(composeInteractionActions(config, ['10001']).map((item) => item.actionType)).toEqual([
+      'switch_page',
+      'target_uid_interaction'
+    ])
+    expect(composeInteractionActions(config, [])).toEqual([])
   })
 
   it('composes group + comment-level actions in stable order', () => {
