@@ -18,6 +18,7 @@ import {
   collectJoinedGroupUrls,
   configuredGroupWhitelist,
   deleteGroupComment,
+  directGroupUrlsFromWhitelist,
   groupArticles,
   groupIdentityAllowed,
   leaveCurrentGroup,
@@ -368,14 +369,18 @@ export class GroupInteractionActionExecutor implements ActionExecutor {
       return resultFromStats(stats, aggregateTargets, context.control.isStopped())
     }
 
-    if (!await navigate(page, 'https://www.facebook.com/groups/joins/', timeoutMs)) {
-      return navigationFailed('Tương tác nhóm', new Error('Không mở được danh sách nhóm đã tham gia.'))
-    }
     const desiredGroups = pickRange(
       configNumber(config, 'joinedGroupMin', 5),
       configNumber(config, 'joinedGroupMax', 10)
     )
-    const groupUrls = await collectJoinedGroupUrls(page, configuredGroupWhitelist(config), desiredGroups)
+    const whitelist = configuredGroupWhitelist(config)
+    let groupUrls = directGroupUrlsFromWhitelist(whitelist, desiredGroups)
+    if (!groupUrls.length) {
+      if (!await navigate(page, 'https://www.facebook.com/groups/joins/', timeoutMs)) {
+        return navigationFailed('Tương tác nhóm', new Error('Không mở được danh sách nhóm đã tham gia.'))
+      }
+      groupUrls = await collectJoinedGroupUrls(page, [], desiredGroups)
+    }
     if (!groupUrls.length) return resultFromStats(stats, aggregateTargets, context.control.isStopped())
 
     for (const url of groupUrls) {

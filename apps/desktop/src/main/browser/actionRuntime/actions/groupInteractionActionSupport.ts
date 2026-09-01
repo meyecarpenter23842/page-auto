@@ -78,6 +78,10 @@ export function configuredGroupWhitelist(config: ActionConfig, key = 'groupWhite
   return output
 }
 
+export function directGroupUrlsFromWhitelist(whitelist: readonly string[], limit: number): string[] {
+  return whitelist.slice(0, Math.max(0, limit)).map((identity) => normalizeGroupUrl(identity))
+}
+
 export function groupIdentityAllowed(identity: string | null, whitelist: readonly string[]): boolean {
   if (!whitelist.length) return true
   return identity !== null && whitelist.includes(identity.toLocaleLowerCase())
@@ -106,6 +110,9 @@ export async function articleGroupIdentity(article: Locator): Promise<string | n
 }
 
 export async function collectJoinedGroupUrls(page: Page, whitelist: readonly string[], limit: number): Promise<string[]> {
+  const direct = directGroupUrlsFromWhitelist(whitelist, limit)
+  if (direct.length) return direct
+
   const links = page.locator(GROUP_LINK_SELECTOR)
   const count = await links.count().catch(() => 0)
   const output: string[] = []

@@ -158,6 +158,7 @@ export function composeInteractionActions(
   const hasResolvedTargets = resolvedTargets.length > 0
   const targetCount = Math.min(draft.targetLimit, resolvedTargets.length)
   const operationCount = Math.max(1, targetCount * Math.max(1, draft.postsPerTarget))
+  const operationsPerTarget = Math.max(1, draft.postsPerTarget)
   const reactionFields = reactions(draft)
   const pacingFields = pacing(draft)
 
@@ -193,12 +194,12 @@ export function composeInteractionActions(
         viewMaxSeconds: 0,
         sortRecent: false,
         reactionEnabled: draft.actions.reaction,
-        reactionMin: draft.actions.reaction ? operationCount : 0,
-        reactionMax: draft.actions.reaction ? operationCount : 0,
+        reactionMin: draft.actions.reaction ? operationsPerTarget : 0,
+        reactionMax: draft.actions.reaction ? operationsPerTarget : 0,
         ...reactionFields,
         commentEnabled: draft.actions.comment,
-        commentMin: draft.actions.comment ? operationCount : 0,
-        commentMax: draft.actions.comment ? operationCount : 0,
+        commentMin: draft.actions.comment ? operationsPerTarget : 0,
+        commentMax: draft.actions.comment ? operationsPerTarget : 0,
         deleteCommentAfter: false,
         usePostTextAsComment: false,
         commentTemplates: draft.commentTemplates,
