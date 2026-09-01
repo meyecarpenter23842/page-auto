@@ -89,13 +89,28 @@ async function firstVisibleCandidate(locator: Locator): Promise<Locator | null> 
   return null
 }
 
+async function clickableTextFallback(scope: Page | Locator, name: string): Promise<Locator | null> {
+  const textMatches = scope.getByText(name, { exact: true })
+  const count = Math.min(await textMatches.count().catch(() => 0), MAX_VISIBLE_CANDIDATES_PER_SELECTOR)
+  for (let index = 0; index < count; index += 1) {
+    const text = textMatches.nth(index)
+    if (!await text.isVisible().catch(() => false)) continue
+    const clickable = text.locator('xpath=ancestor-or-self::*[self::button or @role="button"][1]').first()
+    if (await clickable.isVisible().catch(() => false)) return clickable
+  }
+  return null
+}
+
 async function accessibleButtonFallback(scope: Page | Locator, name: string): Promise<Locator | null> {
   const exact = await firstVisibleCandidate(scope.getByRole('button', { name, exact: true }))
   if (exact) return exact
 
   if (!/^(?:Like|Thích)$/i.test(name)) return null
   const prefix = new RegExp(`^${escapeRegExp(name)}(?:$|\\s|[:.,])`, 'i')
-  return firstVisibleCandidate(scope.getByRole('button', { name: prefix }))
+  const accessible = await firstVisibleCandidate(scope.getByRole('button', { name: prefix }))
+  if (accessible) return accessible
+
+  return clickableTextFallback(scope, name)
 }
 
 export async function firstVisible(page: Page | Locator, selectors: readonly string[]): Promise<Locator | null> {
@@ -114,6 +129,7 @@ export async function firstVisible(page: Page | Locator, selectors: readonly str
 export async function clickFirstVisible(page: Page | Locator, selectors: readonly string[]): Promise<boolean> {
   const locator = await firstVisible(page, selectors)
   if (!locator) return false
+  await locator.scrollIntoViewIfNeeded().catch(() => undefined)
   return locator.click({ timeout: 5000 }).then(() => true).catch(() => false)
 }
 

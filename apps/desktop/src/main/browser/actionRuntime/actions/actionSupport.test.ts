@@ -11,7 +11,15 @@ function candidate(visible: boolean): Locator {
 function candidateList(items: Locator[]): Locator {
   return {
     count: async () => items.length,
-    nth: (index: number) => items[index]!
+    nth: (index: number) => items[index]!,
+    first: () => items[0]!
+  } as unknown as Locator
+}
+
+function textCandidate(visible: boolean, clickable: Locator): Locator {
+  return {
+    isVisible: async () => visible,
+    locator: () => candidateList([clickable])
   } as unknown as Locator
 }
 
@@ -23,7 +31,8 @@ describe('actionSupport firstVisible', () => {
     const empty = candidateList([])
     const scope = {
       locator: () => direct,
-      getByRole: () => empty
+      getByRole: () => empty,
+      getByText: () => empty
     } as unknown as Page
 
     await expect(firstVisible(scope, ['[role="button"][aria-label="Like"]'])).resolves.toBe(visible)
@@ -35,7 +44,8 @@ describe('actionSupport firstVisible', () => {
     const accessible = candidateList([nativeButton])
     const scope = {
       locator: () => empty,
-      getByRole: () => accessible
+      getByRole: () => accessible,
+      getByText: () => empty
     } as unknown as Page
 
     await expect(firstVisible(scope, ['[role="button"][aria-label="Like"]'])).resolves.toBe(nativeButton)
@@ -47,9 +57,23 @@ describe('actionSupport firstVisible', () => {
     const accessible = candidateList([vietnameseButton])
     const scope = {
       locator: () => empty,
-      getByRole: () => accessible
+      getByRole: () => accessible,
+      getByText: () => empty
     } as unknown as Page
 
     await expect(firstVisible(scope, ['[role="button"][aria-label="Thích"]'])).resolves.toBe(vietnameseButton)
+  })
+
+  it('resolves visible Like text to its clickable ancestor when Facebook uses a different aria-label', async () => {
+    const clickable = candidate(true)
+    const visibleText = textCandidate(true, clickable)
+    const empty = candidateList([])
+    const scope = {
+      locator: () => empty,
+      getByRole: () => empty,
+      getByText: () => candidateList([visibleText])
+    } as unknown as Page
+
+    await expect(firstVisible(scope, ['[role="button"][aria-label="Thích"]'])).resolves.toBe(clickable)
   })
 })
