@@ -54,12 +54,16 @@ async function runJoinButton(
   context: ActionExecutorContext,
   config: ActionConfig,
   target: number,
-  stats: JoinStats
+  stats: JoinStats,
+  filtersAlreadyValidated = false
 ): Promise<boolean> {
-  const text = await joinCandidateText(button)
-  if (!groupTextMatchesFilters(text, config)) {
-    stats.skipped += 1
-    return true
+  if (!filtersAlreadyValidated) {
+    const text = await joinCandidateText(button)
+    if (!groupTextMatchesFilters(text, config)) {
+      stats.skipped += 1
+      context.log('debug', 'Bỏ qua ứng viên nhóm vì card hiện tại không đạt bộ lọc K431.', 'join_group_candidate_filtered')
+      return true
+    }
   }
 
   const previousAttempted = stats.attempted
@@ -90,18 +94,33 @@ async function joinFromIdList(
 
     if (!await navigate(page, normalizeGroupUrl(group), timeoutMs)) {
       stats.failed += 1
+      context.log('warning', 'Không mở được Group ID hiện tại.', 'join_group_navigation_failed')
       continue
     }
 
+    // Direct-ID mode owns the whole Group page, so evaluate configured metadata once on that
+    // surface. The Join button itself often contains only “Join group/Tham gia nhóm”; applying
+    // member/privacy/location filters to that button text a second time falsely rejects a Group
+    // that already passed the page-level filter.
     const pageText = await page.locator('body').innerText().catch(() => '')
     if (!groupTextMatchesFilters(pageText, config)) {
       stats.skipped += 1
+      context.log(
+        'info',
+        'Bỏ qua Group ID hiện tại vì metadata của trang không đạt bộ lọc K431.',
+        'join_group_page_filtered'
+      )
       continue
     }
 
     const buttons = await findSurfaceJoinButtons(page)
     if (!buttons) {
       stats.skipped += 1
+      context.log(
+        'warning',
+        'Group ID đã đạt bộ lọc nhưng không tìm thấy nút Tham gia trên DOM hiện tại.',
+        'join_group_button_not_found'
+      )
       continue
     }
 
@@ -111,10 +130,18 @@ async function joinFromIdList(
       const button = buttons.nth(index)
       if (!await button.isVisible().catch(() => false)) continue
       handled = true
-      if (!await runJoinButton(page, button, context, config, target, stats)) return
+      context.log('debug', 'Group ID đạt bộ lọc; bắt đầu thao tác Tham gia.', 'join_group_attempt_start')
+      if (!await runJoinButton(page, button, context, config, target, stats, true)) return
       break
     }
-    if (!handled) stats.skipped += 1
+    if (!handled) {
+      stats.skipped += 1
+      context.log(
+        'warning',
+        'Có locator nút Tham gia nhưng không có nút nào đang hiển thị.',
+        'join_group_button_not_visible'
+      )
+    }
   }
 }
 
