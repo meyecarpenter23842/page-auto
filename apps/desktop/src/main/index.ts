@@ -8,6 +8,7 @@ import { registerContentLibraryIpcHandlers, type ContentLibraryIpcRuntime } from
 import { registerCopyPostIpcHandlers, type CopyPostIpcRuntime } from './copyPostIpc'
 import { initializeDatabase, type DatabaseRuntime } from './database'
 import { registerHotmailIpcHandlers, type HotmailIpcRuntime } from './hotmailIpc'
+import { registerInteractionWorkspaceRunnerIpcHandlers, type InteractionWorkspaceRunnerIpcRuntime } from './interactionWorkspaceRunnerIpc'
 import { registerIpcHandlers, type IpcRuntime } from './ipc'
 import { createLogger } from './logger'
 import { registerPostLibraryIpcHandlers, type PostLibraryIpcRuntime } from './postLibraryIpc'
@@ -21,6 +22,7 @@ let databaseRuntime: DatabaseRuntime | null = null
 let ipcRuntime: IpcRuntime | null = null
 let accountGroupIpcRuntime: AccountGroupIpcRuntime | null = null
 let actionWorkspaceIpcRuntime: ActionWorkspaceIpcRuntime | null = null
+let interactionWorkspaceRunnerIpcRuntime: InteractionWorkspaceRunnerIpcRuntime | null = null
 let aiAgentIpcRuntime: AiAgentIpcRuntime | null = null
 let checkpoint282WorkbenchIpcRuntime: Checkpoint282WorkbenchIpcRuntime | null = null
 let contentLibraryIpcRuntime: ContentLibraryIpcRuntime | null = null
@@ -82,6 +84,10 @@ app.whenReady().then(() => {
     ipcRuntime = registerIpcHandlers({ database: databaseRuntime.client, dataDirectory })
     accountGroupIpcRuntime = registerAccountGroupIpcHandlers(databaseRuntime.client)
     actionWorkspaceIpcRuntime = registerActionWorkspaceIpcHandlers(databaseRuntime.client)
+    interactionWorkspaceRunnerIpcRuntime = registerInteractionWorkspaceRunnerIpcHandlers({
+      database: databaseRuntime.client,
+      dataDirectory
+    })
     aiAgentIpcRuntime = registerAiAgentIpcHandlers(databaseRuntime.client)
     contentLibraryIpcRuntime = registerContentLibraryIpcHandlers(databaseRuntime.client)
     copyPostIpcRuntime = registerCopyPostIpcHandlers(databaseRuntime.client)
@@ -115,6 +121,8 @@ app.whenReady().then(() => {
     contentLibraryIpcRuntime = null
     aiAgentIpcRuntime?.dispose()
     aiAgentIpcRuntime = null
+    interactionWorkspaceRunnerIpcRuntime?.dispose()
+    interactionWorkspaceRunnerIpcRuntime = null
     actionWorkspaceIpcRuntime?.dispose()
     actionWorkspaceIpcRuntime = null
     hotmailIpcRuntime?.dispose()
@@ -150,6 +158,8 @@ app.on('before-quit', () => {
   contentLibraryIpcRuntime = null
   aiAgentIpcRuntime?.dispose()
   aiAgentIpcRuntime = null
+  interactionWorkspaceRunnerIpcRuntime?.dispose()
+  interactionWorkspaceRunnerIpcRuntime = null
   actionWorkspaceIpcRuntime?.dispose()
   actionWorkspaceIpcRuntime = null
   hotmailIpcRuntime?.dispose()

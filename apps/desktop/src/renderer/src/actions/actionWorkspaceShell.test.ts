@@ -28,7 +28,7 @@ describe('Action workspace shell', () => {
     expect(registrySource).toContain("label: 'Tương tác'")
   })
 
-  it('binds real Account Manager rows and saves checkbox composition config to DB', () => {
+  it('binds Account Manager rows, persists composition and exposes runner controls', () => {
     expect(interactionSource).toContain('Tài khoản chạy')
     expect(interactionSource).toContain('availableAccounts')
     expect(interactionSource).toContain('Thứ tự chạy')
@@ -38,6 +38,10 @@ describe('Action workspace shell', () => {
     expect(interactionModelSource).toContain("label: 'Reply comment'")
     expect(interactionModelSource).toContain("label: 'Tag trong comment'")
     expect(interactionSource).toContain('Kế hoạch module')
-    expect(interactionSource).toContain('Runner chưa nối')
+    expect(interactionSource).toContain("runCommand('start')")
+    expect(interactionSource).toContain("runCommand('pause')")
+    expect(interactionSource).toContain("runCommand('resume')")
+    expect(interactionSource).toContain("runCommand('stop')")
+    expect(interactionSource).not.toContain('Runner chưa nối')
   })
 })

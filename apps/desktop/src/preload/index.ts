@@ -39,6 +39,12 @@ import {
   type UpdateActionWorkspacePayload
 } from '../shared/actionWorkspaces'
 import {
+  INTERACTION_WORKSPACE_RUNNER_IPC,
+  type InteractionWorkspaceRunIdPayload,
+  type InteractionWorkspaceRunSnapshot,
+  type InteractionWorkspaceRunStartPayload
+} from '../shared/interactionWorkspaceRunner'
+import {
   AI_AGENT_IPC,
   type AiAgentCatalogView,
   type AiAgentEnabledPayload,
@@ -156,6 +162,11 @@ const api = {
   createActionWorkspace: (input: CreateActionWorkspaceInput): Promise<ActionWorkspaceRecord> => ipcRenderer.invoke(ACTION_WORKSPACE_IPC.create, input) as Promise<ActionWorkspaceRecord>,
   updateActionWorkspace: (payload: UpdateActionWorkspacePayload): Promise<ActionWorkspaceRecord> => ipcRenderer.invoke(ACTION_WORKSPACE_IPC.update, payload) as Promise<ActionWorkspaceRecord>,
   deleteActionWorkspace: (payload: ActionWorkspaceIdPayload): Promise<boolean> => ipcRenderer.invoke(ACTION_WORKSPACE_IPC.delete, payload) as Promise<boolean>,
+  startInteractionWorkspaceRunner: (payload: InteractionWorkspaceRunStartPayload): Promise<InteractionWorkspaceRunSnapshot> => ipcRenderer.invoke(INTERACTION_WORKSPACE_RUNNER_IPC.start, payload) as Promise<InteractionWorkspaceRunSnapshot>,
+  getInteractionWorkspaceRunnerStatus: (payload: InteractionWorkspaceRunIdPayload): Promise<InteractionWorkspaceRunSnapshot | null> => ipcRenderer.invoke(INTERACTION_WORKSPACE_RUNNER_IPC.status, payload) as Promise<InteractionWorkspaceRunSnapshot | null>,
+  pauseInteractionWorkspaceRunner: (payload: InteractionWorkspaceRunIdPayload): Promise<InteractionWorkspaceRunSnapshot | null> => ipcRenderer.invoke(INTERACTION_WORKSPACE_RUNNER_IPC.pause, payload) as Promise<InteractionWorkspaceRunSnapshot | null>,
+  resumeInteractionWorkspaceRunner: (payload: InteractionWorkspaceRunIdPayload): Promise<InteractionWorkspaceRunSnapshot | null> => ipcRenderer.invoke(INTERACTION_WORKSPACE_RUNNER_IPC.resume, payload) as Promise<InteractionWorkspaceRunSnapshot | null>,
+  stopInteractionWorkspaceRunner: (payload: InteractionWorkspaceRunIdPayload): Promise<InteractionWorkspaceRunSnapshot | null> => ipcRenderer.invoke(INTERACTION_WORKSPACE_RUNNER_IPC.stop, payload) as Promise<InteractionWorkspaceRunSnapshot | null>,
   getAiAgentCatalog: (): Promise<AiAgentCatalogView> => ipcRenderer.invoke(AI_AGENT_IPC.catalog) as Promise<AiAgentCatalogView>,
   importAiAgentJson: (): Promise<AiAgentImportResult | null> => ipcRenderer.invoke(AI_AGENT_IPC.importJson) as Promise<AiAgentImportResult | null>,
   setAiAgentEnabled: (payload: AiAgentEnabledPayload): Promise<AiAgentCatalogView> => ipcRenderer.invoke(AI_AGENT_IPC.setEnabled, payload) as Promise<AiAgentCatalogView>,

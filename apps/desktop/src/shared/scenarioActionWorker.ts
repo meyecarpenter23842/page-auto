@@ -42,6 +42,8 @@ export interface ScenarioActionWorkerResult {
 
 export type ScenarioActionWorkerRequestMessage =
   | { type: 'execute'; job: ScenarioActionWorkerJob }
+  | { type: 'pause'; runKey: string }
+  | { type: 'resume'; runKey: string }
   | { type: 'stop'; runKey: string }
   | { type: 'shutdown' }
 
