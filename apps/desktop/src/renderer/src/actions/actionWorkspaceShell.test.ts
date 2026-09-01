@@ -7,6 +7,8 @@ const registrySource = readFileSync(new URL('./actionWorkspaceRegistry.ts', impo
 const interactionSource = readFileSync(new URL('./InteractionWorkspace.tsx', import.meta.url), 'utf8')
 const interactionModelSource = readFileSync(new URL('./interactionWorkspaceModel.ts', import.meta.url), 'utf8')
 const accountPickerSource = readFileSync(new URL('./AccountBindingPickerModal.tsx', import.meta.url), 'utf8')
+const interactionPersistenceCssSource = readFileSync(new URL('./interactionWorkspacePersistence.css', import.meta.url), 'utf8')
+const interactionRuntimeCssSource = readFileSync(new URL('./interactionWorkspaceRunner.css', import.meta.url), 'utf8')
 
 describe('Action workspace shell', () => {
   it('uses Hành động as the semantic main route', () => {
@@ -58,5 +60,16 @@ describe('Action workspace shell', () => {
     expect(interactionSource).toContain("runCommand('pause')")
     expect(interactionSource).toContain("runCommand('resume')")
     expect(interactionSource).toContain("runCommand('stop')")
+  })
+
+  it('keeps the account list as a tall vertical rail and pins runtime to the dark theme palette', () => {
+    expect(interactionPersistenceCssSource).toContain('grid-template-columns: minmax(260px, 320px) minmax(0, 1fr)')
+    expect(interactionPersistenceCssSource).toContain('grid-row: 1 / span 5')
+    expect(interactionPersistenceCssSource).toContain('max-height: calc(100vh - 160px)')
+    expect(interactionPersistenceCssSource).toContain('max-height: none')
+    expect(interactionRuntimeCssSource).toContain("html[data-theme='dark'] .interaction-runtime-card")
+    expect(interactionRuntimeCssSource).toContain('background: var(--pa-dark-surface-2)')
+    expect(interactionRuntimeCssSource).toContain("html[data-theme='dark'] .interaction-run-controls button")
+    expect(interactionRuntimeCssSource).toContain("html[data-theme='dark'] .interaction-runtime-accounts [data-state='needs_attention']")
   })
 })

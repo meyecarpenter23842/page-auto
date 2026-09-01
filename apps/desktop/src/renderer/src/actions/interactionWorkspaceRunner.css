@@ -97,3 +97,99 @@
 .interaction-run-hint { display: block; margin-top: 7px; opacity: .7; }
 .interaction-run-error { margin-top: 8px; }
 .interaction-page-uid { margin-top: 10px; }
+
+html[data-theme='dark'] .interaction-runtime-card {
+  border-color: var(--pa-dark-border-strong);
+  background: var(--pa-dark-surface-2);
+  color: var(--pa-dark-text);
+}
+
+html[data-theme='dark'] .interaction-runtime-head small,
+html[data-theme='dark'] .interaction-runtime-empty,
+html[data-theme='dark'] .interaction-run-hint {
+  color: var(--pa-dark-muted);
+  opacity: 1;
+}
+
+html[data-theme='dark'] .interaction-runtime-card[data-state='running'] .interaction-runtime-head b { color: #4ade80; }
+html[data-theme='dark'] .interaction-runtime-card[data-state='paused'] .interaction-runtime-head b { color: #fbbf24; }
+html[data-theme='dark'] .interaction-runtime-card[data-state='stopping'] .interaction-runtime-head b { color: #f59e0b; }
+html[data-theme='dark'] .interaction-runtime-card[data-state='failed'] .interaction-runtime-head b { color: #fca5a5; }
+html[data-theme='dark'] .interaction-runtime-card[data-state='completed'] .interaction-runtime-head b { color: #86efac; }
+html[data-theme='dark'] .interaction-runtime-card[data-state='stopped'] .interaction-runtime-head b { color: var(--pa-dark-muted); }
+
+html[data-theme='dark'] .interaction-runtime-summary span {
+  border: 1px solid var(--pa-dark-border);
+  background: var(--pa-dark-surface);
+  color: var(--pa-dark-text-soft);
+}
+
+html[data-theme='dark'] .interaction-runtime-accounts > div {
+  border: 1px solid var(--pa-dark-border);
+  background: var(--pa-dark-surface);
+  color: var(--pa-dark-text-soft);
+}
+
+html[data-theme='dark'] .interaction-runtime-accounts small {
+  color: var(--pa-dark-muted);
+  opacity: 1;
+}
+
+html[data-theme='dark'] .interaction-runtime-accounts [data-state='running'] {
+  border-color: rgba(34, 197, 94, .5);
+  outline: none;
+  background: rgba(20, 83, 45, .22);
+}
+
+html[data-theme='dark'] .interaction-runtime-accounts [data-state='completed'] {
+  border-color: rgba(34, 197, 94, .25);
+  background: rgba(20, 83, 45, .12);
+}
+
+html[data-theme='dark'] .interaction-runtime-accounts [data-state='waiting'] {
+  border-color: rgba(245, 158, 11, .38);
+  background: rgba(120, 53, 15, .16);
+}
+
+html[data-theme='dark'] .interaction-runtime-accounts [data-state='needs_attention'],
+html[data-theme='dark'] .interaction-runtime-accounts [data-state='failed'] {
+  border-color: rgba(239, 68, 68, .55);
+  outline: none;
+  background: rgba(127, 29, 29, .2);
+}
+
+html[data-theme='dark'] .interaction-runtime-logs {
+  border-color: var(--pa-dark-border);
+}
+
+html[data-theme='dark'] .interaction-runtime-logs p {
+  color: var(--pa-dark-text-soft);
+}
+
+html[data-theme='dark'] .interaction-runtime-logs time {
+  color: var(--pa-dark-faint);
+  opacity: 1;
+}
+
+html[data-theme='dark'] .interaction-runtime-logs p[data-level='warning'] span { color: #fde68a; }
+html[data-theme='dark'] .interaction-runtime-logs p[data-level='error'] span { color: #fca5a5; }
+
+html[data-theme='dark'] .interaction-run-controls button {
+  border-color: var(--pa-dark-border-strong);
+  background: var(--pa-dark-surface-2);
+  color: var(--pa-dark-text-soft);
+}
+
+html[data-theme='dark'] .interaction-run-controls button.primary {
+  border-color: #22c55e;
+  background: #22c55e;
+  color: #07140b;
+}
+
+html[data-theme='dark'] .interaction-run-controls button.danger { color: #fca5a5; }
+html[data-theme='dark'] .interaction-run-controls button:disabled {
+  border-color: var(--pa-dark-border);
+  background: #171717;
+  color: var(--pa-dark-faint);
+  opacity: .7;
+}
