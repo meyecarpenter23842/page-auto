@@ -14,8 +14,9 @@ Nguyên tắc cốt lõi:
 - Page không phải account; Page được switch theo Page UID từ session account.
 - **1 Page Tab = 1 Page UID + một container nhiều nghiệp vụ của Page đó**, không còn được hiểu là chỉ một cấu hình đăng Group.
 - Danh sách account của Page được dùng làm nguồn chung; từng nghiệp vụ có cấu hình/runtime riêng khi cần.
-- Account trong cùng một phiên/nghiệp vụ của Page chạy tuần tự, không song song.
-- Nhiều Page Tab khác nhau có thể chạy song song theo giới hạn cấu hình.
+- `group_post` Page Tab hiện giữ account tuần tự theo rotation baseline. Workspace/nghiệp vụ có cấu hình concurrency riêng được phép chạy nhiều account theo giới hạn đã snapshot; hiện workspace `Tương tác` dùng cơ chế này.
+- Với workspace `Tương tác`, `TK song song = N` là **rolling pool/cuốn chiếu**: luôn cố giữ tối đa N account active; slot nào kết thúc thì account kế tiếp vào ngay, không chờ cả nhóm N account cùng xong.
+- Nhiều Page Tab/workspace khác nhau có thể chạy song song theo giới hạn cấu hình và account-level lock.
 - Group gốc không bị xóa; mỗi run Group clone snapshot riêng để chống trùng trong phiên.
 - Bài viết gốc nằm trong Thư viện Bài viết chung; consumer snapshot nội dung khi tạo run.
 - React chỉ làm UI; renderer không truy cập DB/browser trực tiếp.
@@ -82,8 +83,9 @@ Ràng buộc:
 
 - Renderer chỉ gọi typed IPC qua preload.
 - Main giữ quyền DB, filesystem và worker.
-- Một Page Tab/nghiệp vụ đang chạy không được tạo chạy song song nhiều account trong chính phiên đó.
-- Nhiều Page Tab có thể chạy song song theo giới hạn cấu hình.
+- Concurrency là policy của từng orchestration/business workspace, không phải giả định cố định toàn app. `group_post` hiện vẫn tuần tự; `Tương tác` có rolling account pool theo `accountConcurrency` đã lưu/snapshot.
+- Cùng một account không được bị hai workflow điều khiển đồng thời; mọi flow phải tôn trọng account-level execution coordinator/lease dùng chung.
+- Nhiều Page Tab/workspace có thể chạy song song khi không tranh cùng account và còn giới hạn runtime cho phép.
 - Mỗi browser action/provider action phải có typed result; không viết một script dài khó bảo trì.
 
 ### 3.2. Tầng A — Facebook dùng chung
@@ -111,6 +113,9 @@ Tầng này quản lý phiên nhưng **không biết selector/nút Facebook cụ
 
 - account nào đang chạy;
 - account nào đã chạy lượt trong phiên;
+- policy tuần tự hoặc concurrency của workspace;
+- rolling pool/slot refill khi workspace hỗ trợ chạy song song;
+- account-level lease để không chạy trùng cùng một account giữa nhiều workflow;
 - số bài/account;
 - delay giữa bài;
 - delay đổi account;
@@ -274,6 +279,7 @@ Giữ toàn bộ nghiệp vụ hiện tại:
 - số bài/account
 - delay bài, delay đổi account
 - ngày chạy + nhiều time windows
+- account rotation hiện vẫn tuần tự trong chính phiên `group_post`
 - sequential/random ở consumer
 - runtime/log
 - snapshot Group chống trùng trong phiên
@@ -446,7 +452,8 @@ Facebook Common
 
 Run Orchestration
   Scheduler
-  Account turn / rotation
+  Account turn / rotation / rolling account pool
+  Account execution lease
   Pause / Resume / Stop
   Worker lifecycle
   Runtime status / logs
@@ -474,6 +481,16 @@ App restart không mất config/lịch sử. Item đang processing mà publish c
 Retry chỉ áp dụng lỗi được policy đánh dấu an toàn; lỗi publish_unconfirmed/manual_review không auto-retry.
 
 Orchestration không được chứa Facebook selector cụ thể.
+
+### 8.1. Rolling account concurrency cho workspace Tương tác
+
+- `accountConcurrency` là config orchestration, không phải một atomic Facebook action.
+- Giá trị hiện hành cho UI/runtime Tương tác là `1..20`; config legacy không có field này phải parse về `1` để giữ compatibility.
+- Khi Start, config và account order được freeze vào snapshot. Thay đổi `TK song song` trên UI sau đó không đổi phiên đang chạy.
+- Runner dùng **rolling pool**, không chia batch: nếu N slot đang chạy và một account hoàn tất/needs-attention/off, slot vừa trống được cấp account kế tiếp ngay khi phiên còn runnable.
+- Account đang bị một workflow khác giữ global execution lease không được chiếm một slot rỗng nếu còn account khác trong queue có thể acquire; queue sẽ quay lại account bị lock sau.
+- Pause/Resume/Stop phải tác động trên toàn bộ account active trong pool và không cấp account mới khi phiên paused/stopping.
+- Quyết định này chỉ thay semantics của workspace `Tương tác` có config concurrency; `group_post` Page Tab hiện giữ rotation tuần tự cho tới khi có batch riêng thay đổi nó.
 
 ---
 
@@ -637,6 +654,10 @@ Các phase nền cũ vẫn có giá trị lịch sử: Bootstrap -> Account -> S
 
 - Group source/run chống trùng không đổi ngoài thay đổi được chốt.
 - Group Post trước/sau refactor common runtime phải giữ cùng observable behavior.
+- Group account rotation vẫn tuần tự trong lô không chủ đích đổi `group_post`.
+- Workspace Tương tác có regression chứng minh rolling pool: với concurrency 2, account thứ 3 bắt đầu ngay khi một trong hai slot đầu kết thúc dù slot còn lại vẫn đang chạy.
+- Account bị global lock không làm mất một concurrency slot khi còn account khác có thể chạy; cùng một account không chạy trùng giữa workflow.
+- Config legacy của Tương tác không có `accountConcurrency` phải giữ default 1; giới hạn concurrency được validate trước worker launch.
 - Session/login/2FA/checkpoint/Page switch có test ở common layer, không duplicate test implementation trong từng business.
 - Orchestration test không phụ thuộc Facebook selector.
 - Worker crash/browser failure không làm treo renderer.
@@ -655,7 +676,7 @@ Live bug liên quan checkpoint/2FA continuation chỉ được coi fixed sau liv
 2. Custom Import map tối thiểu 9 cột và mở rộng theo input.
 3. Account giữ persistent session qua restart.
 4. Page Tab là container của một Page và hỗ trợ nhiều nghiệp vụ rõ ràng.
-5. Account tuần tự trong một phiên/nghiệp vụ; nhiều Page Tab có thể chạy song song.
+5. `group_post` giữ rotation account tuần tự theo baseline hiện tại; workspace Tương tác dùng rolling concurrency khi `TK song song > 1`, không có batch barrier và vẫn tôn trọng global account lock.
 6. Login/2FA/checkpoint/account identity/Page switch có một nguồn Facebook Common dùng chung, không copy theo nghiệp vụ.
 7. Group source không bị phá; run chống trùng và Group vẫn chạy sau refactor.
 8. UI Page có `Nhóm / Đăng Tường / Sửa Page`, compact control và preview runtime theo kế hoạch.

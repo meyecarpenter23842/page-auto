@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildInteractionWorkspacePlan,
   DEFAULT_INTERACTION_WORKSPACE_DRAFT,
+  MAX_INTERACTION_ACCOUNT_CONCURRENCY,
   parseInteractionWorkspaceDraft,
   serializeInteractionWorkspaceDraft,
   type InteractionWorkspaceDraft
@@ -62,9 +63,12 @@ describe('interaction workspace composition model', () => {
     expect(friendRequest.errors.some((message) => message.includes('target collector'))).toBe(true)
   })
 
-  it('validates conditional config, Page UID and actor compatibility', () => {
+  it('validates conditional config, rolling concurrency, Page UID and actor compatibility', () => {
     const missingPage = buildInteractionWorkspacePlan(draft({ actor: 'page' }))
     expect(missingPage.errors).toContain('Actor Page cần nhập Page UID.')
+
+    const invalidConcurrency = buildInteractionWorkspacePlan(draft({ accountConcurrency: MAX_INTERACTION_ACCOUNT_CONCURRENCY + 1 }))
+    expect(invalidConcurrency.errors).toContain(`TK song song phải từ 1 đến ${MAX_INTERACTION_ACCOUNT_CONCURRENCY}.`)
 
     const plan = buildInteractionWorkspacePlan(draft({
       actor: 'page',
@@ -91,6 +95,7 @@ describe('interaction workspace composition model', () => {
       targetValues: '10001|10002',
       delayMinSeconds: 7,
       delayMaxSeconds: 12,
+      accountConcurrency: 4,
       actions: { ...DEFAULT_INTERACTION_WORKSPACE_DRAFT.actions, comment: true },
       commentTemplates: 'Xin chào'
     })
@@ -99,6 +104,7 @@ describe('interaction workspace composition model', () => {
     const legacy = parseInteractionWorkspaceDraft(JSON.stringify({ targetMode: 'groups', targetValues: '123' }))
     expect(legacy.targetMode).toBe('groups')
     expect(legacy.pageUid).toBe('')
+    expect(legacy.accountConcurrency).toBe(1)
     expect(legacy.actions).toEqual(DEFAULT_INTERACTION_WORKSPACE_DRAFT.actions)
     expect(legacy.reactions).toEqual(DEFAULT_INTERACTION_WORKSPACE_DRAFT.reactions)
   })
@@ -110,12 +116,14 @@ describe('interaction workspace composition model', () => {
       targetMode: 'invalid',
       targetLimit: -1,
       delayMinSeconds: -2,
+      accountConcurrency: 999,
       actions: { reaction: 'yes' }
     }))
     expect(parsed.actor).toBe('profile')
     expect(parsed.targetMode).toBe('friends')
     expect(parsed.targetLimit).toBe(DEFAULT_INTERACTION_WORKSPACE_DRAFT.targetLimit)
     expect(parsed.delayMinSeconds).toBe(DEFAULT_INTERACTION_WORKSPACE_DRAFT.delayMinSeconds)
+    expect(parsed.accountConcurrency).toBe(DEFAULT_INTERACTION_WORKSPACE_DRAFT.accountConcurrency)
     expect(parsed.actions.reaction).toBe(true)
   })
 })

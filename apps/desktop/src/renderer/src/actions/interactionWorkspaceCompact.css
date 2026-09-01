@@ -101,35 +101,35 @@
   max-width: 150px;
 }
 
-.interaction-concurrency-locked {
+.interaction-concurrency-field {
   min-width: 0;
   display: grid;
   grid-template-columns: 1fr auto;
   gap: 5px 6px;
-  color: #667085;
+  color: #475467;
   font-size: 9px;
   font-weight: 750;
 }
 
-.interaction-concurrency-locked > span {
+.interaction-concurrency-field > span {
   grid-column: 1 / -1;
 }
 
-.interaction-concurrency-locked input {
-  width: 72px;
+.interaction-concurrency-field input {
+  width: 82px;
   height: 34px;
   box-sizing: border-box;
   padding: 0 8px;
   border: 1px solid #d7dde6;
   border-radius: 8px;
-  background: #f2f4f7;
-  color: #667085;
+  background: #fff;
+  color: #1d2939;
   font: inherit;
 }
 
-.interaction-concurrency-locked small {
+.interaction-concurrency-field small {
   align-self: center;
-  color: #98a2b3;
+  color: #667085;
   font-size: 8px;
   white-space: nowrap;
 }
@@ -154,20 +154,19 @@
 
 html[data-theme='dark'] .interaction-page-actor-check,
 html[data-theme='dark'] .interaction-page-uid-inline input,
-html[data-theme='dark'] .interaction-concurrency-locked input {
+html[data-theme='dark'] .interaction-concurrency-field input {
   background: var(--pa-dark-surface-2);
   border-color: var(--pa-dark-border-strong);
   color: var(--pa-dark-text-soft);
 }
 
-html[data-theme='dark'] .interaction-page-uid-inline input:disabled,
-html[data-theme='dark'] .interaction-concurrency-locked input {
+html[data-theme='dark'] .interaction-page-uid-inline input:disabled {
   background: #171717;
   color: var(--pa-dark-faint);
 }
 
 html[data-theme='dark'] .interaction-page-actor-row > small,
 html[data-theme='dark'] .interaction-target-hint,
-html[data-theme='dark'] .interaction-concurrency-locked { color: var(--pa-dark-muted); }
+html[data-theme='dark'] .interaction-concurrency-field { color: var(--pa-dark-muted); }
 html[data-theme='dark'] .interaction-target-compact label { color: var(--pa-dark-text-soft); }
 html[data-theme='dark'] .interaction-target-compact label.active { color: #86efac; }

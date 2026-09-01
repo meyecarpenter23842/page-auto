@@ -8,6 +8,8 @@ export const INTERACTION_TARGET_MODES = [
   'seeding'
 ] as const
 
+export const MAX_INTERACTION_ACCOUNT_CONCURRENCY = 20
+
 export type InteractionTargetMode = typeof INTERACTION_TARGET_MODES[number]
 export type InteractionActor = 'profile' | 'page'
 export type InteractionActionKey = 'reaction' | 'comment' | 'replyComment' | 'reactComment' | 'commentTag' | 'poke'
@@ -29,6 +31,7 @@ export interface InteractionWorkspaceDraft {
   postsPerTarget: number
   delayMinSeconds: number
   delayMaxSeconds: number
+  accountConcurrency: number
   repeat: boolean
 }
 
@@ -63,6 +66,7 @@ export const DEFAULT_INTERACTION_WORKSPACE_DRAFT: InteractionWorkspaceDraft = {
   postsPerTarget: 1,
   delayMinSeconds: 2,
   delayMaxSeconds: 5,
+  accountConcurrency: 1,
   repeat: false
 }
 
@@ -92,6 +96,12 @@ function positiveNumber(value: unknown, fallback: number): number {
 
 function nonNegativeNumber(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback
+}
+
+function boundedInteger(value: unknown, fallback: number, min: number, max: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback
+  const normalized = Math.floor(value)
+  return normalized >= min && normalized <= max ? normalized : fallback
 }
 
 export function parseInteractionWorkspaceDraft(configJson: string): InteractionWorkspaceDraft {
@@ -134,6 +144,12 @@ export function parseInteractionWorkspaceDraft(configJson: string): InteractionW
     postsPerTarget: positiveNumber(raw.postsPerTarget, fallback.postsPerTarget),
     delayMinSeconds: nonNegativeNumber(raw.delayMinSeconds, fallback.delayMinSeconds),
     delayMaxSeconds: nonNegativeNumber(raw.delayMaxSeconds, fallback.delayMaxSeconds),
+    accountConcurrency: boundedInteger(
+      raw.accountConcurrency,
+      fallback.accountConcurrency,
+      1,
+      MAX_INTERACTION_ACCOUNT_CONCURRENCY
+    ),
     repeat: typeof raw.repeat === 'boolean' ? raw.repeat : fallback.repeat
   }
 }

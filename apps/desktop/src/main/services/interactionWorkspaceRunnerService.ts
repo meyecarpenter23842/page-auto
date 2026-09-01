@@ -29,6 +29,7 @@ import {
   interactionWorkspaceActionTypes,
   validateInteractionWorkspaceRun
 } from './interactionWorkspaceComposition'
+import { runRollingAccountPool } from './rollingAccountPool'
 
 export interface InteractionWorkspaceWorkerHost {
   run(job: ScenarioActionWorkerJob, onLog?: (event: ActionLogEvent) => void): Promise<ScenarioActionWorkerResult>
@@ -161,7 +162,12 @@ export class InteractionWorkspaceRunnerService {
       runningKeys: new Map()
     }
     this.active.set(workspaceId, active)
-    this.log(active, 'info', `Bắt đầu phiên ${runId}: ${accounts.length} account, ${snapshot.frozen.actionTypes.length} module.`)
+    const concurrency = Math.min(draft.accountConcurrency, accounts.length)
+    this.log(
+      active,
+      'info',
+      `Bắt đầu phiên ${runId}: ${accounts.length} account, tối đa ${concurrency} account chạy song song kiểu cuốn chiếu, ${snapshot.frozen.actionTypes.length} module.`
+    )
 
     void this.execute(active).catch((error) => {
       if (this.active.get(workspaceId) !== active) return
@@ -266,21 +272,25 @@ export class InteractionWorkspaceRunnerService {
   }
 
   private async execute(active: ActiveInteractionRun): Promise<void> {
-    for (const account of active.frozen.accounts) {
-      if (active.stopRequested) break
-      if (!await this.waitUntilRunnable(active)) break
-      const runtime = this.accountRuntime(active, account.id)
-      if (account.status === 'disabled') {
-        runtime.state = 'failed'
-        runtime.message = 'Account đang bị tắt trong Account Manager.'
-        this.log(active, 'warning', runtime.message, account.id)
-        continue
-      }
-      await this.accountExecution.run(account.id, async () => {
+    const concurrency = Math.min(active.frozen.draft.accountConcurrency, active.frozen.accounts.length)
+    await runRollingAccountPool({
+      items: active.frozen.accounts,
+      concurrency,
+      tryAcquire: (account) => this.accountExecution.tryAcquireLease(account.id),
+      waitUntilRunnable: () => this.waitUntilRunnable(active),
+      shouldStop: () => active.stopRequested,
+      run: async (account) => {
         if (active.stopRequested) return
+        const runtime = this.accountRuntime(active, account.id)
+        if (account.status === 'disabled') {
+          runtime.state = 'failed'
+          runtime.message = 'Account đang bị tắt trong Account Manager.'
+          this.log(active, 'warning', runtime.message, account.id)
+          return
+        }
         await this.runAccount(active, account)
-      })
-    }
+      }
+    })
 
     if (this.active.get(active.snapshot.workspaceId) !== active) return
     active.snapshot.finishedAt = Date.now()
