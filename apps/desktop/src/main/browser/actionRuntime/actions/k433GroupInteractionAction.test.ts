@@ -1,3 +1,4 @@
+import type { Locator, Page } from 'playwright-core'
 import { describe, expect, it } from 'vitest'
 import { createK4ActionExecutorRegistry, createK433GroupInteractionActionExecutorRegistry } from './index'
 import {
@@ -8,11 +9,14 @@ import {
 } from './groupInteractionAction'
 import {
   classifyGroupRestriction,
+  commentOnGroupArticle,
   configuredGroupWhitelist,
   directGroupUrlsFromWhitelist,
+  groupArticles,
   groupIdentityAllowed,
   hasConfiguredGroupReaction,
-  isAppliedReactionAriaLabel
+  isAppliedReactionAriaLabel,
+  reactToGroupArticle
 } from './groupInteractionActionSupport'
 
 describe('K4.3.3 group interaction executor', () => {
@@ -83,6 +87,81 @@ describe('K4.3.3 group interaction executor', () => {
     expect(isAppliedReactionAriaLabel('Remove Love')).toBe(true)
     expect(isAppliedReactionAriaLabel('Bỏ Thích')).toBe(true)
     expect(isAppliedReactionAriaLabel(null)).toBe(false)
+  })
+
+  it('scopes Group posts from the live reaction rendering marker instead of relying only on role=article', () => {
+    let selector = ''
+    const locator = {} as Locator
+    const page = {
+      locator: (value: string) => {
+        selector = value
+        return locator
+      }
+    } as unknown as Page
+
+    expect(groupArticles(page)).toBe(locator)
+    expect(selector).toContain('data-ad-rendering-role="like_button"')
+    expect(selector).toContain('count(parent::*')
+    expect(selector).toContain('count(//*[@data-ad-rendering-role="like_button"])=1')
+    expect(selector).toContain('@role="article"')
+  })
+
+  it('uses an unlabeled contenteditable as the post-local comment fallback', async () => {
+    const candidate = {
+      count: async () => 1,
+      nth: () => candidate,
+      isVisible: async () => true,
+      fill: async () => undefined,
+      press: async () => undefined
+    }
+    const missing = {
+      count: async () => 0,
+      nth: () => missing
+    }
+    const article = {
+      locator: (selector: string) => selector === '[contenteditable="true"]' ? candidate : missing
+    } as unknown as Locator
+
+    expect(await commentOnGroupArticle({} as Page, article, 'hello', '')).toBe(true)
+  })
+
+  it('verifies the post primary live reaction control instead of an applied reaction in a nested comment', async () => {
+    let label = 'Like'
+    let appliedScopeQueried = false
+
+    const live = {
+      first: () => live,
+      count: async () => 1,
+      nth: () => live,
+      isVisible: async () => true,
+      getAttribute: async (name: string) => name === 'aria-label' ? label : null,
+      scrollIntoViewIfNeeded: async () => undefined,
+      click: async () => {
+        label = 'Remove Like'
+      },
+      dispatchEvent: async () => undefined
+    }
+    const missing = {
+      first: () => missing,
+      count: async () => 0,
+      nth: () => missing,
+      isVisible: async () => false
+    }
+    const article = {
+      locator: (selector: string) => {
+        if (selector.startsWith('xpath=self::*')) return missing
+        if (selector === '[role="button"]:has([data-ad-rendering-role="like_button"])') return live
+        if (selector.includes('aria-label^="Remove') || selector.includes('aria-label^="Unlike')
+          || selector.includes('aria-label^="Bỏ') || selector.includes('aria-label^="Gỡ')
+          || selector.includes('aria-label^="Xóa')) {
+          appliedScopeQueried = true
+        }
+        return missing
+      }
+    } as unknown as Locator
+
+    expect(await reactToGroupArticle({} as Page, article, { reactionEnabled: true, reactionLike: true })).toBe(true)
+    expect(appliedScopeQueried).toBe(false)
   })
 
   it('classifies Facebook restriction messages without bypassing them', () => {

@@ -16,17 +16,25 @@ import { groupIdentityFromHref, normalizeGroupUrl } from './joinGroupActionSuppo
 
 export interface GroupInteractionActionDependencies extends BaseViewActionDependencies {}
 
-const ARTICLE_SELECTOR = 'div[role="article"]'
-const GROUP_LINK_SELECTOR = 'a[href*="/groups/"]'
 const LIVE_REACTION_BUTTON_SELECTOR = '[role="button"]:has([data-ad-rendering-role="like_button"])'
-const LIKE_SELECTORS = [
-  LIVE_REACTION_BUTTON_SELECTOR,
+const LIVE_MARKER_XPATH = '//*[@data-ad-rendering-role="like_button"]'
+const LIVE_POST_BOUNDARY_XPATH = '//div[count(.//*[@data-ad-rendering-role="like_button"])=1 and count(parent::*//*[@data-ad-rendering-role="like_button"])>1]'
+const LIVE_POST_EDITOR_CANDIDATE_XPATH = '//div[count(.//*[@data-ad-rendering-role="like_button"])=1 and .//*[@contenteditable="true"] and not(.//div[count(.//*[@data-ad-rendering-role="like_button"])=1 and .//*[@contenteditable="true"]])]'
+const LIVE_POST_EDITOR_FALLBACK_XPATH = `${LIVE_POST_EDITOR_CANDIDATE_XPATH}[not(${LIVE_POST_BOUNDARY_XPATH})]`
+const SINGLE_LIVE_REACTION_FALLBACK_XPATH = `//*[@role="button" and .//*[@data-ad-rendering-role="like_button"]][count(${LIVE_MARKER_XPATH})=1 and not(${LIVE_POST_BOUNDARY_XPATH}) and not(${LIVE_POST_EDITOR_CANDIDATE_XPATH})]`
+const LEGACY_ARTICLE_FALLBACK_XPATH = '//div[@role="article" and not(//*[@data-ad-rendering-role="like_button"])]'
+const ARTICLE_SELECTOR = `xpath=${LIVE_POST_BOUNDARY_XPATH} | ${LIVE_POST_EDITOR_FALLBACK_XPATH} | ${SINGLE_LIVE_REACTION_FALLBACK_XPATH} | ${LEGACY_ARTICLE_FALLBACK_XPATH}`
+const GROUP_LINK_SELECTOR = 'a[href*="/groups/"]'
+const LEGACY_LIKE_SELECTORS = [
   '[role="button"][aria-label="Like"]',
   '[role="button"][aria-label="Thích"]'
 ] as const
+const LIKE_SELECTORS = [LIVE_REACTION_BUTTON_SELECTOR, ...LEGACY_LIKE_SELECTORS] as const
 const COMMENT_BOX_SELECTORS = [
   '[contenteditable="true"][aria-label*="comment" i]',
-  '[contenteditable="true"][aria-label*="bình luận" i]'
+  '[contenteditable="true"][aria-label*="bình luận" i]',
+  '[contenteditable="true"][role="textbox"]',
+  '[contenteditable="true"]'
 ] as const
 const SHARE_SELECTORS = [
   '[role="button"][aria-label="Share"]',
@@ -53,8 +61,18 @@ const REACTION_SELECTORS: Record<string, readonly string[]> = {
   angry: ['[role="button"][aria-label="Angry"]', '[role="button"][aria-label="Phẫn nộ"]']
 }
 const APPLIED_REACTION_LABEL_PATTERN = /^(?:Remove(?:\s|$)|Unlike(?:\s|$)|Bỏ(?:\s|$)|Gỡ(?:\s|$)|Xóa(?:\s|$))/i
+const APPLIED_REACTION_SELECTORS = [
+  '[role="button"][aria-label^="Remove "]',
+  '[role="button"][aria-label^="Unlike"]',
+  '[role="button"][aria-label^="Bỏ "]',
+  '[role="button"][aria-label^="Gỡ "]',
+  '[role="button"][aria-label^="Xóa "]'
+] as const
 const REACTION_VERIFY_TIMEOUT_MS = 3000
 const REACTION_VERIFY_POLL_MS = 150
+const MAX_INTERACTION_SCOPE_ANCESTORS = 12
+const INTERACTION_SCOPE_STOP_SELECTOR = 'xpath=self::main | self::body | self::*[@role="main" or @role="feed"]'
+const SELF_LIVE_REACTION_CONTROL_SELECTOR = 'xpath=self::*[@role="button" and .//*[@data-ad-rendering-role="like_button"]]'
 
 const RESTRICTION_PATTERNS: readonly { code: GroupRestrictionCode; pattern: RegExp }[] = [
   { code: 'comment_blocked', pattern: /(?:you (?:can(?:not|'t)|are unable to) comment|comments? (?:are|have been) turned off|bạn không thể bình luận|đã tắt bình luận|bị chặn bình luận)/i },
@@ -164,31 +182,61 @@ export async function sortGroupFeedByRecent(page: Page): Promise<boolean> {
   return newest.click({ timeout: 5000 }).then(() => true).catch(() => false)
 }
 
-async function waitForAppliedReaction(page: Page, control: Locator, timeoutMs = REACTION_VERIFY_TIMEOUT_MS): Promise<boolean> {
+async function livePrimaryReactionControl(scope: Locator): Promise<Locator | null> {
+  const self = scope.locator(SELF_LIVE_REACTION_CONTROL_SELECTOR).first()
+  if (await self.isVisible().catch(() => false)) return self
+  return firstVisible(scope, [LIVE_REACTION_BUTTON_SELECTOR])
+}
+
+async function primaryReactionControl(scope: Locator): Promise<Locator | null> {
+  return await livePrimaryReactionControl(scope) ?? firstVisible(scope, LEGACY_LIKE_SELECTORS)
+}
+
+async function firstVisibleInScopeOrAncestors(scope: Locator, selectors: readonly string[]): Promise<Locator | null> {
+  const direct = await firstVisible(scope, selectors)
+  if (direct) return direct
+
+  for (let level = 1; level <= MAX_INTERACTION_SCOPE_ANCESTORS; level += 1) {
+    const ancestor = scope.locator(`xpath=ancestor::*[${level}]`)
+    if (!await ancestor.count().catch(() => 0)) break
+    if (await ancestor.locator(INTERACTION_SCOPE_STOP_SELECTOR).count().catch(() => 0)) break
+
+    const markerCount = await ancestor.locator('[data-ad-rendering-role="like_button"]').count().catch(() => 0)
+    if (markerCount > 1) break
+
+    const candidate = await firstVisible(ancestor, selectors)
+    if (candidate) return candidate
+  }
+  return null
+}
+
+async function waitForAppliedReaction(page: Page, scope: Locator, timeoutMs = REACTION_VERIFY_TIMEOUT_MS): Promise<boolean> {
   const deadline = Date.now() + Math.max(0, timeoutMs)
+  const preferLiveControl = Boolean(await livePrimaryReactionControl(scope))
+
   while (true) {
-    const label = await control.getAttribute('aria-label').catch(() => null)
-    if (isAppliedReactionAriaLabel(label)) return true
+    if (preferLiveControl) {
+      const liveControl = await livePrimaryReactionControl(scope)
+      const label = liveControl ? await liveControl.getAttribute('aria-label').catch(() => null) : null
+      if (isAppliedReactionAriaLabel(label)) return true
+    } else {
+      const applied = await firstVisible(scope, APPLIED_REACTION_SELECTORS)
+      if (applied) return true
+    }
+
     if (Date.now() >= deadline) return false
     await page.waitForTimeout(REACTION_VERIFY_POLL_MS).catch(() => undefined)
   }
 }
 
-async function clickReactionTargetAndVerify(page: Page, target: Locator, control: Locator): Promise<boolean> {
+async function clickReactionTargetAndVerify(page: Page, target: Locator, scope: Locator): Promise<boolean> {
   await target.scrollIntoViewIfNeeded().catch(() => undefined)
 
   try {
     await target.click({ timeout: 5000 })
-    if (await waitForAppliedReaction(page, control)) return true
+    return waitForAppliedReaction(page, scope)
   } catch {
-    if (await waitForAppliedReaction(page, control, 750)) return true
-  }
-
-  try {
-    await target.click({ timeout: 5000, force: true })
-    if (await waitForAppliedReaction(page, control)) return true
-  } catch {
-    if (await waitForAppliedReaction(page, control, 750)) return true
+    if (await waitForAppliedReaction(page, scope, 750)) return true
   }
 
   try {
@@ -196,7 +244,7 @@ async function clickReactionTargetAndVerify(page: Page, target: Locator, control
   } catch {
     return false
   }
-  return waitForAppliedReaction(page, control)
+  return waitForAppliedReaction(page, scope)
 }
 
 async function openReactionPicker(control: Locator): Promise<boolean> {
@@ -206,15 +254,13 @@ async function openReactionPicker(control: Locator): Promise<boolean> {
 
 export async function reactToGroupArticle(page: Page, article: Locator, config: ActionConfig): Promise<boolean> {
   if (!hasConfiguredGroupReaction(config)) return false
-  const like = await firstVisible(article, LIKE_SELECTORS)
+  const like = await primaryReactionControl(article)
   if (!like) return false
-
-  const beforeLabel = await like.getAttribute('aria-label').catch(() => null)
-  if (isAppliedReactionAriaLabel(beforeLabel)) return false
+  if (await waitForAppliedReaction(page, article, 0)) return false
 
   const reaction = pickOne(selectedReactions(config))
   if (!reaction) return false
-  if (reaction === 'like') return clickReactionTargetAndVerify(page, like, like)
+  if (reaction === 'like') return clickReactionTargetAndVerify(page, like, article)
 
   if (!await openReactionPicker(like)) return false
   let choice = await firstVisible(page, REACTION_SELECTORS[reaction] ?? LIKE_SELECTORS)
@@ -222,7 +268,7 @@ export async function reactToGroupArticle(page: Page, article: Locator, config: 
     await like.hover({ timeout: 5000, force: true }).catch(() => undefined)
     choice = await firstVisible(page, REACTION_SELECTORS[reaction] ?? LIKE_SELECTORS)
   }
-  return choice ? clickReactionTargetAndVerify(page, choice, like) : false
+  return choice ? clickReactionTargetAndVerify(page, choice, article) : false
 }
 
 export async function commentOnGroupArticle(
@@ -231,7 +277,7 @@ export async function commentOnGroupArticle(
   text: string,
   imagePath: string
 ): Promise<boolean> {
-  const box = await firstVisible(article, COMMENT_BOX_SELECTORS)
+  const box = await firstVisibleInScopeOrAncestors(article, COMMENT_BOX_SELECTORS)
   if (!box) return false
   if (imagePath.trim()) {
     const articleInput = article.locator('input[type="file"][accept*="image" i]').first()
@@ -274,7 +320,7 @@ export async function deleteGroupComment(page: Page, article: Locator, text: str
 }
 
 async function openShareMenu(article: Locator): Promise<boolean> {
-  const share = await firstVisible(article, SHARE_SELECTORS)
+  const share = await firstVisibleInScopeOrAncestors(article, SHARE_SELECTORS)
   return Boolean(share && await share.click({ timeout: 5000 }).then(() => true).catch(() => false))
 }
 
