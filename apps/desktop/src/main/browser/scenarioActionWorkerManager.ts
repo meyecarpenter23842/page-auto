@@ -3,8 +3,8 @@ import { utilityProcess, type UtilityProcess } from 'electron'
 import { DEFAULT_APP_SETTINGS, type RuntimeSettings } from '../../shared/appSettings'
 import type { ActionExecutionSummary, ActionLogEvent } from '../../shared/actionRuntime'
 import type { ScenarioActionWorkerJob, ScenarioActionWorkerMessage, ScenarioActionWorkerResult } from '../../shared/scenarioActionWorker'
+import { configureGlobalBrowserLaunchBroker, setBrowserLaunchAwareTimeout } from './browserLaunchBroker'
 import { getManagedBrowserEndpoint } from './managedBrowserRegistry'
-import { BrowserLaunchGate } from './runtimeLaunchGate'
 import { workerProfileReuseDecision } from './workerProfileOwnership'
 
 const MANAGED_CDP_ARG_PREFIX = '--page-auto-managed-cdp='
@@ -54,11 +54,12 @@ function isWorkerMessage(event: unknown): event is ScenarioActionWorkerMessage {
 
 export class ScenarioActionWorkerManager {
   private readonly workers = new Map<number, WorkerEntry>()
-  private readonly launchGate = new BrowserLaunchGate()
   constructor(
     private readonly getRuntimeSettings: () => RuntimeSettings = () => ({ ...DEFAULT_APP_SETTINGS.runtime }),
     private readonly specialHandler?: ScenarioActionSpecialHandler
-  ) {}
+  ) {
+    configureGlobalBrowserLaunchBroker(this.getRuntimeSettings)
+  }
 
   async run(job: ScenarioActionWorkerJob, onLog?: (event: ActionLogEvent) => void): Promise<ScenarioActionWorkerResult> {
     if (this.specialHandler?.handles(job.request.actionType)) {
@@ -91,7 +92,6 @@ export class ScenarioActionWorkerManager {
     }
 
     if (!entry || entry.shuttingDown) {
-      await this.launchGate.wait(runtime.browserLaunchSpacingMs, 0)
       try { entry = this.spawn(job) } catch (error) { return failedWorkerResult(job, 'browser_unavailable', error instanceof Error ? error.message : String(error)) }
     }
     if (entry.pending) return failedWorkerResult(job, 'browser_unavailable', `Action worker account #${job.accountId} đang bận.`)
@@ -221,7 +221,7 @@ export class ScenarioActionWorkerManager {
     const pending = entry.pending
     if (!pending || pending.timer || entry.shuttingDown) return
     pending.timeoutStartedAt = Date.now()
-    pending.timer = setTimeout(() => {
+    pending.timer = setBrowserLaunchAwareTimeout(entry.process, () => {
       if (!entry.pending || entry.pending !== pending || entry.pending.runKey !== pending.runKey) return
       entry.pending = null
       entry.shuttingDown = true

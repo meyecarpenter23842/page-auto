@@ -7,6 +7,7 @@ import type {
   HotmailRecoveryActionResult,
   HotmailRecoveryOperation
 } from '../../shared/hotmail'
+import { setBrowserLaunchAwareTimeout } from '../browser/browserLaunchBroker'
 import { startEmailProxyAuthBridge, type EmailProxyAuthBridge } from './emailProxyAuthBridge'
 import { shouldKeepEmailBrowserWorker } from './emailBrowserLifecycle'
 import { ensureEmailProfileDirectory, inspectEmailProfile } from './emailProfileResolver'
@@ -410,7 +411,7 @@ export class EmailBrowserManager {
 
     return await new Promise<WorkerResponse>((resolve) => {
       const timeoutMs = kind === 'open-result' ? 90_000 : 45_000
-      const timer = setTimeout(() => {
+      const timer = setBrowserLaunchAwareTimeout(entry.process, () => {
         if (!entry.pending) return
         entry.pending = null
         if (kind === 'open-result') {
