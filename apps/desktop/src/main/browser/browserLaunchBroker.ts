@@ -9,6 +9,8 @@ import { globalBrowserLaunchGate } from './runtimeLaunchGate'
 
 let runtimeSettingsProvider: () => RuntimeSettings = () => ({ ...DEFAULT_APP_SETTINGS.runtime })
 let installed = false
+const launchAwareTimers = new WeakMap<UtilityProcess, NodeJS.Timeout>()
+const TIMER_REFRESH_INTERVAL_MS = 1_000
 
 function sendPermitResult(worker: UtilityProcess, result: BrowserLaunchPermitResultMessage): void {
   try {
@@ -18,7 +20,27 @@ function sendPermitResult(worker: UtilityProcess, result: BrowserLaunchPermitRes
   }
 }
 
+function refreshLaunchAwareTimer(worker: UtilityProcess): void {
+  launchAwareTimers.get(worker)?.refresh()
+}
+
+async function waitForLaunchPermit(worker: UtilityProcess, spacingMs: number): Promise<void> {
+  // Operation/runtime budgets describe the work after Chrome is allowed to launch.
+  // Keep the currently active worker timer alive while this worker is queued behind
+  // other app-wide Chrome launches, then give it a fresh budget when permit is granted.
+  refreshLaunchAwareTimer(worker)
+  const timerRefresh = setInterval(() => refreshLaunchAwareTimer(worker), TIMER_REFRESH_INTERVAL_MS)
+  timerRefresh.unref?.()
+  try {
+    await globalBrowserLaunchGate.wait(spacingMs)
+  } finally {
+    clearInterval(timerRefresh)
+    refreshLaunchAwareTimer(worker)
+  }
+}
+
 function attachLaunchPermitListener(worker: UtilityProcess): void {
+  worker.once('exit', () => launchAwareTimers.delete(worker))
   worker.on('message', (raw: unknown) => {
     const payload = browserLaunchPermitPayload(raw)
     if (!isBrowserLaunchPermitRequest(payload)) return
@@ -36,7 +58,7 @@ function attachLaunchPermitListener(worker: UtilityProcess): void {
       return
     }
 
-    void globalBrowserLaunchGate.wait(spacingMs).then(() => {
+    void waitForLaunchPermit(worker, spacingMs).then(() => {
       sendPermitResult(worker, {
         type: 'browser_launch_permit_result',
         requestId: payload.requestId,
@@ -55,6 +77,11 @@ function attachLaunchPermitListener(worker: UtilityProcess): void {
 
 function installGlobalBrowserLaunchBroker(): void {
   if (installed) return
+
+  // Vitest's Electron shim intentionally omits utilityProcess. Runtime services may
+  // still be constructed there, so installing the Main-process interceptor must be a
+  // safe no-op outside a real Electron Main process.
+  if (!utilityProcess || typeof utilityProcess.fork !== 'function') return
   installed = true
 
   const originalFork = utilityProcess.fork.bind(utilityProcess)
@@ -68,6 +95,20 @@ function installGlobalBrowserLaunchBroker(): void {
     configurable: true,
     value: wrappedFork
   })
+}
+
+/**
+ * Create the normal operation timeout for one utility worker while allowing the
+ * global launch broker to keep that exact timer alive during permit queueing.
+ */
+export function setBrowserLaunchAwareTimeout(
+  worker: UtilityProcess,
+  callback: () => void,
+  timeoutMs: number
+): NodeJS.Timeout {
+  const timer = setTimeout(callback, timeoutMs)
+  launchAwareTimers.set(worker, timer)
+  return timer
 }
 
 /**
