@@ -2,6 +2,10 @@ export interface RollingPoolLease {
   release(): void
 }
 
+export interface RollingAccountPoolAfterReleaseContext {
+  remainingItems: number
+}
+
 export interface RollingAccountPoolOptions<T> {
   items: readonly T[]
   concurrency: number
@@ -9,6 +13,12 @@ export interface RollingAccountPoolOptions<T> {
   run: (item: T) => Promise<void>
   waitUntilRunnable: () => Promise<boolean>
   shouldStop: () => boolean
+  /**
+   * Optional per-slot pacing after an item has finished and its execution lease
+   * has already been released. This keeps switch/cooldown delays from holding
+   * the global account lock while still delaying that slot before it refills.
+   */
+  afterRelease?: (item: T, context: RollingAccountPoolAfterReleaseContext) => Promise<void>
   idleDelayMs?: number
 }
 
@@ -59,6 +69,10 @@ export async function runRollingAccountPool<T>(options: RollingAccountPoolOption
         await options.run(item)
       } finally {
         lease.release()
+      }
+
+      if (options.afterRelease && !options.shouldStop()) {
+        await options.afterRelease(item, { remainingItems: pending.length })
       }
     }
   }
