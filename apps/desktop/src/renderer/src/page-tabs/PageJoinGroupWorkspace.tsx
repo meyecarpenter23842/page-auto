@@ -2,7 +2,10 @@ import { useCallback, useEffect, useMemo, useState, type PointerEvent as ReactPo
 import type { AccountRecord } from '../../../shared/accounts'
 import type { ActionWorkspaceRecord } from '../../../shared/actionWorkspaces'
 import {
+  MAX_GROUP_ACCOUNT_CONCURRENCY,
+  groupSourceRequiresClaimForParallel,
   parseGroupWorkspaceDraft,
+  resolveGroupAccountConcurrency,
   splitGroupTargets,
   validateGroupWorkspaceDraft,
   type GroupJoinSourceMode,
@@ -278,6 +281,8 @@ export function PageJoinGroupWorkspace() {
   const targetCount = draft ? splitGroupTargets(draft.sourceTargets).length : 0
   const boundIds = useMemo(() => new Set(bindings.map((item) => item.pageTabId)), [bindings])
   const allPageAccountsSelected = pageAccounts.length > 0 && pageAccounts.every((item) => selectedAccountIds.has(item.binding.accountId))
+  const sharedSourceSerial = draft ? groupSourceRequiresClaimForParallel(draft.sourceMode) : false
+  const effectiveConcurrency = draft ? resolveGroupAccountConcurrency(draft, enabledCount) : 1
 
   const setField = <K extends keyof GroupWorkspaceDraft>(key: K, value: GroupWorkspaceDraft[K]) => setDraft((current) => current ? { ...current, [key]: value } : current)
 
@@ -491,8 +496,9 @@ export function PageJoinGroupWorkspace() {
       <fieldset className="group-fieldset group-box group-pacing-box"><legend>4. Nhịp chạy</legend><div className="group-pacing-grid">
         <div className="group-range-row"><span>Delay nghiệp vụ</span><label>Từ <input type="number" min={0} max={3600} value={draft.itemDelayMinSeconds} onChange={(event) => setField('itemDelayMinSeconds', Number(event.target.value))} /></label><label>đến <input type="number" min={0} max={3600} value={draft.itemDelayMaxSeconds} onChange={(event) => setField('itemDelayMaxSeconds', Number(event.target.value))} /></label><small>giây · cộng thêm Global Browser Action Delay</small></div>
         <div className="group-range-row"><span>Tạm dừng sau</span><input type="number" min={0} max={10000} value={draft.pauseAfterCount} onChange={(event) => setField('pauseAfterCount', Number(event.target.value))} /><span>nhóm ·</span><input type="number" min={0} max={1440} value={draft.pauseMinutes} onChange={(event) => setField('pauseMinutes', Number(event.target.value))} /><span>phút</span></div>
+        <div className="group-check-row"><span className="row-label">TK song song</span><input className="short" type="number" min={1} max={MAX_GROUP_ACCOUNT_CONCURRENCY} disabled={sharedSourceSerial} value={sharedSourceSerial ? 1 : draft.accountConcurrency} onChange={(event) => setField('accountConcurrency', Number(event.target.value))} /><span>{sharedSourceSerial ? 'tạm 1 TK · nguồn dùng chung chờ Group claim' : `tối đa ${effectiveConcurrency} TK · cuốn chiếu`}</span></div>
         <div className="group-check-row"><label><input type="checkbox" checked={draft.repeatEnabled} onChange={(event) => setField('repeatEnabled', event.target.checked)} /><span>Repeat</span></label><input className="short" disabled={!draft.repeatEnabled} type="number" min={1} max={999} value={draft.repeatCount} onChange={(event) => setField('repeatCount', Number(event.target.value))} /><span>lần/account</span></div>
-      </div><div className="group-run-controls"><div className="group-run-state"><span className={`run-dot state-${runtime?.state ?? 'idle'}`} /><strong>{runtimeStateLabel(runtime?.state)}</strong><small>Account chạy lần lượt; mỗi account được Common Runtime switch sang Page {page.name} trước action.</small></div><div className="group-run-buttons">{activeRun && runtime?.state === 'paused' ? <button className="resume" type="button" disabled={busy} onClick={() => void control('resume')}>Tiếp tục</button> : activeRun ? <button className="pause" type="button" disabled={busy || runtime?.state === 'stopping'} onClick={() => void control('pause')}>Tạm dừng</button> : null}<button className="start" type="button" disabled={activeRun || busy || validationErrors.length > 0} onClick={() => void start()}>Bắt đầu</button><button className="stop" type="button" disabled={!activeRun || busy} onClick={() => void control('stop')}>Kết thúc</button></div></div></fieldset>
+      </div><div className="group-run-controls"><div className="group-run-state"><span className={`run-dot state-${runtime?.state ?? 'idle'}`} /><strong>{runtimeStateLabel(runtime?.state)}</strong><small>{sharedSourceSerial ? 'Nguồn Group dùng chung đang giữ 1 account cho tới Batch 4 atomic claim; Common Runtime vẫn switch đúng Page và Browser Launch Spacing vẫn áp dụng.' : `Tối đa ${effectiveConcurrency} account chạy song song kiểu cuốn chiếu; mỗi account được Common Runtime switch sang Page ${page.name}; Browser Launch Spacing vẫn áp dụng.`}</small></div><div className="group-run-buttons">{activeRun && runtime?.state === 'paused' ? <button className="resume" type="button" disabled={busy} onClick={() => void control('resume')}>Tiếp tục</button> : activeRun ? <button className="pause" type="button" disabled={busy || runtime?.state === 'stopping'} onClick={() => void control('pause')}>Tạm dừng</button> : null}<button className="start" type="button" disabled={activeRun || busy || validationErrors.length > 0} onClick={() => void start()}>Bắt đầu</button><button className="stop" type="button" disabled={!activeRun || busy} onClick={() => void control('stop')}>Kết thúc</button></div></div></fieldset>
 
       <section className="group-runtime-log group-box"><div className="group-runtime-log-head"><strong>Log runtime</strong><span>{runtime?.logs.length ?? 0} dòng</span></div><div className="group-runtime-log-body">{(runtime?.logs ?? []).slice(-80).map((entry) => <div key={entry.id} data-level={entry.level}><time>{new Date(entry.at).toLocaleTimeString('vi-VN')}</time><span>{entry.message}</span></div>)}{!runtime?.logs.length ? <p>Chưa có log phiên Tham gia nhóm.</p> : null}</div></section>
     </section>}

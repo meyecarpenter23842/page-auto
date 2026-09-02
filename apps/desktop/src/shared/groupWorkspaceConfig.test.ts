@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_GROUP_WORKSPACE_DRAFT,
+  MAX_GROUP_ACCOUNT_CONCURRENCY,
   allocateGroupTargets,
   buildJoinGroupActionConfig,
   parseGroupWorkspaceDraft,
+  resolveGroupAccountConcurrency,
   serializeGroupWorkspaceDraft,
   splitGroupTargets,
   validateGroupWorkspaceDraft
@@ -11,9 +13,28 @@ import {
 
 describe('group workspace config', () => {
   it('round-trips the persisted draft and keeps safe defaults', () => {
-    const draft = { ...DEFAULT_GROUP_WORKSPACE_DRAFT, sourceMode: 'id_shared' as const, sourceTargets: '1\n2' }
+    const draft = {
+      ...DEFAULT_GROUP_WORKSPACE_DRAFT,
+      sourceMode: 'id_shared' as const,
+      sourceTargets: '1\n2',
+      accountConcurrency: 4
+    }
     expect(parseGroupWorkspaceDraft(serializeGroupWorkspaceDraft(draft))).toEqual(draft)
     expect(parseGroupWorkspaceDraft('{bad json')).toEqual(DEFAULT_GROUP_WORKSPACE_DRAFT)
+  })
+
+  it('keeps legacy group workspaces sequential and bounds configured concurrency', () => {
+    expect(parseGroupWorkspaceDraft(JSON.stringify({ sourceMode: 'suggestions' })).accountConcurrency).toBe(1)
+    expect(parseGroupWorkspaceDraft(JSON.stringify({ accountConcurrency: 0 })).accountConcurrency).toBe(1)
+    expect(parseGroupWorkspaceDraft(JSON.stringify({ accountConcurrency: 999 })).accountConcurrency).toBe(MAX_GROUP_ACCOUNT_CONCURRENCY)
+  })
+
+  it('resolves rolling account concurrency while shared Group sources stay serial until claim exists', () => {
+    expect(resolveGroupAccountConcurrency({ ...DEFAULT_GROUP_WORKSPACE_DRAFT, accountConcurrency: 4 }, 6)).toBe(4)
+    expect(resolveGroupAccountConcurrency({ ...DEFAULT_GROUP_WORKSPACE_DRAFT, accountConcurrency: 4 }, 2)).toBe(2)
+    expect(resolveGroupAccountConcurrency({ ...DEFAULT_GROUP_WORKSPACE_DRAFT, sourceMode: 'account_file', accountConcurrency: 3 }, 5)).toBe(3)
+    expect(resolveGroupAccountConcurrency({ ...DEFAULT_GROUP_WORKSPACE_DRAFT, sourceMode: 'id_shared', accountConcurrency: 5 }, 5)).toBe(1)
+    expect(resolveGroupAccountConcurrency({ ...DEFAULT_GROUP_WORKSPACE_DRAFT, sourceMode: 'file', accountConcurrency: 5 }, 5)).toBe(1)
   })
 
   it('splits and deduplicates group targets', () => {

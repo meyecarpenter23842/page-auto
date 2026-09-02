@@ -28,14 +28,17 @@ describe('Page Join Group workspace binding', () => {
     const parsed = parsePageJoinGroupWorkspaceConfig(createDefaultPageJoinGroupWorkspaceConfig(12))
     expect(parsed?.pageTabId).toBe(12)
     expect(parsed?.draft.sourceMode).toBe('id_distribute')
+    expect(parsed?.draft.accountConcurrency).toBe(1)
   })
 
-  it('preserves the Page binding when business config is saved', () => {
+  it('preserves the Page binding and account concurrency when business config is saved', () => {
     const draft = cloneDefaultGroupWorkspaceDraft()
     draft.keyword = 'thời trang'
+    draft.accountConcurrency = 4
     const parsed = parsePageJoinGroupWorkspaceConfig(serializePageJoinGroupWorkspaceConfig(9, draft))
     expect(parsed?.pageTabId).toBe(9)
     expect(parsed?.draft.keyword).toBe('thời trang')
+    expect(parsed?.draft.accountConcurrency).toBe(4)
   })
 
   it('does not classify a normal Hành động Group workspace just because config has pageTabId', () => {
