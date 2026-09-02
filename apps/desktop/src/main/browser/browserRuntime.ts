@@ -1,5 +1,10 @@
-import type { BrowserContext, CDPSession, Page } from 'playwright-core'
+import { chromium, type BrowserContext, type CDPSession, type Page } from 'playwright-core'
 import type { BrowserSettings } from '../../shared/appSettings'
+import {
+  browserLaunchPermitPayload,
+  isBrowserLaunchPermitResult,
+  type BrowserLaunchPermitRequestMessage
+} from '../../shared/browserLaunchPermit'
 import type { BrowserWindowPlacement } from '../../shared/browserWindowLayout'
 
 export interface BrowserLaunchShape {
@@ -46,6 +51,66 @@ const NATIVE_BOUNDS_SETTLE_INTERVAL_MS = 100
 const NATIVE_BOUNDS_SETTLE_TIMEOUT_MS = 1_200
 const compactSessions = new WeakMap<Page, CDPSession>()
 const placementQueues = new WeakMap<BrowserContext, Promise<void>>()
+
+/**
+ * Utility workers request a permit from Electron Main immediately before a real Chromium launch.
+ * Main processes and ordinary unit-test processes have no parentPort, so this is a no-op there.
+ * Managed-browser reuse wraps this gated launch later: successful CDP attach never calls the gated
+ * original launch, while a stale attach that falls back to a new persistent Chrome still does.
+ */
+function installWorkerBrowserLaunchPermit(): void {
+  const parentPort = process.parentPort
+  if (!parentPort) return
+
+  let sequence = 0
+  const pending = new Map<string, { resolve: () => void; reject: (error: Error) => void }>()
+  parentPort.on('message', (event) => {
+    const payload = browserLaunchPermitPayload(event)
+    if (!isBrowserLaunchPermitResult(payload)) return
+    const waiter = pending.get(payload.requestId)
+    if (!waiter) return
+    pending.delete(payload.requestId)
+    if (payload.status === 'granted') waiter.resolve()
+    else waiter.reject(new Error(payload.message ?? 'Electron Main từ chối Browser Launch Permit.'))
+  })
+
+  const requestPermit = (): Promise<void> => new Promise((resolve, reject) => {
+    const requestId = `${process.pid}-${++sequence}`
+    pending.set(requestId, { resolve, reject })
+    const request: BrowserLaunchPermitRequestMessage = {
+      type: 'browser_launch_permit_request',
+      requestId
+    }
+    try {
+      parentPort.postMessage(request)
+    } catch (error) {
+      pending.delete(requestId)
+      reject(error instanceof Error ? error : new Error(String(error)))
+    }
+  })
+
+  const originalLaunch = chromium.launch.bind(chromium)
+  const originalLaunchPersistentContext = chromium.launchPersistentContext.bind(chromium)
+  const gatedLaunch: typeof chromium.launch = async (options) => {
+    await requestPermit()
+    return originalLaunch(options)
+  }
+  const gatedLaunchPersistentContext: typeof chromium.launchPersistentContext = async (userDataDir, options) => {
+    await requestPermit()
+    return originalLaunchPersistentContext(userDataDir, options)
+  }
+
+  Object.defineProperty(chromium, 'launch', {
+    configurable: true,
+    value: gatedLaunch
+  })
+  Object.defineProperty(chromium, 'launchPersistentContext', {
+    configurable: true,
+    value: gatedLaunchPersistentContext
+  })
+}
+
+installWorkerBrowserLaunchPermit()
 
 async function compactSessionFor(context: BrowserContext, page: Page): Promise<CDPSession> {
   const existing = compactSessions.get(page)

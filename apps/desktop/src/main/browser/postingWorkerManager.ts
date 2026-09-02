@@ -23,10 +23,10 @@ import type {
   PostingWorkerMessage
 } from '../../shared/posting'
 import { getEmailCodeProvider } from '../services/emailCodeProviderRegistry'
+import { configureGlobalBrowserLaunchBroker } from './browserLaunchBroker'
 import { BrowserWindowLayoutManager } from './browserWindowLayoutManager'
 import { getManagedBrowserEndpoint } from './managedBrowserRegistry'
 import { shouldRetainPostingBrowserForManualSession } from './postingWorkerLifecycle'
-import { BrowserLaunchGate } from './runtimeLaunchGate'
 import { workerProfileReuseDecision } from './workerProfileOwnership'
 
 const MANAGED_CDP_ARG_PREFIX = '--page-auto-managed-cdp='
@@ -70,13 +70,14 @@ function emailSupportError(accountId: number, message: string): EmailCodeResult 
 
 export class PostingWorkerManager {
   private readonly workers = new Map<number, AccountWorkerEntry>()
-  private readonly launchGate = new BrowserLaunchGate()
 
   constructor(
     private readonly getRuntimeSettings: () => RuntimeSettings = () => ({ ...DEFAULT_APP_SETTINGS.runtime }),
     private readonly windowLayout?: BrowserWindowLayoutManager,
     private readonly getWindowLayoutSettings: () => BrowserWindowLayoutSettings = () => cloneDefaultBrowserWindowLayout()
-  ) {}
+  ) {
+    configureGlobalBrowserLaunchBroker(this.getRuntimeSettings)
+  }
 
   run(job: PostingJobRequest): Promise<PostingJobResult> {
     return this.runTask(groupPostTaskFromLegacy(job))
@@ -118,7 +119,6 @@ export class PostingWorkerManager {
     const runtimeJob = { ...job, browserPlacement: placement } as FacebookPostTaskJobRequest
 
     if (!entry || entry.shuttingDown) {
-      await this.launchGate.wait(runtime.browserLaunchSpacingMs, job.runId)
       try {
         entry = this.spawnWorker(runtimeJob)
       } catch (error) {
