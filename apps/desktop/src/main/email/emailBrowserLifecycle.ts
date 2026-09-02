@@ -1,3 +1,5 @@
+import '../browser/browserRuntime'
+
 export function isEmailProfileInUseError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error)
   return /processsingleton|singletonlock|user data directory.*(in use|already)|profile.*(in use|already)|opening in existing browser session|another browser process/i.test(message)
