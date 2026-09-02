@@ -8,6 +8,7 @@ import {
   allocateGroupTargets,
   buildJoinGroupActionConfig,
   groupSourceNeedsTargets,
+  parseGroupWorkspaceDraft,
   splitGroupTargets,
   validateGroupWorkspaceDraft,
   type GroupWorkspaceDraft
@@ -17,12 +18,11 @@ import type {
   InteractionWorkspaceRunLogEntry,
   InteractionWorkspaceRunSnapshot
 } from '../../shared/interactionWorkspaceRunner'
-import { parsePageJoinGroupWorkspaceConfig } from '../../shared/pageJoinGroup'
 import type { ScenarioActionWorkerJob, ScenarioActionWorkerResult } from '../../shared/scenarioActionWorker'
 import { resolveFacebookProfileDirectory } from '../browser/facebookProfileResolver'
 import { resolveAccountProxyState } from '../browser/proxyConfig'
 import { AccountRepository } from '../database/accountRepository'
-import { ActionWorkspaceRepository } from '../database/actionWorkspaceRepository'
+import { PageBusinessBindingRepository } from '../database/pageBusinessBindingRepository'
 import { PageTabRepository } from '../database/pageTabRepository'
 import { AccountExecutionCoordinator } from './accountExecutionCoordinator'
 import { redactExecutionText } from './executionLogSanitizer'
@@ -80,7 +80,7 @@ function resultCount(result: ScenarioActionWorkerResult, key: 'attempted' | 'com
 
 export class PageJoinGroupRunnerService {
   private readonly accounts: AccountRepository
-  private readonly workspaces: ActionWorkspaceRepository
+  private readonly bindings: PageBusinessBindingRepository
   private readonly pages: PageTabRepository
   private readonly active = new Map<number, ActivePageJoinRun>()
   private logSequence = 0
@@ -93,47 +93,47 @@ export class PageJoinGroupRunnerService {
     private readonly getSettings: () => AppSettings
   ) {
     this.accounts = new AccountRepository(database)
-    this.workspaces = new ActionWorkspaceRepository(database)
+    this.bindings = new PageBusinessBindingRepository(database)
     this.pages = new PageTabRepository(database)
   }
 
-  start(workspaceId: number): InteractionWorkspaceRunSnapshot {
-    const current = this.active.get(workspaceId)
+  start(bindingId: number): InteractionWorkspaceRunSnapshot {
+    const current = this.active.get(bindingId)
     if (current && ['running', 'paused', 'stopping'].includes(current.snapshot.state)) {
       throw new Error('Page này đang có phiên Tham gia nhóm.')
     }
 
-    const workspace = this.workspaces.get(workspaceId)
-    if (!workspace || workspace.type !== 'group') throw new Error(`Không tìm thấy binding Tham gia nhóm #${workspaceId}.`)
-    const parsed = parsePageJoinGroupWorkspaceConfig(workspace.configJson)
-    if (!parsed) throw new Error('Workspace Nhóm này không phải binding Page Tham gia nhóm.')
-
-    const page = this.pages.get(parsed.pageTabId)
-    if (!page) throw new Error(`Page #${parsed.pageTabId} không còn tồn tại trong Quản lý Page.`)
+    const binding = this.bindings.get(bindingId)
+    if (!binding || binding.businessType !== 'join_group') {
+      throw new Error(`Không tìm thấy binding Tham gia nhóm #${bindingId}.`)
+    }
+    const draft = parseGroupWorkspaceDraft(binding.configJson)
+    const page = this.pages.get(binding.pageTabId)
+    if (!page) throw new Error(`Page #${binding.pageTabId} không còn tồn tại trong Quản lý Page.`)
     const enabledPageAccounts = [...page.accounts]
       .filter((item) => item.enabled)
       .sort((left, right) => left.sortOrder - right.sortOrder)
     const accounts = enabledPageAccounts
-      .map((binding) => this.accounts.getById(binding.accountId))
+      .map((item) => this.accounts.getById(item.accountId))
       .filter((account): account is AccountRecord => Boolean(account))
     if (accounts.length !== enabledPageAccounts.length) throw new Error('Một số account của Page không còn tồn tại.')
 
-    const validationErrors = validateGroupWorkspaceDraft(parsed.draft, accounts.length)
+    const validationErrors = validateGroupWorkspaceDraft(draft, accounts.length)
     if (validationErrors.length) throw new Error(validationErrors.join(' '))
 
-    const targetsByAccount = this.snapshotTargets(parsed.draft, accounts)
-    const runId = `page-join-${workspace.id}-${Date.now()}-${Math.floor(Math.random() * 10000)}`
+    const targetsByAccount = this.snapshotTargets(draft, accounts)
+    const runId = `page-join-${binding.id}-${Date.now()}-${Math.floor(Math.random() * 10000)}`
     const now = Date.now()
     const snapshot: InteractionWorkspaceRunSnapshot = {
       runId,
-      workspaceId: workspace.id,
+      workspaceId: binding.id,
       state: 'running',
       startedAt: now,
       finishedAt: null,
       frozen: {
-        workspaceId: workspace.id,
+        workspaceId: binding.id,
         workspaceLabel: `${page.name} · Tham gia nhóm`,
-        configJson: workspace.configJson,
+        configJson: binding.configJson,
         accountIds: accounts.map((account) => account.id),
         actionTypes: ['join_group'],
         createdAt: now
@@ -158,7 +158,7 @@ export class PageJoinGroupRunnerService {
         pageTabId: page.id,
         pageUid: page.pageUid,
         pageName: page.name,
-        draft: parsed.draft,
+        draft,
         accounts,
         targetsByAccount
       },
@@ -166,11 +166,11 @@ export class PageJoinGroupRunnerService {
       paused: false,
       runningKeys: new Map()
     }
-    this.active.set(workspace.id, active)
+    this.active.set(binding.id, active)
     this.log(active, 'info', `Bắt đầu ${page.name}: ${accounts.length} account Page, chạy lần lượt action Tham gia nhóm.`)
 
     void this.execute(active).catch((error) => {
-      if (this.active.get(workspace.id) !== active) return
+      if (this.active.get(binding.id) !== active) return
       active.snapshot.state = 'failed'
       active.snapshot.finishedAt = Date.now()
       active.snapshot.message = safeText(null, error instanceof Error ? error.message : String(error))
@@ -179,13 +179,13 @@ export class PageJoinGroupRunnerService {
     return cloneSnapshot(snapshot)
   }
 
-  status(workspaceId: number): InteractionWorkspaceRunSnapshot | null {
-    const active = this.active.get(workspaceId)
+  status(bindingId: number): InteractionWorkspaceRunSnapshot | null {
+    const active = this.active.get(bindingId)
     return active ? cloneSnapshot(active.snapshot) : null
   }
 
-  pause(workspaceId: number): InteractionWorkspaceRunSnapshot | null {
-    const active = this.active.get(workspaceId)
+  pause(bindingId: number): InteractionWorkspaceRunSnapshot | null {
+    const active = this.active.get(bindingId)
     if (!active) return null
     if (active.snapshot.state !== 'running') return cloneSnapshot(active.snapshot)
     active.paused = true
@@ -197,8 +197,8 @@ export class PageJoinGroupRunnerService {
     return cloneSnapshot(active.snapshot)
   }
 
-  resume(workspaceId: number): InteractionWorkspaceRunSnapshot | null {
-    const active = this.active.get(workspaceId)
+  resume(bindingId: number): InteractionWorkspaceRunSnapshot | null {
+    const active = this.active.get(bindingId)
     if (!active) return null
     if (active.snapshot.state !== 'paused') return cloneSnapshot(active.snapshot)
     active.paused = false
@@ -212,8 +212,8 @@ export class PageJoinGroupRunnerService {
     return cloneSnapshot(active.snapshot)
   }
 
-  stop(workspaceId: number): InteractionWorkspaceRunSnapshot | null {
-    const active = this.active.get(workspaceId)
+  stop(bindingId: number): InteractionWorkspaceRunSnapshot | null {
+    const active = this.active.get(bindingId)
     if (!active) return null
     if (!['running', 'paused', 'stopping'].includes(active.snapshot.state)) return cloneSnapshot(active.snapshot)
     active.stopRequested = true
@@ -232,7 +232,7 @@ export class PageJoinGroupRunnerService {
   }
 
   dispose(): void {
-    for (const workspaceId of this.active.keys()) this.stop(workspaceId)
+    for (const bindingId of this.active.keys()) this.stop(bindingId)
   }
 
   private snapshotTargets(draft: GroupWorkspaceDraft, accounts: AccountRecord[]): Map<number, string[]> {

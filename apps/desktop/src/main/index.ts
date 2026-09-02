@@ -11,6 +11,7 @@ import { registerHotmailIpcHandlers, type HotmailIpcRuntime } from './hotmailIpc
 import { registerInteractionWorkspaceRunnerIpcHandlers, type InteractionWorkspaceRunnerIpcRuntime } from './interactionWorkspaceRunnerIpc'
 import { registerIpcHandlers, type IpcRuntime } from './ipc'
 import { createLogger } from './logger'
+import { registerPageBusinessBindingIpcHandlers, type PageBusinessBindingIpcRuntime } from './pageBusinessBindingIpc'
 import { registerPostLibraryIpcHandlers, type PostLibraryIpcRuntime } from './postLibraryIpc'
 import { registerScenarioIpcHandlers, type ScenarioIpcRuntime } from './scenarioIpc'
 import { registerScenarioRunnerIpcHandlers, type ScenarioRunnerIpcRuntime } from './scenarioRunnerIpc'
@@ -22,6 +23,7 @@ let databaseRuntime: DatabaseRuntime | null = null
 let ipcRuntime: IpcRuntime | null = null
 let accountGroupIpcRuntime: AccountGroupIpcRuntime | null = null
 let actionWorkspaceIpcRuntime: ActionWorkspaceIpcRuntime | null = null
+let pageBusinessBindingIpcRuntime: PageBusinessBindingIpcRuntime | null = null
 let interactionWorkspaceRunnerIpcRuntime: InteractionWorkspaceRunnerIpcRuntime | null = null
 let aiAgentIpcRuntime: AiAgentIpcRuntime | null = null
 let checkpoint282WorkbenchIpcRuntime: Checkpoint282WorkbenchIpcRuntime | null = null
@@ -84,6 +86,7 @@ app.whenReady().then(() => {
     ipcRuntime = registerIpcHandlers({ database: databaseRuntime.client, dataDirectory })
     accountGroupIpcRuntime = registerAccountGroupIpcHandlers(databaseRuntime.client)
     actionWorkspaceIpcRuntime = registerActionWorkspaceIpcHandlers(databaseRuntime.client)
+    pageBusinessBindingIpcRuntime = registerPageBusinessBindingIpcHandlers(databaseRuntime.client)
     interactionWorkspaceRunnerIpcRuntime = registerInteractionWorkspaceRunnerIpcHandlers({
       database: databaseRuntime.client,
       dataDirectory
@@ -123,6 +126,8 @@ app.whenReady().then(() => {
     aiAgentIpcRuntime = null
     interactionWorkspaceRunnerIpcRuntime?.dispose()
     interactionWorkspaceRunnerIpcRuntime = null
+    pageBusinessBindingIpcRuntime?.dispose()
+    pageBusinessBindingIpcRuntime = null
     actionWorkspaceIpcRuntime?.dispose()
     actionWorkspaceIpcRuntime = null
     hotmailIpcRuntime?.dispose()
@@ -160,6 +165,8 @@ app.on('before-quit', () => {
   aiAgentIpcRuntime = null
   interactionWorkspaceRunnerIpcRuntime?.dispose()
   interactionWorkspaceRunnerIpcRuntime = null
+  pageBusinessBindingIpcRuntime?.dispose()
+  pageBusinessBindingIpcRuntime = null
   actionWorkspaceIpcRuntime?.dispose()
   actionWorkspaceIpcRuntime = null
   hotmailIpcRuntime?.dispose()

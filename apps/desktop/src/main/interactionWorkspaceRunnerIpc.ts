@@ -5,7 +5,10 @@ import {
   type InteractionWorkspaceRunIdPayload,
   type InteractionWorkspaceRunStartPayload
 } from '../shared/interactionWorkspaceRunner'
-import { parsePageJoinGroupWorkspaceConfig } from '../shared/pageJoinGroup'
+import {
+  PAGE_JOIN_GROUP_RUNNER_IPC,
+  type PageJoinGroupRunIdPayload
+} from '../shared/pageJoinGroupRunner'
 import { ScenarioActionWorkerManager } from './browser/scenarioActionWorkerManager'
 import { AppSettingsRepository } from './database/appSettingsRepository'
 import { ActionWorkspaceRepository } from './database/actionWorkspaceRepository'
@@ -53,9 +56,6 @@ export function registerInteractionWorkspaceRunnerIpcHandlers(
   const serviceFor = (workspaceId: number) => {
     const workspace = workspaces.get(workspaceId)
     if (!workspace) throw new Error(`Không tìm thấy workspace #${workspaceId}.`)
-    if (workspace.type === 'group' && parsePageJoinGroupWorkspaceConfig(workspace.configJson)) {
-      return pageJoinGroupService
-    }
     return workspace.type === 'group' ? groupService : interactionService
   }
 
@@ -80,12 +80,34 @@ export function registerInteractionWorkspaceRunnerIpcHandlers(
     (_event, payload: InteractionWorkspaceRunIdPayload) => serviceFor(payload.workspaceId).stop(payload.workspaceId)
   )
 
+  ipcMain.handle(
+    PAGE_JOIN_GROUP_RUNNER_IPC.start,
+    (_event, payload: PageJoinGroupRunIdPayload) => pageJoinGroupService.start(payload.bindingId)
+  )
+  ipcMain.handle(
+    PAGE_JOIN_GROUP_RUNNER_IPC.status,
+    (_event, payload: PageJoinGroupRunIdPayload) => pageJoinGroupService.status(payload.bindingId)
+  )
+  ipcMain.handle(
+    PAGE_JOIN_GROUP_RUNNER_IPC.pause,
+    (_event, payload: PageJoinGroupRunIdPayload) => pageJoinGroupService.pause(payload.bindingId)
+  )
+  ipcMain.handle(
+    PAGE_JOIN_GROUP_RUNNER_IPC.resume,
+    (_event, payload: PageJoinGroupRunIdPayload) => pageJoinGroupService.resume(payload.bindingId)
+  )
+  ipcMain.handle(
+    PAGE_JOIN_GROUP_RUNNER_IPC.stop,
+    (_event, payload: PageJoinGroupRunIdPayload) => pageJoinGroupService.stop(payload.bindingId)
+  )
+
   return {
     dispose: () => {
       pageJoinGroupService.dispose()
       groupService.dispose()
       interactionService.dispose()
       for (const channel of Object.values(INTERACTION_WORKSPACE_RUNNER_IPC)) ipcMain.removeHandler(channel)
+      for (const channel of Object.values(PAGE_JOIN_GROUP_RUNNER_IPC)) ipcMain.removeHandler(channel)
     }
   }
 }

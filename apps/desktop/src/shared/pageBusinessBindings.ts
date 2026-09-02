@@ -12,9 +12,50 @@ export const PAGE_BUSINESS_TYPES = [
 export type PageBusinessType = (typeof PAGE_BUSINESS_TYPES)[number]
 export type GenericPageBusinessType = Exclude<PageBusinessType, 'join_group'>
 
+export const PAGE_BUSINESS_BINDING_IPC = {
+  list: 'page-business-bindings:list',
+  create: 'page-business-bindings:create',
+  update: 'page-business-bindings:update',
+  delete: 'page-business-bindings:delete'
+} as const
+
+export interface PageBusinessBindingRecord {
+  id: number
+  pageTabId: number
+  businessType: PageBusinessType
+  configJson: string
+  createdAt: number
+  updatedAt: number
+}
+
+export interface ListPageBusinessBindingsPayload {
+  businessType?: PageBusinessType
+}
+
+export interface CreatePageBusinessBindingInput {
+  pageTabId: number
+  businessType: PageBusinessType
+  configJson: string
+}
+
+export interface UpdatePageBusinessBindingPayload {
+  id: number
+  patch: {
+    configJson?: string
+  }
+}
+
+export interface PageBusinessBindingIdPayload {
+  id: number
+}
+
 export interface PageBusinessBindingConfig {
   pageBusinessType: GenericPageBusinessType
   pageTabId: number
+}
+
+export function isPageBusinessType(value: unknown): value is PageBusinessType {
+  return (PAGE_BUSINESS_TYPES as readonly unknown[]).includes(value)
 }
 
 function isGenericType(value: unknown): value is GenericPageBusinessType {
@@ -39,6 +80,7 @@ export function parsePageBusinessBindingConfig(configJson: string): PageBusiness
   return { pageBusinessType, pageTabId }
 }
 
+/** Legacy v19 serializer kept only so the historical migration remains reproducible. */
 export function serializePageBusinessBindingConfig(
   pageBusinessType: GenericPageBusinessType,
   pageTabId: number
@@ -47,6 +89,7 @@ export function serializePageBusinessBindingConfig(
   return JSON.stringify({ pageBusinessType, pageTabId })
 }
 
+/** Legacy action-workspace detector. New Page UI must use PAGE_BUSINESS_BINDING_IPC instead. */
 export function pageBusinessTypeOf(workspace: ActionWorkspaceRecord): PageBusinessType | null {
   const generic = parsePageBusinessBindingConfig(workspace.configJson)
   if (generic) return generic.pageBusinessType
@@ -54,6 +97,7 @@ export function pageBusinessTypeOf(workspace: ActionWorkspaceRecord): PageBusine
   return null
 }
 
+/** Legacy action-workspace detector. New Page UI must use PAGE_BUSINESS_BINDING_IPC instead. */
 export function pageBusinessPageIdOf(workspace: ActionWorkspaceRecord): number | null {
   const generic = parsePageBusinessBindingConfig(workspace.configJson)
   if (generic) return generic.pageTabId
@@ -61,6 +105,7 @@ export function pageBusinessPageIdOf(workspace: ActionWorkspaceRecord): number |
   return parsePageJoinGroupWorkspaceConfig(workspace.configJson)?.pageTabId ?? null
 }
 
+/** Legacy helper retained for migration/tests only; Hành động must never filter by this. */
 export function isPageBusinessWorkspace(workspace: ActionWorkspaceRecord): boolean {
   return pageBusinessTypeOf(workspace) !== null
 }
