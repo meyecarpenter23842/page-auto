@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import type { AccountRecord } from '../../../shared/accounts'
 import type { ActionWorkspaceRecord } from '../../../shared/actionWorkspaces'
 import {
@@ -14,7 +14,8 @@ import {
   parsePageJoinGroupWorkspaceConfig,
   serializePageJoinGroupWorkspaceConfig
 } from '../../../shared/pageJoinGroup'
-import type { PageTabConfig, PageTabSummary } from '../../../shared/pageTabs'
+import type { PageTabAccountInput, PageTabConfig, PageTabSummary } from '../../../shared/pageTabs'
+import { accountInputsForSelection, buildSharedPageSaveInput } from './pageSharedState'
 import './pageJoinGroup.css'
 import '../actions/groupWorkspace.css'
 
@@ -77,6 +78,97 @@ function PagePicker({ pages, boundIds, onClose, onAdd }: {
   </div>
 }
 
+function AccountPicker({ accounts, selectedIds, onClose, onApply }: {
+  accounts: AccountRecord[]
+  selectedIds: number[]
+  onClose: () => void
+  onApply: (ids: number[]) => Promise<void>
+}) {
+  const [search, setSearch] = useState('')
+  const [selected, setSelected] = useState(() => new Set(selectedIds))
+  const [paintValue, setPaintValue] = useState<boolean | null>(null)
+  const [busy, setBusy] = useState(false)
+  const filtered = useMemo(() => {
+    const query = search.trim().toLowerCase()
+    return accounts.filter((account) => !query || [account.uid, account.username, account.name, account.email, account.category, account.note]
+      .some((value) => value?.toLowerCase().includes(query)))
+  }, [accounts, search])
+
+  useEffect(() => {
+    const stopPaint = () => setPaintValue(null)
+    window.addEventListener('pointerup', stopPaint)
+    window.addEventListener('pointercancel', stopPaint)
+    window.addEventListener('blur', stopPaint)
+    return () => {
+      window.removeEventListener('pointerup', stopPaint)
+      window.removeEventListener('pointercancel', stopPaint)
+      window.removeEventListener('blur', stopPaint)
+    }
+  }, [])
+
+  const toggle = (accountId: number, value: boolean) => setSelected((current) => {
+    const next = new Set(current)
+    if (value) next.add(accountId)
+    else next.delete(accountId)
+    return next
+  })
+
+  const beginPaint = (event: ReactPointerEvent<HTMLElement>, accountId: number) => {
+    if (event.button !== 0 || event.detail > 1) return
+    event.preventDefault()
+    const value = !selected.has(accountId)
+    toggle(accountId, value)
+    setPaintValue(value)
+  }
+
+  const paintRow = (accountId: number) => {
+    if (paintValue === null) return
+    toggle(accountId, paintValue)
+  }
+
+  const allFilteredSelected = filtered.length > 0 && filtered.every((account) => selected.has(account.id))
+
+  return <div className="page-join-picker-backdrop" role="presentation" onMouseDown={onClose}>
+    <section className="page-join-picker page-join-account-picker" role="dialog" aria-modal="true" aria-label="Chọn tài khoản của Page" onMouseDown={(event) => event.stopPropagation()}>
+      <header><div><span>PAGE DÙNG CHUNG</span><strong>Chọn tài khoản</strong></div><button type="button" onClick={onClose}>×</button></header>
+      <p>Thay đổi tại đây ghi thẳng vào Quản lý Page và đồng bộ sang các tab Page khác.</p>
+      <div className="page-join-account-picker-tools">
+        <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Tìm UID, tên, email, category…" />
+        <label><input type="checkbox" checked={allFilteredSelected} onChange={(event) => {
+          setSelected((current) => {
+            const next = new Set(current)
+            for (const account of filtered) {
+              if (event.target.checked) next.add(account.id)
+              else next.delete(account.id)
+            }
+            return next
+          })
+        }} /> Chọn tất cả đang lọc</label>
+      </div>
+      <div className="page-join-picker-list page-join-account-picker-list">
+        {filtered.map((account) => <label
+          key={account.id}
+          className={selected.has(account.id) ? 'selected' : ''}
+          onPointerDown={(event) => {
+            const target = event.target as HTMLElement
+            if (target.closest('input,button,select,a')) return
+            beginPaint(event, account.id)
+          }}
+          onPointerEnter={() => paintRow(account.id)}
+        >
+          <input type="checkbox" checked={selected.has(account.id)} onChange={(event) => toggle(account.id, event.target.checked)} />
+          <b>{account.uid}{account.username ? ` / ${account.username}` : ''}</b><small>{account.name ?? '—'}</small><span>{account.status}</span>
+        </label>)}
+        {!filtered.length ? <div className="page-join-empty-row">Không có tài khoản phù hợp.</div> : null}
+      </div>
+      <footer><span className="page-join-picker-count">Đã chọn {selected.size}/{accounts.length}</span><button type="button" onClick={onClose}>Hủy</button><button className="primary" type="button" disabled={busy} onClick={() => {
+        setBusy(true)
+        void onApply(accounts.filter((account) => selected.has(account.id)).map((account) => account.id)).finally(() => setBusy(false))
+      }}>{busy ? 'Đang lưu…' : 'Áp dụng'}</button></footer>
+    </section>
+  </div>
+}
+
 export function PageJoinGroupWorkspace() {
   const [pages, setPages] = useState<PageTabSummary[]>([])
   const [bindings, setBindings] = useState<PageBinding[]>([])
@@ -87,6 +179,9 @@ export function PageJoinGroupWorkspace() {
   const [savedConfig, setSavedConfig] = useState('')
   const [runtime, setRuntime] = useState<InteractionWorkspaceRunSnapshot | null>(null)
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [accountPickerOpen, setAccountPickerOpen] = useState(false)
+  const [selectedAccountIds, setSelectedAccountIds] = useState<Set<number>>(() => new Set())
+  const [accountPaintValue, setAccountPaintValue] = useState<boolean | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -109,7 +204,7 @@ export function PageJoinGroupWorkspace() {
 
   useEffect(() => {
     if (!activeBinding) {
-      setPage(null); setDraft(null); setSavedConfig(''); setRuntime(null)
+      setPage(null); setDraft(null); setSavedConfig(''); setRuntime(null); setSelectedAccountIds(new Set()); setAccountPaintValue(null)
       return
     }
     let disposed = false
@@ -128,6 +223,8 @@ export function PageJoinGroupWorkspace() {
       setDraft(parsed.draft)
       setSavedConfig(serializePageJoinGroupWorkspaceConfig(parsed.pageTabId, parsed.draft))
       setRuntime(nextRuntime)
+      setSelectedAccountIds(new Set())
+      setAccountPaintValue(null)
       setError(null)
     }
     void load().catch((cause) => { if (!disposed) setError(cause instanceof Error ? cause.message : String(cause)) })
@@ -151,6 +248,23 @@ export function PageJoinGroupWorkspace() {
     return () => { disposed = true; window.clearInterval(timer) }
   }, [activeBinding?.workspace.id, activeBinding?.pageTabId])
 
+  useEffect(() => {
+    const stopPaint = () => setAccountPaintValue(null)
+    window.addEventListener('pointerup', stopPaint)
+    window.addEventListener('pointercancel', stopPaint)
+    window.addEventListener('blur', stopPaint)
+    return () => {
+      window.removeEventListener('pointerup', stopPaint)
+      window.removeEventListener('pointercancel', stopPaint)
+      window.removeEventListener('blur', stopPaint)
+    }
+  }, [])
+
+  useEffect(() => {
+    const validIds = new Set(page?.accounts.map((item) => item.accountId) ?? [])
+    setSelectedAccountIds((current) => new Set([...current].filter((id) => validIds.has(id))))
+  }, [page?.accounts])
+
   const pageAccounts = useMemo(() => {
     if (!page) return []
     const byId = new Map(accounts.map((account) => [account.id, account]))
@@ -163,8 +277,31 @@ export function PageJoinGroupWorkspace() {
   const activeRun = Boolean(runtime && ['running', 'paused', 'stopping'].includes(runtime.state))
   const targetCount = draft ? splitGroupTargets(draft.sourceTargets).length : 0
   const boundIds = useMemo(() => new Set(bindings.map((item) => item.pageTabId)), [bindings])
+  const allPageAccountsSelected = pageAccounts.length > 0 && pageAccounts.every((item) => selectedAccountIds.has(item.binding.accountId))
 
   const setField = <K extends keyof GroupWorkspaceDraft>(key: K, value: GroupWorkspaceDraft[K]) => setDraft((current) => current ? { ...current, [key]: value } : current)
+
+  const setPageAccountSelected = (accountId: number, value: boolean) => {
+    setSelectedAccountIds((current) => {
+      const next = new Set(current)
+      if (value) next.add(accountId)
+      else next.delete(accountId)
+      return next
+    })
+  }
+
+  const beginPageAccountPaint = (event: ReactPointerEvent<HTMLElement>, accountId: number) => {
+    if (event.button !== 0 || event.detail > 1) return
+    event.preventDefault()
+    const value = !selectedAccountIds.has(accountId)
+    setPageAccountSelected(accountId, value)
+    setAccountPaintValue(value)
+  }
+
+  const paintPageAccountRow = (accountId: number) => {
+    if (accountPaintValue === null) return
+    setPageAccountSelected(accountId, accountPaintValue)
+  }
 
   const addPage = async (selectedPage: PageTabSummary) => {
     const created = await window.pageAuto.createActionWorkspace({
@@ -185,6 +322,56 @@ export function PageJoinGroupWorkspace() {
     }
     await window.pageAuto.deleteActionWorkspace({ id: binding.workspace.id })
     await refreshCatalog()
+  }
+
+  const savePageAccounts = async (nextAccounts: PageTabAccountInput[]): Promise<boolean> => {
+    if (!page || busy || activeRun) return false
+    setBusy(true); setError(null)
+    try {
+      const latest = await window.pageAuto.getPageTab({ id: page.id })
+      if (!latest) throw new Error('Page không còn tồn tại.')
+      const saved = await window.pageAuto.updatePageTab({
+        id: latest.id,
+        config: buildSharedPageSaveInput(latest, { accounts: nextAccounts })
+      })
+      setPage(saved)
+      setSelectedAccountIds((current) => new Set([...current].filter((id) => saved.accounts.some((item) => item.accountId === id))))
+      await refreshCatalog(activeWorkspaceId ?? undefined)
+      return true
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+      return false
+    } finally { setBusy(false) }
+  }
+
+  const togglePageAccount = async (accountId: number, enabled: boolean) => {
+    if (!page) return
+    await savePageAccounts(page.accounts.map((item, index) => ({
+      accountId: item.accountId,
+      enabled: item.accountId === accountId ? enabled : item.enabled,
+      sortOrder: index,
+      postsPerTurn: item.postsPerTurn
+    })))
+  }
+
+  const applyAccountSelection = async (selectedIds: number[]) => {
+    if (!page) return
+    if (await savePageAccounts(accountInputsForSelection(page, selectedIds))) {
+      setAccountPickerOpen(false)
+      setSelectedAccountIds(new Set())
+    }
+  }
+
+  const removeSelectedAccounts = async () => {
+    if (!page || selectedAccountIds.size === 0) return
+    if (!window.confirm(`Bỏ ${selectedAccountIds.size} tài khoản đã chọn khỏi Page “${page.name}”? Thay đổi sẽ đồng bộ sang Quản lý Page và các tab Page khác.`)) return
+    const next = page.accounts.filter((item) => !selectedAccountIds.has(item.accountId)).map((item, index) => ({
+      accountId: item.accountId,
+      enabled: item.enabled,
+      sortOrder: index,
+      postsPerTurn: item.postsPerTurn
+    }))
+    if (await savePageAccounts(next)) setSelectedAccountIds(new Set())
   }
 
   const save = async (): Promise<boolean> => {
@@ -239,8 +426,8 @@ export function PageJoinGroupWorkspace() {
       <div className="page-join-page-scroll">
         {bindings.map((binding) => {
           const summary = pages.find((item) => item.id === binding.pageTabId)
-          return <div className={binding.workspace.id === activeWorkspaceId ? 'page-join-page-chip active' : 'page-join-page-chip'} key={binding.workspace.id}>
-            <button type="button" onClick={() => setActiveWorkspaceId(binding.workspace.id)}><strong>{summary?.name ?? `Page #${binding.pageTabId}`}</strong><small>{summary?.pageUid ?? 'Không còn Page'}</small></button>
+          return <div className={binding.workspace.id === activeWorkspaceId ? 'page-join-page-chip active' : 'page-join-page-chip'} key={binding.workspace.id} title={summary?.pageUid ?? 'Không còn Page'}>
+            <button type="button" onClick={() => setActiveWorkspaceId(binding.workspace.id)}><strong>{summary?.name ?? `Page #${binding.pageTabId}`}</strong></button>
             <button className="remove" type="button" title="Bỏ Page khỏi Tham gia nhóm" onClick={() => void removePage(binding)}>×</button>
           </div>
         })}
@@ -258,15 +445,25 @@ export function PageJoinGroupWorkspace() {
 
       <div className="group-workspace-grid">
         <section className="group-account-panel group-box">
-          <div className="group-account-toolbar"><strong>Tài khoản của Page ({pageAccounts.length})</strong><span className="page-join-shared-badge">Dùng chung · sửa tại Quản lý Page</span></div>
-          <div className="group-account-table-wrap"><table className="group-account-table"><thead><tr><th>Bật</th><th>UID / UserName</th><th>Account</th><th>Phiên</th><th>Đã xử lý</th><th>Thành công</th></tr></thead><tbody>
+          <div className="group-account-toolbar"><strong>Tài khoản của Page ({pageAccounts.length})</strong><div className="page-join-account-actions"><span className="page-join-shared-badge">Dùng chung · {selectedAccountIds.size} chọn</span><button type="button" disabled={busy || activeRun} onClick={() => setAccountPickerOpen(true)}>Chọn tài khoản</button><button className="danger" type="button" disabled={busy || activeRun || selectedAccountIds.size === 0} onClick={() => void removeSelectedAccounts()}>Bỏ đã chọn</button></div></div>
+          <div className="group-account-table-wrap"><table className="group-account-table page-join-account-table"><thead><tr><th className="check"><input type="checkbox" aria-label="Chọn tất cả tài khoản của Page" checked={allPageAccountsSelected} onChange={(event) => setSelectedAccountIds(event.target.checked ? new Set(pageAccounts.map((item) => item.binding.accountId)) : new Set())} /></th><th>Bật</th><th>UID / UserName</th><th>Account</th><th>Phiên</th><th>Đã xử lý</th><th>Thành công</th></tr></thead><tbody>
             {pageAccounts.map(({ binding, account }) => {
               const row = runtime?.accountRuntimes.find((item) => item.accountId === binding.accountId)
-              return <tr key={binding.accountId} className={binding.enabled ? '' : 'disabled'}><td>{binding.enabled ? '✓' : '—'}</td><td><strong>{account?.uid ?? binding.uid}</strong><small>{account?.username ?? binding.name ?? '—'}</small></td><td>{account?.status ?? binding.status}</td><td><span className={`group-runtime-state state-${row?.state ?? 'idle'}`}>{runtimeStateLabel(row?.state)}</span></td><td className="number">{row?.attempted ?? 0}</td><td className="number">{row?.success ?? 0}</td></tr>
+              const selected = selectedAccountIds.has(binding.accountId)
+              return <tr
+                key={binding.accountId}
+                className={`${selected ? 'page-join-account-selected ' : ''}${binding.enabled ? '' : 'disabled'}`}
+                onPointerDown={(event) => {
+                  const target = event.target as HTMLElement
+                  if (target.closest('input,button,select,a')) return
+                  beginPageAccountPaint(event, binding.accountId)
+                }}
+                onPointerEnter={() => paintPageAccountRow(binding.accountId)}
+              ><td className="check"><input type="checkbox" checked={selected} onChange={() => undefined} onPointerDown={(event) => { event.stopPropagation(); beginPageAccountPaint(event, binding.accountId) }} /></td><td className="check"><input type="checkbox" aria-label={`Bật ${account?.uid ?? binding.uid}`} checked={binding.enabled} disabled={busy || activeRun} onChange={(event) => void togglePageAccount(binding.accountId, event.target.checked)} /></td><td><strong>{account?.uid ?? binding.uid}</strong><small>{account?.username ?? binding.name ?? '—'}</small></td><td>{account?.status ?? binding.status}</td><td><span className={`group-runtime-state state-${row?.state ?? 'idle'}`}>{runtimeStateLabel(row?.state)}</span></td><td className="number">{row?.attempted ?? 0}</td><td className="number">{row?.success ?? 0}</td></tr>
             })}
-            {!pageAccounts.length ? <tr><td colSpan={6} className="empty">Page chưa có account. Thêm account tại Quản lý Page.</td></tr> : null}
+            {!pageAccounts.length ? <tr><td colSpan={7} className="empty">Page chưa có account. Bấm “Chọn tài khoản” để thêm từ Account Manager.</td></tr> : null}
           </tbody></table></div>
-          <div className="group-account-summary"><span>Đang bật: <strong>{enabledCount}</strong></span><span>Tổng: <strong>{pageAccounts.length}</strong></span><span>Nguồn: <strong>Page canonical</strong></span></div>
+          <div className="group-account-summary"><span>Đang bật: <strong>{enabledCount}</strong></span><span>Tổng: <strong>{pageAccounts.length}</strong></span><span>Đã chọn: <strong>{selectedAccountIds.size}</strong></span><span>Nguồn: <strong>Page canonical</strong></span></div>
         </section>
 
         <section className="group-source-panel group-box"><fieldset className="group-fieldset"><legend>1. Nguồn nhóm</legend>
@@ -300,5 +497,6 @@ export function PageJoinGroupWorkspace() {
       <section className="group-runtime-log group-box"><div className="group-runtime-log-head"><strong>Log runtime</strong><span>{runtime?.logs.length ?? 0} dòng</span></div><div className="group-runtime-log-body">{(runtime?.logs ?? []).slice(-80).map((entry) => <div key={entry.id} data-level={entry.level}><time>{new Date(entry.at).toLocaleTimeString('vi-VN')}</time><span>{entry.message}</span></div>)}{!runtime?.logs.length ? <p>Chưa có log phiên Tham gia nhóm.</p> : null}</div></section>
     </section>}
     {pickerOpen ? <PagePicker pages={pages} boundIds={boundIds} onClose={() => setPickerOpen(false)} onAdd={addPage} /> : null}
+    {accountPickerOpen && page ? <AccountPicker accounts={accounts} selectedIds={page.accounts.map((item) => item.accountId)} onClose={() => setAccountPickerOpen(false)} onApply={applyAccountSelection} /> : null}
   </section>
 }
