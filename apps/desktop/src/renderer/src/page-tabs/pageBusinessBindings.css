@@ -101,8 +101,12 @@
 .page-business-picker footer button { min-height: 30px; padding: 0 12px; border: 1px solid #3f3f46; border-radius: 5px; background: #202020; color: #d4d4d8; cursor: pointer; }
 .page-business-picker footer button.primary { border-color: #16a34a; background: #15803d; color: #fff; }
 
-.page-business-scoped-child { opacity: 0; pointer-events: none; }
-.page-business-scoped-child.ready { opacity: 1; pointer-events: auto; }
+/* Embedded business panes must stay visible while the inner Page manager syncs to the bound Page. */
+.page-business-scoped-child,
+.page-business-scoped-child.ready {
+  opacity: 1;
+  pointer-events: auto;
+}
 .business-group_post .page-tabs-strip { display: none; }
 .business-group_post .page-tab-editor-header .page-tab-header-actions > .pt-button.secondary,
 .business-group_post .page-tab-editor-header .page-tab-header-actions > .pt-button.danger { display: none; }
