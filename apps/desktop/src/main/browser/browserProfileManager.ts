@@ -18,6 +18,7 @@ import type {
   FacebookCheckpointSurface
 } from '../../shared/facebookCheckpoint'
 import { getEmailCodeProvider } from '../services/emailCodeProviderRegistry'
+import { setBrowserLaunchAwareTimeout } from './browserLaunchBroker'
 import type { FacebookSessionAccount, FacebookSessionResult } from './facebookSession'
 import {
   FacebookProfileResolutionError,
@@ -411,7 +412,7 @@ export class BrowserProfileManager {
         + browserSettings.startupTimeoutMs
         + browserSettings.navigationTimeoutMs
         + 45_000
-      const timer = setTimeout(() => {
+      const timer = setBrowserLaunchAwareTimeout(entry.process, () => {
         if (!entry?.checkpoint956Pending || entry.checkpoint956Pending.resolve !== resolve) return
         entry.checkpoint956Pending = null
         resolve({
@@ -648,7 +649,7 @@ export class BrowserProfileManager {
         + browserSettings.startupTimeoutMs
         + browserSettings.navigationTimeoutMs
         + 30_000
-      const timer = setTimeout(() => {
+      const timer = setBrowserLaunchAwareTimeout(entry.process, () => {
         if (!entry.pending || entry.pending.resolve !== resolve) return
         entry.pending = null
         resolve({
