@@ -21,6 +21,7 @@ import { ScenarioRepository } from '../database/scenarioRepository'
 import { StoryRepository } from '../database/storyRepository'
 import { AccountExecutionCoordinator } from './accountExecutionCoordinator'
 import { redactExecutionText } from './executionLogSanitizer'
+import { runRollingAccountPool } from './rollingAccountPool'
 
 interface ActiveScenarioRun {
   snapshot: ScenarioRunnerSnapshot
@@ -218,27 +219,23 @@ export class ScenarioRunnerService {
       return false
     })
     const parallel = Math.max(1, Math.min(payload.settings.parallelAccounts, runnable.length || 1))
-    let cursor = 0
 
-    const nextAccount = async (): Promise<AccountRecord | null> => {
-      while (!active.stopRequested) {
-        const waitMs = active.accountPauseUntil - Date.now()
-        if (waitMs > 0) {
-          await this.sleep(active, waitMs)
-          continue
+    await runRollingAccountPool({
+      items: runnable,
+      concurrency: parallel,
+      tryAcquire: (account) => this.accountExecution.tryAcquireLease(account.id),
+      waitUntilRunnable: async () => {
+        while (!active.stopRequested) {
+          const waitMs = active.accountPauseUntil - Date.now()
+          if (waitMs <= 0) return true
+          if (!await this.sleep(active, waitMs)) return false
         }
-        const account = runnable[cursor]
-        cursor += 1
-        return account ?? null
-      }
-      return null
-    }
-
-    const workerLoop = async (): Promise<void> => {
-      let account = await nextAccount()
-      while (account && !active.stopRequested) {
-        const finishedAccount = account
-        await this.accountExecution.run(finishedAccount.id, () => this.runAccount(active, finishedAccount, scenarios, payload))
+        return false
+      },
+      shouldStop: () => active.stopRequested,
+      run: async (account) => {
+        if (active.stopRequested) return
+        await this.runAccount(active, account, scenarios, payload)
         active.completedAccounts += 1
         if (
           !active.stopRequested
@@ -253,25 +250,20 @@ export class ScenarioRunnerService {
           )
           this.log(active, 'info', `Tạm dừng ${payload.settings.pauseAfterAccountsMinutes} phút sau ${active.completedAccounts} tài khoản.`)
         }
-
-        if (active.stopRequested) return
-        const reservedNext = await nextAccount()
-        if (!reservedNext) return
-
+      },
+      afterRelease: async (finishedAccount, context) => {
+        if (active.stopRequested || context.remainingItems < 1) return
         const switchDelayMs = randomDelayMs(
           payload.settings.accountSwitchDelayMinSeconds,
           payload.settings.accountSwitchDelayMaxSeconds
         )
-        if (switchDelayMs > 0) {
-          const displaySeconds = Math.max(1, Math.round(switchDelayMs / 1000))
-          this.log(active, 'info', `Đã đóng account ${finishedAccount.uid}; chờ ${displaySeconds} giây trước khi mở tài khoản tiếp theo.`, finishedAccount.id)
-          if (!await this.sleep(active, switchDelayMs)) return
-        }
-        account = reservedNext
+        if (switchDelayMs <= 0) return
+        const displaySeconds = Math.max(1, Math.round(switchDelayMs / 1000))
+        this.log(active, 'info', `Đã đóng account ${finishedAccount.uid}; chờ ${displaySeconds} giây trước khi mở tài khoản tiếp theo.`, finishedAccount.id)
+        await this.sleep(active, switchDelayMs)
       }
-    }
+    })
 
-    await Promise.all(Array.from({ length: parallel }, () => workerLoop()))
     if (this.active !== active) return
     active.snapshot.finishedAt = Date.now()
     if (active.stopRequested) {
