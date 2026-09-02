@@ -8,6 +8,7 @@ import type {
   BrowserTestWorkerMessage,
   BrowserTestWorkerRequestMessage
 } from '../../shared/browserSettings'
+import { setBrowserLaunchAwareTimeout } from './browserLaunchBroker'
 
 function environmentValue(env: NodeJS.ProcessEnv, names: string[]): string | undefined {
   for (const name of names) {
@@ -117,7 +118,7 @@ export class BrowserEngineService {
       }
 
       const timeoutMs = settings.startupDelayMs + settings.startupTimeoutMs + 8_000
-      const timer = setTimeout(() => {
+      const timer = setBrowserLaunchAwareTimeout(worker, () => {
         finish({
           status: 'failed',
           code: 'timeout',
