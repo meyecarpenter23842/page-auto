@@ -148,7 +148,8 @@ try {
   await compactLauncher.getByRole('button', { name: 'Bài viết' }).click()
   const postsDialog = windowPage.locator('.pt-post-library-modal').first()
   await postsDialog.waitFor({ state: 'visible' })
-  invariant((await postsDialog.innerText()).includes('Bài viết'), 'Bài viết compact không mở thư viện bài viết thật.')
+  const postsDialogText = await postsDialog.innerText()
+  invariant(postsDialogText.includes('Danh sách bài đang dùng') && postsDialogText.includes('+ Bài mới') && postsDialogText.includes('Chọn từ thư viện'), 'Bài viết compact không mở đúng thư viện bài viết canonical của Page.')
   await closeDialog(postsDialog)
 
   const pageBChip = windowPage.locator('.page-business-group-pane .page-business-page-chip').filter({ hasText: 'Smoke Page B' })
