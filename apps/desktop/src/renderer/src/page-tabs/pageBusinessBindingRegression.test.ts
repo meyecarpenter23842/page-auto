@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest'
 
 const bindingScopeSource = readFileSync(new URL('./PageBusinessBindingScope.tsx', import.meta.url), 'utf8')
 const bindingCssSource = readFileSync(new URL('./pageBusinessBindings.css', import.meta.url), 'utf8')
+const compactCssSource = readFileSync(new URL('./compactGroupStateDriven.css', import.meta.url), 'utf8')
+const compactLauncherSource = readFileSync(new URL('./CompactGroupConfigLauncher.tsx', import.meta.url), 'utf8')
 const groupManagerSource = readFileSync(new URL('./PageTabsManagerV2.tsx', import.meta.url), 'utf8')
 const wallSource = readFileSync(new URL('./PageWallWorkspace.tsx', import.meta.url), 'utf8')
 const coreSource = readFileSync(new URL('./PageBusinessWorkspaceCore.tsx', import.meta.url), 'utf8')
@@ -13,7 +15,7 @@ describe('Page business binding regression', () => {
     expect(bindingScopeSource).not.toContain("querySelectorAll<HTMLButtonElement>('.page-tab-chip')")
     expect(bindingScopeSource).not.toContain("dispatchEvent(new Event('change'")
     expect(bindingScopeSource).not.toContain('setInterval(sync, 150)')
-    expect(bindingScopeSource).toContain('<PageTabsManager activePageId={activePageId} scoped />')
+    expect(bindingScopeSource).toContain('<PageTabsManager activePageId={activePageId} scoped compactGroupUi />')
     expect(bindingScopeSource).toContain('<PageWallWorkspace activePageId={activePageId} scoped />')
   })
 
@@ -27,12 +29,39 @@ describe('Page business binding regression', () => {
     expect(bindingCssSource).toContain('.page-business-scoped-child > .page-tabs-manager')
   })
 
+  it('restores the Issue #98 compact Group UI through React state instead of DOM click bridges', () => {
+    expect(groupManagerSource).toContain('compactGroupUi?: boolean')
+    expect(groupManagerSource).toContain('const [identityEditorOpen, setIdentityEditorOpen] = useState(false)')
+    expect(groupManagerSource).toContain('onIdentity={() => setIdentityEditorOpen(true)}')
+    expect(groupManagerSource).toContain("onSchedule={() => setEditorModal('schedule')}")
+    expect(groupManagerSource).toContain("onGroups={() => setEditorModal('groups')}")
+    expect(groupManagerSource).toContain('onPosts={() => setPostLibraryOpen(true)}')
+    expect(groupManagerSource).toContain('compactGroupUi && identityEditorOpen ? <ConfigModal eyebrow="Nhận diện"')
+    expect(groupManagerSource).not.toContain('openExistingEditor')
+    expect(groupManagerSource).not.toContain('.pt-business-row:nth-child')
+    expect(compactLauncherSource).toContain('Nhận diện')
+    expect(compactLauncherSource).toContain('Lịch chạy')
+    expect(compactLauncherSource).toContain('Group')
+    expect(compactLauncherSource).toContain('Bài viết')
+    expect(compactCssSource).toContain('.pt-compact-config-launchers')
+    expect(compactCssSource).toContain('.pt-rotation-grid')
+    expect(compactCssSource).not.toContain('display: none !important')
+    expect(compactCssSource).not.toContain('issue98-identity-modal')
+  })
+
+  it('keeps legacy panels out of the scoped compact Group render without deleting their non-compact path', () => {
+    expect(groupManagerSource).toContain('!compactGroupUi ? <section className="pt-panel pt-identity-panel pt-compact-panel"')
+    expect(groupManagerSource).toContain('!compactGroupUi ? <section className="pt-panel pt-business-panel"')
+    expect(groupManagerSource).toContain('!compactGroupUi ? <section className="pt-panel pt-right-summary"')
+    expect(groupManagerSource).toContain('<CompactGroupConfigLauncher')
+  })
+
   it('drives Đăng Nhóm config and runtime from the bound Page id', () => {
     expect(groupManagerSource).toContain('activePageId: controlledActiveId')
     expect(groupManagerSource).toContain('const nextActive = controlledActiveId ?? preferredId ?? activeId')
     expect(groupManagerSource).toContain('!scoped ? <div className="page-tabs-strip"')
     expect(coreSource).toContain('CurrentPageRuntimeActions({ activePageId }')
-    expect(coreSource).toContain("action({ pageTabId: activePageId })")
+    expect(coreSource).toContain('action({ pageTabId: activePageId })')
     expect(coreSource).not.toContain("findIndex((button) => button.classList.contains('active'))")
   })
 

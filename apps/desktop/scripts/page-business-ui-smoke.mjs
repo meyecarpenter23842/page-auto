@@ -23,6 +23,11 @@ async function tabText(selector) {
   return (await windowPage.locator(selector).allTextContents()).map((value) => value.trim()).filter(Boolean)
 }
 
+async function closeDialog(dialog) {
+  await dialog.locator('.page-tab-icon-button').first().click()
+  await dialog.waitFor({ state: 'detached' })
+}
+
 try {
   electronApp = await electron.launch({
     executablePath: electronExecutable,
@@ -69,7 +74,6 @@ try {
       accounts: []
     })
 
-    // Page created after all bindings must remain canonical-only until explicitly added.
     const pageD = await window.pageAuto.createPageTab({ name: 'Smoke Page D', pageUid: '910000004' })
     return { a: pageA.id, b: pageB.id, c: pageC.id, d: pageD.id }
   })
@@ -92,7 +96,8 @@ try {
   invariant(groupChips.length === 2, `Nhóm phải có đúng 2 binding, thực tế ${groupChips.length}.`)
 
   await windowPage.locator('.page-business-group-pane .pt-account-panel').waitFor({ state: 'visible' })
-  await windowPage.locator('.page-business-group-pane .pt-business-panel').waitFor({ state: 'visible' })
+  const compactLauncher = windowPage.locator('.page-business-group-pane .pt-compact-config-launchers')
+  await compactLauncher.waitFor({ state: 'visible' })
 
   const groupLayout = await windowPage.evaluate(() => {
     const height = (selector) => document.querySelector(selector)?.getBoundingClientRect().height ?? 0
@@ -102,7 +107,8 @@ try {
       content: height('.page-business-group-pane .page-business-binding-content'),
       child: height('.page-business-group-pane .page-business-scoped-child'),
       manager: height('.page-business-group-pane .page-tabs-manager'),
-      workspace: height('.page-business-group-pane .page-tab-workspace')
+      workspace: height('.page-business-group-pane .page-tab-workspace'),
+      launcher: height('.page-business-group-pane .pt-compact-config-launchers')
     }
   })
   invariant(groupLayout.pane > 200, `Pane Nhóm có chiều cao bất thường: ${JSON.stringify(groupLayout)}`)
@@ -111,15 +117,45 @@ try {
   invariant(groupLayout.child >= groupLayout.content - 2, `Scoped child Nhóm không fill vùng action: ${JSON.stringify(groupLayout)}`)
   invariant(groupLayout.manager >= groupLayout.child - 2, `PageTabsManager không fill scoped child: ${JSON.stringify(groupLayout)}`)
   invariant(groupLayout.workspace > Math.max(120, groupLayout.content * 0.65), `Workspace Đăng Nhóm bị co về 0: ${JSON.stringify(groupLayout)}`)
+  invariant(groupLayout.launcher >= 36, `Compact launcher Đăng Nhóm bị collapse: ${JSON.stringify(groupLayout)}`)
 
-  invariant(await windowPage.locator('.page-business-group-pane').getByText('Group Set', { exact: true }).count() > 0, 'UI Đăng Nhóm thiếu Group Set.')
-  invariant(await windowPage.locator('.page-business-group-pane').getByText('Bài viết', { exact: true }).count() > 0, 'UI Đăng Nhóm thiếu Bài viết.')
+  invariant(await windowPage.locator('.page-business-group-pane .pt-business-panel').count() === 0, 'UI legacy Cấu hình nghiệp vụ vẫn render trong Nhóm compact.')
+  invariant(await windowPage.locator('.page-business-group-pane .pt-identity-panel').count() === 0, 'UI legacy Nhận diện inline vẫn render trong Nhóm compact.')
+  invariant(await compactLauncher.getByRole('button', { name: 'Nhận diện' }).count() === 1, 'Compact UI thiếu Nhận diện.')
+  invariant(await compactLauncher.getByRole('button', { name: 'Lịch chạy' }).count() === 1, 'Compact UI thiếu Lịch chạy.')
+  invariant(await compactLauncher.getByRole('button', { name: 'Group' }).count() === 1, 'Compact UI thiếu Group.')
+  invariant(await compactLauncher.getByRole('button', { name: 'Bài viết' }).count() === 1, 'Compact UI thiếu Bài viết.')
   invariant((await windowPage.locator('.page-business-group-pane .page-tab-editor-header h2').innerText()).includes('Smoke Page A'), 'Nhóm không load config Page A ban đầu.')
+
+  await compactLauncher.getByRole('button', { name: 'Nhận diện' }).click()
+  const identityDialog = windowPage.getByRole('dialog', { name: 'Page' })
+  await identityDialog.waitFor({ state: 'visible' })
+  invariant((await identityDialog.innerText()).includes('Page UID'), 'Nhận diện compact không mở editor Page thật.')
+  await closeDialog(identityDialog)
+
+  await compactLauncher.getByRole('button', { name: 'Lịch chạy' }).click()
+  const scheduleDialog = windowPage.getByRole('dialog', { name: 'Ngày và khung giờ' })
+  await scheduleDialog.waitFor({ state: 'visible' })
+  invariant((await scheduleDialog.innerText()).includes('Lưu lịch'), 'Lịch chạy compact không mở editor lịch thật.')
+  await closeDialog(scheduleDialog)
+
+  await compactLauncher.getByRole('button', { name: 'Group' }).click()
+  const groupsDialog = windowPage.getByRole('dialog', { name: 'Danh sách Group UID' })
+  await groupsDialog.waitFor({ state: 'visible' })
+  invariant((await groupsDialog.innerText()).includes('Ngẫu nhiên Group'), 'Group compact không mở editor Group thật.')
+  await closeDialog(groupsDialog)
+
+  await compactLauncher.getByRole('button', { name: 'Bài viết' }).click()
+  const postsDialog = windowPage.locator('.pt-post-library-modal').first()
+  await postsDialog.waitFor({ state: 'visible' })
+  invariant((await postsDialog.innerText()).includes('Bài viết'), 'Bài viết compact không mở thư viện bài viết thật.')
+  await closeDialog(postsDialog)
 
   const pageBChip = windowPage.locator('.page-business-group-pane .page-business-page-chip').filter({ hasText: 'Smoke Page B' })
   await pageBChip.locator('button').first().click()
   await windowPage.locator('.page-business-group-pane .page-tab-editor-header h2').filter({ hasText: 'Smoke Page B' }).waitFor({ state: 'visible' })
   invariant((await windowPage.locator('.page-business-group-pane .page-tab-editor-header').innerText()).includes('910000002'), 'Đổi Page trong Nhóm không đổi đúng config/Page UID B.')
+  await windowPage.locator('.page-business-group-pane .pt-compact-config-launchers').waitFor({ state: 'visible' })
 
   await windowPage.getByRole('tab', { name: /Đăng Tường/ }).click()
   await windowPage.locator('.business-page_wall_post .page-business-page-chip').filter({ hasText: 'Smoke Page B' }).waitFor({ state: 'visible' })
@@ -163,7 +199,8 @@ try {
   await windowPage.screenshot({ path: screenshotPath, fullPage: true })
   console.log('Page business UI smoke passed:', {
     actionWorkspaceClean: true,
-    groupUiRendered: true,
+    compactGroupUiRendered: true,
+    compactEditorsOpen: true,
     groupLayoutUsable: true,
     controlledPageSwitch: true,
     independentBindings: true,

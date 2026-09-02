@@ -144,7 +144,7 @@ export function PageBusinessBindingScope({ businessType, label, children }: Page
 }
 
 export function ScopedGroupPostWorkspace({ activePageId }: { activePageId: number }) {
-  return <div className="page-business-scoped-child ready"><PageTabsManager activePageId={activePageId} scoped /></div>
+  return <div className="page-business-scoped-child ready"><PageTabsManager activePageId={activePageId} scoped compactGroupUi /></div>
 }
 
 export function ScopedPageWallWorkspace({ activePageId }: { activePageId: number }) {

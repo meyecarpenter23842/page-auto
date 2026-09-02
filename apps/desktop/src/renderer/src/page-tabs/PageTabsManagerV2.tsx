@@ -19,6 +19,7 @@ import type {
 } from '../../../shared/pageTabs'
 import type { RotationRuntimeSnapshot } from '../../../shared/rotation'
 import { accountStatusLabels } from '../accounts/accountManagerModel'
+import { CompactGroupConfigLauncher } from './CompactGroupConfigLauncher'
 import { PostLibraryModal } from './PostLibraryModal'
 import {
   accountRuntimeLabel,
@@ -34,6 +35,7 @@ import './pageTabsWorkspace.css'
 import './postLibrary.css'
 import './scheduleEditor.css'
 import './pageAccountParity.css'
+import './compactGroupStateDriven.css'
 
 const dayLabels = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7']
 type ConfigSection = 'accounts' | 'identity' | 'rotation' | 'schedule' | 'groups'
@@ -43,6 +45,7 @@ type AccountPickerStatus = AccountStatus | 'all'
 export interface PageTabsManagerProps {
   activePageId?: number
   scoped?: boolean
+  compactGroupUi?: boolean
 }
 
 function minutesToTime(minutes: number): string {
@@ -281,7 +284,7 @@ function AccountPicker({ accounts, selectedIds, onClose, onApply }: AccountPicke
   )
 }
 
-export function PageTabsManager({ activePageId: controlledActiveId, scoped = false }: PageTabsManagerProps = {}) {
+export function PageTabsManager({ activePageId: controlledActiveId, scoped = false, compactGroupUi = false }: PageTabsManagerProps = {}) {
   const [tabs, setTabs] = useState<PageTabSummary[]>([])
   const [activeId, setActiveId] = useState<number | null>(controlledActiveId ?? null)
   const [config, setConfig] = useState<PageTabConfig | null>(null)
@@ -295,6 +298,7 @@ export function PageTabsManager({ activePageId: controlledActiveId, scoped = fal
   const [dirtySections, setDirtySections] = useState<Set<ConfigSection>>(() => new Set())
   const [createOpen, setCreateOpen] = useState(false)
   const [accountPickerOpen, setAccountPickerOpen] = useState(false)
+  const [identityEditorOpen, setIdentityEditorOpen] = useState(false)
   const [editorModal, setEditorModal] = useState<EditorModal>(null)
   const [postLibraryOpen, setPostLibraryOpen] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
@@ -343,6 +347,7 @@ export function PageTabsManager({ activePageId: controlledActiveId, scoped = fal
       setDirtySections(new Set())
       setSelectedAccountIds(new Set())
       setPaintValue(null)
+      setIdentityEditorOpen(false)
       return
     }
     let cancelled = false
@@ -358,6 +363,7 @@ export function PageTabsManager({ activePageId: controlledActiveId, scoped = fal
       setDirtySections(new Set())
       setSelectedAccountIds(new Set())
       setPaintValue(null)
+      setIdentityEditorOpen(false)
       setEditorModal(null)
       setPostLibraryOpen(false)
       setAccountPickerOpen(false)
@@ -590,7 +596,7 @@ export function PageTabsManager({ activePageId: controlledActiveId, scoped = fal
       {error ? <div className="page-tab-error">{error}</div> : null}
 
       {!config ? <div className="page-tabs-empty"><strong>{scoped ? 'Page không còn khả dụng trong tab Nhóm' : 'Chưa có Page Tab'}</strong><span>{scoped ? 'Binding đang chọn không còn trỏ tới Page canonical hợp lệ.' : 'Tạo tab đầu tiên để cấu hình Page UID, tài khoản, lịch, group và bài viết.'}</span>{!scoped ? <button className="pt-button primary" type="button" onClick={() => setCreateOpen(true)}>+ Tạo Page Tab</button> : null}</div> : (
-        <div className="page-tab-workspace">
+        <div className={compactGroupUi ? 'page-tab-workspace compact-group-workspace' : 'page-tab-workspace'}>
           <header className="page-tab-editor-header">
             <div><div className="page-tab-title-line"><span className="pt-status-badge">{config.status}</span>{dirty ? <span className="pt-dirty-badge">{dirtySections.size} mục chưa lưu</span> : <span className="pt-saved-badge">Đã lưu</span>}</div><h2>{config.name}</h2><p>Page UID: {config.pageUid}</p></div>
             <div className="page-tab-header-actions">{!scoped ? <><button className="pt-button secondary" type="button" onClick={() => void duplicate()}>Nhân bản</button><button className="pt-button danger" type="button" onClick={() => void deleteCurrent()}>Xóa</button></> : null}<button className="pt-button primary" type="button" disabled={!dirty || savingSection !== null} onClick={() => void saveAll()}>{savingSection === 'all' ? 'Đang lưu…' : 'Lưu tất cả'}</button></div>
@@ -626,10 +632,10 @@ export function PageTabsManager({ activePageId: controlledActiveId, scoped = fal
                 </tbody></table></div>
               </section>
 
-              <section className="pt-panel pt-identity-panel pt-compact-panel">
+              {!compactGroupUi ? <section className="pt-panel pt-identity-panel pt-compact-panel">
                 <div className="pt-panel-heading"><div><p className="eyebrow">Nhận diện</p><h3>Page</h3></div><button className="pt-button secondary" type="button" disabled={!dirtySections.has('identity') || savingSection !== null} onClick={() => void saveSectionOnly('identity')}>Lưu</button></div>
                 <div className="pt-form-grid two"><label><span>Tên tab</span><input value={config.name} onChange={(event) => patchConfig('identity', { name: event.target.value })} /></label><label><span>Page UID</span><input value={config.pageUid} onChange={(event) => patchConfig('identity', { pageUid: event.target.value })} /></label></div>
-              </section>
+              </section> : null}
 
               <section className="pt-panel pt-rotation-panel pt-compact-panel">
                 <div className="pt-panel-heading"><div><p className="eyebrow">Vòng chạy</p><h3>Số bài và thời gian nghỉ</h3></div><div className="pt-account-heading-actions"><label className="pt-count-chip" title="Bật để mỗi vòng dùng một thứ tự tài khoản ngẫu nhiên, không lặp account trong cùng vòng."><input type="checkbox" checked={(config.rotation.accountOrderMode ?? 'sequential') === 'random'} onChange={(event) => patchConfig('rotation', { rotation: { ...config.rotation, accountOrderMode: event.target.checked ? 'random' : 'sequential' } })} /> Ngẫu nhiên TK</label><button className="pt-button secondary" type="button" disabled={!dirtySections.has('rotation') || savingSection !== null} onClick={() => void saveSectionOnly('rotation')}>Lưu</button></div></div>
@@ -646,23 +652,34 @@ export function PageTabsManager({ activePageId: controlledActiveId, scoped = fal
                 </> : <div className="pt-live-preview-empty">{runtimeEmptyPreviewMessage(runtime)}</div>}
               </section>
 
-              <section className="pt-panel pt-business-panel">
+              {!compactGroupUi ? <section className="pt-panel pt-business-panel">
                 <div className="pt-panel-heading"><div><p className="eyebrow">Cấu hình nghiệp vụ</p><h3>Đăng Nhóm</h3></div><span className="pt-business-state">Mỗi mục lưu riêng</span></div>
                 <div className="pt-business-list">
                   <div className="pt-business-row"><div className="pt-business-icon">L</div><div className="pt-business-copy"><span>Lịch chạy</span><strong>{enabledScheduleCount} khung đang bật</strong><small>Ngày chạy và nhiều khung giờ trong ngày</small></div>{dirtySections.has('schedule') ? <span className="pt-business-unsaved">Chưa lưu</span> : null}<button type="button" onClick={() => setEditorModal('schedule')}>Chỉnh</button></div>
                   <div className="pt-business-row"><div className="pt-business-icon">G</div><div className="pt-business-copy"><span>Group Set</span><strong>{groupCount} group</strong><small>Nguồn Group gốc · run snapshot riêng · {(config.groupOrderMode ?? 'sequential') === 'random' ? 'ngẫu nhiên' : 'lần lượt'}</small></div>{dirtySections.has('groups') ? <span className="pt-business-unsaved">Chưa lưu</span> : null}<button type="button" onClick={() => setEditorModal('groups')}>Quản lý</button></div>
                   <div className="pt-business-row featured"><div className="pt-business-icon">B</div><div className="pt-business-copy"><span>Bài viết</span><strong>{enabledPostCount}/{postLibrary?.posts.length ?? 0} bài bật · {variantCount} biến thể</strong><small>{postLibrary?.mode === 'random' ? 'Lấy bài ngẫu nhiên' : 'Lấy bài lần lượt'} · {imagePostCount} bài có folder ảnh</small></div><button type="button" className="primary" onClick={() => setPostLibraryOpen(true)}>Quản lý bài viết</button></div>
                 </div>
-              </section>
+              </section> : null}
 
-              <section className="pt-panel pt-right-summary"><div><span>Accounts</span><strong>{config.accounts.length}</strong></div><div><span>Groups</span><strong>{groupCount}</strong></div><div><span>Bài viết</span><strong>{enabledPostCount}</strong></div><div><span>Schedule</span><strong>{enabledScheduleCount}</strong></div></section>
+              {!compactGroupUi ? <section className="pt-panel pt-right-summary"><div><span>Accounts</span><strong>{config.accounts.length}</strong></div><div><span>Groups</span><strong>{groupCount}</strong></div><div><span>Bài viết</span><strong>{enabledPostCount}</strong></div><div><span>Schedule</span><strong>{enabledScheduleCount}</strong></div></section> : null}
             </div>
+
+            {compactGroupUi ? <CompactGroupConfigLauncher
+              onIdentity={() => setIdentityEditorOpen(true)}
+              onSchedule={() => setEditorModal('schedule')}
+              onGroups={() => setEditorModal('groups')}
+              onPosts={() => setPostLibraryOpen(true)}
+            /> : null}
           </div>
         </div>
       )}
 
       {!scoped && createOpen ? <CreateTabModal onClose={() => setCreateOpen(false)} onCreate={createTab} /> : null}
       {config && accountPickerOpen ? <AccountPicker accounts={accounts} selectedIds={config.accounts.map((item) => item.accountId)} onClose={() => setAccountPickerOpen(false)} onApply={applyAccountSelection} /> : null}
+
+      {config && compactGroupUi && identityEditorOpen ? <ConfigModal eyebrow="Nhận diện" title="Page" onClose={() => setIdentityEditorOpen(false)} actions={<button className="pt-button primary" type="button" disabled={!dirtySections.has('identity') || savingSection !== null} onClick={() => void saveSectionOnly('identity')}>{savingSection === 'identity' ? 'Đang lưu…' : 'Lưu nhận diện'}</button>}>
+        <div className="pt-form-grid two"><label><span>Tên tab</span><input value={config.name} onChange={(event) => patchConfig('identity', { name: event.target.value })} /></label><label><span>Page UID</span><input value={config.pageUid} onChange={(event) => patchConfig('identity', { pageUid: event.target.value })} /></label></div>
+      </ConfigModal> : null}
 
       {config && editorModal === 'schedule' ? <ConfigModal eyebrow="Lịch chạy" title="Ngày và khung giờ" onClose={() => setEditorModal(null)} actions={<><button className="pt-button secondary" type="button" onClick={addSchedule}>+ Khung giờ</button><button className="pt-button primary" type="button" disabled={!dirtySections.has('schedule') || savingSection !== null} onClick={() => void saveSectionOnly('schedule')}>{savingSection === 'schedule' ? 'Đang lưu…' : 'Lưu lịch'}</button></>}>
         <div className="pt-schedule-list">{config.schedules.map((schedule, index) => <div className="pt-schedule-row" key={`${schedule.id}:${index}`}><label><span>Bật</span><input type="checkbox" checked={schedule.enabled} onChange={(event) => updateSchedule(index, { enabled: event.target.checked })} /></label><label><span>Ngày</span><select value={schedule.dayOfWeek === EVERY_DAY_SCHEDULE ? 1 : schedule.dayOfWeek} disabled={schedule.dayOfWeek === EVERY_DAY_SCHEDULE} onChange={(event) => updateSchedule(index, { dayOfWeek: Number(event.target.value) })}>{dayLabels.map((label, day) => <option key={label} value={day}>{label}</option>)}</select><span className="pt-schedule-every-day"><input type="checkbox" checked={schedule.dayOfWeek === EVERY_DAY_SCHEDULE} onChange={(event) => updateSchedule(index, { dayOfWeek: event.target.checked ? EVERY_DAY_SCHEDULE : 1 })} /> Mỗi ngày</span></label><label><span>Từ</span><input type="time" value={minutesToTime(schedule.startMinute)} onChange={(event) => updateSchedule(index, { startMinute: timeToMinutes(event.target.value) })} /></label><label><span>Đến</span><input type="time" value={minutesToTime(schedule.endMinute)} onChange={(event) => updateSchedule(index, { endMinute: timeToMinutes(event.target.value) })} /></label><button className="pt-remove-button" type="button" onClick={() => patchConfig('schedule', { schedules: config.schedules.filter((_, itemIndex) => itemIndex !== index) })}>Xóa</button></div>)}{config.schedules.length === 0 ? <div className="pt-empty-row">Chưa có lịch. Tab vẫn có thể chạy thủ công.</div> : null}</div>
