@@ -5,12 +5,14 @@ import {
   type InteractionWorkspaceRunIdPayload,
   type InteractionWorkspaceRunStartPayload
 } from '../shared/interactionWorkspaceRunner'
+import { parsePageJoinGroupWorkspaceConfig } from '../shared/pageJoinGroup'
 import { ScenarioActionWorkerManager } from './browser/scenarioActionWorkerManager'
 import { AppSettingsRepository } from './database/appSettingsRepository'
 import { ActionWorkspaceRepository } from './database/actionWorkspaceRepository'
 import { AccountExecutionCoordinator } from './services/accountExecutionCoordinator'
 import { GroupWorkspaceRunnerService } from './services/groupWorkspaceRunnerService'
 import { InteractionWorkspaceRunnerService } from './services/interactionWorkspaceRunnerService'
+import { PageJoinGroupRunnerService } from './services/pageJoinGroupRunnerService'
 
 export interface InteractionWorkspaceRunnerIpcRuntime { dispose: () => void }
 
@@ -40,10 +42,20 @@ export function registerInteractionWorkspaceRunnerIpcHandlers(
     options.dataDirectory,
     () => appSettings.get()
   )
+  const pageJoinGroupService = new PageJoinGroupRunnerService(
+    options.database,
+    workers,
+    accountExecution,
+    options.dataDirectory,
+    () => appSettings.get()
+  )
 
   const serviceFor = (workspaceId: number) => {
     const workspace = workspaces.get(workspaceId)
     if (!workspace) throw new Error(`Không tìm thấy workspace #${workspaceId}.`)
+    if (workspace.type === 'group' && parsePageJoinGroupWorkspaceConfig(workspace.configJson)) {
+      return pageJoinGroupService
+    }
     return workspace.type === 'group' ? groupService : interactionService
   }
 
@@ -70,6 +82,7 @@ export function registerInteractionWorkspaceRunnerIpcHandlers(
 
   return {
     dispose: () => {
+      pageJoinGroupService.dispose()
       groupService.dispose()
       interactionService.dispose()
       for (const channel of Object.values(INTERACTION_WORKSPACE_RUNNER_IPC)) ipcMain.removeHandler(channel)
