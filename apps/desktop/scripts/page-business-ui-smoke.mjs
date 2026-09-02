@@ -92,7 +92,30 @@ try {
   invariant(groupChips.length === 2, `Nhóm phải có đúng 2 binding, thực tế ${groupChips.length}.`)
 
   await windowPage.locator('.page-business-group-pane .pt-account-panel').waitFor({ state: 'visible' })
-  await windowPage.locator('.page-business-group-pane .pt-business-panel').waitFor({ state: 'visible' })
+  await windowPage.locator('.page-business-group-pane .pt-compact-config-launchers').waitFor({ state: 'visible' })
+  await windowPage.locator('.page-business-group-pane .pt-live-preview').waitFor({ state: 'visible' })
+
+  const compactLabels = await tabText('.page-business-group-pane .pt-compact-config-actions button')
+  for (const expected of ['Nhận diện', 'Lịch chạy', 'Group', 'Bài viết']) {
+    invariant(compactLabels.some((label) => label.includes(expected)), `UI compact Nhóm thiếu nút ${expected}.`)
+  }
+  invariant(await windowPage.locator('.page-business-group-pane .pt-identity-panel').isHidden(), 'Card Nhận diện cũ vẫn chiếm layout Nhóm.')
+  invariant(await windowPage.locator('.page-business-group-pane .pt-business-panel').isHidden(), 'Cụm card Lịch/Group/Bài viết cũ vẫn hiển thị trong Nhóm.')
+  invariant(await windowPage.locator('.page-business-group-pane .pt-right-summary').isHidden(), 'Summary card cũ vẫn chiếm diện tích Preview.')
+
+  const rotationInputWidth = await windowPage.locator('.page-business-group-pane .pt-rotation-grid input[type="number"]').first().evaluate((element) => element.getBoundingClientRect().width)
+  invariant(rotationInputWidth <= 72, `Input Vòng chạy không còn compact (~3 chữ số): ${rotationInputWidth}px.`)
+
+  await windowPage.getByRole('button', { name: 'Lịch chạy', exact: true }).click()
+  const scheduleDialog = windowPage.getByRole('dialog', { name: 'Ngày và khung giờ' })
+  await scheduleDialog.waitFor({ state: 'visible' })
+  await scheduleDialog.getByRole('button', { name: 'Đóng', exact: true }).click()
+  await scheduleDialog.waitFor({ state: 'detached' })
+
+  await windowPage.getByRole('button', { name: 'Nhận diện', exact: true }).click()
+  await windowPage.locator('.page-business-group-pane .pt-identity-panel.issue98-identity-modal').waitFor({ state: 'visible' })
+  await windowPage.getByRole('button', { name: 'Đóng Nhận diện' }).click()
+  await windowPage.locator('.page-business-group-pane .pt-identity-panel.issue98-identity-modal').waitFor({ state: 'hidden' })
 
   const groupLayout = await windowPage.evaluate(() => {
     const height = (selector) => document.querySelector(selector)?.getBoundingClientRect().height ?? 0
@@ -102,7 +125,8 @@ try {
       content: height('.page-business-group-pane .page-business-binding-content'),
       child: height('.page-business-group-pane .page-business-scoped-child'),
       manager: height('.page-business-group-pane .page-tabs-manager'),
-      workspace: height('.page-business-group-pane .page-tab-workspace')
+      workspace: height('.page-business-group-pane .page-tab-workspace'),
+      preview: height('.page-business-group-pane .pt-live-preview')
     }
   })
   invariant(groupLayout.pane > 200, `Pane Nhóm có chiều cao bất thường: ${JSON.stringify(groupLayout)}`)
@@ -111,15 +135,15 @@ try {
   invariant(groupLayout.child >= groupLayout.content - 2, `Scoped child Nhóm không fill vùng action: ${JSON.stringify(groupLayout)}`)
   invariant(groupLayout.manager >= groupLayout.child - 2, `PageTabsManager không fill scoped child: ${JSON.stringify(groupLayout)}`)
   invariant(groupLayout.workspace > Math.max(120, groupLayout.content * 0.65), `Workspace Đăng Nhóm bị co về 0: ${JSON.stringify(groupLayout)}`)
+  invariant(groupLayout.preview > 180, `Preview runtime không còn là vùng chính của layout Nhóm compact: ${JSON.stringify(groupLayout)}`)
 
-  invariant(await windowPage.locator('.page-business-group-pane').getByText('Group Set', { exact: true }).count() > 0, 'UI Đăng Nhóm thiếu Group Set.')
-  invariant(await windowPage.locator('.page-business-group-pane').getByText('Bài viết', { exact: true }).count() > 0, 'UI Đăng Nhóm thiếu Bài viết.')
   invariant((await windowPage.locator('.page-business-group-pane .page-tab-editor-header h2').innerText()).includes('Smoke Page A'), 'Nhóm không load config Page A ban đầu.')
 
   const pageBChip = windowPage.locator('.page-business-group-pane .page-business-page-chip').filter({ hasText: 'Smoke Page B' })
   await pageBChip.locator('button').first().click()
   await windowPage.locator('.page-business-group-pane .page-tab-editor-header h2').filter({ hasText: 'Smoke Page B' }).waitFor({ state: 'visible' })
   invariant((await windowPage.locator('.page-business-group-pane .page-tab-editor-header').innerText()).includes('910000002'), 'Đổi Page trong Nhóm không đổi đúng config/Page UID B.')
+  await windowPage.locator('.page-business-group-pane .pt-compact-config-launchers').waitFor({ state: 'visible' })
 
   await windowPage.getByRole('tab', { name: /Đăng Tường/ }).click()
   await windowPage.locator('.business-page_wall_post .page-business-page-chip').filter({ hasText: 'Smoke Page B' }).waitFor({ state: 'visible' })
@@ -160,11 +184,14 @@ try {
   await windowPage.locator('.business-page_edit .page-business-page-chip').filter({ hasText: 'Smoke Page A' }).waitFor({ state: 'visible' })
   invariant((await tabText('.business-page_edit .page-business-page-chip')).some((text) => text.includes('Smoke Page A')), 'Unlink Nhóm làm mất binding độc lập của Sửa Page.')
 
+  await windowPage.getByRole('tab', { name: /^Nhóm/ }).click()
+  await windowPage.locator('.page-business-group-pane .pt-compact-config-launchers').waitFor({ state: 'visible' })
   await windowPage.screenshot({ path: screenshotPath, fullPage: true })
   console.log('Page business UI smoke passed:', {
     actionWorkspaceClean: true,
     groupUiRendered: true,
     groupLayoutUsable: true,
+    compactGroupUiRestored: true,
     controlledPageSwitch: true,
     independentBindings: true,
     newPageNotAutoBound: true,
