@@ -40,6 +40,11 @@ type ConfigSection = 'accounts' | 'identity' | 'rotation' | 'schedule' | 'groups
 type EditorModal = 'schedule' | 'groups' | null
 type AccountPickerStatus = AccountStatus | 'all'
 
+export interface PageTabsManagerProps {
+  activePageId?: number
+  scoped?: boolean
+}
+
 function minutesToTime(minutes: number): string {
   const safe = Math.max(0, Math.min(minutes, 1439))
   return `${String(Math.floor(safe / 60)).padStart(2, '0')}:${String(safe % 60).padStart(2, '0')}`
@@ -276,9 +281,9 @@ function AccountPicker({ accounts, selectedIds, onClose, onApply }: AccountPicke
   )
 }
 
-export function PageTabsManager() {
+export function PageTabsManager({ activePageId: controlledActiveId, scoped = false }: PageTabsManagerProps = {}) {
   const [tabs, setTabs] = useState<PageTabSummary[]>([])
-  const [activeId, setActiveId] = useState<number | null>(null)
+  const [activeId, setActiveId] = useState<number | null>(controlledActiveId ?? null)
   const [config, setConfig] = useState<PageTabConfig | null>(null)
   const [postLibrary, setPostLibrary] = useState<PageTabPostLibrary | null>(null)
   const [accounts, setAccounts] = useState<AccountRecord[]>([])
@@ -298,20 +303,26 @@ export function PageTabsManager() {
   const refreshTabs = useCallback(async (preferredId?: number) => {
     const nextTabs = await window.pageAuto.listPageTabs()
     setTabs(nextTabs)
-    const nextActive = preferredId ?? activeId ?? nextTabs[0]?.id ?? null
-    setActiveId(nextTabs.some((tab) => tab.id === nextActive) ? nextActive : nextTabs[0]?.id ?? null)
-  }, [activeId])
+    const nextActive = controlledActiveId ?? preferredId ?? activeId ?? nextTabs[0]?.id ?? null
+    setActiveId(nextTabs.some((tab) => tab.id === nextActive) ? nextActive : scoped ? null : nextTabs[0]?.id ?? null)
+  }, [activeId, controlledActiveId, scoped])
 
   useEffect(() => {
     void Promise.all([window.pageAuto.listPageTabs(), window.pageAuto.listAccounts()])
       .then(([nextTabs, nextAccounts]) => {
         setTabs(nextTabs)
         setAccounts(nextAccounts)
-        setActiveId(nextTabs[0]?.id ?? null)
+        const requested = controlledActiveId ?? nextTabs[0]?.id ?? null
+        setActiveId(nextTabs.some((tab) => tab.id === requested) ? requested : scoped ? null : nextTabs[0]?.id ?? null)
       })
       .catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)))
       .finally(() => setLoading(false))
   }, [])
+
+  useEffect(() => {
+    if (controlledActiveId === undefined) return
+    setActiveId(tabs.some((tab) => tab.id === controlledActiveId) ? controlledActiveId : null)
+  }, [controlledActiveId, tabs])
 
   useEffect(() => {
     const stopPaint = () => setPaintValue(null)
@@ -561,7 +572,7 @@ export function PageTabsManager() {
 
   return (
     <section className="page-tabs-manager">
-      <div className="page-tabs-strip" aria-label="Danh sách Page Tabs">
+      {!scoped ? <div className="page-tabs-strip" aria-label="Danh sách Page Tabs">
         <div className="page-tabs-scroll">
           {tabs.map((tab) => {
             const tabRuntime = runtimeByTab[tab.id]
@@ -573,16 +584,16 @@ export function PageTabsManager() {
           })}
         </div>
         <button className="page-tab-add" type="button" onClick={() => setCreateOpen(true)}>+ Page</button>
-      </div>
+      </div> : null}
 
       {notice ? <div className="pt-notice"><span>{notice}</span><button type="button" onClick={() => setNotice(null)}>×</button></div> : null}
       {error ? <div className="page-tab-error">{error}</div> : null}
 
-      {!config ? <div className="page-tabs-empty"><strong>Chưa có Page Tab</strong><span>Tạo tab đầu tiên để cấu hình Page UID, tài khoản, lịch, group và bài viết.</span><button className="pt-button primary" type="button" onClick={() => setCreateOpen(true)}>+ Tạo Page Tab</button></div> : (
+      {!config ? <div className="page-tabs-empty"><strong>{scoped ? 'Page không còn khả dụng trong tab Nhóm' : 'Chưa có Page Tab'}</strong><span>{scoped ? 'Binding đang chọn không còn trỏ tới Page canonical hợp lệ.' : 'Tạo tab đầu tiên để cấu hình Page UID, tài khoản, lịch, group và bài viết.'}</span>{!scoped ? <button className="pt-button primary" type="button" onClick={() => setCreateOpen(true)}>+ Tạo Page Tab</button> : null}</div> : (
         <div className="page-tab-workspace">
           <header className="page-tab-editor-header">
             <div><div className="page-tab-title-line"><span className="pt-status-badge">{config.status}</span>{dirty ? <span className="pt-dirty-badge">{dirtySections.size} mục chưa lưu</span> : <span className="pt-saved-badge">Đã lưu</span>}</div><h2>{config.name}</h2><p>Page UID: {config.pageUid}</p></div>
-            <div className="page-tab-header-actions"><button className="pt-button secondary" type="button" onClick={() => void duplicate()}>Nhân bản</button><button className="pt-button danger" type="button" onClick={() => void deleteCurrent()}>Xóa</button><button className="pt-button primary" type="button" disabled={!dirty || savingSection !== null} onClick={() => void saveAll()}>{savingSection === 'all' ? 'Đang lưu…' : 'Lưu tất cả'}</button></div>
+            <div className="page-tab-header-actions">{!scoped ? <><button className="pt-button secondary" type="button" onClick={() => void duplicate()}>Nhân bản</button><button className="pt-button danger" type="button" onClick={() => void deleteCurrent()}>Xóa</button></> : null}<button className="pt-button primary" type="button" disabled={!dirty || savingSection !== null} onClick={() => void saveAll()}>{savingSection === 'all' ? 'Đang lưu…' : 'Lưu tất cả'}</button></div>
           </header>
 
           <div className="page-tab-two-column">
@@ -650,7 +661,7 @@ export function PageTabsManager() {
         </div>
       )}
 
-      {createOpen ? <CreateTabModal onClose={() => setCreateOpen(false)} onCreate={createTab} /> : null}
+      {!scoped && createOpen ? <CreateTabModal onClose={() => setCreateOpen(false)} onCreate={createTab} /> : null}
       {config && accountPickerOpen ? <AccountPicker accounts={accounts} selectedIds={config.accounts.map((item) => item.accountId)} onClose={() => setAccountPickerOpen(false)} onApply={applyAccountSelection} /> : null}
 
       {config && editorModal === 'schedule' ? <ConfigModal eyebrow="Lịch chạy" title="Ngày và khung giờ" onClose={() => setEditorModal(null)} actions={<><button className="pt-button secondary" type="button" onClick={addSchedule}>+ Khung giờ</button><button className="pt-button primary" type="button" disabled={!dirtySections.has('schedule') || savingSection !== null} onClick={() => void saveSectionOnly('schedule')}>{savingSection === 'schedule' ? 'Đang lưu…' : 'Lưu lịch'}</button></>}>

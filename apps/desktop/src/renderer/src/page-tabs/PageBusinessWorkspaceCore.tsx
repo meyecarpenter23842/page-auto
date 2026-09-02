@@ -12,11 +12,9 @@ import { PageJoinGroupWorkspace } from './PageJoinGroupWorkspace'
 import './pageBusinessWorkspace.css'
 import './pageTabs3c.css'
 import './pageTabs3d.css'
-import './issue98CompactGroup.css'
 
 type PageBusinessId = 'groups' | 'wall' | 'edit' | 'join' | 'scenario'
 type RuntimeAction = (payload: { pageTabId: number }) => Promise<RotationRuntimeSnapshot>
-type GroupConfigLauncherId = 'identity' | 'schedule' | 'groups' | 'posts'
 
 interface PageBusinessDefinition {
   id: PageBusinessId
@@ -111,109 +109,15 @@ function canStop(status: RotationRuntimeStatus): boolean {
   return status === 'starting' || status === 'running' || status === 'paused' || status === 'waiting_window'
 }
 
-function GroupConfigIcon({ id }: { id: GroupConfigLauncherId }) {
-  const common = {
-    width: 16,
-    height: 16,
-    viewBox: '0 0 24 24',
-    fill: 'none',
-    stroke: 'currentColor',
-    strokeWidth: 1.8,
-    strokeLinecap: 'round' as const,
-    strokeLinejoin: 'round' as const
-  }
-
-  if (id === 'identity') return <svg {...common}><rect x="4" y="5" width="16" height="14" rx="2" /><circle cx="9" cy="11" r="2" /><path d="M7 16c.6-1.6 1.5-2.4 2.8-2.4S12 14.4 12.6 16" /><path d="M14.5 10h3" /><path d="M14.5 14h3" /></svg>
-  if (id === 'schedule') return <svg {...common}><rect x="4" y="5.5" width="16" height="14.5" rx="2" /><path d="M8 3.5v4" /><path d="M16 3.5v4" /><path d="M4 9.5h16" /><path d="M8 13h3" /><path d="M13 13h3" /><path d="M8 16.5h3" /></svg>
-  if (id === 'groups') return <svg {...common}><circle cx="9" cy="9" r="3" /><circle cx="17" cy="10" r="2.3" /><path d="M3.5 19c.6-3.2 2.5-4.8 5.5-4.8s4.9 1.6 5.5 4.8" /><path d="M14.5 15.2c2.8.2 4.6 1.5 5.2 3.8" /></svg>
-  return <svg {...common}><path d="M6 3.5h8l4 4V20H6z" /><path d="M14 3.5V8h4" /><path d="M9 12h6" /><path d="M9 15.5h6" /></svg>
-}
-
-function CompactGroupConfigControls() {
-  const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null)
-  const [identityPanel, setIdentityPanel] = useState<HTMLElement | null>(null)
-  const [identityOpen, setIdentityOpen] = useState(false)
-
-  useEffect(() => {
-    const syncTargets = () => {
-      setPortalTarget(document.querySelector<HTMLElement>('.page-business-group-pane .page-tab-left-pane'))
-      setIdentityPanel(document.querySelector<HTMLElement>('.page-business-group-pane .pt-identity-panel'))
-    }
-    syncTargets()
-    const timer = window.setInterval(syncTargets, 500)
-    return () => window.clearInterval(timer)
-  }, [])
-
-  useEffect(() => {
-    if (!identityPanel) return
-    identityPanel.classList.toggle('issue98-identity-modal', identityOpen)
-    if (identityOpen) {
-      identityPanel.setAttribute('role', 'dialog')
-      identityPanel.setAttribute('aria-modal', 'true')
-      identityPanel.setAttribute('aria-label', 'Nhận diện Page')
-    } else {
-      identityPanel.removeAttribute('role')
-      identityPanel.removeAttribute('aria-modal')
-      identityPanel.removeAttribute('aria-label')
-    }
-    return () => {
-      identityPanel.classList.remove('issue98-identity-modal')
-      identityPanel.removeAttribute('role')
-      identityPanel.removeAttribute('aria-modal')
-      identityPanel.removeAttribute('aria-label')
-    }
-  }, [identityOpen, identityPanel])
-
-  useEffect(() => {
-    if (!identityOpen) return
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setIdentityOpen(false)
-    }
-    window.addEventListener('keydown', closeOnEscape)
-    return () => window.removeEventListener('keydown', closeOnEscape)
-  }, [identityOpen])
-
-  const openExistingEditor = (rowIndex: 1 | 2 | 3) => {
-    document.querySelector<HTMLButtonElement>(`.page-business-group-pane .pt-business-row:nth-child(${rowIndex}) button`)?.click()
-  }
-
-  if (!portalTarget) return null
-  const closeButtonTarget = identityPanel?.querySelector<HTMLElement>('.pt-panel-heading') ?? null
-
-  return <>
-    {createPortal(
-      <section className="pt-panel pt-compact-config-launchers" aria-label="Cấu hình nhanh Đăng Nhóm">
-        <div className="pt-compact-config-title"><span>Cấu hình</span><small>Mở khi cần</small></div>
-        <div className="pt-compact-config-actions">
-          <button type="button" title="Nhận diện Page" onClick={() => setIdentityOpen(true)}><GroupConfigIcon id="identity" /><span>Nhận diện</span></button>
-          <button type="button" title="Lịch chạy" onClick={() => openExistingEditor(1)}><GroupConfigIcon id="schedule" /><span>Lịch chạy</span></button>
-          <button type="button" title="Danh sách Group" onClick={() => openExistingEditor(2)}><GroupConfigIcon id="groups" /><span>Group</span></button>
-          <button type="button" title="Thư viện bài viết" onClick={() => openExistingEditor(3)}><GroupConfigIcon id="posts" /><span>Bài viết</span></button>
-        </div>
-      </section>,
-      portalTarget
-    )}
-    {identityOpen ? createPortal(<div className="pt-identity-compact-backdrop" role="presentation" onMouseDown={() => setIdentityOpen(false)} />, document.body) : null}
-    {identityOpen && closeButtonTarget ? createPortal(<button className="pt-identity-compact-close" type="button" aria-label="Đóng Nhận diện" onClick={() => setIdentityOpen(false)}>×</button>, closeButtonTarget) : null}
-  </>
-}
-
-function CurrentPageRuntimeActions() {
+function CurrentPageRuntimeActions({ activePageId }: { activePageId: number }) {
   const [runtimeByTab, setRuntimeByTab] = useState<Record<number, RotationRuntimeSnapshot>>({})
-  const [activePageId, setActivePageId] = useState<number | null>(null)
   const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const refresh = async () => {
     try {
-      const [tabs, runtimes] = await Promise.all([
-        window.pageAuto.listPageTabs(),
-        window.pageAuto.listPageTabRotations()
-      ])
-      const pageButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('.page-business-group-pane .page-tab-chip'))
-      const activeIndex = pageButtons.findIndex((button) => button.classList.contains('active'))
-      setActivePageId(activeIndex >= 0 ? tabs[activeIndex]?.id ?? null : null)
+      const runtimes = await window.pageAuto.listPageTabRotations()
       setRuntimeByTab(Object.fromEntries(runtimes.map((runtime) => [runtime.pageTabId, runtime])))
       setPortalTarget(document.querySelector<HTMLElement>('.page-business-group-pane .page-tab-header-actions'))
       setError(null)
@@ -228,9 +132,9 @@ function CurrentPageRuntimeActions() {
     return () => window.clearInterval(timer)
   }, [])
 
-  const status = activePageId === null ? 'idle' : runtimeByTab[activePageId]?.status ?? 'idle'
+  const status = runtimeByTab[activePageId]?.status ?? 'idle'
   const run = async (action: RuntimeAction, eligibility: (runtimeStatus: RotationRuntimeStatus) => boolean) => {
-    if (activePageId === null || !eligibility(status)) return
+    if (!eligibility(status)) return
     setBusy(true)
     setError(null)
     try {
@@ -243,7 +147,7 @@ function CurrentPageRuntimeActions() {
     }
   }
 
-  if (!portalTarget || activePageId === null) return null
+  if (!portalTarget) return null
   return createPortal(
     <div className="page-tab-runtime-actions" title={error ?? `Runtime: ${runtimeStatusLabels[status]}`}>
       <span className={`page-tab-runtime-state runtime-${status}`}>{runtimeStatusLabels[status]}</span>
@@ -369,7 +273,10 @@ export function PageBusinessWorkspace() {
 
     <div className={activeBusiness === 'groups' ? 'page-business-pane page-business-group-pane active' : 'page-business-pane page-business-group-pane inactive'} role="tabpanel" aria-hidden={activeBusiness !== 'groups'}>
       <PageBusinessBindingScope businessType="group_post" label="Nhóm">
-        {({ activePage, allPages }) => <ScopedGroupPostWorkspace activePageId={activePage.id} allPages={allPages} />}
+        {({ activePage }) => <>
+          <ScopedGroupPostWorkspace activePageId={activePage.id} />
+          <CurrentPageRuntimeActions activePageId={activePage.id} />
+        </>}
       </PageBusinessBindingScope>
     </div>
 
@@ -378,8 +285,6 @@ export function PageBusinessWorkspace() {
     {activeBusiness === 'join' ? <PageJoinGroupWorkspace /> : null}
     {activeBusiness === 'scenario' && active ? <BoundPlaceholder business={active} /> : null}
 
-    {activeBusiness === 'groups' ? <CompactGroupConfigControls /> : null}
-    <CurrentPageRuntimeActions />
     {runtimeControlsOpen ? <PageRuntimeQuickControls onClose={() => setRuntimeControlsOpen(false)} /> : null}
   </div>
 }

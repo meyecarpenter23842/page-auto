@@ -42,6 +42,17 @@ jobs:
       - name: Electron smoke test
         run: npm run smoke
 
+      - name: Page business UI smoke
+        run: npm run smoke:page-business -w @page-auto/desktop
+
+      - name: Upload Page business UI evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: PageAuto-page-business-ui-${{ github.sha }}
+          path: dist/page-business-ui-smoke.png
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Package Windows portable
         run: npm run package:portable
 

@@ -9,7 +9,7 @@ export interface PageJoinGroupWorkspaceConfig {
   draft: GroupWorkspaceDraft
 }
 
-/** Legacy action-workspace parser used only by v19 compatibility/migration. */
+/** Page-bound Tham gia nhóm configs require an explicit ownership marker. */
 export function parsePageJoinGroupWorkspaceConfig(configJson: string): PageJoinGroupWorkspaceConfig | null {
   let raw: unknown
   try {
@@ -25,7 +25,6 @@ export function parsePageJoinGroupWorkspaceConfig(configJson: string): PageJoinG
   return { pageTabId, draft: parseGroupWorkspaceDraft(configJson) }
 }
 
-/** Legacy v19 serializer. New Page bindings store page identity outside config_json. */
 export function serializePageJoinGroupWorkspaceConfig(pageTabId: number, draft: GroupWorkspaceDraft): string {
   if (!Number.isInteger(pageTabId) || pageTabId < 1) throw new Error('Page Tab ID không hợp lệ.')
   return JSON.stringify({ ...draft, pageBusinessType: 'join_group', pageTabId })
