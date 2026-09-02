@@ -2,7 +2,10 @@ import { useEffect, useMemo, useState } from 'react'
 import type { AccountRecord } from '../../../shared/accounts'
 import type { ActionWorkspaceAccountInput, ActionWorkspaceRecord } from '../../../shared/actionWorkspaces'
 import {
+  MAX_GROUP_ACCOUNT_CONCURRENCY,
+  groupSourceRequiresClaimForParallel,
   parseGroupWorkspaceDraft,
+  resolveGroupAccountConcurrency,
   serializeGroupWorkspaceDraft,
   splitGroupTargets,
   validateGroupWorkspaceDraft,
@@ -83,6 +86,8 @@ export function GroupWorkspace({ workspace, availableAccounts, onWorkspaceSaved 
   const targetCount = useMemo(() => splitGroupTargets(draft.sourceTargets).length, [draft.sourceTargets])
   const attemptedTotal = runSnapshot?.accountRuntimes.reduce((sum, item) => sum + item.attempted, 0) ?? 0
   const successTotal = runSnapshot?.accountRuntimes.reduce((sum, item) => sum + item.success, 0) ?? 0
+  const sharedSourceSerial = groupSourceRequiresClaimForParallel(draft.sourceMode)
+  const effectiveConcurrency = resolveGroupAccountConcurrency(draft, enabledCount)
 
   useEffect(() => {
     let disposed = false
@@ -301,11 +306,12 @@ export function GroupWorkspace({ workspace, availableAccounts, onWorkspaceSaved 
         <div className="group-pacing-grid">
           <div className="group-range-row"><span>Delay nghiệp vụ</span><label>Từ <input type="number" min={0} max={3600} value={draft.itemDelayMinSeconds} onChange={(event) => setField('itemDelayMinSeconds', Number(event.target.value))} /></label><label>đến <input type="number" min={0} max={3600} value={draft.itemDelayMaxSeconds} onChange={(event) => setField('itemDelayMaxSeconds', Number(event.target.value))} /></label><small>giây · cộng thêm Global Browser Action Delay</small></div>
           <div className="group-range-row"><span>Tạm dừng sau khi xử lý</span><input type="number" min={0} max={10000} value={draft.pauseAfterCount} onChange={(event) => setField('pauseAfterCount', Number(event.target.value))} /><span>nhóm</span><span>Thời gian</span><input type="number" min={0} max={1440} value={draft.pauseMinutes} onChange={(event) => setField('pauseMinutes', Number(event.target.value))} /><span>phút</span></div>
+          <div className="group-check-row"><span className="row-label">TK song song</span><input className="short" type="number" min={1} max={MAX_GROUP_ACCOUNT_CONCURRENCY} disabled={sharedSourceSerial} value={sharedSourceSerial ? 1 : draft.accountConcurrency} onChange={(event) => setField('accountConcurrency', Number(event.target.value))} /><span>{sharedSourceSerial ? 'tạm 1 TK · nguồn dùng chung chờ Group claim' : `tối đa ${effectiveConcurrency} TK · cuốn chiếu`}</span></div>
           <div className="group-check-row"><label><input type="checkbox" checked={draft.repeatEnabled} onChange={(event) => setField('repeatEnabled', event.target.checked)} /><span>Repeat</span></label><input className="short" disabled={!draft.repeatEnabled} type="number" min={1} max={999} value={draft.repeatCount} onChange={(event) => setField('repeatCount', Number(event.target.value))} /><span>lần / account</span></div>
         </div>
 
         <div className="group-run-controls">
-          <div className="group-run-state"><span className={`run-dot state-${runSnapshot?.state ?? 'idle'}`} /><strong>{runSnapshot ? runtimeStateLabel(runSnapshot.state) : 'Chưa chạy'}</strong><small>{runSnapshot?.message ?? 'Account trong workspace Nhóm chạy lần lượt; nhiều Page Tab vẫn giữ contract riêng.'}</small></div>
+          <div className="group-run-state"><span className={`run-dot state-${runSnapshot?.state ?? 'idle'}`} /><strong>{runSnapshot ? runtimeStateLabel(runSnapshot.state) : 'Chưa chạy'}</strong><small>{runSnapshot?.message ?? (sharedSourceSerial ? 'Nguồn Group dùng chung đang giữ 1 account cho tới Batch 4 atomic claim; Browser Launch Spacing vẫn áp dụng.' : `Tối đa ${effectiveConcurrency} account chạy song song kiểu cuốn chiếu; Browser Launch Spacing vẫn áp dụng.`)}</small></div>
           <div className="group-run-buttons">
             {activeRun && paused ? <button className="resume" type="button" disabled={runBusy} onClick={() => void controlRun('resume')}>Tiếp tục</button> : activeRun ? <button className="pause" type="button" disabled={runBusy || runSnapshot?.state === 'stopping'} onClick={() => void controlRun('pause')}>Tạm dừng</button> : null}
             <button className="start" type="button" disabled={activeRun || runBusy || validationErrors.length > 0} onClick={() => void startRun()}>Bắt đầu</button>

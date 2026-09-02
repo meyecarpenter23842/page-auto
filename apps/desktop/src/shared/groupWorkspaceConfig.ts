@@ -10,6 +10,8 @@ export const GROUP_JOIN_SOURCE_MODES = [
   'account_file'
 ] as const
 
+export const MAX_GROUP_ACCOUNT_CONCURRENCY = 20
+
 export type GroupJoinSourceMode = typeof GROUP_JOIN_SOURCE_MODES[number]
 
 export interface GroupWorkspaceDraft {
@@ -19,6 +21,7 @@ export interface GroupWorkspaceDraft {
   sourceFileLabel: string
   accountFilePath: string
   limitPerAccount: number
+  accountConcurrency: number
   answerQuestionsEnabled: boolean
   answerQuestions: string
   joinMin: number
@@ -49,6 +52,7 @@ export const DEFAULT_GROUP_WORKSPACE_DRAFT: GroupWorkspaceDraft = {
   sourceFileLabel: '',
   accountFilePath: '',
   limitPerAccount: 100,
+  accountConcurrency: 1,
   answerQuestionsEnabled: true,
   answerQuestions: '',
   joinMin: 5,
@@ -121,6 +125,7 @@ export function parseGroupWorkspaceDraft(configJson: string): GroupWorkspaceDraf
     sourceFileLabel: text(raw.sourceFileLabel, fallback.sourceFileLabel),
     accountFilePath: text(raw.accountFilePath, fallback.accountFilePath),
     limitPerAccount: boundedInteger(raw.limitPerAccount, fallback.limitPerAccount, 1, 100_000),
+    accountConcurrency: boundedInteger(raw.accountConcurrency, fallback.accountConcurrency, 1, MAX_GROUP_ACCOUNT_CONCURRENCY),
     answerQuestionsEnabled: bool(raw.answerQuestionsEnabled, fallback.answerQuestionsEnabled),
     answerQuestions: text(raw.answerQuestions, fallback.answerQuestions),
     joinMin: boundedInteger(raw.joinMin, fallback.joinMin, 1, 5000),
@@ -163,6 +168,17 @@ export function splitGroupTargets(value: string): string[] {
 
 export function groupSourceNeedsTargets(mode: GroupJoinSourceMode): boolean {
   return mode !== 'keyword' && mode !== 'suggestions'
+}
+
+export function groupSourceRequiresClaimForParallel(mode: GroupJoinSourceMode): boolean {
+  return mode === 'id_shared' || mode === 'file'
+}
+
+export function resolveGroupAccountConcurrency(draft: GroupWorkspaceDraft, enabledAccountCount: number): number {
+  if (groupSourceRequiresClaimForParallel(draft.sourceMode)) return 1
+  const accountCount = Math.max(1, Math.floor(enabledAccountCount))
+  const configured = Math.min(MAX_GROUP_ACCOUNT_CONCURRENCY, Math.max(1, Math.floor(draft.accountConcurrency)))
+  return Math.min(configured, accountCount)
 }
 
 export function allocateGroupTargets(

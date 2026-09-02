@@ -8,6 +8,8 @@ import {
   allocateGroupTargets,
   buildJoinGroupActionConfig,
   groupSourceNeedsTargets,
+  groupSourceRequiresClaimForParallel,
+  resolveGroupAccountConcurrency,
   splitGroupTargets,
   validateGroupWorkspaceDraft,
   type GroupWorkspaceDraft
@@ -167,7 +169,11 @@ export class PageJoinGroupRunnerService {
       runningKeys: new Map()
     }
     this.active.set(workspace.id, active)
-    this.log(active, 'info', `Bắt đầu ${page.name}: ${accounts.length} account Page, chạy lần lượt action Tham gia nhóm.`)
+    const concurrency = resolveGroupAccountConcurrency(parsed.draft, accounts.length)
+    const claimGuard = groupSourceRequiresClaimForParallel(parsed.draft.sourceMode)
+      ? ' Nguồn Group dùng chung tạm giữ 1 account cho tới khi atomic Group claim được nối.'
+      : ''
+    this.log(active, 'info', `Bắt đầu ${page.name}: ${accounts.length} account Page, tối đa ${concurrency} account chạy song song kiểu cuốn chiếu action Tham gia nhóm.${claimGuard}`)
 
     void this.execute(active).catch((error) => {
       if (this.active.get(workspace.id) !== active) return
@@ -264,9 +270,10 @@ export class PageJoinGroupRunnerService {
   }
 
   private async execute(active: ActivePageJoinRun): Promise<void> {
+    const concurrency = resolveGroupAccountConcurrency(active.frozen.draft, active.frozen.accounts.length)
     await runRollingAccountPool({
       items: active.frozen.accounts,
-      concurrency: 1,
+      concurrency,
       tryAcquire: (account) => this.accountExecution.tryAcquireLease(account.id),
       waitUntilRunnable: () => this.waitUntilRunnable(active),
       shouldStop: () => active.stopRequested,
