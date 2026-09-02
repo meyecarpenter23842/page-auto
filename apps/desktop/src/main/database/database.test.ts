@@ -81,9 +81,10 @@ describe('initializeDatabase', () => {
       { version: 15, name: 'copy_post_history' },
       { version: 16, name: 'page_tab_group_order_mode' },
       { version: 17, name: 'story_library' },
-      { version: 18, name: 'action_workspace_persistence' }
+      { version: 18, name: 'action_workspace_persistence' },
+      { version: 19, name: 'page_business_explicit_bindings' }
     ])
-    expect(schemaVersion?.value).toBe('18')
+    expect(schemaVersion?.value).toBe('19')
     expect(executionLogsTable?.name).toBe('execution_logs')
     expect(postLibraryTable?.name).toBe('page_tab_posts')
     expect(pageTabColumns.some((column) => column.name === 'account_order_mode')).toBe(true)
@@ -111,7 +112,7 @@ describe('initializeDatabase', () => {
       .prepare('SELECT COUNT(*) AS count FROM __page_auto_migrations')
       .get() as { count: number }
 
-    expect(count.count).toBe(18)
+    expect(count.count).toBe(19)
     reopened.close()
   })
 
