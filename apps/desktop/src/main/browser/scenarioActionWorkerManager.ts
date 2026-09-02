@@ -3,7 +3,7 @@ import { utilityProcess, type UtilityProcess } from 'electron'
 import { DEFAULT_APP_SETTINGS, type RuntimeSettings } from '../../shared/appSettings'
 import type { ActionExecutionSummary, ActionLogEvent } from '../../shared/actionRuntime'
 import type { ScenarioActionWorkerJob, ScenarioActionWorkerMessage, ScenarioActionWorkerResult } from '../../shared/scenarioActionWorker'
-import { configureGlobalBrowserLaunchBroker } from './browserLaunchBroker'
+import { configureGlobalBrowserLaunchBroker, setBrowserLaunchAwareTimeout } from './browserLaunchBroker'
 import { getManagedBrowserEndpoint } from './managedBrowserRegistry'
 import { workerProfileReuseDecision } from './workerProfileOwnership'
 
@@ -221,7 +221,7 @@ export class ScenarioActionWorkerManager {
     const pending = entry.pending
     if (!pending || pending.timer || entry.shuttingDown) return
     pending.timeoutStartedAt = Date.now()
-    pending.timer = setTimeout(() => {
+    pending.timer = setBrowserLaunchAwareTimeout(entry.process, () => {
       if (!entry.pending || entry.pending !== pending || entry.pending.runKey !== pending.runKey) return
       entry.pending = null
       entry.shuttingDown = true
