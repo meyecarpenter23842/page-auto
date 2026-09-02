@@ -122,12 +122,14 @@ App vẫn có thể đạt 10 account chạy đồng thời sau khi các slot đ
 
 ### 4.4. Account Concurrency là orchestration rule dùng chung
 
-- Workspace có nhiều account phải dùng common orchestration/rolling-pool primitive thay vì tự viết cơ chế cấp account song song riêng nếu primitive chung đáp ứng được.
+- Workspace/flow có nhiều account phải dùng common orchestration/rolling-pool primitive thay vì tự viết cơ chế cấp account song song riêng nếu primitive chung đáp ứng được.
 - Mỗi workflow phải khai báo rõ concurrency policy của nó; không suy đoán từ UI hoặc code legacy.
-- Nếu workflow cho phép chạy song song, concurrency là config/runtime policy của workflow và phải được validate/snapshot phù hợp; không hard-code tùy tiện.
-- Nếu workflow được thiết kế bắt buộc tuần tự thì phải được ghi rõ thành business invariant. `group_post` Page Tab hiện vẫn tuần tự cho tới khi có batch riêng được chấp thuận để đổi semantics.
-- Cùng một account tuyệt đối không được hai Page/Workspace/Kịch Bản điều khiển đồng thời.
-- `AccountExecutionCoordinator` là global account lock/lease dùng chung trong Electron Main và mọi runner phải tôn trọng.
+- Nếu workflow cho phép chạy song song, `accountConcurrency` là config/runtime policy của workflow, phải được validate và **snapshot khi Start**; thay đổi UI giữa phiên không đổi run đang chạy.
+- Config/record legacy không có `accountConcurrency` phải giữ **default `1`** để tương thích hành vi cũ.
+- `group_post` Page Tab **không còn là business invariant bắt buộc tuần tự**. Wording cũ “`group_post` luôn tuần tự/hiện giữ tuần tự cho tới batch riêng” được Issue #263 supersede: `accountConcurrency = 1` giữ behavior legacy; khi người dùng chủ động đặt `> 1` thì orchestration phải chạy **rolling/refill**, không batch barrier.
+- Cùng một account tuyệt đối không được hai Page/Workspace/Kịch Bản điều khiển đồng thời. `AccountExecutionCoordinator` là global account lock/lease dùng chung trong Electron Main và mọi runner phải tôn trọng.
+- Account đang bị workflow khác giữ global lease không được chiếm chết một concurrency slot nếu còn account khác trong queue acquire được; common pool phải bỏ qua tạm và quay lại account bị lock sau.
+- Account concurrency không được bypass Global Browser Launch Spacing; pool có thể có N slot active nhưng Chrome/Profile mới vẫn phải đi qua một global launch gate duy nhất.
 
 ### 4.5. Không implementation cục bộ rule toàn app
 
@@ -139,3 +141,24 @@ Business/workspace module không được tự sở hữu hoặc tự định ng
 - global runtime limits có semantics app-wide.
 
 Các module chỉ được đọc/sử dụng service chung từ Electron Main/Facebook Common Runtime. Nếu cần thay đổi một semantics app-wide, phải cập nhật mục invariant này trước rồi mới migration implementation.
+
+### 4.6. Group run-item claim/reservation khi có nhiều account
+
+Khi một run có nhiều account active cùng consume Group snapshot, chống trùng phải được bảo đảm tại **DB/repository boundary**, không dựa vào việc worker “đọc nhanh/chậm”:
+
+```text
+pending -> claimed/processing(owner) -> success
+                           |
+                           +-> release/retry hoặc failed theo policy
+```
+
+Invariant bắt buộc:
+
+- Claim một `run_item` phải atomic; không dùng `SELECT pending` rồi update tách rời theo cách hai worker có thể cùng nhận một Group.
+- Một `run_item` tại một thời điểm chỉ có tối đa một owner/claim; account khác chỉ được cấp item chưa claim hoặc đã release hợp lệ.
+- Success chỉ consume item trong **run hiện tại**; Group source gốc không bị xóa và run/time window sau clone lại từ source.
+- Pause không cấp claim/account mới; Resume tiếp tục snapshot cũ. Stop/crash/recovery phải có policy trả/recover claim đang giữ, không để `processing` treo vĩnh viễn.
+- Page Tab `group_post` và Scenario/Kịch Bản/flow khác nếu cùng consume `run_items` phải dùng **một claim primitive chung**, không tạo implementation chống trùng riêng theo workspace.
+- Trước migration schema phải audit model hiện có và chỉ thêm ownership/recovery field tối thiểu nếu status hiện tại chưa đủ; không thêm cột chỉ vì đoán.
+
+Audit Issue #263 tại `main@8adb1e2faf98d2990d5be7de494d4d05df2e1325` xác nhận `run_items` đã có `pending/processing/success/failed/skipped`, attempt/timestamp và `RunRepository.claimNext()` dùng transaction + conditional update, nhưng chưa lưu owner account/worker. Batch implementation phải tận dụng nền hiện có và bổ sung ownership/recovery tối thiểu nếu cần.
