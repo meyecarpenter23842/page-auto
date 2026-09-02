@@ -23,7 +23,7 @@ import type {
   PostingWorkerMessage
 } from '../../shared/posting'
 import { getEmailCodeProvider } from '../services/emailCodeProviderRegistry'
-import { configureGlobalBrowserLaunchBroker } from './browserLaunchBroker'
+import { configureGlobalBrowserLaunchBroker, setBrowserLaunchAwareTimeout } from './browserLaunchBroker'
 import { BrowserWindowLayoutManager } from './browserWindowLayoutManager'
 import { getManagedBrowserEndpoint } from './managedBrowserRegistry'
 import { shouldRetainPostingBrowserForManualSession } from './postingWorkerLifecycle'
@@ -144,7 +144,7 @@ export class PostingWorkerManager {
     }
 
     return new Promise((resolve) => {
-      const timer = setTimeout(() => {
+      const timer = setBrowserLaunchAwareTimeout(entry.process, () => {
         if (!entry?.pending || entry.pending.job.itemId !== runtimeJob.itemId) return
         diagnostic(runtimeJob, `TIMEOUT sau ${runtime.maxAccountRuntimeSeconds}s`)
         const pending = entry.pending
