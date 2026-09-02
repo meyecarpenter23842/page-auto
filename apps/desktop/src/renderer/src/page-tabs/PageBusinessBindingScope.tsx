@@ -136,7 +136,9 @@ export function PageBusinessBindingScope({ businessType, label, children }: Page
     </div>
 
     {error ? <div className="page-tab-error page-business-binding-error">{error}</div> : null}
-    {activePage ? children({ activePage, allPages: pages }) : <div className="page-business-binding-empty"><strong>Chưa có Page trong tab {label}</strong><span>Page trong Quản lý Page không tự xuất hiện ở đây.</span><button type="button" onClick={() => setPickerOpen(true)}>+ Thêm Page</button></div>}
+    <div className="page-business-binding-content">
+      {activePage ? children({ activePage, allPages: pages }) : <div className="page-business-binding-empty"><strong>Chưa có Page trong tab {label}</strong><span>Page trong Quản lý Page không tự xuất hiện ở đây.</span><button type="button" onClick={() => setPickerOpen(true)}>+ Thêm Page</button></div>}
+    </div>
     {pickerOpen ? <PagePicker pages={pages} boundIds={boundIds} label={label} onClose={() => setPickerOpen(false)} onAdd={addPage} /> : null}
   </section>
 }

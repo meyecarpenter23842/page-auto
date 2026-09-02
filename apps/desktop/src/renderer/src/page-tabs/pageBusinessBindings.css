@@ -1,9 +1,15 @@
 .page-business-binding-scope {
   min-width: 0;
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .page-business-page-strip {
   min-height: 38px;
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -69,6 +75,36 @@
 .page-business-add-page { min-height: 30px; padding: 0 10px; border: 1px dashed #4b5563; border-radius: 5px; background: #171717; color: #d4d4d8; cursor: pointer; white-space: nowrap; }
 .page-business-add-page:hover { border-color: #22c55e; color: #22c55e; }
 
+.page-business-binding-content {
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 0;
+  overflow: hidden;
+}
+
+.page-business-scoped-child,
+.page-business-scoped-child.ready {
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 1;
+  overflow: hidden;
+  pointer-events: auto;
+}
+
+.page-business-scoped-child > .page-tabs-manager,
+.page-business-scoped-child > .page-wall-workspace {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.page-business-binding-content > .page-business-placeholder,
+.page-business-binding-content > .page-business-binding-empty {
+  height: 100%;
+}
+
 .page-business-binding-empty {
   min-height: 260px;
   display: flex;
@@ -80,7 +116,7 @@
 }
 .page-business-binding-empty strong { color: #f4f4f5; }
 .page-business-binding-empty button { min-height: 32px; padding: 0 12px; border: 1px solid #16a34a; border-radius: 5px; background: rgba(34, 197, 94, .12); color: #4ade80; cursor: pointer; }
-.page-business-binding-error { margin: 6px; }
+.page-business-binding-error { flex: 0 0 auto; margin: 6px; }
 
 .page-business-picker-backdrop { position: fixed; inset: 0; z-index: 1600; display: grid; place-items: center; background: rgba(0, 0, 0, .62); }
 .page-business-picker { width: min(620px, calc(100vw - 32px)); max-height: min(720px, calc(100vh - 48px)); display: flex; flex-direction: column; overflow: hidden; border: 1px solid #3f3f46; border-radius: 10px; background: #151515; color: #e4e4e7; box-shadow: 0 24px 70px rgba(0,0,0,.5); }
@@ -101,12 +137,6 @@
 .page-business-picker footer button { min-height: 30px; padding: 0 12px; border: 1px solid #3f3f46; border-radius: 5px; background: #202020; color: #d4d4d8; cursor: pointer; }
 .page-business-picker footer button.primary { border-color: #16a34a; background: #15803d; color: #fff; }
 
-/* Embedded business panes must stay visible while the inner Page manager syncs to the bound Page. */
-.page-business-scoped-child,
-.page-business-scoped-child.ready {
-  opacity: 1;
-  pointer-events: auto;
-}
 .business-group_post .page-tabs-strip { display: none; }
 .business-group_post .page-tab-editor-header .page-tab-header-actions > .pt-button.secondary,
 .business-group_post .page-tab-editor-header .page-tab-header-actions > .pt-button.danger { display: none; }
