@@ -10,6 +10,7 @@
     "test": "vitest run --no-file-parallelism",
     "rebuild:native": "electron-rebuild -m ../.. -f -w better-sqlite3",
     "smoke": "node ./scripts/smoke.mjs",
+    "smoke:page-business": "node ./scripts/page-business-ui-smoke.mjs",
     "package:portable": "npm run build && electron-builder --win --x64 --dir --publish never && electron-builder --win zip --x64 --publish never",
     "verify:portable": "node ./scripts/verify-portable.mjs"
   },

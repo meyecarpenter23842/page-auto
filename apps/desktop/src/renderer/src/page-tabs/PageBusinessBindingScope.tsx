@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { ActionWorkspaceRecord } from '../../../shared/actionWorkspaces'
 import {
   pageBusinessPageIdOf,
@@ -141,53 +141,10 @@ export function PageBusinessBindingScope({ businessType, label, children }: Page
   </section>
 }
 
-export function ScopedGroupPostWorkspace({ activePageId, allPages }: { activePageId: number; allPages: PageTabSummary[] }) {
-  const rootRef = useRef<HTMLDivElement | null>(null)
-  const [ready, setReady] = useState(false)
-
-  useEffect(() => {
-    setReady(false)
-    let disposed = false
-    let attempts = 0
-    const sync = () => {
-      if (disposed) return
-      const index = allPages.findIndex((page) => page.id === activePageId)
-      const buttons = Array.from(rootRef.current?.querySelectorAll<HTMLButtonElement>('.page-tab-chip') ?? [])
-      const target = index >= 0 ? buttons[index] : undefined
-      if (!target) return
-      if (!target.classList.contains('active') && attempts === 0) target.click()
-      attempts += 1
-      if (target.classList.contains('active')) setReady(true)
-    }
-    sync()
-    const timer = window.setInterval(sync, 150)
-    return () => { disposed = true; window.clearInterval(timer) }
-  }, [activePageId, allPages])
-
-  return <div ref={rootRef} className={ready ? 'page-business-scoped-child ready' : 'page-business-scoped-child'}><PageTabsManager /></div>
+export function ScopedGroupPostWorkspace({ activePageId }: { activePageId: number }) {
+  return <div className="page-business-scoped-child ready"><PageTabsManager activePageId={activePageId} scoped /></div>
 }
 
 export function ScopedPageWallWorkspace({ activePageId }: { activePageId: number }) {
-  const rootRef = useRef<HTMLDivElement | null>(null)
-  const [ready, setReady] = useState(false)
-
-  useEffect(() => {
-    setReady(false)
-    let disposed = false
-    const sync = () => {
-      if (disposed) return
-      const select = rootRef.current?.querySelector<HTMLSelectElement>('.page-wall-target-card .page-wall-field select')
-      if (!select) return
-      if (select.value !== String(activePageId)) {
-        select.value = String(activePageId)
-        select.dispatchEvent(new Event('change', { bubbles: true }))
-      }
-      if (select.value === String(activePageId)) setReady(true)
-    }
-    sync()
-    const timer = window.setInterval(sync, 150)
-    return () => { disposed = true; window.clearInterval(timer) }
-  }, [activePageId])
-
-  return <div ref={rootRef} className={ready ? 'page-business-scoped-child ready' : 'page-business-scoped-child'}><PageWallWorkspace /></div>
+  return <div className="page-business-scoped-child ready"><PageWallWorkspace activePageId={activePageId} scoped /></div>
 }

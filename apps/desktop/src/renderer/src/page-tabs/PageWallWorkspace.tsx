@@ -11,6 +11,11 @@ interface WallLogEntry {
   message: string
 }
 
+export interface PageWallWorkspaceProps {
+  activePageId?: number
+  scoped?: boolean
+}
+
 function fileName(path: string): string {
   const parts = path.split(/[\\/]/)
   return parts[parts.length - 1] || path
@@ -58,9 +63,9 @@ function contentPreview(job: PageWallJobRecord): string {
   return normalized.length > 150 ? `${normalized.slice(0, 150)}…` : normalized
 }
 
-export function PageWallWorkspace() {
+export function PageWallWorkspace({ activePageId: controlledPageId, scoped = false }: PageWallWorkspaceProps = {}) {
   const [tabs, setTabs] = useState<PageTabSummary[]>([])
-  const [pageTabId, setPageTabId] = useState<number | null>(null)
+  const [pageTabId, setPageTabId] = useState<number | null>(controlledPageId ?? null)
   const [config, setConfig] = useState<PageTabConfig | null>(null)
   const [accountId, setAccountId] = useState<number | null>(null)
   const [content, setContent] = useState('')
@@ -106,9 +111,11 @@ export function PageWallWorkspace() {
       .then((nextTabs) => {
         if (cancelled) return
         setTabs(nextTabs)
-        setPageTabId((current) => current && nextTabs.some((tab) => tab.id === current)
-          ? current
-          : nextTabs[0]?.id ?? null)
+        setPageTabId((current) => {
+          const requested = controlledPageId ?? current
+          if (requested && nextTabs.some((tab) => tab.id === requested)) return requested
+          return scoped ? null : nextTabs[0]?.id ?? null
+        })
         setError(null)
       })
       .catch((cause) => {
@@ -119,6 +126,11 @@ export function PageWallWorkspace() {
       })
     return () => { cancelled = true }
   }, [])
+
+  useEffect(() => {
+    if (controlledPageId === undefined) return
+    setPageTabId(tabs.some((tab) => tab.id === controlledPageId) ? controlledPageId : null)
+  }, [controlledPageId, tabs])
 
   useEffect(() => {
     void refreshJobs()
@@ -271,7 +283,7 @@ export function PageWallWorkspace() {
     return (
       <section className="page-wall-workspace page-wall-empty">
         <strong>Chưa có Page Tab</strong>
-        <span>Tạo Page ở tab Nhóm trước; Đăng Tường dùng chung Page UID và danh sách tài khoản đó.</span>
+        <span>Tạo Page trong Quản lý Page trước; Đăng Tường dùng chung Page UID và danh sách tài khoản canonical.</span>
       </section>
     )
   }
@@ -291,10 +303,10 @@ export function PageWallWorkspace() {
 
       <div className="page-wall-grid">
         <section className="page-wall-card page-wall-target-card">
-          <div className="page-wall-card-head"><strong>Page + tài khoản</strong><small>Dùng chung dữ liệu Page Tab</small></div>
+          <div className="page-wall-card-head"><strong>Page + tài khoản</strong><small>Dùng chung dữ liệu Page canonical</small></div>
           <label className="page-wall-field">
             <span>Page</span>
-            <select value={pageTabId ?? ''} disabled={busy || scheduling} onChange={(event) => setPageTabId(Number(event.target.value))}>
+            <select value={pageTabId ?? ''} disabled={scoped || busy || scheduling} onChange={(event) => setPageTabId(Number(event.target.value))}>
               {tabs.map((tab) => <option key={tab.id} value={tab.id}>{tab.name} · {tab.pageUid}</option>)}
             </select>
           </label>
@@ -314,7 +326,7 @@ export function PageWallWorkspace() {
             <span>Account</span><b>{selectedAccount?.uid ?? '—'}</b>
             <span>Trạng thái</span><b className={`wall-account-${selectedAccount?.status ?? 'unknown'}`}>{selectedAccount?.status ?? '—'}</b>
           </div>
-          {config && runnableAccounts.length === 0 ? <p className="page-wall-inline-warning">Page này chưa có tài khoản khả dụng đang bật. Qua tab Nhóm → Danh sách chạy để cấu hình.</p> : null}
+          {config && runnableAccounts.length === 0 ? <p className="page-wall-inline-warning">Page này chưa có tài khoản khả dụng đang bật. Cập nhật danh sách account canonical của Page để chạy.</p> : null}
         </section>
 
         <section className="page-wall-card page-wall-compose-card">

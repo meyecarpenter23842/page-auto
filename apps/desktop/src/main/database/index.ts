@@ -11,6 +11,7 @@ import { COPY_POST_SCHEMA_VERSION, applyCopyPostMigration } from './copyPostMigr
 import { HOTMAIL_SCHEMA_VERSION, applyHotmailMigration } from './hotmailMigration'
 import { latestSchemaVersion, migrations } from './migrations'
 import { PAGE_BUSINESS_BINDING_SCHEMA_VERSION, applyPageBusinessBindingMigration } from './pageBusinessBindingMigration'
+import { applyPageJoinGroupOwnershipRepair } from './pageJoinGroupOwnershipMigration'
 import { PAGE_WALL_SCHEMA_VERSION, applyPageWallMigration } from './pageWallMigration'
 import { SCENARIO_SCHEMA_VERSION, applyScenarioMigration } from './scenarioMigration'
 import { STORY_SCHEMA_VERSION, applyStoryMigration } from './storyMigration'
@@ -71,6 +72,7 @@ export function initializeDatabase(databaseFile: string): DatabaseRuntime {
   applyStoryMigration(client)
   applyActionWorkspaceMigration(client)
   applyPageBusinessBindingMigration(client)
+  applyPageJoinGroupOwnershipRepair(client)
 
   const schemaVersion = Math.max(
     latestSchemaVersion,
