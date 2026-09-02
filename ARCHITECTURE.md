@@ -4,6 +4,8 @@
 
 Baseline khi tạo tài liệu: `main@0926cdb7b3a6e0a00c74a3d9743e8ab099207c0a` — sau PR #76. Tài liệu phân biệt rõ **source hiện tại** và **đích refactor**; việc một module được ghi là “target/common” không có nghĩa source đã được di chuyển xong.
 
+Audit concurrency mới nhất cho Issue #263 được thực hiện tại `main@8adb1e2faf98d2990d5be7de494d4d05df2e1325`; các mục 5.4 và 26 bên dưới supersede wording cũ coi Page Tab `group_post` là bắt buộc tuần tự.
+
 ---
 
 ## 1. Vì sao phải tách kiến trúc
@@ -27,13 +29,14 @@ Quy tắc ngắn gọn:
 - Electron Main sở hữu DB, filesystem, scheduler và worker lifecycle.
 - Playwright chạy ngoài renderer; browser lỗi không được kéo treo UI.
 - Account là session/profile thật; Page là identity được switch từ account.
-- Concurrency là policy orchestration của từng workflow, không phải giả định cố định toàn app. `group_post` Page Tab hiện vẫn chạy account tuần tự; workspace `Tương tác` có thể chạy rolling concurrency theo config đã snapshot.
+- Concurrency là policy orchestration của từng workflow, không phải giả định cố định toàn app. Workflow cho phép parallel dùng common rolling pool theo `accountConcurrency`; config/record legacy thiếu field phải giữ default `1`.
+- Page Tab `group_post` không còn bị khóa bởi invariant tuần tự: `accountConcurrency = 1` giữ behavior legacy, `>1` phải rolling/refill và dùng atomic Group claim theo Issue #263.
 - Dù có nhiều workspace/Page Tab chạy song song, cùng một account không được bị hai flow điều khiển đồng thời; account-level execution coordinator là lock dùng chung toàn Main.
 - Secret không log plaintext.
 - Checkpoint/xác minh danh tính không được tự động bypass.
 - Không thêm anti-detection/evasion.
 - Group source không bị xóa; anti-duplicate dùng snapshot/run items của phiên.
-- Kiến trúc được tách dần theo batch; không đổi hành vi đang chạy ổn chỉ để “đẹp source”.
+- Kiến trúc được tách dần theo batch; không đổi hành vi đang chạy ổn ngoài semantics đã được chốt rõ trong issue/batch tương ứng.
 
 ---
 
@@ -183,7 +186,28 @@ Nếu `rotationService` hoặc service orchestration phải biết selector Face
 - account đang bị workflow khác giữ global execution lease không được làm mất slot nếu queue còn account khác acquire được; orchestration có thể bỏ qua tạm và quay lại account bị lock sau;
 - Pause ngăn cấp account/action mới và cooperative-pause các action đang active; Resume tiếp tục snapshot cũ; Stop dừng active worker và không cấp account mới;
 - `AccountExecutionCoordinator` vẫn là global account lock dùng chung giữa Scenario/Page/Action flows;
-- thay đổi này **không đổi** `group_post` rotation hiện hành: Group Page Tab vẫn tuần tự cho tới một batch riêng chủ đích thay semantics đó.
+- `Tương tác` là reference implementation hiện có; Issue #263 mở cùng rolling-pool contract cho các flow multi-account khác thay vì tạo pool riêng từng workspace.
+
+### 5.4. Account concurrency contract sau Issue #263
+
+Invariant orchestration được mở rộng như sau:
+
+- Workflow cho phép parallel phải có `accountConcurrency` explicit, validate trước Start và freeze vào run snapshot; legacy/default = `1`.
+- `accountConcurrency > 1` luôn là **rolling/refill**: slot nào xong thì account kế tiếp vào ngay, không có batch barrier.
+- Global account lease phải được acquire trước khi account thật sự chiếm slot. Account đang lock ở workflow khác được bỏ qua tạm nếu còn account khác runnable.
+- Page Tab `group_post` được phép chạy nhiều account khi người dùng chủ động đặt `TK song song > 1`; `1` giữ behavior tuần tự cũ.
+- Concurrency và Global Browser Launch Spacing là hai lớp độc lập: pool có N slot không cho phép N Chrome mới mở cùng lúc.
+- Pause không cấp account/claim mới; Resume dùng snapshot cũ; Stop/crash/recovery phải giải phóng lease/claim theo policy xác định.
+
+Với flow consume Group snapshot, account slot và Group target là hai resource khác nhau. Group target phải được claim atomically tại repository boundary:
+
+```text
+pending -> claimed/processing(owner) -> success
+                           |
+                           +-> release/retry hoặc failed
+```
+
+Một `run_item` chỉ có tối đa một owner/claim tại một thời điểm; success consume item của run hiện tại, không xóa Group source. Page Tab/Scenario/flow khác cùng dùng `run_items` phải dùng một claim primitive chung.
 
 ---
 
@@ -355,6 +379,11 @@ Ví dụ hiện tại `PublishResultDetector` trong `postingEngine.ts` dùng Gro
 - coordination account-level; ownership mục tiêu: Orchestration;
 - lock table là global trong Electron Main; rolling pool phải acquire lease trước khi chiếm slot thực thi để cùng account không chạy trùng giữa workflow.
 
+`apps/desktop/src/main/services/rollingAccountPool.ts`
+
+- common rolling worker-pool primitive hiện hữu; `tryAcquire` synchronous cho phép bỏ qua account đang global-lock mà không mất slot;
+- không chứa Facebook selector hoặc business target logic.
+
 `apps/desktop/src/main/services/pageTabWorkerManager.ts`
 
 - Page Tab worker lifecycle; ownership mục tiêu: Orchestration/Worker Manager.
@@ -362,6 +391,7 @@ Ví dụ hiện tại `PublishResultDetector` trong `postingEngine.ts` dùng Gro
 `apps/desktop/src/main/services/rotationService.ts`
 
 - account rotation/run control lớn hiện tại;
+- audit #263 xác nhận Page Tab `group_post` ở đây vẫn tuần tự tại baseline và sẽ được migrate riêng sang configurable rolling concurrency + Group claim;
 - khi refactor phải giữ nó ở tầng Orchestration và đẩy Facebook-specific browser actions ra common/business adapter.
 
 `apps/desktop/src/main/services/rotationSchedule.ts`
@@ -541,19 +571,21 @@ Nếu có hai hàm resolve profile khác nhau cho Account và Group thì refacto
 
 ## 12. Group Post regression invariants
 
-Tách source không được âm thầm đổi Group behavior. Các invariant phải giữ:
+Tách source không được âm thầm đổi Group behavior ngoài semantics Issue #263 đã chốt. Các invariant phải giữ:
 
 - Group Set gốc không bị xóa;
 - mỗi run clone snapshot/run items;
 - success consume Group trong phiên theo policy hiện hành;
-- account trong tab chạy tuần tự;
+- `accountConcurrency = 1` giữ account rotation tuần tự legacy;
+- `accountConcurrency > 1` dùng rolling/refill và một Group run item không bao giờ được cấp đồng thời cho hai account;
 - số bài/account và delay giữ semantics;
-- pause/resume/stop giữ semantics;
+- pause/resume/stop giữ semantics và không cấp claim mới sai trạng thái;
 - scheduler/time windows giữ semantics;
 - content/image selection giữ semantics trừ batch sửa bug riêng;
 - publish verification không được biến click nút thành success nếu policy hiện hành yêu cầu evidence;
 - failure/result code mapping được regression test;
-- browser/session recovery không duplicate Group logic.
+- browser/session recovery không duplicate Group logic;
+- Stop/crash/recovery không để account lease hoặc Group claim treo; run/time window mới vẫn clone đầy đủ từ Group source.
 
 Bug `random` hiện còn OPEN thì phải giữ là bug OPEN; refactor không được “đánh dấu fixed” nếu chưa test đúng hành vi.
 
@@ -668,6 +700,10 @@ Test bằng fake task/common adapter khi có thể:
 - per-run account statuses;
 - rolling pool không có batch barrier: slot xong phải refill account kế tiếp ngay;
 - account global-lock không được chiếm mất concurrency slot nếu còn account khác runnable;
+- legacy/default concurrency `1` giữ behavior tuần tự cũ;
+- Group claim atomic: concurrency `>1` không bao giờ cấp cùng run item cho hai account;
+- Pause/Resume/Stop/crash recovery không để claim/lease treo;
+- concurrency không bypass Global Browser Launch Spacing;
 - không cần selector Facebook.
 
 ### Business Group
@@ -679,7 +715,8 @@ Test:
 - snapshot chống trùng;
 - content/media mapping;
 - Group navigation/result verification;
-- same observable behavior before/after common extraction.
+- same observable behavior before/after common extraction;
+- run/time window mới clone lại Group source đầy đủ.
 
 ### Live Windows retest
 
@@ -1039,4 +1076,63 @@ Regression tối thiểu:
 - locked account không làm pool tụt từ N slot xuống N-1 nếu còn account runnable khác;
 - legacy config -> concurrency 1;
 - Pause/Resume/Stop không tạo account mới sai trạng thái;
-- `group_post` sequential invariant vẫn xanh.
+- contract này là reference cho Issue #263; `group_post` concurrency `1` giữ legacy còn `>1` phải dùng cùng rolling-pool semantics cộng Group claim atomic.
+
+---
+
+## 26. Issue #263 — repo-wide audit Account Concurrency + Group claim
+
+Audit tại `main@8adb1e2faf98d2990d5be7de494d4d05df2e1325` xác nhận source hiện tại:
+
+| Flow | Source hiện tại | Kết luận |
+| --- | --- | --- |
+| Tương tác | `interactionWorkspaceRunnerService.ts` + `runRollingAccountPool()` + `tryAcquireLease()` | đã đúng common rolling contract |
+| Kịch Bản/Scenario | `scenarioRunnerService.ts` tự tạo `Promise.all` worker-loop và gọi `accountExecution.run()` | cần migrate; account đang lock có thể giữ worker slot thay vì skip/refill |
+| Nhóm standalone | `groupWorkspaceRunnerService.ts` dùng common pool nhưng `concurrency: 1` | Batch 3 thêm config/snapshot/UI, default `1` |
+| Page → Tham gia nhóm | `pageJoinGroupRunnerService.ts` dùng common pool nhưng `concurrency: 1` | Batch 3 thêm config/snapshot/UI, default `1` |
+| Page Tab `group_post` | `rotationService.ts` điều phối account tuần tự | Batch 4 mở configurable rolling concurrency |
+| Page Wall | production task hiện là một account/job | giữ single-account job; không tạo pool giả ở business layer |
+
+### 26.1. Common pool và global account lease
+
+`main/services/rollingAccountPool.ts` hiện có contract phù hợp để chuẩn hóa:
+
+- queue account được giữ trong orchestration;
+- `tryAcquire` synchronous trước khi remove item khỏi pending;
+- account global-lock được skip tạm nên không chiếm slot;
+- worker slot refill ngay sau khi account xong;
+- lease luôn release trong `finally`.
+
+Scenario phải migrate sang primitive này thay vì duy trì custom worker-loop riêng. Các flow Nhóm/Page Join chỉ mở config trên cùng primitive, không copy pool.
+
+### 26.2. `run_items` và Group claim
+
+Schema hiện tại có:
+
+- `status`: `pending/processing/success/failed/skipped`;
+- `attempt_count`, `last_error`, `started_at`, `finished_at`, `updated_at`;
+- chưa có `claimed_by_account_id`/owner tương đương.
+
+`RunRepository.claimNext()` hiện chạy transaction, chọn item `pending`, rồi conditional update `WHERE ... status = 'pending'`. Đây là nền chống race tốt nhưng contract chưa ghi owner account/worker để recovery/trace khi nhiều account active.
+
+Batch 4 phải audit và bổ sung ownership tối thiểu nếu cần, với semantics:
+
+- claim atomic tại repository boundary;
+- tối đa một owner trên một run item;
+- publish success -> consume item hiện tại;
+- lỗi trước khi hoàn thành target -> release/retry/terminal-fail theo policy;
+- Pause không cấp claim mới; Resume dùng snapshot cũ;
+- Stop/crash/restart không để `processing` treo vĩnh viễn;
+- Group source gốc không bị xóa và run/time window sau clone lại đầy đủ.
+
+`ScenarioGroupPostRunRepository` cũng tạo `runs/run_items`; vì vậy claim/reservation phải là primitive chung của Run repository/orchestration, không làm một bản Page Tab và một bản Scenario.
+
+### 26.3. Batch implementation
+
+1. **Batch 1 — Docs + audit:** cập nhật invariant/plan/architecture; không đổi runtime.
+2. **Batch 2 — Common orchestration:** migrate Scenario sang common rolling pool; regression global lease + locked-account refill.
+3. **Batch 3 — Configurable concurrency:** Nhóm standalone + Page → Tham gia nhóm; config/IPC/UI/snapshot; legacy/default `1`.
+4. **Batch 4 — Page Tab `group_post` + claim:** configurable `TK song song`; atomic Group claim/release/recovery; reuse cho flow khác dùng `run_items`.
+5. **Batch 5 — Regression + CI:** concurrency `1` legacy, `>1` rolling, cross-workspace same-account lock, launch spacing, Pause/Resume/Stop/recovery, Group source cloning.
+
+Không merge PR tự động; chỉ merge khi có lệnh rõ ràng của chủ dự án.
