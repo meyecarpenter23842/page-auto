@@ -24,7 +24,7 @@ export function parsePageJoinGroupWorkspaceConfig(configJson: string): PageJoinG
 
 export function serializePageJoinGroupWorkspaceConfig(pageTabId: number, draft: GroupWorkspaceDraft): string {
   if (!Number.isInteger(pageTabId) || pageTabId < 1) throw new Error('Page Tab ID không hợp lệ.')
-  return JSON.stringify({ ...draft, pageTabId })
+  return JSON.stringify({ ...draft, pageBusinessType: 'join_group', pageTabId })
 }
 
 export function createDefaultPageJoinGroupWorkspaceConfig(pageTabId: number): string {

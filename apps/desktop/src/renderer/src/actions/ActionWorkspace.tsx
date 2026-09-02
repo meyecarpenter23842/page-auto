@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { AccountRecord } from '../../../shared/accounts'
 import type { ActionWorkspaceRecord, ActionWorkspaceType } from '../../../shared/actionWorkspaces'
+import { isPageBusinessWorkspace } from '../../../shared/pageBusinessBindings'
 import { DEFAULT_GROUP_WORKSPACE_DRAFT, serializeGroupWorkspaceDraft } from '../../../shared/groupWorkspaceConfig'
 import { ScenarioWorkspace } from '../scenarios/ScenarioWorkspace'
 import { GroupWorkspace } from './GroupWorkspace'
@@ -59,9 +60,10 @@ export function ActionWorkspace() {
         window.pageAuto.listActionWorkspaces(),
         window.pageAuto.listAccounts()
       ])
-      setTabs(savedWorkspaces)
+      const visibleWorkspaces = savedWorkspaces.filter((workspace) => !isPageBusinessWorkspace(workspace))
+      setTabs(visibleWorkspaces)
       setAccounts(accountRows)
-      setActiveTabId(restoreActiveTab(savedWorkspaces))
+      setActiveTabId(restoreActiveTab(visibleWorkspaces))
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : String(loadError))
     } finally {

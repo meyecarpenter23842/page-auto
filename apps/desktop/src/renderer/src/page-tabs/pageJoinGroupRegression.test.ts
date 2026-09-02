@@ -1,16 +1,16 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
-const wrapper = readFileSync(new URL('./PageBusinessWorkspace.tsx', import.meta.url), 'utf8')
+const core = readFileSync(new URL('./PageBusinessWorkspaceCore.tsx', import.meta.url), 'utf8')
 const workspace = readFileSync(new URL('./PageJoinGroupWorkspace.tsx', import.meta.url), 'utf8')
 const styles = readFileSync(new URL('./pageJoinGroup.css', import.meta.url), 'utf8')
 const runner = readFileSync(new URL('../../../main/services/pageJoinGroupRunnerService.ts', import.meta.url), 'utf8')
 const routing = readFileSync(new URL('../../../main/interactionWorkspaceRunnerIpc.ts', import.meta.url), 'utf8')
 
 describe('Page Tham gia nhóm business binding', () => {
-  it('adds the business tab without auto-rendering every canonical Page', () => {
-    expect(wrapper).toContain('<strong>Tham gia nhóm</strong>')
-    expect(wrapper).toContain('<PageJoinGroupWorkspace />')
+  it('keeps the business inside Page Tabs without auto-rendering every canonical Page', () => {
+    expect(core).toContain("label: 'Tham gia nhóm'")
+    expect(core).toContain('<PageJoinGroupWorkspace />')
     expect(workspace).toContain('+ Thêm Page')
     expect(workspace).toContain('parsePageJoinGroupWorkspaceConfig')
     expect(workspace).toContain('createActionWorkspace({')
