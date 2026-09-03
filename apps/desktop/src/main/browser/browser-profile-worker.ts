@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { chromium, type BrowserContext } from 'playwright-core'
 import type { BrowserSettings, SessionSettings } from '../../shared/appSettings'
 import type { BrowserWindowPlacement } from '../../shared/browserWindowLayout'
+import { buildBrowserVisualBaselineSnapshot } from '../../shared/browserVisualBaseline'
 import { sameWholeChromeScale, wholeChromeScaleForLaunch } from '../../shared/browserWholeChromeScale'
 import type {
   FacebookCheckpoint282Action,
@@ -253,6 +254,44 @@ async function resolveCdpEndpoint(profileDirectory: string): Promise<string | nu
   return null
 }
 
+type VisualBaselineProbePhase = 'launch' | 'retile' | 'manual-resize-detached'
+
+async function logVisualBaselineProbe(
+  context: BrowserContext,
+  input: {
+    phase: VisualBaselineProbePhase
+    browserScale: number
+    compact: boolean
+    manualResizeDetached: boolean
+  }
+): Promise<void> {
+  const page = context.pages()[0]
+  if (!page) return
+
+  const metrics = await page.evaluate(() => {
+    const visualViewport = window.visualViewport
+    return {
+      outerWidth: window.outerWidth,
+      outerHeight: window.outerHeight,
+      innerWidth: window.innerWidth,
+      innerHeight: window.innerHeight,
+      devicePixelRatio: window.devicePixelRatio,
+      visualViewportWidth: visualViewport?.width ?? window.innerWidth,
+      visualViewportHeight: visualViewport?.height ?? window.innerHeight,
+      visualViewportScale: visualViewport?.scale ?? 1
+    }
+  }).catch(() => null)
+  if (!metrics) return
+
+  const snapshot = buildBrowserVisualBaselineSnapshot({
+    metrics,
+    browserScale: input.browserScale,
+    compact: input.compact,
+    manualResizeDetached: input.manualResizeDetached
+  })
+  console.info(`[PAGE-AUTO visual-baseline] phase=${input.phase} ${JSON.stringify(snapshot)}`)
+}
+
 async function run(): Promise<void> {
   const profileDirectory = process.argv[2]
   if (!profileDirectory) throw new Error('Missing browser profile directory.')
@@ -280,11 +319,18 @@ async function run(): Promise<void> {
     const activeContext = context
     const placement = activePlacement
     if (!activeContext || !placement || manualResizeDetached) return
+    const browserScale = launchedWholeChromeScale ?? 1
     stopResizeWatch = watchForManualBrowserResize(activeContext, () => {
       if (context !== activeContext) return
       manualResizeDetached = true
       activePlacement = null
       stopResizeWatch = null
+      void logVisualBaselineProbe(activeContext, {
+        phase: 'manual-resize-detached',
+        browserScale,
+        compact: true,
+        manualResizeDetached: true
+      })
     }, 350, { width: placement.width, height: placement.height })
   }
 
@@ -374,6 +420,12 @@ async function run(): Promise<void> {
       () => applyBrowserPlacementToContext(opened, activePlacement),
       armResizeWatch
     )
+    await logVisualBaselineProbe(opened, {
+      phase: 'launch',
+      browserScale: launchedWholeChromeScale ?? 1,
+      compact: activePlacement !== null,
+      manualResizeDetached
+    })
     opened.on('page', (page) => {
       void applyBrowserWindowPlacement(opened, page, activePlacement).catch(() => undefined)
     })
@@ -574,6 +626,12 @@ async function run(): Promise<void> {
             () => applyBrowserPlacementToContext(activeContext, activePlacement),
             armResizeWatch
           )
+          await logVisualBaselineProbe(activeContext, {
+            phase: 'retile',
+            browserScale: launchedWholeChromeScale ?? 1,
+            compact: placement !== null,
+            manualResizeDetached
+          })
         }
       })
       return
