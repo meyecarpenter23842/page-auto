@@ -8,8 +8,9 @@ import {
 } from '../../shared/browserVisualBaseline'
 
 const DEFAULT_METRIC_TIMEOUT_MS = 1_500
-const DEFAULT_RECOVERY_VERIFY_TIMEOUT_MS = 1_500
-const RECOVERY_VERIFY_INTERVAL_MS = 100
+const DEFAULT_LAYOUT_SETTLE_TIMEOUT_MS = 1_500
+const LAYOUT_SETTLE_INTERVAL_MS = 100
+const STABLE_COMPARISONS_REQUIRED = 2
 const baselines = new WeakMap<BrowserContext, BrowserVisualBaselineSnapshot>()
 
 export interface BrowserVisualLayoutState {
@@ -73,6 +74,40 @@ function snapshotFromMetrics(
   })
 }
 
+async function waitForStableVisualSnapshot(input: {
+  page: Page
+  readState: () => BrowserVisualLayoutState
+  metricTimeoutMs: number
+  initialSnapshot?: BrowserVisualBaselineSnapshot | null
+}): Promise<BrowserVisualBaselineSnapshot | null> {
+  const deadline = Date.now() + DEFAULT_LAYOUT_SETTLE_TIMEOUT_MS
+  let previous = input.initialSnapshot ?? null
+  let stableComparisons = 0
+
+  while (true) {
+    const remainingMs = Math.max(1, deadline - Date.now())
+    const metrics = await readBrowserVisualMetrics(
+      input.page,
+      Math.min(input.metricTimeoutMs, remainingMs)
+    )
+    if (metrics) {
+      const snapshot = snapshotFromMetrics(metrics, input.readState())
+      if (previous) {
+        const comparison = compareBrowserVisualBaseline(previous, snapshot)
+        stableComparisons = comparison.stable ? stableComparisons + 1 : 0
+        if (stableComparisons >= STABLE_COMPARISONS_REQUIRED) return snapshot
+      }
+      previous = snapshot
+    } else {
+      stableComparisons = 0
+    }
+
+    const remainingAfterReadMs = deadline - Date.now()
+    if (remainingAfterReadMs <= 0) return null
+    await delay(Math.min(LAYOUT_SETTLE_INTERVAL_MS, remainingAfterReadMs))
+  }
+}
+
 async function waitForRecoveredVisualLayout(input: {
   page: Page
   readState: () => BrowserVisualLayoutState
@@ -83,7 +118,7 @@ async function waitForRecoveredVisualLayout(input: {
   snapshot: BrowserVisualBaselineSnapshot | null
   drift: BrowserVisualDriftKind[]
 }> {
-  const deadline = Date.now() + DEFAULT_RECOVERY_VERIFY_TIMEOUT_MS
+  const deadline = Date.now() + DEFAULT_LAYOUT_SETTLE_TIMEOUT_MS
   let latestSnapshot: BrowserVisualBaselineSnapshot | null = null
   let latestDrift: BrowserVisualDriftKind[] = []
 
@@ -105,7 +140,7 @@ async function waitForRecoveredVisualLayout(input: {
 
     const remainingAfterReadMs = deadline - Date.now()
     if (remainingAfterReadMs <= 0) break
-    await delay(Math.min(RECOVERY_VERIFY_INTERVAL_MS, remainingAfterReadMs))
+    await delay(Math.min(LAYOUT_SETTLE_INTERVAL_MS, remainingAfterReadMs))
   }
 
   return {
@@ -129,9 +164,12 @@ export async function captureBrowserVisualLayoutBaseline(
   state: BrowserVisualLayoutState,
   timeoutMs: number = DEFAULT_METRIC_TIMEOUT_MS
 ): Promise<BrowserVisualBaselineSnapshot | null> {
-  const metrics = await readBrowserVisualMetrics(page, timeoutMs)
-  if (!metrics) return null
-  const snapshot = snapshotFromMetrics(metrics, state)
+  const snapshot = await waitForStableVisualSnapshot({
+    page,
+    readState: () => state,
+    metricTimeoutMs: timeoutMs
+  })
+  if (!snapshot) return null
   baselines.set(context, snapshot)
   return snapshot
 }
@@ -157,12 +195,26 @@ export async function ensureBrowserVisualLayout(input: {
   const current = snapshotFromMetrics(metrics, input.readState())
   const baseline = baselines.get(input.context)
   if (!baseline) {
-    baselines.set(input.context, current)
+    const stableBaseline = await waitForStableVisualSnapshot({
+      page: input.page,
+      readState: input.readState,
+      metricTimeoutMs: timeoutMs,
+      initialSnapshot: current
+    })
+    if (!stableBaseline) {
+      return {
+        status: 'failed',
+        message: 'Visual/Layout Guard không thể chụp baseline vì renderer vẫn đang thay đổi.',
+        drift: [],
+        snapshot: current
+      }
+    }
+    baselines.set(input.context, stableBaseline)
     return {
       status: 'captured',
-      message: 'Visual/Layout Guard đã chụp runtime baseline hiện tại.',
+      message: 'Visual/Layout Guard đã chụp runtime baseline ổn định hiện tại.',
       drift: [],
-      snapshot: current
+      snapshot: stableBaseline
     }
   }
 
@@ -195,20 +247,23 @@ export async function ensureBrowserVisualLayout(input: {
     }
   }
   if (decision === 'rebaseline') {
-    const nextMetrics = await readBrowserVisualMetrics(input.page, timeoutMs)
-    if (!nextMetrics) {
+    const next = await waitForStableVisualSnapshot({
+      page: input.page,
+      readState: input.readState,
+      metricTimeoutMs: timeoutMs
+    })
+    if (!next) {
       return {
         status: 'failed',
-        message: 'Visual/Layout Guard không đọc được Chrome sau khi chuẩn hóa baseline.',
+        message: 'Visual/Layout Guard không thể chụp baseline ổn định sau khi chuẩn hóa layout.',
         drift: comparison.drift,
         snapshot: null
       }
     }
-    const next = snapshotFromMetrics(nextMetrics, input.readState())
     baselines.set(input.context, next)
     return {
       status: 'rebaselined',
-      message: 'Visual/Layout Guard đã nhận runtime layout mới làm baseline an toàn.',
+      message: 'Visual/Layout Guard đã nhận runtime layout ổn định mới làm baseline an toàn.',
       drift: comparison.drift,
       snapshot: next
     }
@@ -216,7 +271,7 @@ export async function ensureBrowserVisualLayout(input: {
 
   // Native Chrome bounds can settle before renderer metrics finish reflowing. Verify the
   // recovered baseline with bounded polling so a successful placement is not false-failed
-  // just because window.outer/inner/visualViewport still report one transient stale frame.
+  // just because window.outer/inner/visualViewport still report transient stale frames.
   const recovered = await waitForRecoveredVisualLayout({
     page: input.page,
     readState: input.readState,
