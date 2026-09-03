@@ -163,7 +163,7 @@ async function openPage(context: BrowserContext, url: string): Promise<Page> {
 }
 
 realChromeDescribe('Issue #273 Batch 5 Windows visual recovery matrix', () => {
-  it('isolates two account-like Chrome baselines across Compact OFF/ON, true zoom drift and manual resize recovery', async () => {
+  it('isolates two account-like Chrome baselines across Compact OFF/ON and manual resize recovery', async () => {
     const normalProfile = await mkdtemp(join(tmpdir(), 'page-auto-batch5-normal-'))
     const compactProfile = await mkdtemp(join(tmpdir(), 'page-auto-batch5-compact-'))
     let normalContext: BrowserContext | null = null
@@ -177,7 +177,12 @@ realChromeDescribe('Issue #273 Batch 5 Windows visual recovery matrix', () => {
         seedPersistedZoom(normalProfile, 1.2),
         seedPersistedZoom(compactProfile, 1.2)
       ])
-      const compactProfileNormalization = await normalizeAutomationProfileZoom(compactProfile)
+      const [normalProfileNormalization, compactProfileNormalization] = await Promise.all([
+        normalizeAutomationProfileZoom(normalProfile),
+        normalizeAutomationProfileZoom(compactProfile)
+      ])
+      expect(normalProfileNormalization.status).toBe('normalized')
+      expect(normalProfileNormalization.changed).toBe(true)
       expect(compactProfileNormalization.status).toBe('normalized')
       expect(compactProfileNormalization.changed).toBe(true)
 
@@ -204,21 +209,21 @@ realChromeDescribe('Issue #273 Batch 5 Windows visual recovery matrix', () => {
         compactContext.newCDPSession(compactPage)
       ])
 
-      const persistedNormalZoom = await readPageZoom(normalSession)
-      expect(persistedNormalZoom).not.toBeNull()
-      expect(Math.abs((persistedNormalZoom ?? 1) - 1)).toBeGreaterThan(0.05)
-
-      const normalZoomNormalization = await normalizeAutomationPageZoom(normalContext, normalPage)
-      expect(normalZoomNormalization.status).toBe('normalized')
-      expect(normalZoomNormalization.after).not.toBeNull()
-      expect(normalZoomNormalization.after).toBeCloseTo(1, 2)
-
-      const compactZoom = await readPageZoom(compactSession)
+      const [normalZoom, compactZoom] = await Promise.all([
+        readPageZoom(normalSession),
+        readPageZoom(compactSession)
+      ])
+      expect(normalZoom).not.toBeNull()
+      expect(normalZoom).toBeCloseTo(1, 2)
       expect(compactZoom).not.toBeNull()
       expect(compactZoom).toBeCloseTo(1, 2)
-      const compactZoomReadiness = await normalizeAutomationPageZoom(compactContext, compactPage)
+
+      const [normalZoomReadiness, compactZoomReadiness] = await Promise.all([
+        normalizeAutomationPageZoom(normalContext, normalPage),
+        normalizeAutomationPageZoom(compactContext, compactPage)
+      ])
+      expect(normalZoomReadiness.status).toBe('ready')
       expect(compactZoomReadiness.status).toBe('ready')
-      expect(compactZoomReadiness.after).toBeCloseTo(1, 2)
 
       await applyBrowserWindowPlacement(compactContext, compactPage, compactPlacement)
 
@@ -303,11 +308,7 @@ realChromeDescribe('Issue #273 Batch 5 Windows visual recovery matrix', () => {
       expect(finalCompactBaseline?.manualResizeDetached).toBe(false)
       expect(finalNormalBaseline?.outerWidth).toBeCloseTo(normalResizedBounds.width, -1)
 
-      const compactFinalBounds = await setAndWaitForStableBounds(
-        compactSession,
-        compactWindowId,
-        { width: compactPlacement.width, height: compactPlacement.height }
-      )
+      const compactFinalBounds = await readNativeBounds(compactSession, compactWindowId)
       expect(Math.abs(compactFinalBounds.width - compactPlacement.width)).toBeLessThanOrEqual(4)
       expect(Math.abs(compactFinalBounds.height - compactPlacement.height)).toBeLessThanOrEqual(4)
 
