@@ -38,11 +38,10 @@ async function pollVerifiedState<T>(
 
   const timeoutMs = Math.max(0, Math.floor(polling.timeoutMs))
   const intervalMs = Math.max(50, Math.floor(polling.intervalMs))
-  const deadline = Date.now() + timeoutMs
+  const polls = Math.max(1, Math.ceil(timeoutMs / intervalMs))
 
-  while (Date.now() < deadline) {
-    const remaining = deadline - Date.now()
-    if (!await waitForVerificationPoll(polling, Math.min(intervalMs, remaining))) return null
+  for (let index = 0; index < polls; index += 1) {
+    if (!await waitForVerificationPoll(polling, intervalMs)) return null
     const state = await verify()
     if (state !== null) return state
   }
