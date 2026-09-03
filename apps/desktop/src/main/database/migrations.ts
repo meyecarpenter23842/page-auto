@@ -285,6 +285,15 @@ export const migrations: Migration[] = [
     sql: `
       ALTER TABLE page_tabs ADD COLUMN group_order_mode TEXT NOT NULL DEFAULT 'sequential';
     `
+  },
+  {
+    version: 17,
+    name: 'page_tab_group_post_concurrency_and_run_claim_owner',
+    sql: `
+      ALTER TABLE page_tabs ADD COLUMN account_concurrency INTEGER NOT NULL DEFAULT 1;
+      ALTER TABLE run_items ADD COLUMN claimed_by_account_id INTEGER;
+      CREATE INDEX IF NOT EXISTS idx_run_items_claim_owner ON run_items(run_id, claimed_by_account_id, status);
+    `
   }
 ]
 

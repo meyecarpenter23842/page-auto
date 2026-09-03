@@ -6,6 +6,8 @@ import type {
   RotationWindowRuntimeState
 } from '../../shared/rotation'
 import type { RunDetails } from '../../shared/runs'
+import type { AccountExecutionCoordinator } from './accountExecutionCoordinator'
+import { ParallelRotationService } from './parallelRotationService'
 import { scheduleWindowKey } from './rotationSchedule'
 import { RotationService as CoreRotationService } from './rotationServiceCore'
 import type { RotationPostingExecutor, RotationRunStore } from './rotationServiceCore'
@@ -46,13 +48,10 @@ interface ObservedAccountTurn {
 }
 
 type RotationCommand = 'start' | 'resume'
+type RotationMode = 'serial' | 'parallel'
 
 function localDateKey(date: Date): string {
-  return [
-    date.getFullYear(),
-    String(date.getMonth() + 1).padStart(2, '0'),
-    String(date.getDate()).padStart(2, '0')
-  ].join('-')
+  return [date.getFullYear(), String(date.getMonth() + 1).padStart(2, '0'), String(date.getDate()).padStart(2, '0')].join('-')
 }
 
 function windowKey(dateKey: string, schedule: PageTabScheduleInput): string {
@@ -88,18 +87,13 @@ class RotationWindowTracker {
   runCommand<T>(command: RotationCommand, action: () => T): T {
     const previous = this.command
     this.command = command
-    try {
-      return action()
-    } finally {
-      this.command = previous
-    }
+    try { return action() } finally { this.command = previous }
   }
 
   discardInvalidCreatedRun(pageTabId: number): void {
     const run = this.runs.getLatestForPageTab(pageTabId)
     if (!run || run.run.status !== 'created') return
     if (run.run.snapshot.accounts.some((account) => account.enabled)) return
-
     this.runs.stop(run.run.id, 'manual')
     this.resetHistoryOnNextRunCreate = true
   }
@@ -109,9 +103,7 @@ class RotationWindowTracker {
       getLatestForPageTab: (pageTabId) => this.runs.getLatestForPageTab(pageTabId),
       createForPageTab: (pageTabId) => {
         const previous = this.runs.getLatestForPageTab(pageTabId)
-        if (this.command !== 'start' && previous && this.state?.runId !== previous.run.id) {
-          this.ensureState(previous)
-        }
+        if (this.command !== 'start' && previous && this.state?.runId !== previous.run.id) this.ensureState(previous)
         const fresh = this.runs.createForPageTab(pageTabId)
         this.noteRunCreated(fresh, this.command === 'start')
         return fresh
@@ -129,9 +121,7 @@ class RotationWindowTracker {
       },
       stop: (runId, reason) => {
         const stopped = this.runs.stop(runId, reason)
-        if (reason === 'manual' || reason === 'daily_rollover') {
-          this.resetHistoryOnNextRunCreate = true
-        }
+        if (reason === 'manual' || reason === 'daily_rollover') this.resetHistoryOnNextRunCreate = true
         return stopped
       },
       getRotationState: (runId) => this.runs.getRotationState?.(runId) ?? null,
@@ -177,7 +167,6 @@ class RotationWindowTracker {
       if (this.state.dateKey !== dateKey) this.resetForDate(run.run.id, dateKey)
       return this.state
     }
-
     const persisted = this.extension().getRotationWindowState?.(run.run.id) ?? null
     this.state = {
       runId: run.run.id,
@@ -208,19 +197,12 @@ class RotationWindowTracker {
 
   private noteRunCreated(run: RunDetails, forceReset: boolean): void {
     const dateKey = localDateKey(this.now())
-    const preserve = !forceReset &&
-      !this.resetHistoryOnNextRunCreate &&
-      this.state?.dateKey === dateKey
-
+    const preserve = !forceReset && !this.resetHistoryOnNextRunCreate && this.state?.dateKey === dateKey
     this.resetHistoryOnNextRunCreate = false
     this.state = preserve && this.state
       ? { ...this.state, runId: run.run.id, closedWindows: this.state.closedWindows.map((entry) => ({ ...entry })) }
       : { runId: run.run.id, dateKey, activeWindowKey: null, closedWindows: [] }
-
-    if (!preserve) {
-      this.observedTurn = null
-      this.observedTurnSequence = 0
-    }
+    if (!preserve) { this.observedTurn = null; this.observedTurnSequence = 0 }
     this.observedGroupRemaining = run.metrics.remaining
     this.persist()
   }
@@ -245,22 +227,15 @@ class RotationWindowTracker {
   }
 
   private notePostingResult(accountId: number, run: RunDetails, resultStatus: string): void {
-    const target = run.run.snapshot.accounts.find((account) => account.accountId === accountId)?.postsPerTurn
-      ?? run.run.snapshot.rotation.postsPerAccount
-    if (this.observedTurn?.accountId !== accountId) {
-      this.observedTurn = { accountId, slotsCompleted: 0, targetSlots: target }
-    } else {
-      this.observedTurn.targetSlots = target
-    }
+    const target = run.run.snapshot.accounts.find((account) => account.accountId === accountId)?.postsPerTurn ?? run.run.snapshot.rotation.postsPerAccount
+    if (this.observedTurn?.accountId !== accountId) this.observedTurn = { accountId, slotsCompleted: 0, targetSlots: target }
+    else this.observedTurn.targetSlots = target
     if (resultStatus === 'success') this.observedTurn.slotsCompleted += 1
     this.observedGroupRemaining = run.metrics.remaining
     this.observedTurnSequence = ++this.observationSequence
   }
 
-  private noteCoreRotationState(
-    runId: number,
-    state: { activeDateKey: string | null; completedWindowKey: string | null }
-  ): void {
+  private noteCoreRotationState(runId: number, state: { activeDateKey: string | null; completedWindowKey: string | null }): void {
     if (!state.completedWindowKey) return
     const run = this.runs.get(runId)
     if (!run) return
@@ -272,89 +247,46 @@ class RotationWindowTracker {
     const run = snapshot.run
     if (!run || snapshot.runId === null) return
     const state = this.ensureState(run)
-    const pageTabId = snapshot.pageTabId
-    const currentKey = this.currentWindowKey(pageTabId, run)
+    const currentKey = this.currentWindowKey(snapshot.pageTabId, run)
     const coreState = this.runs.getRotationState?.(snapshot.runId) ?? null
-
-    if (coreState?.completedWindowKey) {
-      this.closeWindow(coreState.completedWindowKey, 'closed_account_cycle', snapshot)
-    }
-
-    if (state.activeWindowKey && state.activeWindowKey !== currentKey) {
-      this.closeWindow(state.activeWindowKey, 'closed_time_remaining_accounts', snapshot)
-    }
-
+    if (coreState?.completedWindowKey) this.closeWindow(coreState.completedWindowKey, 'closed_account_cycle', snapshot)
+    if (state.activeWindowKey && state.activeWindowKey !== currentKey) this.closeWindow(state.activeWindowKey, 'closed_time_remaining_accounts', snapshot)
     const cycleAdvanced = snapshot.cycle > this.lastCycle
-    if (cycleAdvanced && currentKey && state.activeWindowKey === currentKey) {
-      this.closeWindow(currentKey, 'closed_account_cycle', snapshot)
-    }
-
+    if (cycleAdvanced && currentKey && state.activeWindowKey === currentKey) this.closeWindow(currentKey, 'closed_account_cycle', snapshot)
     const canMarkActive = snapshot.status === 'starting' || snapshot.status === 'running' || snapshot.status === 'paused'
-    if (
-      currentKey &&
-      canMarkActive &&
-      !state.closedWindows.some((entry) => entry.key === currentKey) &&
-      state.activeWindowKey !== currentKey
-    ) {
+    if (currentKey && canMarkActive && !state.closedWindows.some((entry) => entry.key === currentKey) && state.activeWindowKey !== currentKey) {
       state.activeWindowKey = currentKey
       this.persist()
     }
   }
 
-  private closeWindow(
-    key: string,
-    status: PersistedClosedWindow['status'],
-    source: RotationRuntimeSnapshot | null
-  ): void {
+  private closeWindow(key: string, status: PersistedClosedWindow['status'], source: RotationRuntimeSnapshot | null): void {
     if (!this.state) return
     const existingIndex = this.state.closedWindows.findIndex((entry) => entry.key === key)
     if (existingIndex >= 0) {
       const existing = this.state.closedWindows[existingIndex]
       if (existing?.status === 'closed_account_cycle' || existing?.status === status) {
-        if (this.state.activeWindowKey === key) {
-          this.state.activeWindowKey = null
-          this.persist()
-        }
-        if (status === 'closed_account_cycle') {
-          this.observedTurn = null
-          this.observedTurnSequence = 0
-        }
+        if (this.state.activeWindowKey === key) { this.state.activeWindowKey = null; this.persist() }
+        if (status === 'closed_account_cycle') { this.observedTurn = null; this.observedTurnSequence = 0 }
         return
       }
     }
-
     const sourceHasAccount = source?.currentAccountId !== null && source?.currentAccountId !== undefined
-    const observedIsFresher = this.observedTurn !== null &&
-      (!sourceHasAccount || this.observedTurnSequence > this.lastSnapshotSequence)
+    const observedIsFresher = this.observedTurn !== null && (!sourceHasAccount || this.observedTurnSequence > this.lastSnapshotSequence)
     const closed: PersistedClosedWindow = {
       key,
       status,
       closedAt: this.now().getTime(),
-      currentAccountId: observedIsFresher
-        ? this.observedTurn!.accountId
-        : sourceHasAccount
-          ? source.currentAccountId
-          : null,
-      slotsCompletedThisTurn: observedIsFresher
-        ? this.observedTurn!.slotsCompleted
-        : sourceHasAccount
-          ? source.slotsCompletedThisTurn
-          : 0,
-      targetSlotsThisTurn: observedIsFresher
-        ? this.observedTurn!.targetSlots
-        : sourceHasAccount
-          ? source.targetSlotsThisTurn
-          : 0,
+      currentAccountId: observedIsFresher ? this.observedTurn!.accountId : sourceHasAccount ? source.currentAccountId : null,
+      slotsCompletedThisTurn: observedIsFresher ? this.observedTurn!.slotsCompleted : sourceHasAccount ? source.slotsCompletedThisTurn : 0,
+      targetSlotsThisTurn: observedIsFresher ? this.observedTurn!.targetSlots : sourceHasAccount ? source.targetSlotsThisTurn : 0,
       groupRemaining: this.observedGroupRemaining ?? source?.run?.metrics.remaining ?? 0
     }
     if (existingIndex >= 0) this.state.closedWindows[existingIndex] = closed
     else this.state.closedWindows.push(closed)
     if (this.state.activeWindowKey === key) this.state.activeWindowKey = null
     this.persist()
-    if (status === 'closed_account_cycle') {
-      this.observedTurn = null
-      this.observedTurnSequence = 0
-    }
+    if (status === 'closed_account_cycle') { this.observedTurn = null; this.observedTurnSequence = 0 }
   }
 
   private buildWindowStates(snapshot: RotationRuntimeSnapshot): RotationWindowRuntimeState[] {
@@ -365,20 +297,11 @@ class RotationWindowTracker {
     const enabled = schedules.filter((schedule) => schedule.enabled)
     const currentKey = scheduleWindowKey(schedules, now)
     const state = run ? this.ensureState(run) : null
-
     const rows: Array<{ key: string; dayOfWeek: number; startMinute: number; endMinute: number; sortOrder: number }> = enabled.length === 0
       ? [{ key: `${dateKey}:all-day`, dayOfWeek: now.getDay(), startMinute: 0, endMinute: 1440, sortOrder: 0 }]
-      : enabled
-          .filter((schedule) => schedule.dayOfWeek === now.getDay())
+      : enabled.filter((schedule) => schedule.dayOfWeek === now.getDay())
           .sort((a, b) => a.sortOrder - b.sortOrder || a.startMinute - b.startMinute || a.endMinute - b.endMinute)
-          .map((schedule) => ({
-            key: windowKey(dateKey, schedule),
-            dayOfWeek: schedule.dayOfWeek,
-            startMinute: schedule.startMinute,
-            endMinute: schedule.endMinute,
-            sortOrder: schedule.sortOrder
-          }))
-
+          .map((schedule) => ({ key: windowKey(dateKey, schedule), dayOfWeek: schedule.dayOfWeek, startMinute: schedule.startMinute, endMinute: schedule.endMinute, sortOrder: schedule.sortOrder }))
     return rows.map((row) => {
       const closed = state?.closedWindows.find((entry) => entry.key === row.key) ?? null
       const running = !closed && state?.activeWindowKey === row.key && currentKey === row.key
@@ -402,55 +325,72 @@ class RotationWindowTracker {
 
 export class RotationService {
   private readonly core: CoreRotationService
+  private readonly parallel: ParallelRotationService
   private readonly tracker: RotationWindowTracker
+  private activeMode: RotationMode | null = null
 
   constructor(
-    runs: RotationRunStore,
+    private readonly runs: RotationRunStore,
     posting: RotationPostingExecutor,
     clock?: RotationClockLike,
     getSessionSettings?: () => SessionSettings,
     getNetworkSettings?: () => NetworkSettings,
-    getLiveSchedules: (pageTabId: number) => PageTabScheduleInput[] | null = () => null
+    getLiveSchedules: (pageTabId: number) => PageTabScheduleInput[] | null = () => null,
+    private readonly getLiveAccountConcurrency: (pageTabId: number) => number = () => 1,
+    accountExecution?: AccountExecutionCoordinator
   ) {
     this.tracker = new RotationWindowTracker(runs, getLiveSchedules, clock?.now ?? (() => new Date()))
-    this.core = new CoreRotationService(
-      this.tracker.trackedRunStore(),
-      this.tracker.trackedPostingExecutor(posting),
-      clock,
-      getSessionSettings,
-      getNetworkSettings,
-      getLiveSchedules
-    )
+    const trackedRuns = this.tracker.trackedRunStore()
+    const trackedPosting = this.tracker.trackedPostingExecutor(posting)
+    this.core = new CoreRotationService(trackedRuns, trackedPosting, clock, getSessionSettings, getNetworkSettings, getLiveSchedules)
+    this.parallel = new ParallelRotationService(trackedRuns, trackedPosting, accountExecution, clock, getSessionSettings, getNetworkSettings, getLiveSchedules)
   }
 
   start(payload: RotationPageTabPayload): RotationRuntimeSnapshot {
     return this.tracker.runCommand('start', () => {
       this.tracker.discardInvalidCreatedRun(payload.pageTabId)
-      return this.tracker.decorate(this.core.start(payload))
+      this.activeMode = this.resolveMode(payload.pageTabId)
+      return this.tracker.decorate(this.delegate().start(payload))
     })
   }
 
   status(payload: RotationPageTabPayload): RotationRuntimeSnapshot {
-    return this.tracker.decorate(this.core.status(payload))
+    if (!this.activeMode) this.activeMode = this.resolveMode(payload.pageTabId)
+    return this.tracker.decorate(this.delegate().status(payload))
   }
 
   pause(payload: RotationPageTabPayload): RotationRuntimeSnapshot {
-    return this.tracker.decorate(this.core.pause(payload))
+    return this.tracker.decorate(this.delegate().pause(payload))
   }
 
   resume(payload: RotationPageTabPayload): RotationRuntimeSnapshot {
-    return this.tracker.runCommand('resume', () => this.tracker.decorate(this.core.resume(payload)))
+    return this.tracker.runCommand('resume', () => {
+      if (!this.activeMode) this.activeMode = this.resolveMode(payload.pageTabId)
+      return this.tracker.decorate(this.delegate().resume(payload))
+    })
   }
 
   stop(payload: RotationPageTabPayload): RotationRuntimeSnapshot {
-    return this.tracker.decorate(this.core.stop(payload))
+    return this.tracker.decorate(this.delegate().stop(payload))
   }
 
   waitForSettled(): Promise<void> {
-    return this.core.waitForSettled()
+    return this.delegate().waitForSettled()
   }
 
   dispose(): void {
-    this.core.dispose()
+    this.delegate().dispose()
+  }
+
+  private resolveMode(pageTabId: number): RotationMode {
+    const latest = this.runs.getLatestForPageTab(pageTabId)
+    const activeSnapshot = latest && ['created', 'running', 'paused'].includes(latest.run.status)
+      ? latest.run.snapshot.rotation.accountConcurrency ?? 1
+      : this.getLiveAccountConcurrency(pageTabId)
+    return Number.isFinite(activeSnapshot) && activeSnapshot > 1 ? 'parallel' : 'serial'
+  }
+
+  private delegate(): CoreRotationService | ParallelRotationService {
+    return this.activeMode === 'parallel' ? this.parallel : this.core
   }
 }

@@ -71,7 +71,8 @@ export class RuntimeRecoveryService {
       for (const item of interruptedItems) {
         this.client.prepare(`
           UPDATE run_items
-          SET status = 'failed', last_error = ?, finished_at = ?, updated_at = ?
+          SET status = 'failed', claimed_by_account_id = NULL,
+              last_error = ?, finished_at = ?, updated_at = ?
           WHERE id = ? AND status = 'processing'
         `).run(RECOVERY_MESSAGE, now, now, item.itemId)
 
@@ -270,7 +271,8 @@ export class RuntimeRecoveryService {
   ): void {
     this.client.prepare(`
       UPDATE run_items
-      SET status = 'pending', last_error = NULL, started_at = NULL, finished_at = NULL, updated_at = ?
+      SET status = 'pending', claimed_by_account_id = NULL, last_error = NULL,
+          started_at = NULL, finished_at = NULL, updated_at = ?
       WHERE id = ? AND status = 'failed'
     `).run(now, row.itemId)
 

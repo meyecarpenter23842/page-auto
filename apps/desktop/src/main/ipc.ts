@@ -105,8 +105,7 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
 
   const browserDock = new AccountBrowserDockManager(() => {
     const display = browserWindowLayout.listDisplays()[0] as (ReturnType<BrowserWindowLayoutManager['listDisplays']>[number] & BrowserDisplaySlotRuntimeExtension) | undefined
-    const accountIds = display?.slotRuntime.assignments
-      .map((assignment) => assignment.accountId) ?? []
+    const accountIds = display?.slotRuntime.assignments.map((assignment) => assignment.accountId) ?? []
     const browserSettings = appSettings.get().browser
     return accountIds.flatMap((accountId) => {
       const account = accounts.getById(accountId)
@@ -133,13 +132,7 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
     browserWindowLayout,
     () => browserWindowLayoutSettings.get()
   )
-  const posting = new ResilientPostingService(
-    corePosting,
-    options.database,
-    executionLogs,
-    () => appSettings.get().runtime,
-    () => appSettings.get().logging
-  )
+  const posting = new ResilientPostingService(corePosting, options.database, executionLogs, () => appSettings.get().runtime, () => appSettings.get().logging)
   const accountExecution = new AccountExecutionCoordinator()
   const checkpoint282Runtime = new Checkpoint282RuntimeController(accountExecution, checkpoint282RunLifecycle, browserProfiles)
   const executePageWallPostNow = (input: Parameters<PostingService['executePageWallPostNow']>[0]) => accountExecution.run(
@@ -147,12 +140,10 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
     () => corePosting.executePageWallPostNow(input)
   )
   const pageWallRunNowService = new PageWallRunNowService(pageTabs, { executePageWallPostNow })
-  const pageWallScheduler = new PageWallSchedulerService(
-    pageWallJobs,
-    pageWallRunNowService,
-    { executePageWallPostNow },
-    () => appSettings.get().runtime.maxActivePageTabs
-  )
+  const pageWallScheduler = new PageWallSchedulerService(pageWallJobs, pageWallRunNowService, { executePageWallPostNow }, () => appSettings.get().runtime.maxActivePageTabs)
+
+  // Direct single-post IPC retains coordinator wrapping. Page Tab rotation owns the
+  // lease at the rolling-pool layer, so its executor must stay raw to avoid double-locking.
   const coordinatedPosting: RotationPostingExecutor = {
     executeSingle: (payload) => {
       const accountId = payload.accountId
@@ -161,25 +152,25 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
     },
     releaseAccount: (accountId) => accountExecution.run(accountId, () => corePosting.releaseAccount(accountId))
   }
+  const rotationPosting: RotationPostingExecutor = {
+    executeSingle: (payload) => posting.executeSingle(payload),
+    releaseAccount: (accountId) => corePosting.releaseAccount(accountId)
+  }
   const rotation = new PageTabWorkerManager(
     () => new RotationService(
       runs,
-      coordinatedPosting,
+      rotationPosting,
       undefined,
       () => appSettings.get().session,
       () => appSettings.get().network,
-      (pageTabId) => pageTabs.get(pageTabId)?.schedules ?? null
+      (pageTabId) => pageTabs.get(pageTabId)?.schedules ?? null,
+      (pageTabId) => pageTabs.get(pageTabId)?.rotation.accountConcurrency ?? 1,
+      accountExecution
     ),
     () => appSettings.get().runtime.maxActivePageTabs
   )
 
-  ipcMain.handle(IPC_CHANNELS.appInfo, (): AppInfo => ({
-    name: app.getName(),
-    version: app.getVersion(),
-    isPackaged: app.isPackaged,
-    dataDirectory: options.dataDirectory
-  }))
-
+  ipcMain.handle(IPC_CHANNELS.appInfo, (): AppInfo => ({ name: app.getName(), version: app.getVersion(), isPackaged: app.isPackaged, dataDirectory: options.dataDirectory }))
   ipcMain.handle(IPC_CHANNELS.accountsList, (_event, filters?: AccountListFilters) => accounts.list(filters))
   ipcMain.handle(IPC_CHANNELS.accountsCreate, (_event, input: AccountDraft) => accounts.create(input))
   ipcMain.handle(IPC_CHANNELS.accountsUpdate, (_event, payload: AccountUpdatePayload) => accounts.update(payload.id, payload.patch))
@@ -194,20 +185,14 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
     const account = accounts.getById(payload.accountId)
     if (!account) return { status: 'error', message: 'Account không tồn tại.' }
     const checkLive = payload.checkLive === true
-
-    if (checkLive) {
-      profileNameRefreshRequests.set(account.id, (profileNameRefreshRequests.get(account.id) ?? 0) + 1)
-    }
-
+    if (checkLive) profileNameRefreshRequests.set(account.id, (profileNameRefreshRequests.get(account.id) ?? 0) + 1)
     try {
       const opening = browserProfiles.open(account)
       if (!checkLive) void browserDock.open(BrowserWindow.fromWebContents(event.sender))
       const result = await opening
       if (checkLive) {
         if (result.status === 'started') await browserProfiles.closeAccount(account.id)
-      } else if (result.status !== 'error') {
-        await browserDock.sync()
-      }
+      } else if (result.status !== 'error') await browserDock.sync()
       return result
     } finally {
       if (checkLive) {
@@ -243,15 +228,10 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
     try {
       const entries = await readdir(normalized, { withFileTypes: true })
       return { exists: true, fileCount: entries.filter((entry) => entry.isFile() && supportedImageExtensions.has(extname(entry.name).toLowerCase())).length }
-    } catch {
-      return { exists: false, fileCount: 0 }
-    }
+    } catch { return { exists: false, fileCount: 0 } }
   })
   ipcMain.handle(IPC_CHANNELS.pageTabsPickTextFile, async () => {
-    const result = await dialog.showOpenDialog({
-      title: 'Import text / CSV', properties: ['openFile'],
-      filters: [{ name: 'Text / CSV', extensions: ['txt', 'csv'] }, { name: 'All files', extensions: ['*'] }]
-    })
+    const result = await dialog.showOpenDialog({ title: 'Import text / CSV', properties: ['openFile'], filters: [{ name: 'Text / CSV', extensions: ['txt', 'csv'] }, { name: 'All files', extensions: ['*'] }] })
     const filePath = result.canceled ? undefined : result.filePaths[0]
     if (!filePath) return null
     const fileStat = await stat(filePath)
@@ -259,10 +239,7 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
     return { path: filePath, content: await readFile(filePath, 'utf8') }
   })
   ipcMain.handle(IPC_CHANNELS.pageWallPickImages, async () => {
-    const result = await dialog.showOpenDialog({
-      title: 'Chọn ảnh Đăng Tường', properties: ['openFile', 'multiSelections'],
-      filters: [{ name: 'Ảnh', extensions: ['jpg', 'jpeg', 'png', 'webp'] }]
-    })
+    const result = await dialog.showOpenDialog({ title: 'Chọn ảnh Đăng Tường', properties: ['openFile', 'multiSelections'], filters: [{ name: 'Ảnh', extensions: ['jpg', 'jpeg', 'png', 'webp'] }] })
     return result.canceled ? [] : result.filePaths
   })
   ipcMain.handle(IPC_CHANNELS.pageWallRunNow, (_event, payload: PageWallRunNowPayload) => pageWallRunNowService.execute(payload))
@@ -308,11 +285,7 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
   })
   ipcMain.handle(IPC_CHANNELS.browserPickProfileRoot, async () => {
     const savedRoot = appSettings.get().browser.externalProfileRoot?.trim()
-    const result = await dialog.showOpenDialog({
-      title: 'Chọn Facebook Profile Root — mỗi account nằm trong Root\\UID',
-      properties: ['openDirectory'],
-      ...(savedRoot ? { defaultPath: savedRoot } : {})
-    })
+    const result = await dialog.showOpenDialog({ title: 'Chọn Facebook Profile Root — mỗi account nằm trong Root\\UID', properties: ['openDirectory'], ...(savedRoot ? { defaultPath: savedRoot } : {}) })
     return result.canceled ? null : (result.filePaths[0] ?? null)
   })
   ipcMain.handle(IPC_CHANNELS.browserTest, (_event, input: BrowserTestRequest) => {

@@ -62,6 +62,7 @@ export const pageTabs = sqliteTable('page_tabs', {
   postDelayMaxSeconds: integer('post_delay_max_seconds').notNull().default(300),
   accountDelayMinSeconds: integer('account_delay_min_seconds').notNull().default(600),
   accountDelayMaxSeconds: integer('account_delay_max_seconds').notNull().default(900),
+  accountConcurrency: integer('account_concurrency').notNull().default(1),
   postSelectionMode: text('post_selection_mode').notNull().default('sequential'),
   createdAt: integer('created_at').notNull(),
   updatedAt: integer('updated_at').notNull()
@@ -245,6 +246,7 @@ export const runItems = sqliteTable('run_items', {
   groupUid: text('group_uid').notNull(),
   sortOrder: integer('sort_order').notNull(),
   status: text('status').notNull().default('pending'),
+  claimedByAccountId: integer('claimed_by_account_id'),
   attemptCount: integer('attempt_count').notNull().default(0),
   lastError: text('last_error'),
   startedAt: integer('started_at'),
