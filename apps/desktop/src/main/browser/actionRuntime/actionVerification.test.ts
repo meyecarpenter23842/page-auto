@@ -39,7 +39,7 @@ describe('action verification fallback contract', () => {
     expect(steps).toEqual(['stabilize', 'revisit', 'verify'])
   })
 
-  it('returns uncertain without revisiting when visual stabilization fails', async () => {
+  it('still performs the safe exact-target revisit when visual stabilization fails', async () => {
     let revisits = 0
     const result = await verifyActionWithTargetRevisit({
       immediate: null,
@@ -51,8 +51,44 @@ describe('action verification fallback contract', () => {
       verifyAfterRevisit: async () => 'joined'
     })
 
+    expect(result).toEqual({ status: 'verified', phase: 'revisit', value: 'joined' })
+    expect(revisits).toBe(1)
+  })
+
+  it('polls a bounded hydration window after revisit before declaring the state uncertain', async () => {
+    let reads = 0
+    let waits = 0
+    const result = await verifyActionWithTargetRevisit({
+      immediate: null,
+      revisit: async () => true,
+      verifyAfterRevisit: async () => {
+        reads += 1
+        return reads >= 3 ? 'joined' : null
+      },
+      polling: {
+        timeoutMs: 2_000,
+        intervalMs: 100,
+        wait: async () => {
+          waits += 1
+          return true
+        }
+      }
+    })
+
+    expect(result).toEqual({ status: 'verified', phase: 'revisit', value: 'joined' })
+    expect(reads).toBe(3)
+    expect(waits).toBe(2)
+  })
+
+  it('returns stabilize_failed only after the safe revisit still cannot confirm state', async () => {
+    const result = await verifyActionWithTargetRevisit({
+      immediate: null,
+      stabilize: async () => false,
+      revisit: async () => true,
+      verifyAfterRevisit: async () => null
+    })
+
     expect(result).toEqual({ status: 'uncertain', phase: 'revisit', reason: 'stabilize_failed' })
-    expect(revisits).toBe(0)
   })
 
   it('returns uncertain when exact-target revisit still cannot confirm state', async () => {
