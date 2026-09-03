@@ -19,6 +19,10 @@ import type {
 } from '../../shared/facebookCheckpoint'
 import { getEmailCodeProvider } from '../services/emailCodeProviderRegistry'
 import { setBrowserLaunchAwareTimeout } from './browserLaunchBroker'
+import {
+  facebookLaunchFingerprint,
+  facebookLaunchReuseDecision
+} from './facebookLaunchFingerprint'
 import type { FacebookSessionAccount, FacebookSessionResult } from './facebookSession'
 import {
   FacebookProfileResolutionError,
@@ -78,6 +82,7 @@ interface PendingCheckpoint {
 interface BrowserWorkerEntry {
   process: UtilityProcess
   profileDirectory: string
+  launchFingerprint: string
   pending: PendingBootstrap | null
   checkpoint282Pending: PendingCheckpoint | null
   checkpoint956Pending: PendingCheckpoint | null
@@ -201,18 +206,28 @@ export class BrowserProfileManager {
     if (proxyResolution.status === 'invalid') {
       return { status: 'error', profileDirectory, message: proxyResolution.message }
     }
+    const proxy = proxyResolution.status === 'valid' ? proxyResolution.proxy : undefined
+    const launchFingerprint = facebookLaunchFingerprint({
+      profileDirectory,
+      userAgent: account.userAgent,
+      ...(proxy ? { proxy } : {})
+    })
 
     let existing = this.workers.get(account.id)
-    if (existing && !existing.closing && existing.profileDirectory !== profileDirectory) {
-      if (existing.pending || existing.checkpoint282Pending || existing.checkpoint956Pending) {
+    if (existing && !existing.closing) {
+      const busy = Boolean(existing.pending || existing.checkpoint282Pending || existing.checkpoint956Pending)
+      const decision = facebookLaunchReuseDecision(existing.launchFingerprint, launchFingerprint, busy)
+      if (decision === 'busy') {
         return {
           status: 'error',
           profileDirectory,
-          message: 'Facebook Profile Root vừa thay đổi nhưng browser account đang bận. Hãy dừng lượt hiện tại rồi mở lại account.'
+          message: 'Profile/proxy/UserAgent canonical vừa thay đổi nhưng browser account đang bận. Hãy dừng lượt hiện tại rồi mở lại account.'
         }
       }
-      await this.closeAccount(account.id)
-      existing = undefined
+      if (decision === 'replace') {
+        await this.closeAccount(account.id)
+        existing = undefined
+      }
     }
     if (existing && !existing.closing) {
       if (existing.pending || existing.checkpoint282Pending || existing.checkpoint956Pending) {
@@ -227,7 +242,7 @@ export class BrowserProfileManager {
     if (existing) this.workers.delete(account.id)
 
     try {
-      const entry = await this.spawnWorker(account, profileDirectory)
+      const entry = await this.spawnWorker(account, profileDirectory, launchFingerprint)
       return await this.bootstrap(entry, account, 'started')
     } catch (error) {
       this.workers.delete(account.id)
@@ -358,21 +373,31 @@ export class BrowserProfileManager {
         message: proxyResolution.message
       }
     }
+    const proxy = proxyResolution.status === 'valid' ? proxyResolution.proxy : undefined
+    const launchFingerprint = facebookLaunchFingerprint({
+      profileDirectory,
+      userAgent: account.userAgent,
+      ...(proxy ? { proxy } : {})
+    })
 
     let entry = this.workers.get(account.id)
-    if (entry && !entry.closing && entry.profileDirectory !== profileDirectory) {
-      if (entry.pending || entry.checkpoint282Pending || entry.checkpoint956Pending) {
+    if (entry && !entry.closing) {
+      const busy = Boolean(entry.pending || entry.checkpoint282Pending || entry.checkpoint956Pending)
+      const decision = facebookLaunchReuseDecision(entry.launchFingerprint, launchFingerprint, busy)
+      if (decision === 'busy') {
         return {
           accountId: account.id,
           uid: account.uid,
           state: 'error',
           surface: payload.surface,
           checkpointKind: '956',
-          message: 'Facebook Profile Root vừa thay đổi nhưng browser account đang bận. Hãy Stop flow cũ trước khi chạy CP956 lại.'
+          message: 'Profile/proxy/UserAgent canonical vừa thay đổi nhưng browser account đang bận. Hãy Stop flow cũ trước khi chạy CP956 lại.'
         }
       }
-      await this.closeAccount(account.id)
-      entry = undefined
+      if (decision === 'replace') {
+        await this.closeAccount(account.id)
+        entry = undefined
+      }
     }
     if (entry && !entry.closing && (entry.pending || entry.checkpoint282Pending || entry.checkpoint956Pending)) {
       return {
@@ -388,7 +413,7 @@ export class BrowserProfileManager {
     if (!entry || entry.closing) {
       if (entry) this.workers.delete(account.id)
       try {
-        entry = await this.spawnWorker(account, profileDirectory)
+        entry = await this.spawnWorker(account, profileDirectory, launchFingerprint)
       } catch (error) {
         return {
           accountId: account.id,
@@ -405,7 +430,6 @@ export class BrowserProfileManager {
     const sessionSettings = { ...this.getSessionSettings() }
     const layoutSettings = { ...this.getWindowLayoutSettings() }
     const placement = this.windowLayout?.placementFor(account.id, layoutSettings, browserSettings) ?? null
-    const proxy = proxyResolution.status === 'valid' ? proxyResolution.proxy : undefined
 
     return new Promise<FacebookCheckpoint282Result>((resolve) => {
       const timeoutMs = browserSettings.startupDelayMs
@@ -564,7 +588,11 @@ export class BrowserProfileManager {
     clearAllManagedBrowserEndpoints()
   }
 
-  private async spawnWorker(account: AccountRecord, profileDirectory: string): Promise<BrowserWorkerEntry> {
+  private async spawnWorker(
+    account: AccountRecord,
+    profileDirectory: string,
+    launchFingerprint: string
+  ): Promise<BrowserWorkerEntry> {
     clearManagedBrowserEndpoint(account.id)
     this.windowLayout?.claim(account.id, 'profile')
 
@@ -575,6 +603,7 @@ export class BrowserProfileManager {
     const entry: BrowserWorkerEntry = {
       process: worker,
       profileDirectory,
+      launchFingerprint,
       pending: null,
       checkpoint282Pending: null,
       checkpoint956Pending: null,
@@ -774,7 +803,9 @@ export class BrowserProfileManager {
     }
 
     if (isBrowserReadyMessage(message)) {
-      if (message.accountId === accountId) setManagedBrowserEndpoint(accountId, message.cdpEndpoint, entry.profileDirectory)
+      if (message.accountId === accountId) {
+        setManagedBrowserEndpoint(accountId, message.cdpEndpoint, entry.profileDirectory, entry.launchFingerprint)
+      }
       return
     }
 
@@ -819,7 +850,9 @@ export class BrowserProfileManager {
     }
 
     if (!isSessionResultMessage(message) || message.accountId !== accountId) return
-    if (message.cdpEndpoint) setManagedBrowserEndpoint(accountId, message.cdpEndpoint, entry.profileDirectory)
+    if (message.cdpEndpoint) {
+      setManagedBrowserEndpoint(accountId, message.cdpEndpoint, entry.profileDirectory, entry.launchFingerprint)
+    }
     this.onSessionResult?.(message)
 
     const pending = entry.pending

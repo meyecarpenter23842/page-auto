@@ -14,6 +14,7 @@ import {
   type BrowserWindowPlacement
 } from '../../shared/browserWindowLayout'
 import { accountStatusFromCheckpointKind } from '../../shared/facebookAccountState'
+import { facebookSessionPolicyStateFromRuntimeState } from '../../shared/facebookSessionPolicy'
 import {
   pageWallPostTaskFromBase,
   type FacebookPostTaskJobRequest,
@@ -328,9 +329,13 @@ export class PostingService {
           message: redactExecutionText(publicWorkerResult.sessionValidation.message, accountSecrets(account)) ?? 'Kiểm tra phiên đăng nhập thất bại.'
         }
       : undefined
+    const sessionPolicyState = safeValidation
+      ? facebookSessionPolicyStateFromRuntimeState(safeValidation.state)
+      : null
     const result: PostingJobResult = {
       ...publicWorkerResult,
       message: safeMessage,
+      sessionPolicyState,
       ...(safeValidation ? { sessionValidation: safeValidation } : {}),
       ...(publicWorkerResult.accountName?.trim() ? { accountName: publicWorkerResult.accountName.trim() } : {})
     }

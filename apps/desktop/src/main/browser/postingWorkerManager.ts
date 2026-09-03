@@ -25,9 +25,9 @@ import type {
 import { getEmailCodeProvider } from '../services/emailCodeProviderRegistry'
 import { configureGlobalBrowserLaunchBroker, setBrowserLaunchAwareTimeout } from './browserLaunchBroker'
 import { BrowserWindowLayoutManager } from './browserWindowLayoutManager'
+import { facebookLaunchFingerprint, facebookLaunchReuseDecision } from './facebookLaunchFingerprint'
 import { getManagedBrowserEndpoint } from './managedBrowserRegistry'
 import { shouldRetainPostingBrowserForManualSession } from './postingWorkerLifecycle'
-import { workerProfileReuseDecision } from './workerProfileOwnership'
 
 const MANAGED_CDP_ARG_PREFIX = '--page-auto-managed-cdp='
 const ACCOUNT_SHUTDOWN_TIMEOUT_MS = 5_000
@@ -42,6 +42,7 @@ interface PendingJob {
 interface AccountWorkerEntry {
   accountId: number
   profileDirectory: string
+  launchFingerprint: string
   process: UtilityProcess
   ready: boolean
   pending: PendingJob | null
@@ -85,25 +86,24 @@ export class PostingWorkerManager {
 
   async runTask(job: FacebookPostTaskJobRequest): Promise<PostingJobResult> {
     const runtime = { ...this.getRuntimeSettings() }
+    const launchFingerprint = facebookLaunchFingerprint(job)
     let entry = this.workers.get(job.accountId)
 
     if (entry && !entry.shuttingDown) {
-      const profileDecision = workerProfileReuseDecision(
-        entry.profileDirectory,
-        job.profileDirectory,
+      const launchDecision = facebookLaunchReuseDecision(
+        entry.launchFingerprint,
+        launchFingerprint,
         Boolean(entry.pending)
       )
-      if (profileDecision === 'busy') {
+      if (launchDecision === 'busy') {
         return {
           status: 'failed',
           code: 'profile_unavailable',
-          message: `Facebook Profile Root vừa thay đổi nhưng posting worker của account #${job.accountId} đang bận. Hãy dừng lượt hiện tại rồi chạy lại.`
+          message: `Profile/proxy/UserAgent canonical vừa thay đổi nhưng posting worker account #${job.accountId} đang bận. Hãy dừng lượt hiện tại rồi chạy lại.`
         }
       }
-      if (profileDecision === 'replace') {
-        diagnostic(job, 'profile directory changed → restart posting worker/browser before next job')
-        // Profile ownership beats manual-session retention. A retained browser from
-        // the previous Root must never be reused after settings resolve elsewhere.
+      if (launchDecision === 'replace') {
+        diagnostic(job, 'canonical launch settings changed → restart posting worker/browser before next job')
         entry.retainForManualSession = false
         await this.closeAccount(job.accountId)
         entry = undefined
@@ -120,7 +120,7 @@ export class PostingWorkerManager {
 
     if (!entry || entry.shuttingDown) {
       try {
-        entry = this.spawnWorker(runtimeJob)
+        entry = this.spawnWorker(runtimeJob, launchFingerprint)
       } catch (error) {
         this.windowLayout?.release(job.accountId, 'posting')
         return {
@@ -285,8 +285,8 @@ export class PostingWorkerManager {
     this.workers.clear()
   }
 
-  private spawnWorker(job: FacebookPostTaskJobRequest): AccountWorkerEntry {
-    const managedEndpoint = getManagedBrowserEndpoint(job.accountId, job.profileDirectory)
+  private spawnWorker(job: FacebookPostTaskJobRequest, launchFingerprint: string): AccountWorkerEntry {
+    const managedEndpoint = getManagedBrowserEndpoint(job.accountId, job.profileDirectory, launchFingerprint)
     const workerArgs = managedEndpoint ? [`${MANAGED_CDP_ARG_PREFIX}${managedEndpoint}`] : []
     const worker = utilityProcess.fork(join(__dirname, 'posting-worker.js'), workerArgs, {
       serviceName: `PAGE-AUTO posting account ${job.accountId}`
@@ -294,6 +294,7 @@ export class PostingWorkerManager {
     const entry: AccountWorkerEntry = {
       accountId: job.accountId,
       profileDirectory: job.profileDirectory,
+      launchFingerprint,
       process: worker,
       ready: false,
       pending: null,

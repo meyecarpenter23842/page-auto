@@ -154,6 +154,48 @@ describe('Issue #263 Batch 5 regression matrix', () => {
     rotation.dispose()
   })
 
+  it('requeues session-unavailable parallel turns on Resume so repaired accounts are revalidated', async () => {
+    const { runs, tab, accountIds } = setup(2, 2, 2)
+    const attemptedAccounts: number[] = []
+    const claimedGroups: string[] = []
+    let credentialsRepaired = false
+    const posting: RotationPostingExecutor = {
+      executeSingle: async ({ runId, accountId }) => {
+        if (accountId === undefined) throw new Error('Expected accountId.')
+        attemptedAccounts.push(accountId)
+        if (!credentialsRepaired) {
+          const run = runs.get(runId)
+          if (!run) throw new Error('Expected active run.')
+          return {
+            accountId,
+            item: null,
+            result: { status: 'failed' as const, code: 'needs_login' as const, message: 'Login required.' },
+            run
+          }
+        }
+        return successfulPosting(runs, [], claimedGroups).executeSingle({ runId, accountId })
+      },
+      releaseAccount: async () => undefined
+    }
+    const rotation = new ParallelRotationService(runs, posting, new AccountExecutionCoordinator())
+
+    rotation.start({ pageTabId: tab.id })
+    await rotation.waitForSettled()
+    expect(rotation.status({ pageTabId: tab.id }).status).toBe('paused')
+    expect(attemptedAccounts).toHaveLength(2)
+
+    credentialsRepaired = true
+    const resumed = rotation.resume({ pageTabId: tab.id })
+    expect(resumed.message).toContain('credential canonical mới nhất')
+    await rotation.waitForSettled()
+
+    expect(attemptedAccounts).toHaveLength(4)
+    expect(new Set(attemptedAccounts.slice(2))).toEqual(new Set(accountIds))
+    expect(new Set(claimedGroups).size).toBe(2)
+    expect(rotation.status({ pageTabId: tab.id }).cycle).toBe(1)
+    rotation.dispose()
+  })
+
   it('clears a crashed Group claim owner while preserving the immutable source Group list', () => {
     const { runtime, tabs, runs, tab, accountIds } = setup(2, 1, 2)
     const [accountId] = accountIds

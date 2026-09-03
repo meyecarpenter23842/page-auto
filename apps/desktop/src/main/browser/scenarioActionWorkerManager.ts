@@ -4,8 +4,8 @@ import { DEFAULT_APP_SETTINGS, type RuntimeSettings } from '../../shared/appSett
 import type { ActionExecutionSummary, ActionLogEvent } from '../../shared/actionRuntime'
 import type { ScenarioActionWorkerJob, ScenarioActionWorkerMessage, ScenarioActionWorkerResult } from '../../shared/scenarioActionWorker'
 import { configureGlobalBrowserLaunchBroker, setBrowserLaunchAwareTimeout } from './browserLaunchBroker'
+import { facebookLaunchFingerprint, facebookLaunchReuseDecision } from './facebookLaunchFingerprint'
 import { getManagedBrowserEndpoint } from './managedBrowserRegistry'
-import { workerProfileReuseDecision } from './workerProfileOwnership'
 
 const MANAGED_CDP_ARG_PREFIX = '--page-auto-managed-cdp='
 const SHUTDOWN_TIMEOUT_MS = 5_000
@@ -23,6 +23,7 @@ interface PendingAction {
 interface WorkerEntry {
   accountId: number
   profileDirectory: string
+  launchFingerprint: string
   process: UtilityProcess
   ready: boolean
   pending: PendingAction | null
@@ -70,29 +71,30 @@ export class ScenarioActionWorkerManager {
     await this.specialHandler?.closeAccount?.(job.accountId)
 
     const runtime = { ...this.getRuntimeSettings() }
+    const launchFingerprint = facebookLaunchFingerprint(job)
     let entry = this.workers.get(job.accountId)
 
     if (entry && !entry.shuttingDown) {
-      const profileDecision = workerProfileReuseDecision(
-        entry.profileDirectory,
-        job.profileDirectory,
+      const launchDecision = facebookLaunchReuseDecision(
+        entry.launchFingerprint,
+        launchFingerprint,
         Boolean(entry.pending)
       )
-      if (profileDecision === 'busy') {
+      if (launchDecision === 'busy') {
         return failedWorkerResult(
           job,
           'browser_unavailable',
-          `Facebook Profile Root vừa thay đổi nhưng action worker account #${job.accountId} đang bận. Hãy dừng action hiện tại rồi chạy lại.`
+          `Profile/proxy/UserAgent canonical vừa thay đổi nhưng action worker account #${job.accountId} đang bận. Hãy dừng action hiện tại rồi chạy lại.`
         )
       }
-      if (profileDecision === 'replace') {
+      if (launchDecision === 'replace') {
         await this.closeWorkerProcess(job.accountId)
         entry = undefined
       }
     }
 
     if (!entry || entry.shuttingDown) {
-      try { entry = this.spawn(job) } catch (error) { return failedWorkerResult(job, 'browser_unavailable', error instanceof Error ? error.message : String(error)) }
+      try { entry = this.spawn(job, launchFingerprint) } catch (error) { return failedWorkerResult(job, 'browser_unavailable', error instanceof Error ? error.message : String(error)) }
     }
     if (entry.pending) return failedWorkerResult(job, 'browser_unavailable', `Action worker account #${job.accountId} đang bận.`)
     return new Promise<ScenarioActionWorkerResult>((resolve) => {
@@ -164,13 +166,14 @@ export class ScenarioActionWorkerManager {
     })
   }
 
-  private spawn(job: ScenarioActionWorkerJob): WorkerEntry {
-    const managedEndpoint = getManagedBrowserEndpoint(job.accountId, job.profileDirectory)
+  private spawn(job: ScenarioActionWorkerJob, launchFingerprint: string): WorkerEntry {
+    const managedEndpoint = getManagedBrowserEndpoint(job.accountId, job.profileDirectory, launchFingerprint)
     const args = managedEndpoint ? [`${MANAGED_CDP_ARG_PREFIX}${managedEndpoint}`] : []
     const process = utilityProcess.fork(join(__dirname, 'scenario-action-worker.js'), args, { serviceName: `PAGE-AUTO scenario action account ${job.accountId}` })
     const entry: WorkerEntry = {
       accountId: job.accountId,
       profileDirectory: job.profileDirectory,
+      launchFingerprint,
       process,
       ready: false,
       pending: null,

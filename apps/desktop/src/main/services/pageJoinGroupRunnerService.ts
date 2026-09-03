@@ -21,11 +21,10 @@ import type {
 } from '../../shared/interactionWorkspaceRunner'
 import { parsePageJoinGroupWorkspaceConfig } from '../../shared/pageJoinGroup'
 import type { ScenarioActionWorkerJob, ScenarioActionWorkerResult } from '../../shared/scenarioActionWorker'
-import { resolveFacebookProfileDirectory } from '../browser/facebookProfileResolver'
-import { resolveAccountProxyState } from '../browser/proxyConfig'
 import { AccountRepository } from '../database/accountRepository'
 import { ActionWorkspaceRepository } from '../database/actionWorkspaceRepository'
 import { PageTabRepository } from '../database/pageTabRepository'
+import { scenarioActionJobForCommonSessionPolicy } from '../facebook/facebookSessionPolicy'
 import { AccountExecutionCoordinator } from './accountExecutionCoordinator'
 import { redactExecutionText } from './executionLogSanitizer'
 import type { InteractionWorkspaceWorkerHost } from './interactionWorkspaceRunnerService'
@@ -209,12 +208,12 @@ export class PageJoinGroupRunnerService {
     if (active.snapshot.state !== 'paused') return cloneSnapshot(active.snapshot)
     active.paused = false
     active.snapshot.state = 'running'
-    active.snapshot.message = 'Đã tiếp tục snapshot Tham gia nhóm hiện tại.'
+    active.snapshot.message = 'Đã tiếp tục snapshot Tham gia nhóm; Common Session Policy sẽ đọc credential canonical mới nhất trước action kế tiếp.'
     for (const [accountId, runKey] of active.runningKeys) this.workers.resume(accountId, runKey)
     for (const runtime of active.snapshot.accountRuntimes) {
       if (runtime.state === 'paused') runtime.state = runtime.currentActionType ? 'running' : 'queued'
     }
-    this.log(active, 'info', 'Phiên Page Tham gia nhóm đã Resume; không đọc lại config đang sửa.')
+    this.log(active, 'info', 'Phiên Page Tham gia nhóm đã Resume; business snapshot giữ nguyên, credential/session re-hydrate tại Common Session Policy.')
     return cloneSnapshot(active.snapshot)
   }
 
@@ -379,30 +378,7 @@ export class PageJoinGroupRunnerService {
   }
 
   private buildWorkerJob(account: AccountRecord, request: ActionRunRequest): ScenarioActionWorkerJob {
-    const settings = this.getSettings()
-    const profileDirectory = resolveFacebookProfileDirectory(this.dataDirectory, account, settings.browser).profileDirectory
-    const proxyResolution = resolveAccountProxyState(account)
-    if (proxyResolution.status === 'invalid') throw new Error(proxyResolution.message)
-    const proxy = proxyResolution.status === 'valid' ? proxyResolution.proxy : undefined
-    return {
-      accountId: account.id,
-      profileDirectory,
-      browser: { ...settings.browser },
-      session: { ...settings.session },
-      network: { ...settings.network },
-      sessionAccount: {
-        id: account.id,
-        uid: account.uid,
-        username: account.username,
-        password: account.password,
-        cookie: account.cookie,
-        twoFactorSecret: account.twoFactorSecret,
-        name: account.name
-      },
-      request,
-      ...(account.userAgent ? { userAgent: account.userAgent } : {}),
-      ...(proxy ? { proxy } : {})
-    }
+    return scenarioActionJobForCommonSessionPolicy(account, request, this.getSettings())
   }
 
   private syncAccountSession(account: AccountRecord, result: ScenarioActionWorkerResult): void {
