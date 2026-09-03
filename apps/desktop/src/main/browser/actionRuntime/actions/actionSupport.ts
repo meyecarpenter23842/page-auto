@@ -1,6 +1,7 @@
 import type { Locator, Page } from 'playwright-core'
 import type { ActionConfig, ActionResult } from '../../../../shared/actionRegistry'
 import type { ActionRunControl, ActionRunRequest } from '../../../../shared/actionRuntime'
+import { pollActionVerificationState } from '../actionVerification'
 
 export type ActionPageResolver = (request: ActionRunRequest) => Promise<Page | null>
 
@@ -71,6 +72,9 @@ export async function sleepWithControl(control: ActionRunControl, delayMs: numbe
 }
 
 const MAX_VISIBLE_CANDIDATES_PER_SELECTOR = 32
+const MAX_RENDERED_TEXT_CANDIDATES = 100
+const SUBMITTED_TEXT_VERIFY_TIMEOUT_MS = 3000
+const SUBMITTED_TEXT_VERIFY_POLL_MS = 150
 const CLICKABLE_TEXT_ANCESTOR = 'xpath=ancestor-or-self::*[self::button or @role="button" or @tabindex="0" or self::a][1]'
 
 function exactAriaButtonName(selector: string): string | null {
@@ -131,6 +135,53 @@ export async function firstVisible(page: Page | Locator, selectors: readonly str
     if (fallback) return fallback
   }
   return null
+}
+
+async function isRenderedSubmittedText(candidate: Locator): Promise<boolean> {
+  if (!await candidate.isVisible().catch(() => false)) return false
+  return candidate.evaluate((element) => {
+    return element.closest('[contenteditable="true"], [role="textbox"], textarea, input') === null
+  }).catch(() => false)
+}
+
+/**
+ * Counts rendered exact text while ignoring composer/editor content. This lets comment actions
+ * distinguish a real DOM mutation from text that is merely still sitting in the input after Enter.
+ */
+export async function visibleSubmittedTextCount(scope: Page | Locator, text: string): Promise<number> {
+  const value = text.trim()
+  if (!value) return 0
+  const matches = scope.getByText(value, { exact: true })
+  const count = Math.min(await matches.count().catch(() => 0), MAX_RENDERED_TEXT_CANDIDATES)
+  let visible = 0
+  for (let index = 0; index < count; index += 1) {
+    if (await isRenderedSubmittedText(matches.nth(index))) visible += 1
+  }
+  return visible
+}
+
+/**
+ * Verifies that submitting text created a new rendered occurrence. Existing identical comments are
+ * safe because callers capture the baseline before filling the composer.
+ */
+export async function waitForSubmittedTextIncrease(
+  page: Page,
+  scope: Page | Locator,
+  text: string,
+  baseline: number,
+  timeoutMs = SUBMITTED_TEXT_VERIFY_TIMEOUT_MS
+): Promise<boolean> {
+  const value = text.trim()
+  if (!value) return false
+  const verified = await pollActionVerificationState(
+    async () => await visibleSubmittedTextCount(scope, value) > baseline ? true : null,
+    {
+      timeoutMs,
+      intervalMs: SUBMITTED_TEXT_VERIFY_POLL_MS,
+      wait: (delayMs) => page.waitForTimeout(delayMs).then(() => true).catch(() => false)
+    }
+  )
+  return verified === true
 }
 
 export async function clickFirstVisible(page: Page | Locator, selectors: readonly string[]): Promise<boolean> {

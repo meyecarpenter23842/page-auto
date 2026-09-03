@@ -1,6 +1,7 @@
 import type { Locator, Page } from 'playwright-core'
 import type { ActionConfig } from '../../../../shared/actionRegistry'
 import type { ActionExecutorContext } from '../../../services/actionRunner'
+import { pollActionVerificationState } from '../actionVerification'
 import {
   configNumber,
   configString,
@@ -10,6 +11,8 @@ import {
   selectedReactions,
   sleepWithControl,
   splitLines,
+  visibleSubmittedTextCount,
+  waitForSubmittedTextIncrease,
   type BaseViewActionDependencies
 } from './actionSupport'
 import { groupIdentityFromHref, normalizeGroupUrl } from './joinGroupActionSupport'
@@ -70,6 +73,8 @@ const APPLIED_REACTION_SELECTORS = [
 ] as const
 const REACTION_VERIFY_TIMEOUT_MS = 3000
 const REACTION_VERIFY_POLL_MS = 150
+const COMMENT_VERIFY_TIMEOUT_MS = 3000
+const COMMENT_VERIFY_POLL_MS = 150
 const MAX_INTERACTION_SCOPE_ANCESTORS = 12
 const INTERACTION_SCOPE_STOP_SELECTOR = 'xpath=self::main | self::body | self::*[@role="main" or @role="feed"]'
 const SELF_LIVE_REACTION_CONTROL_SELECTOR = 'xpath=self::*[@role="button" and .//*[@data-ad-rendering-role="like_button"]]'
@@ -81,6 +86,11 @@ const RESTRICTION_PATTERNS: readonly { code: GroupRestrictionCode; pattern: RegE
 ]
 
 export type GroupRestrictionCode = 'comment_blocked' | 'posting_blocked' | 'temporarily_restricted'
+
+type ScopedVisibleLocator = {
+  locator: Locator
+  scope: Locator
+}
 
 function normalizeConfiguredGroup(value: string): string | null {
   const raw = value.trim()
@@ -192,9 +202,12 @@ async function primaryReactionControl(scope: Locator): Promise<Locator | null> {
   return await livePrimaryReactionControl(scope) ?? firstVisible(scope, LEGACY_LIKE_SELECTORS)
 }
 
-async function firstVisibleInScopeOrAncestors(scope: Locator, selectors: readonly string[]): Promise<Locator | null> {
+async function firstVisibleWithScopeOrAncestors(
+  scope: Locator,
+  selectors: readonly string[]
+): Promise<ScopedVisibleLocator | null> {
   const direct = await firstVisible(scope, selectors)
-  if (direct) return direct
+  if (direct) return { locator: direct, scope }
 
   for (let level = 1; level <= MAX_INTERACTION_SCOPE_ANCESTORS; level += 1) {
     const ancestor = scope.locator(`xpath=ancestor::*[${level}]`)
@@ -205,28 +218,33 @@ async function firstVisibleInScopeOrAncestors(scope: Locator, selectors: readonl
     if (markerCount > 1) break
 
     const candidate = await firstVisible(ancestor, selectors)
-    if (candidate) return candidate
+    if (candidate) return { locator: candidate, scope: ancestor }
   }
   return null
 }
 
+async function firstVisibleInScopeOrAncestors(scope: Locator, selectors: readonly string[]): Promise<Locator | null> {
+  return (await firstVisibleWithScopeOrAncestors(scope, selectors))?.locator ?? null
+}
+
 async function waitForAppliedReaction(page: Page, scope: Locator, timeoutMs = REACTION_VERIFY_TIMEOUT_MS): Promise<boolean> {
-  const deadline = Date.now() + Math.max(0, timeoutMs)
   const preferLiveControl = Boolean(await livePrimaryReactionControl(scope))
-
-  while (true) {
-    if (preferLiveControl) {
-      const liveControl = await livePrimaryReactionControl(scope)
-      const label = liveControl ? await liveControl.getAttribute('aria-label').catch(() => null) : null
-      if (isAppliedReactionAriaLabel(label)) return true
-    } else {
-      const applied = await firstVisible(scope, APPLIED_REACTION_SELECTORS)
-      if (applied) return true
+  const verified = await pollActionVerificationState(
+    async () => {
+      if (preferLiveControl) {
+        const liveControl = await livePrimaryReactionControl(scope)
+        const label = liveControl ? await liveControl.getAttribute('aria-label').catch(() => null) : null
+        return isAppliedReactionAriaLabel(label) ? true : null
+      }
+      return await firstVisible(scope, APPLIED_REACTION_SELECTORS) ? true : null
+    },
+    {
+      timeoutMs,
+      intervalMs: REACTION_VERIFY_POLL_MS,
+      wait: (delayMs) => page.waitForTimeout(delayMs).then(() => true).catch(() => false)
     }
-
-    if (Date.now() >= deadline) return false
-    await page.waitForTimeout(REACTION_VERIFY_POLL_MS).catch(() => undefined)
-  }
+  )
+  return verified === true
 }
 
 async function clickReactionTargetAndVerify(page: Page, target: Locator, scope: Locator): Promise<boolean> {
@@ -277,8 +295,11 @@ export async function commentOnGroupArticle(
   text: string,
   imagePath: string
 ): Promise<boolean> {
-  const box = await firstVisibleInScopeOrAncestors(article, COMMENT_BOX_SELECTORS)
-  if (!box) return false
+  const value = text.trim()
+  if (!value) return false
+  const located = await firstVisibleWithScopeOrAncestors(article, COMMENT_BOX_SELECTORS)
+  if (!located) return false
+  const baseline = await visibleSubmittedTextCount(located.scope, value)
   if (imagePath.trim()) {
     const articleInput = article.locator('input[type="file"][accept*="image" i]').first()
     const input = await articleInput.count().catch(() => 0)
@@ -287,12 +308,17 @@ export async function commentOnGroupArticle(
     if (!await input.count().catch(() => 0)) return false
     if (!await input.setInputFiles(imagePath.trim()).then(() => true).catch(() => false)) return false
   }
-  if (!await box.fill(text, { timeout: 5000 }).then(() => true).catch(() => false)) return false
-  return box.press('Enter', { timeout: 5000 }).then(() => true).catch(() => false)
+  if (!await located.locator.fill(value, { timeout: 5000 }).then(() => true).catch(() => false)) return false
+  if (!await located.locator.press('Enter', { timeout: 5000 }).then(() => true).catch(() => false)) return false
+  return waitForSubmittedTextIncrease(page, located.scope, value, baseline)
 }
 
 export async function deleteGroupComment(page: Page, article: Locator, text: string): Promise<boolean> {
-  const match = article.getByText(text, { exact: true }).last()
+  const value = text.trim()
+  if (!value) return false
+  const baseline = await visibleSubmittedTextCount(article, value)
+  if (baseline <= 0) return false
+  const match = article.getByText(value, { exact: true }).last()
   if (!await match.isVisible().catch(() => false)) return false
   const comment = match.locator('xpath=ancestor::div[@role="article"][1]')
   const scope = await comment.count().catch(() => 0) ? comment : match.locator('xpath=ancestor::div[1]')
@@ -316,7 +342,17 @@ export async function deleteGroupComment(page: Page, article: Locator, text: str
     '[role="dialog"] button:has-text("Delete")',
     '[role="dialog"] button:has-text("Xóa")'
   ])
-  return confirm ? confirm.click({ timeout: 5000 }).then(() => true).catch(() => false) : true
+  if (confirm && !await confirm.click({ timeout: 5000 }).then(() => true).catch(() => false)) return false
+
+  const verified = await pollActionVerificationState(
+    async () => await visibleSubmittedTextCount(article, value) < baseline ? true : null,
+    {
+      timeoutMs: COMMENT_VERIFY_TIMEOUT_MS,
+      intervalMs: COMMENT_VERIFY_POLL_MS,
+      wait: (delayMs) => page.waitForTimeout(delayMs).then(() => true).catch(() => false)
+    }
+  )
+  return verified === true
 }
 
 async function openShareMenu(article: Locator): Promise<boolean> {
