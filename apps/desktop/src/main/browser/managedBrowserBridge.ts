@@ -1,4 +1,4 @@
-import { chromium, type Browser, type BrowserContext } from 'playwright-core'
+import { chromium, type Browser, type BrowserContext, type Page } from 'playwright-core'
 import type { BrowserWindowPlacement } from '../../shared/browserWindowLayout'
 import { sameWholeChromeScale, wholeChromeScaleForLaunch } from '../../shared/browserWholeChromeScale'
 import { closeBrowserTarget } from './browserClose'
@@ -8,6 +8,13 @@ import {
   applyBrowserWindowPlacement,
   watchForManualBrowserResize
 } from './browserRuntime'
+import {
+  captureBrowserVisualLayoutBaseline,
+  clearBrowserVisualLayoutBaseline,
+  ensureBrowserVisualLayout,
+  type BrowserVisualLayoutGuardResult,
+  type BrowserVisualLayoutState
+} from './browserVisualLayoutGuard'
 import { runWithResizeWatcherPaused } from './resizeWatchGuard'
 
 const MANAGED_CDP_ARG_PREFIX = '--page-auto-managed-cdp='
@@ -17,7 +24,9 @@ let persistentContext: BrowserContext | null = null
 let persistentProxy: BrowserContext | null = null
 let attachedBrowser: Browser | null = null
 let activePlacement: BrowserWindowPlacement | null = null
+let visualBaselinePlacement: BrowserWindowPlacement | null = null
 let launchedWholeChromeScale: number | null = null
+let manualResizeDetached = false
 let stopResizeWatch: (() => void) | null = null
 
 function managedCdpEndpointFromArgs(argv: string[] = process.argv): string | null {
@@ -73,12 +82,35 @@ function stopWatchingResize(): void {
   stopResizeWatch = null
 }
 
+function currentVisualState(): BrowserVisualLayoutState {
+  return {
+    browserScale: launchedWholeChromeScale ?? 1,
+    compact: visualBaselinePlacement !== null,
+    manualResizeDetached
+  }
+}
+
+async function captureManagedVisualBaseline(
+  context: BrowserContext,
+  source: 'attach' | 'fallback-launch' | 'retile'
+): Promise<void> {
+  const page = context.pages()[0]
+  if (!page) return
+  const snapshot = await captureBrowserVisualLayoutBaseline(context, page, currentVisualState())
+  if (!snapshot) {
+    console.info(`[PAGE-AUTO visual-baseline] source=${source} metrics=unavailable`)
+    return
+  }
+  console.info(`[PAGE-AUTO visual-baseline] source=${source} ${JSON.stringify(snapshot)}`)
+}
+
 function armResizeWatch(context: BrowserContext): void {
   stopWatchingResize()
   const placement = activePlacement
   if (!placement) return
   stopResizeWatch = watchForManualBrowserResize(context, () => {
     if (persistentContext !== context) return
+    manualResizeDetached = true
     activePlacement = null
     stopResizeWatch = null
   }, 350, { width: placement.width, height: placement.height })
@@ -106,6 +138,43 @@ async function applyCurrentPlacement(context: BrowserContext): Promise<void> {
   )
 }
 
+async function recoverManagedVisualLayout(context: BrowserContext): Promise<'recovered' | 'rebaseline' | 'failed'> {
+  const expected = visualBaselinePlacement
+  if (!expected) {
+    manualResizeDetached = false
+    return 'rebaseline'
+  }
+  if (!scaleMatchesRunningChrome(expected)) {
+    logReopenRequired(expected)
+    return 'failed'
+  }
+
+  activePlacement = expected
+  manualResizeDetached = false
+  await runWithResizeWatcherPaused(
+    stopWatchingResize,
+    () => applyBrowserPlacementToContext(context, expected),
+    () => armResizeWatch(context)
+  )
+  return 'recovered'
+}
+
+export async function ensureManagedBrowserVisualLayout(
+  context: BrowserContext,
+  page: Page
+): Promise<BrowserVisualLayoutGuardResult> {
+  const result = await ensureBrowserVisualLayout({
+    context,
+    page,
+    readState: currentVisualState,
+    recover: () => recoverManagedVisualLayout(context)
+  })
+  if (result.status === 'recovered' || result.status === 'rebaselined' || result.status === 'failed') {
+    console.info(`[PAGE-AUTO visual-guard] status=${result.status} drift=${result.drift.join(',') || 'none'}`)
+  }
+  return result
+}
+
 function rememberContext(
   context: BrowserContext,
   browser: Browser | null,
@@ -122,11 +191,14 @@ function rememberContext(
   context.once('close', () => {
     if (persistentContext !== context) return
     stopWatchingResize()
+    clearBrowserVisualLayoutBaseline(context)
     persistentContext = null
     persistentProxy = null
     attachedBrowser = null
     activePlacement = null
+    visualBaselinePlacement = null
     launchedWholeChromeScale = null
+    manualResizeDetached = false
   })
   return persistentProxy
 }
@@ -135,6 +207,8 @@ function rememberContext(
 export function setManagedBrowserPlacement(placement: BrowserWindowPlacement | null): void {
   if (persistentContext) return
   activePlacement = placement
+  visualBaselinePlacement = placement
+  manualResizeDetached = false
 }
 
 /** Explicit user re-tile action. Scale changes require closing/reopening Chrome. */
@@ -144,14 +218,20 @@ export async function retileManagedPostingBrowser(placement: BrowserWindowPlacem
     return
   }
   activePlacement = placement
-  if (persistentContext) await applyCurrentPlacement(persistentContext)
+  visualBaselinePlacement = placement
+  manualResizeDetached = false
+  if (persistentContext) {
+    await applyCurrentPlacement(persistentContext)
+    await captureManagedVisualBaseline(persistentContext, 'retile')
+  }
 }
 
 /**
  * Reuse one persistent account browser for every Group/post inside the current
  * account turn. Placement is applied once when the browser is opened/attached and
- * later only when the operator explicitly requests re-tile. A manual resize clears
- * compact control for that window until the next explicit re-tile.
+ * later only when the operator explicitly requests re-tile. A manual resize detaches
+ * presentation control, while the Common Visual/Layout Guard retains the runtime
+ * baseline so the next safe action boundary can recover instead of clicking blind.
  */
 export function installManagedBrowserReuse(): void {
   if (installed) return
@@ -175,6 +255,7 @@ export function installManagedBrowserReuse(): void {
         }
         const proxy = rememberContext(context, browser, requestedScale)
         await applyCurrentPlacement(context)
+        await captureManagedVisualBaseline(context, 'attach')
         return proxy
       } catch {
         // Browser may have been closed between registry lookup and job start.
@@ -197,6 +278,7 @@ export function installManagedBrowserReuse(): void {
       )
     }
     await applyCurrentPlacement(context)
+    await captureManagedVisualBaseline(context, 'fallback-launch')
     return proxy
   }
 
@@ -210,11 +292,14 @@ export async function closeManagedPostingBrowser(): Promise<void> {
   const context = persistentContext
   const browser = attachedBrowser
   stopWatchingResize()
+  if (context) clearBrowserVisualLayoutBaseline(context)
   persistentContext = null
   persistentProxy = null
   attachedBrowser = null
   activePlacement = null
+  visualBaselinePlacement = null
   launchedWholeChromeScale = null
+  manualResizeDetached = false
 
   if (browser) {
     await closeConnectedChromiumProcess(browser, 'Chrome managed của automation worker')

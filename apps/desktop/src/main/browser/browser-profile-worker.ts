@@ -35,6 +35,7 @@ import {
   waitForBrowserStartupDelay,
   watchForManualBrowserResize
 } from './browserRuntime'
+import { readBrowserVisualMetrics } from './browserVisualLayoutGuard'
 import { runWithResizeWatcherPaused } from './resizeWatchGuard'
 
 interface BrowserLaunchConfig {
@@ -268,19 +269,7 @@ async function logVisualBaselineProbe(
   const page = context.pages()[0]
   if (!page) return
 
-  const metrics = await page.evaluate(() => {
-    const visualViewport = window.visualViewport
-    return {
-      outerWidth: window.outerWidth,
-      outerHeight: window.outerHeight,
-      innerWidth: window.innerWidth,
-      innerHeight: window.innerHeight,
-      devicePixelRatio: window.devicePixelRatio,
-      visualViewportWidth: visualViewport?.width ?? window.innerWidth,
-      visualViewportHeight: visualViewport?.height ?? window.innerHeight,
-      visualViewportScale: visualViewport?.scale ?? 1
-    }
-  }).catch(() => null)
+  const metrics = await readBrowserVisualMetrics(page)
   if (!metrics) return
 
   const snapshot = buildBrowserVisualBaselineSnapshot({

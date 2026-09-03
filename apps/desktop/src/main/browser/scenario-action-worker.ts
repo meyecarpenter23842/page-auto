@@ -1,5 +1,5 @@
 import type { AccountStatus } from '../../shared/accounts'
-import type { ActionExecutionSummary, ActionRunControl } from '../../shared/actionRuntime'
+import { actionRuntimeResult, type ActionExecutionSummary, type ActionRunControl } from '../../shared/actionRuntime'
 import { accountStatusFromFacebookSessionReason } from '../../shared/facebookAccountState'
 import type { PostingJobResult } from '../../shared/posting'
 import type {
@@ -14,6 +14,7 @@ import { ensureFacebookProfileIdentity } from './facebookProfileIdentity'
 import { bootstrapFacebookSession, type FacebookSessionResult } from './facebookSession'
 import {
   closeManagedPostingBrowser,
+  ensureManagedBrowserVisualLayout,
   installManagedBrowserReuse,
   setManagedBrowserPlacement
 } from './managedBrowserBridge'
@@ -220,7 +221,26 @@ async function execute(job: ScenarioActionWorkerJob): Promise<ScenarioActionWork
       }
       return result
     },
-    switchPage: async () => commonStepToPosting(await runtime.prepareForPage())
+    switchPage: async () => commonStepToPosting(await runtime.prepareForPage()),
+    ensureVisualLayout: async (context) => {
+      const visual = await ensureManagedBrowserVisualLayout(runtime.context, runtime.page)
+      context.log(
+        visual.status === 'failed' ? 'warning' : 'debug',
+        visual.message,
+        visual.status === 'failed' ? 'visual_layout_unstable' : undefined,
+        { status: visual.status, drift: visual.drift }
+      )
+      if (visual.status !== 'failed') return { status: 'ready' }
+      return {
+        status: 'blocked',
+        result: actionRuntimeResult(
+          'failed',
+          'visual_layout_unstable',
+          visual.message,
+          { drift: visual.drift }
+        )
+      }
+    }
   })
   const runner = new ActionRunner(host, createK4ActionExecutorRegistry(actionDependencies(runtime, job)), (event) => {
     parentPort.postMessage({ type: 'log', event })

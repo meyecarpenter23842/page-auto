@@ -11,6 +11,7 @@ export interface FacebookCommonActionHooks {
   ensureSession(context: ActionPreparationContext): Promise<FacebookSessionResult>
   ensureProfile(context: ActionPreparationContext): Promise<PostingJobResult>
   switchPage(context: ActionPreparationContext, pageUid: string): Promise<PostingJobResult>
+  ensureVisualLayout?(context: ActionPreparationContext): Promise<ActionPreparationResult>
 }
 
 function sessionBlock(result: FacebookSessionResult): ActionPreparationResult | null {
@@ -68,6 +69,12 @@ function actorIdentityBlock(result: PostingJobResult, actor: 'profile' | 'page')
 export class FacebookCommonActionHost implements ActionPreparationHost {
   constructor(private readonly hooks: FacebookCommonActionHooks) {}
 
+  private async ensureVisualLayout(context: ActionPreparationContext): Promise<ActionPreparationResult> {
+    if (!this.hooks.ensureVisualLayout) return { status: 'ready' }
+    context.log('debug', 'Xác minh Common Visual/Layout Guard trước action.')
+    return this.hooks.ensureVisualLayout(context)
+  }
+
   async prepare(context: ActionPreparationContext): Promise<ActionPreparationResult> {
     context.log('debug', 'Kiểm tra/khôi phục Facebook session bằng common runtime.')
     const session = await this.hooks.ensureSession(context)
@@ -80,7 +87,7 @@ export class FacebookCommonActionHost implements ActionPreparationHost {
       const blockedProfile = actorIdentityBlock(profileResult, 'profile')
       if (blockedProfile) return blockedProfile
       context.log('info', 'Actor Profile đã được common runtime xác minh.')
-      return { status: 'ready' }
+      return this.ensureVisualLayout(context)
     }
 
     const pageUid = context.request.actor.pageUid.trim()
@@ -97,6 +104,6 @@ export class FacebookCommonActionHost implements ActionPreparationHost {
     if (blockedSwitch) return blockedSwitch
 
     context.log('info', 'Page identity đã được common runtime xác minh.')
-    return { status: 'ready' }
+    return this.ensureVisualLayout(context)
   }
 }

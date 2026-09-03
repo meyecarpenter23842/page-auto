@@ -15,12 +15,52 @@ export interface BrowserVisualBaselineSnapshot extends BrowserVisualBaselineMetr
   manualResizeDetached: boolean
 }
 
+export const BROWSER_VISUAL_DRIFT_KINDS = [
+  'window_bounds',
+  'layout_viewport',
+  'device_pixel_ratio',
+  'visual_viewport',
+  'visual_viewport_scale',
+  'browser_scale',
+  'compact_mode',
+  'manual_resize_detached'
+] as const
+
+export type BrowserVisualDriftKind = (typeof BROWSER_VISUAL_DRIFT_KINDS)[number]
+
+export interface BrowserVisualBaselineComparison {
+  stable: boolean
+  drift: BrowserVisualDriftKind[]
+}
+
+export interface BrowserVisualBaselineTolerance {
+  outerPx: number
+  innerPx: number
+  visualViewportPx: number
+  devicePixelRatio: number
+  visualViewportScale: number
+  browserScale: number
+}
+
+export const DEFAULT_BROWSER_VISUAL_BASELINE_TOLERANCE: Readonly<BrowserVisualBaselineTolerance> = {
+  outerPx: 16,
+  innerPx: 24,
+  visualViewportPx: 24,
+  devicePixelRatio: 0.03,
+  visualViewportScale: 0.02,
+  browserScale: 0.01
+}
+
 function finiteMetric(value: number): number {
   return Number.isFinite(value) ? value : 0
 }
 
 function positiveScale(value: number): number {
   return Number.isFinite(value) && value > 0 ? value : 1
+}
+
+function changed(a: number, b: number, tolerance: number): boolean {
+  return Math.abs(a - b) > tolerance
 }
 
 /**
@@ -49,4 +89,43 @@ export function buildBrowserVisualBaselineSnapshot(input: {
     compact: input.compact,
     manualResizeDetached: input.manualResizeDetached
   }
+}
+
+export function compareBrowserVisualBaseline(
+  baseline: BrowserVisualBaselineSnapshot,
+  current: BrowserVisualBaselineSnapshot,
+  tolerance: BrowserVisualBaselineTolerance = DEFAULT_BROWSER_VISUAL_BASELINE_TOLERANCE
+): BrowserVisualBaselineComparison {
+  const drift: BrowserVisualDriftKind[] = []
+
+  if (
+    changed(baseline.outerWidth, current.outerWidth, tolerance.outerPx)
+    || changed(baseline.outerHeight, current.outerHeight, tolerance.outerPx)
+  ) drift.push('window_bounds')
+
+  if (
+    changed(baseline.innerWidth, current.innerWidth, tolerance.innerPx)
+    || changed(baseline.innerHeight, current.innerHeight, tolerance.innerPx)
+  ) drift.push('layout_viewport')
+
+  if (changed(baseline.devicePixelRatio, current.devicePixelRatio, tolerance.devicePixelRatio)) {
+    drift.push('device_pixel_ratio')
+  }
+
+  if (
+    changed(baseline.visualViewportWidth, current.visualViewportWidth, tolerance.visualViewportPx)
+    || changed(baseline.visualViewportHeight, current.visualViewportHeight, tolerance.visualViewportPx)
+  ) drift.push('visual_viewport')
+
+  if (changed(baseline.visualViewportScale, current.visualViewportScale, tolerance.visualViewportScale)) {
+    drift.push('visual_viewport_scale')
+  }
+
+  if (changed(baseline.browserScale, current.browserScale, tolerance.browserScale)) {
+    drift.push('browser_scale')
+  }
+  if (baseline.compact !== current.compact) drift.push('compact_mode')
+  if (baseline.manualResizeDetached !== current.manualResizeDetached) drift.push('manual_resize_detached')
+
+  return { stable: drift.length === 0, drift }
 }
