@@ -4,7 +4,10 @@ import { join } from 'node:path'
 import { chromium, type BrowserContext, type CDPSession } from 'playwright-core'
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_APP_SETTINGS } from '../../shared/appSettings'
-import { normalizeAutomationProfileZoom } from './automationBrowserVisualContract'
+import {
+  normalizeAutomationPageZoom,
+  normalizeAutomationProfileZoom
+} from './automationBrowserVisualContract'
 import { buildBrowserLaunchOptions } from './browserRuntime'
 
 const realChromeDescribe = process.platform === 'win32' && Boolean(process.env.CI)
@@ -17,6 +20,15 @@ async function readPageZoom(session: CDPSession): Promise<number | null> {
   }
   const zoom = metrics.cssVisualViewport?.zoom
   return typeof zoom === 'number' && Number.isFinite(zoom) ? zoom : null
+}
+
+function launchShape() {
+  return buildBrowserLaunchOptions({
+    ...DEFAULT_APP_SETTINGS.browser,
+    executablePath: null,
+    windowWidth: 1280,
+    windowHeight: 800
+  })
 }
 
 realChromeDescribe('automation browser visual contract on Windows Chrome', () => {
@@ -43,14 +55,8 @@ realChromeDescribe('automation browser visual contract on Windows Chrome', () =>
       const normalized = await normalizeAutomationProfileZoom(profileDirectory)
       expect(normalized).toEqual({ status: 'normalized', changed: true })
 
-      const launchShape = buildBrowserLaunchOptions({
-        ...DEFAULT_APP_SETTINGS.browser,
-        executablePath: null,
-        windowWidth: 1280,
-        windowHeight: 800
-      })
       context = await chromium.launchPersistentContext(profileDirectory, {
-        ...launchShape,
+        ...launchShape(),
         viewport: null
       })
       const page = context.pages()[0] ?? await context.newPage()
@@ -60,6 +66,48 @@ realChromeDescribe('automation browser visual contract on Windows Chrome', () =>
       const zoom = await readPageZoom(session)
       expect(zoom).not.toBeNull()
       expect(zoom).toBeCloseTo(1, 2)
+    } finally {
+      await session?.detach().catch(() => undefined)
+      await context?.close().catch(() => undefined)
+      await rm(profileDirectory, { recursive: true, force: true })
+    }
+  }, 45_000)
+
+  it('restores an already-open Chrome tab to 100 percent after live page zoom drift', async () => {
+    const profileDirectory = await mkdtemp(join(tmpdir(), 'page-auto-live-zoom-contract-'))
+    let context: BrowserContext | null = null
+    let session: CDPSession | null = null
+
+    try {
+      context = await chromium.launchPersistentContext(profileDirectory, {
+        ...launchShape(),
+        viewport: null
+      })
+      const page = context.pages()[0] ?? await context.newPage()
+      await page.goto('data:text/html,<title>live-zoom-contract</title><main>ready</main>')
+      session = await context.newCDPSession(page)
+
+      const initial = await readPageZoom(session)
+      expect(initial).not.toBeNull()
+      expect(initial).toBeCloseTo(1, 2)
+
+      await page.keyboard.press('Control+-')
+      await page.waitForTimeout(200)
+
+      const drifted = await readPageZoom(session)
+      expect(drifted).not.toBeNull()
+      expect(drifted ?? 1).toBeLessThan(0.97)
+
+      const normalized = await normalizeAutomationPageZoom(context, page)
+      expect(normalized.status).toBe('normalized')
+      expect(normalized.before).not.toBeNull()
+      expect(normalized.before ?? 1).toBeCloseTo(drifted ?? 1, 2)
+      expect(normalized.after).not.toBeNull()
+      expect(normalized.after).toBeCloseTo(1, 2)
+
+      const finalZoom = await readPageZoom(session)
+      expect(finalZoom).not.toBeNull()
+      expect(finalZoom).toBeCloseTo(1, 2)
     } finally {
       await session?.detach().catch(() => undefined)
       await context?.close().catch(() => undefined)
