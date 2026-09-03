@@ -43,6 +43,9 @@ describe('initializeDatabase', () => {
     const pageTabColumns = runtime.client
       .prepare('PRAGMA table_info(page_tabs)')
       .all() as Array<{ name: string }>
+    const runItemColumns = runtime.client
+      .prepare('PRAGMA table_info(run_items)')
+      .all() as Array<{ name: string }>
     const emailStateTable = runtime.client
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'account_email_state'")
       .get() as { name: string } | undefined
@@ -82,13 +85,16 @@ describe('initializeDatabase', () => {
       { version: 16, name: 'page_tab_group_order_mode' },
       { version: 17, name: 'story_library' },
       { version: 18, name: 'action_workspace_persistence' },
-      { version: 19, name: 'page_business_explicit_bindings' }
+      { version: 19, name: 'page_business_explicit_bindings' },
+      { version: 20, name: 'page_tab_group_post_concurrency_and_run_claim_owner' }
     ])
-    expect(schemaVersion?.value).toBe('19')
+    expect(schemaVersion?.value).toBe('20')
     expect(executionLogsTable?.name).toBe('execution_logs')
     expect(postLibraryTable?.name).toBe('page_tab_posts')
     expect(pageTabColumns.some((column) => column.name === 'account_order_mode')).toBe(true)
     expect(pageTabColumns.some((column) => column.name === 'group_order_mode')).toBe(true)
+    expect(pageTabColumns.some((column) => column.name === 'account_concurrency')).toBe(true)
+    expect(runItemColumns.some((column) => column.name === 'claimed_by_account_id')).toBe(true)
     expect(emailStateTable?.name).toBe('account_email_state')
     expect(emailStateColumns.map((column) => column.name)).toEqual(expect.arrayContaining([
       'oauth_client_id',
@@ -112,7 +118,7 @@ describe('initializeDatabase', () => {
       .prepare('SELECT COUNT(*) AS count FROM __page_auto_migrations')
       .get() as { count: number }
 
-    expect(count.count).toBe(19)
+    expect(count.count).toBe(20)
     reopened.close()
   })
 

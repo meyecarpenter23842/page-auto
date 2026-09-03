@@ -8,14 +8,15 @@ import {
   type ReactNode
 } from 'react'
 import { ACCOUNT_STATUSES, type AccountRecord, type AccountStatus } from '../../../shared/accounts'
-import type {
-  CreatePageTabInput,
-  PageTabAccountRef,
-  PageTabConfig,
-  PageTabPostLibrary,
-  PageTabSaveInput,
-  PageTabSchedule,
-  PageTabSummary
+import {
+  MAX_PAGE_TAB_ACCOUNT_CONCURRENCY,
+  type CreatePageTabInput,
+  type PageTabAccountRef,
+  type PageTabConfig,
+  type PageTabPostLibrary,
+  type PageTabSaveInput,
+  type PageTabSchedule,
+  type PageTabSummary
 } from '../../../shared/pageTabs'
 import type { RotationRuntimeSnapshot } from '../../../shared/rotation'
 import { accountStatusLabels } from '../accounts/accountManagerModel'
@@ -633,7 +634,7 @@ export function PageTabsManager({ activePageId: controlledActiveId, scoped = fal
 
               <section className="pt-panel pt-rotation-panel pt-compact-panel">
                 <div className="pt-panel-heading"><div><p className="eyebrow">Vòng chạy</p><h3>Số bài và thời gian nghỉ</h3></div><div className="pt-account-heading-actions"><label className="pt-count-chip" title="Bật để mỗi vòng dùng một thứ tự tài khoản ngẫu nhiên, không lặp account trong cùng vòng."><input type="checkbox" checked={(config.rotation.accountOrderMode ?? 'sequential') === 'random'} onChange={(event) => patchConfig('rotation', { rotation: { ...config.rotation, accountOrderMode: event.target.checked ? 'random' : 'sequential' } })} /> Ngẫu nhiên TK</label><button className="pt-button secondary" type="button" disabled={!dirtySections.has('rotation') || savingSection !== null} onClick={() => void saveSectionOnly('rotation')}>Lưu</button></div></div>
-                <div className="pt-form-grid five pt-rotation-grid"><label title="Chỉ dùng cho account để trống cột Bài/lượt."><span>Mặc định bài/lượt</span><input type="number" min="1" value={config.rotation.postsPerAccount} onChange={(event) => patchConfig('rotation', { rotation: { ...config.rotation, postsPerAccount: Number(event.target.value) } })} /></label><label><span>Delay bài min (s)</span><input type="number" min="0" value={config.rotation.postDelayMinSeconds} onChange={(event) => patchConfig('rotation', { rotation: { ...config.rotation, postDelayMinSeconds: Number(event.target.value) } })} /></label><label><span>Delay bài max (s)</span><input type="number" min="0" value={config.rotation.postDelayMaxSeconds} onChange={(event) => patchConfig('rotation', { rotation: { ...config.rotation, postDelayMaxSeconds: Number(event.target.value) } })} /></label><label><span>Đổi account min (s)</span><input type="number" min="0" value={config.rotation.accountDelayMinSeconds} onChange={(event) => patchConfig('rotation', { rotation: { ...config.rotation, accountDelayMinSeconds: Number(event.target.value) } })} /></label><label><span>Đổi account max (s)</span><input type="number" min="0" value={config.rotation.accountDelayMaxSeconds} onChange={(event) => patchConfig('rotation', { rotation: { ...config.rotation, accountDelayMaxSeconds: Number(event.target.value) } })} /></label></div>
+                <div className="pt-form-grid five pt-rotation-grid"><label title="Số tài khoản có thể chạy cuốn chiếu cùng lúc. Legacy/default = 1."><span>TK song song</span><input type="number" min="1" max={MAX_PAGE_TAB_ACCOUNT_CONCURRENCY} value={config.rotation.accountConcurrency ?? 1} onChange={(event) => patchConfig('rotation', { rotation: { ...config.rotation, accountConcurrency: Number(event.target.value) } })} /></label><label title="Chỉ dùng cho account để trống cột Bài/lượt."><span>Mặc định bài/lượt</span><input type="number" min="1" value={config.rotation.postsPerAccount} onChange={(event) => patchConfig('rotation', { rotation: { ...config.rotation, postsPerAccount: Number(event.target.value) } })} /></label><label><span>Delay bài min (s)</span><input type="number" min="0" value={config.rotation.postDelayMinSeconds} onChange={(event) => patchConfig('rotation', { rotation: { ...config.rotation, postDelayMinSeconds: Number(event.target.value) } })} /></label><label><span>Delay bài max (s)</span><input type="number" min="0" value={config.rotation.postDelayMaxSeconds} onChange={(event) => patchConfig('rotation', { rotation: { ...config.rotation, postDelayMaxSeconds: Number(event.target.value) } })} /></label><label><span>Đổi account min (s)</span><input type="number" min="0" value={config.rotation.accountDelayMinSeconds} onChange={(event) => patchConfig('rotation', { rotation: { ...config.rotation, accountDelayMinSeconds: Number(event.target.value) } })} /></label><label><span>Đổi account max (s)</span><input type="number" min="0" value={config.rotation.accountDelayMaxSeconds} onChange={(event) => patchConfig('rotation', { rotation: { ...config.rotation, accountDelayMaxSeconds: Number(event.target.value) } })} /></label></div>
               </section>
             </div>
 
