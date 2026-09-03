@@ -287,7 +287,7 @@ export const migrations: Migration[] = [
     `
   },
   {
-    version: 17,
+    version: 20,
     name: 'page_tab_group_post_concurrency_and_run_claim_owner',
     sql: `
       ALTER TABLE page_tabs ADD COLUMN account_concurrency INTEGER NOT NULL DEFAULT 1;
