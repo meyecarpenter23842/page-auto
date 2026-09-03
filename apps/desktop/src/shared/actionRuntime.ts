@@ -14,6 +14,7 @@ export const ACTION_RUNTIME_ERROR_CODES = [
   'navigation_failed',
   'network_timeout',
   'browser_unavailable',
+  'visual_layout_unstable',
   'action_stopped',
   'executor_exception'
 ] as const
