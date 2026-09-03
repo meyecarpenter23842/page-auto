@@ -342,7 +342,20 @@ export class RotationService {
     this.tracker = new RotationWindowTracker(runs, getLiveSchedules, clock?.now ?? (() => new Date()))
     const trackedRuns = this.tracker.trackedRunStore()
     const trackedPosting = this.tracker.trackedPostingExecutor(posting)
-    this.core = new CoreRotationService(trackedRuns, trackedPosting, clock, getSessionSettings, getNetworkSettings, getLiveSchedules)
+    const serialPosting: RotationPostingExecutor = accountExecution
+      ? {
+          executeSingle: (payload) => {
+            const accountId = payload.accountId
+            return accountId === undefined
+              ? trackedPosting.executeSingle(payload)
+              : accountExecution.run(accountId, () => trackedPosting.executeSingle(payload))
+          },
+          ...(trackedPosting.releaseAccount
+            ? { releaseAccount: (accountId: number) => accountExecution.run(accountId, () => trackedPosting.releaseAccount!(accountId)) }
+            : {})
+        }
+      : trackedPosting
+    this.core = new CoreRotationService(trackedRuns, serialPosting, clock, getSessionSettings, getNetworkSettings, getLiveSchedules)
     this.parallel = new ParallelRotationService(trackedRuns, trackedPosting, accountExecution, clock, getSessionSettings, getNetworkSettings, getLiveSchedules)
   }
 
