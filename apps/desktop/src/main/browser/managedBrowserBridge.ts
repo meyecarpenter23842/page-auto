@@ -1,6 +1,11 @@
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright-core'
+import { buildBrowserVisualBaselineSnapshot } from '../../shared/browserVisualBaseline'
 import type { BrowserWindowPlacement } from '../../shared/browserWindowLayout'
 import { sameWholeChromeScale, wholeChromeScaleForLaunch } from '../../shared/browserWholeChromeScale'
+import {
+  normalizeAutomationPageZoom,
+  normalizeAutomationProfileZoom
+} from './automationBrowserVisualContract'
 import { closeBrowserTarget } from './browserClose'
 import { closeConnectedChromiumProcess } from './browserProcessLifecycle'
 import {
@@ -12,6 +17,8 @@ import {
   captureBrowserVisualLayoutBaseline,
   clearBrowserVisualLayoutBaseline,
   ensureBrowserVisualLayout,
+  getBrowserVisualLayoutBaseline,
+  readBrowserVisualMetrics,
   type BrowserVisualLayoutGuardResult,
   type BrowserVisualLayoutState
 } from './browserVisualLayoutGuard'
@@ -28,6 +35,8 @@ let visualBaselinePlacement: BrowserWindowPlacement | null = null
 let launchedWholeChromeScale: number | null = null
 let manualResizeDetached = false
 let stopResizeWatch: (() => void) | null = null
+
+export type ManagedVisualBaselineSource = 'attach' | 'fallback-launch' | 'retile'
 
 function managedCdpEndpointFromArgs(argv: string[] = process.argv): string | null {
   const raw = argv.find((item) => item.startsWith(MANAGED_CDP_ARG_PREFIX))
@@ -90,18 +99,44 @@ function currentVisualState(): BrowserVisualLayoutState {
   }
 }
 
+/**
+ * Launch/attach observations are diagnostic only. Chrome can apply origin-specific
+ * zoom/DPR and final viewport metrics only after navigation to Facebook. The first
+ * safe action boundary first normalizes the configured placement + page zoom contract,
+ * then captures that deterministic live layout as the guard baseline. Explicit retile
+ * also normalizes before replacing the baseline.
+ */
+export function managedVisualObservationPersistsBaseline(source: ManagedVisualBaselineSource): boolean {
+  return source === 'retile'
+}
+
 async function captureManagedVisualBaseline(
   context: BrowserContext,
-  source: 'attach' | 'fallback-launch' | 'retile'
+  source: ManagedVisualBaselineSource
 ): Promise<void> {
   const page = context.pages()[0]
   if (!page) return
-  const snapshot = await captureBrowserVisualLayoutBaseline(context, page, currentVisualState())
+
+  const state = currentVisualState()
+  const persistBaseline = managedVisualObservationPersistsBaseline(source)
+  const snapshot = persistBaseline
+    ? await captureBrowserVisualLayoutBaseline(context, page, state)
+    : await readBrowserVisualMetrics(page).then((metrics) => metrics
+      ? buildBrowserVisualBaselineSnapshot({
+          metrics,
+          browserScale: state.browserScale,
+          compact: state.compact,
+          manualResizeDetached: state.manualResizeDetached
+        })
+      : null)
+
   if (!snapshot) {
-    console.info(`[PAGE-AUTO visual-baseline] source=${source} metrics=unavailable`)
+    console.info(`[PAGE-AUTO visual-baseline] source=${source} persisted=${persistBaseline} metrics=unavailable`)
     return
   }
-  console.info(`[PAGE-AUTO visual-baseline] source=${source} ${JSON.stringify(snapshot)}`)
+  console.info(
+    `[PAGE-AUTO visual-baseline] source=${source} persisted=${persistBaseline} ${JSON.stringify(snapshot)}`
+  )
 }
 
 function armResizeWatch(context: BrowserContext): void {
@@ -138,11 +173,49 @@ async function applyCurrentPlacement(context: BrowserContext): Promise<void> {
   )
 }
 
-async function recoverManagedVisualLayout(context: BrowserContext): Promise<'recovered' | 'rebaseline' | 'failed'> {
+async function normalizeManagedPageZoom(
+  context: BrowserContext,
+  page: Page,
+  phase: 'initial' | 'recovery' | 'retile'
+): Promise<boolean> {
+  const zoom = await normalizeAutomationPageZoom(context, page)
+  if (zoom.status === 'ready') return true
+
+  console.info(
+    `[PAGE-AUTO visual-contract] phase=${phase} pageZoom=${zoom.before ?? 'unknown'}->${zoom.after ?? 'unknown'} status=${zoom.status}`
+  )
+  return zoom.status === 'normalized'
+}
+
+async function normalizeInitialManagedVisualLayout(
+  context: BrowserContext,
+  page: Page
+): Promise<boolean> {
+  const expected = visualBaselinePlacement
+  if (expected) {
+    if (!scaleMatchesRunningChrome(expected)) {
+      logReopenRequired(expected)
+      return false
+    }
+    activePlacement = expected
+    manualResizeDetached = false
+    await runWithResizeWatcherPaused(
+      stopWatchingResize,
+      () => applyBrowserPlacementToContext(context, expected),
+      () => armResizeWatch(context)
+    )
+  }
+  return normalizeManagedPageZoom(context, page, 'initial')
+}
+
+async function recoverManagedVisualLayout(
+  context: BrowserContext,
+  page: Page
+): Promise<'recovered' | 'rebaseline' | 'failed'> {
   const expected = visualBaselinePlacement
   if (!expected) {
     manualResizeDetached = false
-    return 'rebaseline'
+    return await normalizeManagedPageZoom(context, page, 'recovery') ? 'rebaseline' : 'failed'
   }
   if (!scaleMatchesRunningChrome(expected)) {
     logReopenRequired(expected)
@@ -156,20 +229,45 @@ async function recoverManagedVisualLayout(context: BrowserContext): Promise<'rec
     () => applyBrowserPlacementToContext(context, expected),
     () => armResizeWatch(context)
   )
-  return 'recovered'
+  return await normalizeManagedPageZoom(context, page, 'recovery') ? 'recovered' : 'failed'
+}
+
+function visualContractFailure(message: string): BrowserVisualLayoutGuardResult {
+  return {
+    status: 'failed',
+    message,
+    drift: [],
+    snapshot: null
+  }
 }
 
 export async function ensureManagedBrowserVisualLayout(
   context: BrowserContext,
   page: Page
 ): Promise<BrowserVisualLayoutGuardResult> {
+  if (!getBrowserVisualLayoutBaseline(context)) {
+    const normalized = await normalizeInitialManagedVisualLayout(context, page).catch(() => false)
+    if (!normalized) {
+      const failed = visualContractFailure(
+        'Common Visual/Layout Guard không thể chuẩn hóa Chrome về placement/zoom automation trước action.'
+      )
+      console.info('[PAGE-AUTO visual-guard] status=failed drift=visual_contract')
+      return failed
+    }
+  }
+
   const result = await ensureBrowserVisualLayout({
     context,
     page,
     readState: currentVisualState,
-    recover: () => recoverManagedVisualLayout(context)
+    recover: () => recoverManagedVisualLayout(context, page)
   })
-  if (result.status === 'recovered' || result.status === 'rebaselined' || result.status === 'failed') {
+  if (
+    result.status === 'captured'
+    || result.status === 'recovered'
+    || result.status === 'rebaselined'
+    || result.status === 'failed'
+  ) {
     console.info(`[PAGE-AUTO visual-guard] status=${result.status} drift=${result.drift.join(',') || 'none'}`)
   }
   return result
@@ -222,16 +320,18 @@ export async function retileManagedPostingBrowser(placement: BrowserWindowPlacem
   manualResizeDetached = false
   if (persistentContext) {
     await applyCurrentPlacement(persistentContext)
+    const page = persistentContext.pages()[0]
+    if (page && !await normalizeManagedPageZoom(persistentContext, page, 'retile')) return
     await captureManagedVisualBaseline(persistentContext, 'retile')
   }
 }
 
 /**
- * Reuse one persistent account browser for every Group/post inside the current
- * account turn. Placement is applied once when the browser is opened/attached and
- * later only when the operator explicitly requests re-tile. A manual resize detaches
- * presentation control, while the Common Visual/Layout Guard retains the runtime
- * baseline so the next safe action boundary can recover instead of clicking blind.
+ * Reuse one persistent account browser for every Group/post inside the current account turn.
+ * Launch still derives window size/whole-Chrome scale from BrowserWindowPlacement. The first
+ * safe action boundary additionally forces native placement and 100% page zoom before baseline
+ * capture; later resize/zoom drift is recovered back to that same contract. Manual Account
+ * Manager browsers remain owned by their profile worker and are not changed by this bridge.
  */
 export function installManagedBrowserReuse(): void {
   if (installed) return
@@ -261,6 +361,11 @@ export function installManagedBrowserReuse(): void {
         // Browser may have been closed between registry lookup and job start.
         // Fall back to launching the same persistent account profile below.
       }
+    }
+
+    const profileZoom = await normalizeAutomationProfileZoom(String(userDataDir)).catch(() => null)
+    if (profileZoom?.changed) {
+      console.info('[PAGE-AUTO visual-contract] persisted Facebook/default page zoom reset before automation launch')
     }
 
     const compactArgs = activePlacement

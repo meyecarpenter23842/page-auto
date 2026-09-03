@@ -41,6 +41,30 @@ describe('browserVisualLayoutGuard', () => {
     expect(Date.now() - startedAt).toBeLessThan(500)
   })
 
+  it('captures the live safe-boundary metrics when no guard baseline exists yet', async () => {
+    const context = {} as BrowserContext
+    const facebookMetrics = {
+      ...baselineMetrics,
+      innerWidth: 1225,
+      innerHeight: 687,
+      devicePixelRatio: 0.32,
+      visualViewportWidth: 1225,
+      visualViewportHeight: 687.5
+    }
+    const page = pageWithMetrics([facebookMetrics])
+
+    const result = await ensureBrowserVisualLayout({
+      context,
+      page,
+      readState: state,
+      recover: async () => 'recovered'
+    })
+
+    expect(result.status).toBe('captured')
+    expect(result.drift).toEqual([])
+    expect(result.snapshot).toMatchObject(facebookMetrics)
+  })
+
   it('recovers resize drift and verifies the measured baseline again before allowing the action', async () => {
     const context = {} as BrowserContext
     const resized = { ...baselineMetrics, outerWidth: 1060, innerWidth: 1044, visualViewportWidth: 1044 }

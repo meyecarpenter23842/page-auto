@@ -46,6 +46,9 @@ interface VerifiedJoinAttempt {
   phase: ActionVerificationPhase | null
 }
 
+const JOIN_VERIFICATION_HYDRATION_TIMEOUT_MS = 6_000
+const JOIN_VERIFICATION_POLL_INTERVAL_MS = 300
+
 function completed(stats: JoinStats): number {
   return stats.joined + stats.requested
 }
@@ -143,7 +146,12 @@ async function verifyJoinAttempt(
       }
       return revisitExactGroupTarget(page, context, targetIdentity, timeoutMs)
     },
-    verifyAfterRevisit: () => directGroupMembershipState(page)
+    verifyAfterRevisit: () => directGroupMembershipState(page),
+    polling: {
+      timeoutMs: JOIN_VERIFICATION_HYDRATION_TIMEOUT_MS,
+      intervalMs: JOIN_VERIFICATION_POLL_INTERVAL_MS,
+      wait: (delayMs) => sleepWithControl(context.control, delayMs)
+    }
   })
 
   if (verification.status === 'verified') {
