@@ -107,19 +107,31 @@ describe('K4.3.3 group interaction executor', () => {
   })
 
   it('uses an unlabeled contenteditable as the post-local comment fallback', async () => {
+    let submitted = false
     const candidate = {
       count: async () => 1,
       nth: () => candidate,
       isVisible: async () => true,
       fill: async () => undefined,
-      press: async () => undefined
+      press: async () => {
+        submitted = true
+      }
     }
     const missing = {
       count: async () => 0,
       nth: () => missing
     }
+    const renderedComment = {
+      isVisible: async () => true,
+      evaluate: async () => true
+    }
+    const renderedMatches = {
+      count: async () => submitted ? 1 : 0,
+      nth: () => renderedComment
+    }
     const article = {
-      locator: (selector: string) => selector === '[contenteditable="true"]' ? candidate : missing
+      locator: (selector: string) => selector === '[contenteditable="true"]' ? candidate : missing,
+      getByText: () => renderedMatches
     } as unknown as Locator
 
     expect(await commentOnGroupArticle({} as Page, article, 'hello', '')).toBe(true)
