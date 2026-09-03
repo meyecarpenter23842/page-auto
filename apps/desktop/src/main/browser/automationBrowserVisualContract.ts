@@ -4,6 +4,8 @@ import type { BrowserContext, CDPSession, Page } from 'playwright-core'
 
 const PAGE_ZOOM_TOLERANCE = 0.03
 const PAGE_ZOOM_SETTLE_MS = 100
+const PAGE_ZOOM_STABILITY_TOLERANCE = 0.005
+const PAGE_ZOOM_SETTLE_READS = 3
 const PAGE_ZOOM_MAX_ADJUSTMENTS = 8
 const CONTROL_MODIFIER = 2
 const SHIFT_MODIFIER = 8
@@ -115,6 +117,10 @@ function zoomIsNeutral(zoom: number): boolean {
   return Number.isFinite(zoom) && Math.abs(zoom - 1) <= PAGE_ZOOM_TOLERANCE
 }
 
+function zoomIsSame(left: number, right: number): boolean {
+  return Math.abs(left - right) <= PAGE_ZOOM_STABILITY_TOLERANCE
+}
+
 async function readPageZoom(session: CDPSession): Promise<number | null> {
   const metrics = await session.send('Page.getLayoutMetrics').catch(() => null) as {
     cssVisualViewport?: { zoom?: number }
@@ -156,10 +162,41 @@ function settle(): Promise<void> {
 }
 
 /**
+ * Window resize/native placement can make Page.getLayoutMetrics briefly expose a zoom value
+ * from an intermediate renderer frame. Do not turn that transient value into Ctrl+0/+/- input.
+ * Return as soon as zoom is neutral or the same non-neutral value is observed twice in a row.
+ */
+async function readSettledPageZoom(
+  session: CDPSession,
+  initial: number | null = null
+): Promise<number | null> {
+  let previous = initial
+  if (previous !== null && zoomIsNeutral(previous)) return previous
+
+  for (let read = 0; read < PAGE_ZOOM_SETTLE_READS; read += 1) {
+    if (previous !== null || read > 0) await settle()
+    const current = await readPageZoom(session)
+    if (current === null) {
+      previous = null
+      continue
+    }
+    if (zoomIsNeutral(current)) return current
+    if (previous !== null && zoomIsSame(previous, current)) return current
+    previous = current
+  }
+
+  return previous
+}
+
+/**
  * Reset true Chrome page zoom, not CSS zoom/emulation. Ctrl+0 is attempted first; if the
  * profile default itself is non-100%, step through Chrome's native zoom levels until the
  * target tab reports page zoom ~= 1. Emulation page scale is also cleared so pinch/device
  * emulation cannot survive into the automation visual contract.
+ *
+ * Native window placement can reflow Chromium asynchronously. A bounded settle read happens
+ * before shortcuts and after each shortcut so a transient layout-metric frame is never treated
+ * as a real user page-zoom setting.
  */
 export async function normalizeAutomationPageZoom(
   context: BrowserContext,
@@ -175,18 +212,24 @@ export async function normalizeAutomationPageZoom(
     await session.send('Emulation.resetPageScaleFactor').catch(() => undefined)
     if (zoomIsNeutral(before)) return { status: 'ready', before, after: before }
 
+    const settledBeforeShortcut = await readSettledPageZoom(session, before)
+    if (settledBeforeShortcut === null) {
+      return { status: 'unavailable', before, after: null }
+    }
+    if (zoomIsNeutral(settledBeforeShortcut)) {
+      return { status: 'normalized', before, after: settledBeforeShortcut }
+    }
+
     if (!await dispatchZoomShortcut(session, 'reset')) {
       return { status: 'failed', before, after: await readPageZoom(session) }
     }
-    await settle()
-    let after = await readPageZoom(session)
+    let after = await readSettledPageZoom(session)
     if (after !== null && zoomIsNeutral(after)) return { status: 'normalized', before, after }
 
     for (let attempt = 0; attempt < PAGE_ZOOM_MAX_ADJUSTMENTS && after !== null; attempt += 1) {
       const shortcut = after < 1 ? 'in' : 'out'
       if (!await dispatchZoomShortcut(session, shortcut)) break
-      await settle()
-      after = await readPageZoom(session)
+      after = await readSettledPageZoom(session)
       if (after !== null && zoomIsNeutral(after)) {
         return { status: 'normalized', before, after }
       }
