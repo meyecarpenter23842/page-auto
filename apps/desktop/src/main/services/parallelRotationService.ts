@@ -217,10 +217,27 @@ export class ParallelRotationService {
     const restored = existing === null
     if (session.run.run.status === 'stopped') throw new Error('Page Tab đã Stop; hãy bấm Bắt đầu để tạo run mới từ Group gốc.')
 
+    let requeuedUnavailable = 0
+    if (!restored) {
+      for (const turn of session.turns) {
+        if (!turn.unavailable) continue
+        turn.done = false
+        turn.unavailable = false
+        turn.leaveAccountEarly = false
+        turn.usedSlot = turn.completedSlots > 0
+        requeuedUnavailable += 1
+      }
+      if (this.resolveCycle === null) this.beginCycleWait()
+    }
+
     session.manualPaused = false
     session.stopRequested = false
     session.disposed = false
-    session.message = restored ? 'Đã khôi phục snapshot sau khi khởi động lại ứng dụng.' : 'Đang tiếp tục rolling pool hiện tại.'
+    session.message = restored
+      ? 'Đã khôi phục snapshot sau khi khởi động lại ứng dụng; Common Session Policy sẽ xác minh lại account trước lượt tiếp theo.'
+      : requeuedUnavailable > 0
+        ? `Đã đưa ${requeuedUnavailable} account từng không khả dụng trở lại rolling pool; Common Session Policy sẽ đọc credential canonical mới nhất và xác minh lại.`
+        : 'Đang tiếp tục rolling pool hiện tại; Common Session Policy sẽ xác minh lại trước lượt Facebook tiếp theo.'
     if (restored) this.attach(session)
     return snapshotSession(session)
   }

@@ -272,8 +272,18 @@ async function execute(job: ScenarioActionWorkerJob): Promise<ScenarioActionWork
 }
 
 async function shutdown(): Promise<void> {
-  try { await closeManagedPostingBrowser() } catch { /* process is exiting */ }
-  setTimeout(() => process.exit(0), 25)
+  let exitCode = 0
+  try {
+    await closeManagedPostingBrowser()
+    console.info('[PAGE-AUTO browser-close] scenario action worker confirmed browser shutdown')
+  } catch (error) {
+    exitCode = 1
+    console.error(
+      '[PAGE-AUTO browser-close] scenario action worker failed to close browser:',
+      error instanceof Error ? error.message : String(error)
+    )
+  }
+  setTimeout(() => process.exit(exitCode), 25)
 }
 
 parentPort.on('message', (event) => {

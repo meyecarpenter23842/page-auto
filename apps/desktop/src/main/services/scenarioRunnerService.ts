@@ -11,14 +11,13 @@ import type {
 } from '../../shared/scenarioRunnerRuntime'
 import type { ScenarioActionRecord, ScenarioDetails } from '../../shared/scenarios'
 import { parseStoryIds, type StoryRuntimeData } from '../../shared/story'
-import { resolveFacebookProfileDirectory } from '../browser/facebookProfileResolver'
 import { BrowserWindowLayoutManager } from '../browser/browserWindowLayoutManager'
-import { resolveAccountProxyState } from '../browser/proxyConfig'
 import { ScenarioActionWorkerManager } from '../browser/scenarioActionWorkerManager'
 import { AccountRepository } from '../database/accountRepository'
 import { BrowserWindowLayoutRepository } from '../database/browserWindowLayoutRepository'
 import { ScenarioRepository } from '../database/scenarioRepository'
 import { StoryRepository } from '../database/storyRepository'
+import { scenarioActionJobForCommonSessionPolicy } from '../facebook/facebookSessionPolicy'
 import { AccountExecutionCoordinator } from './accountExecutionCoordinator'
 import { redactExecutionText } from './executionLogSanitizer'
 import { runRollingAccountPool } from './rollingAccountPool'
@@ -443,38 +442,13 @@ export class ScenarioRunnerService {
 
   private buildWorkerJob(account: AccountRecord, request: ActionRunRequest): ScenarioActionWorkerJob {
     const settings = this.getSettings()
-    const profileDirectory = resolveFacebookProfileDirectory(this.dataDirectory, account, settings.browser).profileDirectory
-    const proxyResolution = resolveAccountProxyState(account)
-    if (proxyResolution.status === 'invalid') throw new Error(proxyResolution.message)
-    const proxy = proxyResolution.status === 'valid' ? proxyResolution.proxy : undefined
-
     this.browserWindowLayout.claim(account.id, 'scenario')
     const browserPlacement = this.browserWindowLayout.placementFor(
       account.id,
       this.browserWindowLayoutSettings.get(),
       settings.browser
     )
-
-    return {
-      accountId: account.id,
-      profileDirectory,
-      browser: { ...settings.browser },
-      session: { ...settings.session },
-      network: { ...settings.network },
-      sessionAccount: {
-        id: account.id,
-        uid: account.uid,
-        username: account.username,
-        password: account.password,
-        cookie: account.cookie,
-        twoFactorSecret: account.twoFactorSecret,
-        name: account.name
-      },
-      request,
-      ...(browserPlacement ? { browserPlacement } : {}),
-      ...(account.userAgent ? { userAgent: account.userAgent } : {}),
-      ...(proxy ? { proxy } : {})
-    }
+    return scenarioActionJobForCommonSessionPolicy(account, request, settings, browserPlacement)
   }
 
   private parseConfig(action: ScenarioActionRecord): unknown {
@@ -513,8 +487,6 @@ export class ScenarioRunnerService {
       })
       return
     }
-    // Action/network/Page/browser failures without session evidence do not mutate
-    // canonical account health. They only count as runtime history.
     if (nextName !== account.name) this.accounts.update(account.id, { name: nextName, lastUsedAt: now })
   }
 

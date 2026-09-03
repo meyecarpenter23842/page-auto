@@ -10,10 +10,13 @@ import {
   facebookSessionPolicyStateFromRuntimeState,
   facebookSessionPolicyStopsFacebookActions
 } from '../../shared/facebookSessionPolicy'
-import type { ScenarioActionWorkerJob } from '../../shared/scenarioActionWorker'
+import type { ActionRunRequest } from '../../shared/actionRuntime'
 import { AccountRepository } from '../database/accountRepository'
 import { initializeDatabase } from '../database/index'
-import { FacebookCommonSessionPolicy } from '../facebook/facebookSessionPolicy'
+import {
+  FacebookCommonSessionPolicy,
+  scenarioActionJobForCommonSessionPolicy
+} from '../facebook/facebookSessionPolicy'
 
 const tempDirectories: string[] = []
 const runtimes: ReturnType<typeof initializeDatabase>[] = []
@@ -43,7 +46,7 @@ describe('Issue #266 Common Session Policy', () => {
     expect(FACEBOOK_LOGIN_RECOVERY_ORDER).toEqual(['COOKIE', 'IDENTIFIER_PASSWORD', 'TWO_FACTOR'])
   })
 
-  it('re-hydrates an action job from the latest canonical account row instead of the Start snapshot', () => {
+  it('defers stale snapshot launch data and re-hydrates the latest canonical account row at execution', () => {
     const directory = mkdtempSync(join(tmpdir(), 'page-auto-session-policy-'))
     const profileRoot = join(directory, 'profiles')
     tempDirectories.push(directory)
@@ -57,35 +60,26 @@ describe('Issue #266 Common Session Policy', () => {
       cookie: 'c_user=10001; xs=old',
       twoFactorSecret: 'OLD2FA',
       userAgent: 'old-agent',
-      proxy: '127.0.0.1:8080:old:oldpass'
+      proxy: 'broken-proxy-snapshot'
     })
 
-    const browser = { ...DEFAULT_APP_SETTINGS.browser, externalProfileRoot: profileRoot }
-    const snapshotJob: ScenarioActionWorkerJob = {
-      accountId: account.id,
-      profileDirectory: join(profileRoot, 'stale-profile'),
-      browser,
-      session: { ...DEFAULT_APP_SETTINGS.session },
-      network: { ...DEFAULT_APP_SETTINGS.network },
-      sessionAccount: {
-        id: account.id,
-        uid: account.uid,
-        username: account.username,
-        password: account.password,
-        cookie: account.cookie,
-        twoFactorSecret: account.twoFactorSecret,
-        name: account.name
-      },
-      request: {
-        runKey: 'issue-266-policy',
-        actionType: 'view_newsfeed',
-        label: 'Policy test',
-        actor: { kind: 'profile', accountId: account.id, accountUid: account.uid },
-        config: {}
-      },
-      ...(account.userAgent ? { userAgent: account.userAgent } : {}),
-      proxy: { server: 'http://127.0.0.1:8080', username: 'old', password: 'oldpass' }
+    const request: ActionRunRequest = {
+      runKey: 'issue-266-policy',
+      actionType: 'view_newsfeed',
+      label: 'Policy test',
+      actor: { kind: 'profile', accountId: account.id, accountUid: account.uid },
+      config: {}
     }
+    const settings = {
+      ...DEFAULT_APP_SETTINGS,
+      browser: { ...DEFAULT_APP_SETTINGS.browser, externalProfileRoot: profileRoot }
+    }
+    const snapshotJob = scenarioActionJobForCommonSessionPolicy(account, request, settings)
+
+    // Building a business snapshot must not parse/reject stale proxy/profile/UA.
+    expect(snapshotJob.profileDirectory).toBe('')
+    expect(snapshotJob.proxy).toBeUndefined()
+    expect(snapshotJob.userAgent).toBeUndefined()
 
     accounts.update(account.id, {
       username: 'fresh-user',

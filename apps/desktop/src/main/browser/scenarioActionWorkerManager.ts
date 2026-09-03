@@ -4,8 +4,9 @@ import { DEFAULT_APP_SETTINGS, type RuntimeSettings } from '../../shared/appSett
 import type { ActionExecutionSummary, ActionLogEvent } from '../../shared/actionRuntime'
 import type { ScenarioActionWorkerJob, ScenarioActionWorkerMessage, ScenarioActionWorkerResult } from '../../shared/scenarioActionWorker'
 import { configureGlobalBrowserLaunchBroker, setBrowserLaunchAwareTimeout } from './browserLaunchBroker'
+import { closeOrphanedProfileChrome } from './browserProcessLifecycle'
+import { facebookLaunchFingerprint, facebookLaunchReuseDecision } from './facebookLaunchFingerprint'
 import { getManagedBrowserEndpoint } from './managedBrowserRegistry'
-import { workerProfileReuseDecision } from './workerProfileOwnership'
 
 const MANAGED_CDP_ARG_PREFIX = '--page-auto-managed-cdp='
 const SHUTDOWN_TIMEOUT_MS = 5_000
@@ -23,6 +24,8 @@ interface PendingAction {
 interface WorkerEntry {
   accountId: number
   profileDirectory: string
+  launchFingerprint: string
+  managedEndpoint: string | null
   process: UtilityProcess
   ready: boolean
   pending: PendingAction | null
@@ -70,29 +73,30 @@ export class ScenarioActionWorkerManager {
     await this.specialHandler?.closeAccount?.(job.accountId)
 
     const runtime = { ...this.getRuntimeSettings() }
+    const launchFingerprint = facebookLaunchFingerprint(job)
     let entry = this.workers.get(job.accountId)
 
     if (entry && !entry.shuttingDown) {
-      const profileDecision = workerProfileReuseDecision(
-        entry.profileDirectory,
-        job.profileDirectory,
+      const launchDecision = facebookLaunchReuseDecision(
+        entry.launchFingerprint,
+        launchFingerprint,
         Boolean(entry.pending)
       )
-      if (profileDecision === 'busy') {
+      if (launchDecision === 'busy') {
         return failedWorkerResult(
           job,
           'browser_unavailable',
-          `Facebook Profile Root vừa thay đổi nhưng action worker account #${job.accountId} đang bận. Hãy dừng action hiện tại rồi chạy lại.`
+          `Profile/proxy/UserAgent canonical vừa thay đổi nhưng action worker account #${job.accountId} đang bận. Hãy dừng action hiện tại rồi chạy lại.`
         )
       }
-      if (profileDecision === 'replace') {
+      if (launchDecision === 'replace') {
         await this.closeWorkerProcess(job.accountId)
         entry = undefined
       }
     }
 
     if (!entry || entry.shuttingDown) {
-      try { entry = this.spawn(job) } catch (error) { return failedWorkerResult(job, 'browser_unavailable', error instanceof Error ? error.message : String(error)) }
+      try { entry = this.spawn(job, launchFingerprint) } catch (error) { return failedWorkerResult(job, 'browser_unavailable', error instanceof Error ? error.message : String(error)) }
     }
     if (entry.pending) return failedWorkerResult(job, 'browser_unavailable', `Action worker account #${job.accountId} đang bận.`)
     return new Promise<ScenarioActionWorkerResult>((resolve) => {
@@ -144,7 +148,11 @@ export class ScenarioActionWorkerManager {
 
   closeAll(): void {
     this.specialHandler?.closeAll?.()
-    for (const entry of this.workers.values()) { entry.shuttingDown = true; entry.process.kill() }
+    for (const entry of this.workers.values()) {
+      entry.shuttingDown = true
+      entry.process.kill()
+      void this.cleanupWorkerBrowser(entry, 'manager closeAll force kill')
+    }
     this.workers.clear()
   }
 
@@ -154,23 +162,34 @@ export class ScenarioActionWorkerManager {
     if (entry.pending) throw new Error(`Không thể đóng action worker account #${accountId} khi action đang chạy.`)
     if (entry.shuttingDown) return
     entry.shuttingDown = true
+    let forced = false
+    let exitCode: number | null = null
     await new Promise<void>((resolve) => {
       let settled = false
       const finish = () => { if (settled) return; settled = true; if (this.workers.get(accountId) === entry) this.workers.delete(accountId); resolve() }
-      entry.process.once('exit', finish)
-      const timer = setTimeout(() => { try { entry.process.kill() } finally { finish() } }, SHUTDOWN_TIMEOUT_MS)
+      entry.process.once('exit', (code) => { exitCode = code; finish() })
+      const timer = setTimeout(() => {
+        forced = true
+        try { entry.process.kill() } finally { finish() }
+      }, SHUTDOWN_TIMEOUT_MS)
       entry.process.once('exit', () => clearTimeout(timer))
-      try { entry.process.postMessage({ type: 'shutdown' }) } catch { entry.process.kill() }
+      try { entry.process.postMessage({ type: 'shutdown' }) } catch { forced = true; entry.process.kill() }
     })
+
+    if (forced || exitCode !== 0) {
+      await this.cleanupWorkerBrowser(entry, forced ? 'shutdown timeout/force kill' : `shutdown exit code ${exitCode}`)
+    }
   }
 
-  private spawn(job: ScenarioActionWorkerJob): WorkerEntry {
-    const managedEndpoint = getManagedBrowserEndpoint(job.accountId, job.profileDirectory)
+  private spawn(job: ScenarioActionWorkerJob, launchFingerprint: string): WorkerEntry {
+    const managedEndpoint = getManagedBrowserEndpoint(job.accountId, job.profileDirectory, launchFingerprint)
     const args = managedEndpoint ? [`${MANAGED_CDP_ARG_PREFIX}${managedEndpoint}`] : []
     const process = utilityProcess.fork(join(__dirname, 'scenario-action-worker.js'), args, { serviceName: `PAGE-AUTO scenario action account ${job.accountId}` })
     const entry: WorkerEntry = {
       accountId: job.accountId,
       profileDirectory: job.profileDirectory,
+      launchFingerprint,
+      managedEndpoint,
       process,
       ready: false,
       pending: null,
@@ -179,11 +198,19 @@ export class ScenarioActionWorkerManager {
     this.workers.set(job.accountId, entry)
     process.on('message', (message) => this.handleMessage(entry, message))
     process.once('exit', (code) => {
+      const expectedShutdown = entry.shuttingDown
       entry.shuttingDown = true
       const pending = entry.pending
       entry.pending = null
-      if (pending) { if (pending.timer) clearTimeout(pending.timer); pending.resolve(failedWorkerResult(pending.job, 'browser_unavailable', `Action worker đã thoát (code ${code}).`)) }
+      if (pending?.timer) clearTimeout(pending.timer)
       if (this.workers.get(job.accountId) === entry) this.workers.delete(job.accountId)
+
+      const settle = () => pending?.resolve(failedWorkerResult(pending.job, 'browser_unavailable', `Action worker đã thoát (code ${code}).`))
+      if (!expectedShutdown) {
+        void this.cleanupWorkerBrowser(entry, `unexpected worker exit code ${code}`).finally(settle)
+      } else {
+        settle()
+      }
     })
     return entry
   }
@@ -193,7 +220,14 @@ export class ScenarioActionWorkerManager {
     if (!pending || pending.sent || !entry.ready || entry.shuttingDown) return
     pending.sent = true
     try { entry.process.postMessage({ type: 'execute', job }) } catch (error) {
-      if (pending.timer) clearTimeout(pending.timer); entry.pending = null; pending.resolve(failedWorkerResult(job, 'browser_unavailable', error instanceof Error ? error.message : String(error)))
+      if (pending.timer) clearTimeout(pending.timer)
+      entry.pending = null
+      entry.shuttingDown = true
+      if (this.workers.get(entry.accountId) === entry) this.workers.delete(entry.accountId)
+      try { entry.process.kill() } catch { /* cleanup below owns fallback */ }
+      void this.cleanupWorkerBrowser(entry, 'dispatch failure').finally(() => {
+        pending.resolve(failedWorkerResult(job, 'browser_unavailable', error instanceof Error ? error.message : String(error)))
+      })
     }
   }
 
@@ -227,7 +261,21 @@ export class ScenarioActionWorkerManager {
       entry.shuttingDown = true
       this.workers.delete(entry.accountId)
       entry.process.kill()
-      pending.resolve(failedWorkerResult(pending.job, 'network_timeout', 'Action worker vượt giới hạn runtime cho phép.'))
+      void this.cleanupWorkerBrowser(entry, 'worker runtime timeout').finally(() => {
+        pending.resolve(failedWorkerResult(pending.job, 'network_timeout', 'Action worker vượt giới hạn runtime cho phép.'))
+      })
     }, pending.remainingTimeoutMs)
+  }
+
+  private async cleanupWorkerBrowser(entry: WorkerEntry, reason: string): Promise<void> {
+    try {
+      const closed = await closeOrphanedProfileChrome(entry.profileDirectory, entry.managedEndpoint)
+      if (closed) console.info(`[PAGE-AUTO browser-close] account=${entry.accountId} ${reason} → orphan Chrome closed`)
+    } catch (error) {
+      console.error(
+        `[PAGE-AUTO browser-close] account=${entry.accountId} ${reason} → orphan cleanup failed:`,
+        error instanceof Error ? error.message : String(error)
+      )
+    }
   }
 }

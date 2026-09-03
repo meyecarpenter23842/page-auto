@@ -1,7 +1,8 @@
 import type Database from 'better-sqlite3'
 import type { AccountRecord } from '../../shared/accounts'
-import type { RuntimeSettings } from '../../shared/appSettings'
-import type { ActionExecutionSummary, ActionLogEvent } from '../../shared/actionRuntime'
+import type { AppSettings, RuntimeSettings } from '../../shared/appSettings'
+import type { BrowserWindowPlacement } from '../../shared/browserWindowLayout'
+import type { ActionExecutionSummary, ActionLogEvent, ActionRunRequest } from '../../shared/actionRuntime'
 import { facebookSessionPolicyStateFromRuntimeState } from '../../shared/facebookSessionPolicy'
 import type {
   ScenarioActionSessionAccount,
@@ -25,6 +26,29 @@ export function canonicalScenarioActionSessionAccount(account: AccountRecord): S
     cookie: account.cookie,
     twoFactorSecret: account.twoFactorSecret,
     name: account.name
+  }
+}
+
+/**
+ * Build only the immutable business/settings part of a Scenario/Workspace job.
+ * Account-derived launch/session data is intentionally left as a placeholder and
+ * must be resolved by FacebookCommonSessionPolicy immediately before execution.
+ */
+export function scenarioActionJobForCommonSessionPolicy(
+  account: AccountRecord,
+  request: ActionRunRequest,
+  settings: AppSettings,
+  browserPlacement?: BrowserWindowPlacement | null
+): ScenarioActionWorkerJob {
+  return {
+    accountId: account.id,
+    profileDirectory: '',
+    browser: { ...settings.browser },
+    session: { ...settings.session },
+    network: { ...settings.network },
+    sessionAccount: canonicalScenarioActionSessionAccount(account),
+    request,
+    ...(browserPlacement ? { browserPlacement } : {})
   }
 }
 
