@@ -12,8 +12,10 @@ import {
 import {
   canAttemptAnotherJoin,
   configuredGroupTargets,
+  directGroupMembershipState,
   findSurfaceJoinButtons,
   groupTextMatchesFilters,
+  joinButtonBelongsToDirectGroup,
   joinCandidateText,
   normalizeGroupUrl,
   paceJoinGroup,
@@ -113,6 +115,21 @@ async function joinFromIdList(
       continue
     }
 
+    const existingMembership = await directGroupMembershipState(page)
+    if (existingMembership) {
+      stats.skipped += 1
+      context.log(
+        'info',
+        existingMembership === 'joined'
+          ? 'Bỏ qua Group ID hiện tại vì account đã là thành viên của Group đích.'
+          : 'Bỏ qua Group ID hiện tại vì yêu cầu tham gia Group đích đang chờ duyệt.',
+        existingMembership === 'joined'
+          ? 'join_group_target_already_joined'
+          : 'join_group_target_already_pending'
+      )
+      continue
+    }
+
     const buttons = await findSurfaceJoinButtons(page)
     if (!buttons) {
       stats.skipped += 1
@@ -126,9 +143,14 @@ async function joinFromIdList(
 
     const count = await buttons.count().catch(() => 0)
     let handled = false
+    let sawRelatedGroupButton = false
     for (let index = 0; index < count; index += 1) {
       const button = buttons.nth(index)
       if (!await button.isVisible().catch(() => false)) continue
+      if (!await joinButtonBelongsToDirectGroup(page, button)) {
+        sawRelatedGroupButton = true
+        continue
+      }
       handled = true
       context.log('debug', 'Group ID đạt bộ lọc; bắt đầu thao tác Tham gia.', 'join_group_attempt_start')
       if (!await runJoinButton(page, button, context, config, target, stats, true)) return
@@ -137,9 +159,11 @@ async function joinFromIdList(
     if (!handled) {
       stats.skipped += 1
       context.log(
-        'warning',
-        'Có locator nút Tham gia nhưng không có nút nào đang hiển thị.',
-        'join_group_button_not_visible'
+        sawRelatedGroupButton ? 'info' : 'warning',
+        sawRelatedGroupButton
+          ? 'Không tìm thấy nút Tham gia của Group đích; đã bỏ qua các nút Tham gia thuộc Related groups.'
+          : 'Có locator nút Tham gia nhưng không có nút nào đang hiển thị.',
+        sawRelatedGroupButton ? 'join_group_only_related_buttons' : 'join_group_button_not_visible'
       )
     }
   }
