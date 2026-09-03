@@ -6,7 +6,10 @@ import { chromium, type BrowserContext, type CDPSession, type Page } from 'playw
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_APP_SETTINGS } from '../../shared/appSettings'
 import type { BrowserWindowPlacement } from '../../shared/browserWindowLayout'
-import { normalizeAutomationPageZoom } from './automationBrowserVisualContract'
+import {
+  normalizeAutomationPageZoom,
+  normalizeAutomationProfileZoom
+} from './automationBrowserVisualContract'
 import { applyBrowserWindowPlacement, buildBrowserLaunchOptions } from './browserRuntime'
 import {
   captureBrowserVisualLayoutBaseline,
@@ -170,7 +173,14 @@ realChromeDescribe('Issue #273 Batch 5 Windows visual recovery matrix', () => {
     let server: Server | null = null
 
     try {
-      await seedPersistedZoom(compactProfile, 1.2)
+      await Promise.all([
+        seedPersistedZoom(normalProfile, 1.2),
+        seedPersistedZoom(compactProfile, 1.2)
+      ])
+      const compactProfileNormalization = await normalizeAutomationProfileZoom(compactProfile)
+      expect(compactProfileNormalization.status).toBe('normalized')
+      expect(compactProfileNormalization.changed).toBe(true)
+
       const localPage = await startLocalPageServer()
       server = localPage.server
 
@@ -194,14 +204,21 @@ realChromeDescribe('Issue #273 Batch 5 Windows visual recovery matrix', () => {
         compactContext.newCDPSession(compactPage)
       ])
 
-      const persistedZoom = await readPageZoom(compactSession)
-      expect(persistedZoom).not.toBeNull()
-      expect(Math.abs((persistedZoom ?? 1) - 1)).toBeGreaterThan(0.05)
+      const persistedNormalZoom = await readPageZoom(normalSession)
+      expect(persistedNormalZoom).not.toBeNull()
+      expect(Math.abs((persistedNormalZoom ?? 1) - 1)).toBeGreaterThan(0.05)
 
-      const normalizedZoom = await normalizeAutomationPageZoom(compactContext, compactPage)
-      expect(normalizedZoom.status).toBe('normalized')
-      expect(normalizedZoom.after).not.toBeNull()
-      expect(normalizedZoom.after).toBeCloseTo(1, 2)
+      const normalZoomNormalization = await normalizeAutomationPageZoom(normalContext, normalPage)
+      expect(normalZoomNormalization.status).toBe('normalized')
+      expect(normalZoomNormalization.after).not.toBeNull()
+      expect(normalZoomNormalization.after).toBeCloseTo(1, 2)
+
+      const compactZoom = await readPageZoom(compactSession)
+      expect(compactZoom).not.toBeNull()
+      expect(compactZoom).toBeCloseTo(1, 2)
+      const compactZoomReadiness = await normalizeAutomationPageZoom(compactContext, compactPage)
+      expect(compactZoomReadiness.status).toBe('ready')
+      expect(compactZoomReadiness.after).toBeCloseTo(1, 2)
 
       await applyBrowserWindowPlacement(compactContext, compactPage, compactPlacement)
 
