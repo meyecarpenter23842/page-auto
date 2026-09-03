@@ -78,6 +78,27 @@ describe('automationBrowserVisualContract', () => {
     expect(sent).toEqual(['Digit0', 'Equal', 'Equal'])
   })
 
+  it('lets a transient post-resize zoom metric settle back to 100 percent before sending shortcuts', async () => {
+    const zoomReads = [0.8, 1]
+    let inputEvents = 0
+    const session = {
+      send: async (method: string) => {
+        if (method === 'Page.getLayoutMetrics') {
+          return { cssVisualViewport: { zoom: zoomReads.shift() ?? 1 } }
+        }
+        if (method === 'Input.dispatchKeyEvent') inputEvents += 1
+        return {}
+      },
+      detach: async () => undefined
+    } as unknown as CDPSession
+    const context = { newCDPSession: async () => session } as unknown as BrowserContext
+
+    const result = await normalizeAutomationPageZoom(context, {} as Page)
+
+    expect(result).toEqual({ status: 'normalized', before: 0.8, after: 1 })
+    expect(inputEvents).toBe(0)
+  })
+
   it('does not send zoom shortcuts when the live page is already at 100 percent', async () => {
     let inputEvents = 0
     const session = {
