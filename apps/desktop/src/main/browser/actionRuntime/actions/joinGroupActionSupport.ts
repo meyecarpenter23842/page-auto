@@ -65,6 +65,7 @@ const NON_GROUP_SURFACES = new Set(['discover', 'feed', 'joins', 'notifications'
 
 export type GroupPrivacy = 'open' | 'closed' | 'unknown'
 export type JoinAttemptOutcome = 'joined' | 'requested' | 'skipped_approval' | 'unverified'
+export type DirectGroupMembershipState = 'joined' | 'requested' | null
 
 export function normalizeGroupUrl(value: string): string {
   const input = value.trim()
@@ -185,7 +186,7 @@ async function candidateContainer(button: Locator): Promise<Locator | null> {
   return null
 }
 
-async function candidateGroupIdentity(button: Locator): Promise<string | null> {
+export async function candidateGroupIdentity(button: Locator): Promise<string | null> {
   const container = await candidateContainer(button)
   if (!container) return null
   const links = container.locator('a[href*="/groups/"]')
@@ -212,6 +213,39 @@ async function candidateContainerByIdentity(page: Page, identity: string): Promi
     if (await groupCard.count().catch(() => 0)) return groupCard
   }
   return null
+}
+
+async function firstVisibleForDirectGroup(
+  page: Page,
+  selectors: readonly string[],
+  targetIdentity: string
+): Promise<boolean> {
+  for (const selector of selectors) {
+    const matches = page.locator(selector)
+    const count = await matches.count().catch(() => 0)
+    for (let index = 0; index < count; index += 1) {
+      const candidate = matches.nth(index)
+      if (!await candidate.isVisible().catch(() => false)) continue
+      const identity = await candidateGroupIdentity(candidate)
+      if (identity === null || identity === targetIdentity) return true
+    }
+  }
+  return false
+}
+
+export async function directGroupMembershipState(page: Page): Promise<DirectGroupMembershipState> {
+  const targetIdentity = groupIdentityFromHref(page.url())
+  if (!targetIdentity) return null
+  if (await firstVisibleForDirectGroup(page, JOINED_SELECTORS, targetIdentity)) return 'joined'
+  if (await firstVisibleForDirectGroup(page, PENDING_SELECTORS, targetIdentity)) return 'requested'
+  return null
+}
+
+export async function joinButtonBelongsToDirectGroup(page: Page, button: Locator): Promise<boolean> {
+  const targetIdentity = groupIdentityFromHref(page.url())
+  if (!targetIdentity) return true
+  const candidateIdentity = await candidateGroupIdentity(button)
+  return candidateIdentity === null || candidateIdentity === targetIdentity
 }
 
 export async function joinCandidateText(button: Locator): Promise<string> {
@@ -276,8 +310,8 @@ async function verifyJoinOutcome(page: Page, candidateIdentity: string | null): 
   }
 
   if (isDirectGroupPageUrl(page.url())) {
-    if (await firstVisible(page, JOINED_SELECTORS)) return 'joined'
-    if (await firstVisible(page, PENDING_SELECTORS)) return 'requested'
+    const state = await directGroupMembershipState(page)
+    if (state) return state
   }
 
   return 'unverified'
