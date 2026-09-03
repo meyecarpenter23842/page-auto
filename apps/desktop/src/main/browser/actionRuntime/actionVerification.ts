@@ -30,7 +30,14 @@ async function waitForVerificationPoll(
   return true
 }
 
-async function pollVerifiedState<T>(
+/**
+ * Shared bounded poll for post-action state verification.
+ *
+ * The timeout includes time spent inside the verifier itself. The additional poll-count bound is
+ * intentional: test/control wait implementations may resolve without advancing a clock, and must
+ * never create a busy loop.
+ */
+export async function pollActionVerificationState<T>(
   verify: () => Promise<T | null>,
   polling: ActionVerificationPolling | undefined
 ): Promise<T | null> {
@@ -40,8 +47,6 @@ async function pollVerifiedState<T>(
   const intervalMs = Math.max(50, Math.floor(polling.intervalMs))
   const now = polling.now ?? Date.now
   const deadline = now() + timeoutMs
-  // Keep a count bound as a second safety rail. In production the wait consumes real time,
-  // but test/control implementations may resolve early; they must never create a busy loop.
   const maxAdditionalPolls = Math.max(1, Math.ceil(timeoutMs / intervalMs))
 
   const first = await verify()
@@ -97,7 +102,7 @@ export async function verifyActionWithTargetRevisit<T>(input: {
     }
   }
 
-  const verified = await pollVerifiedState(input.verifyAfterRevisit, input.polling)
+  const verified = await pollActionVerificationState(input.verifyAfterRevisit, input.polling)
   if (verified === null) {
     return {
       status: 'uncertain',

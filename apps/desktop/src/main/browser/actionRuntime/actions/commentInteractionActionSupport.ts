@@ -1,6 +1,7 @@
 import type { Locator, Page } from 'playwright-core'
 import type { ActionConfig } from '../../../../shared/actionRegistry'
 import type { ActionExecutorContext } from '../../../services/actionRunner'
+import { pollActionVerificationState } from '../actionVerification'
 import {
   configNumber,
   configString,
@@ -8,6 +9,8 @@ import {
   pickOne,
   selectedReactions,
   sleepWithControl,
+  visibleSubmittedTextCount,
+  waitForSubmittedTextIncrease,
   type BaseViewActionDependencies
 } from './actionSupport'
 import { targetUrl } from './friendActionSupport'
@@ -20,6 +23,13 @@ const COMMENT_LIKE_SELECTORS = [
   '[role="button"][aria-label="Thích"]',
   'div[role="button"]:has-text("Like")',
   'div[role="button"]:has-text("Thích")'
+] as const
+const APPLIED_COMMENT_REACTION_SELECTORS = [
+  '[role="button"][aria-label^="Remove "]',
+  '[role="button"][aria-label^="Unlike"]',
+  '[role="button"][aria-label^="Bỏ "]',
+  '[role="button"][aria-label^="Gỡ "]',
+  '[role="button"][aria-label^="Xóa "]'
 ] as const
 const REPLY_SELECTORS = [
   'div[role="button"]:has-text("Reply")',
@@ -47,6 +57,8 @@ const REACTION_SELECTORS: Record<string, readonly string[]> = {
   sad: ['[role="button"][aria-label="Sad"]', '[role="button"][aria-label="Buồn"]'],
   angry: ['[role="button"][aria-label="Angry"]', '[role="button"][aria-label="Phẫn nộ"]']
 }
+const REACTION_VERIFY_TIMEOUT_MS = 3000
+const REACTION_VERIFY_POLL_MS = 150
 
 export async function navigateInteractionTarget(page: Page, value: string, timeoutMs = 45_000): Promise<boolean> {
   const input = value.trim()
@@ -74,14 +86,30 @@ export async function findCommentArticle(page: Page, matchText = ''): Promise<Lo
   return null
 }
 
+async function waitForAppliedCommentReaction(page: Page, article: Locator): Promise<boolean> {
+  const verified = await pollActionVerificationState(
+    async () => await firstVisible(article, APPLIED_COMMENT_REACTION_SELECTORS) ? true : null,
+    {
+      timeoutMs: REACTION_VERIFY_TIMEOUT_MS,
+      intervalMs: REACTION_VERIFY_POLL_MS,
+      wait: (delayMs) => page.waitForTimeout(delayMs).then(() => true).catch(() => false)
+    }
+  )
+  return verified === true
+}
+
 export async function reactToComment(page: Page, article: Locator, config: ActionConfig): Promise<boolean> {
   const like = await firstVisible(article, COMMENT_LIKE_SELECTORS)
   if (!like) return false
   const reaction = pickOne(selectedReactions(config)) ?? 'like'
-  if (reaction === 'like') return like.click({ timeout: 5000 }).then(() => true).catch(() => false)
+  if (reaction === 'like') {
+    if (!await like.click({ timeout: 5000 }).then(() => true).catch(() => false)) return false
+    return waitForAppliedCommentReaction(page, article)
+  }
   if (!await like.hover({ timeout: 5000 }).then(() => true).catch(() => false)) return false
   const choice = await firstVisible(page, REACTION_SELECTORS[reaction] ?? COMMENT_LIKE_SELECTORS)
-  return choice ? choice.click({ timeout: 5000 }).then(() => true).catch(() => false) : false
+  if (!choice || !await choice.click({ timeout: 5000 }).then(() => true).catch(() => false)) return false
+  return waitForAppliedCommentReaction(page, article)
 }
 
 async function attachImageIfConfigured(page: Page, imagePath: string): Promise<void> {
@@ -91,13 +119,19 @@ async function attachImageIfConfigured(page: Page, imagePath: string): Promise<v
 }
 
 export async function replyToComment(page: Page, article: Locator, text: string, imagePath = ''): Promise<boolean> {
+  const value = text.trim()
+  if (!value) return false
   const reply = await firstVisible(article, REPLY_SELECTORS)
   if (!reply || !await reply.click({ timeout: 5000 }).then(() => true).catch(() => false)) return false
-  const box = await firstVisible(page, COMMENT_BOX_SELECTORS)
+  const scopedBox = await firstVisible(article, COMMENT_BOX_SELECTORS)
+  const box = scopedBox ?? await firstVisible(page, COMMENT_BOX_SELECTORS)
   if (!box) return false
+  const verificationScope: Page | Locator = scopedBox ? article : page
+  const baseline = await visibleSubmittedTextCount(verificationScope, value)
   await attachImageIfConfigured(page, imagePath)
-  if (!await box.fill(text, { timeout: 5000 }).then(() => true).catch(() => false)) return false
-  return box.press('Enter', { timeout: 5000 }).then(() => true).catch(() => false)
+  if (!await box.fill(value, { timeout: 5000 }).then(() => true).catch(() => false)) return false
+  if (!await box.press('Enter', { timeout: 5000 }).then(() => true).catch(() => false)) return false
+  return waitForSubmittedTextIncrease(page, verificationScope, value, baseline)
 }
 
 export async function commentWithTag(page: Page, tagTarget: string, text: string): Promise<boolean> {
