@@ -87,6 +87,24 @@ describe('browserVisualLayoutGuard', () => {
     expect(result.drift).toContain('window_bounds')
   })
 
+  it('waits for renderer reflow to settle after native recovery instead of false-failing a stale first read', async () => {
+    const context = {} as BrowserContext
+    const resized = { ...baselineMetrics, outerWidth: 1060, innerWidth: 1044, visualViewportWidth: 1044 }
+    const page = pageWithMetrics([baselineMetrics, resized, resized, baselineMetrics])
+    await captureBrowserVisualLayoutBaseline(context, page, state())
+
+    const result = await ensureBrowserVisualLayout({
+      context,
+      page,
+      readState: state,
+      recover: async () => 'recovered'
+    })
+
+    expect(result.status).toBe('recovered')
+    expect(result.drift).toContain('window_bounds')
+    expect(result.snapshot?.outerWidth).toBe(baselineMetrics.outerWidth)
+  })
+
   it('can safely rebaseline a native non-compact layout instead of inventing preferred dimensions', async () => {
     const context = {} as BrowserContext
     const changed = { ...baselineMetrics, outerWidth: 1100, innerWidth: 1084, visualViewportWidth: 1084 }

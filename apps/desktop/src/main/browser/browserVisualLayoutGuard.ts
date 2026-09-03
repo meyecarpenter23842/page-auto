@@ -8,6 +8,8 @@ import {
 } from '../../shared/browserVisualBaseline'
 
 const DEFAULT_METRIC_TIMEOUT_MS = 1_500
+const DEFAULT_RECOVERY_VERIFY_TIMEOUT_MS = 1_500
+const RECOVERY_VERIFY_INTERVAL_MS = 100
 const baselines = new WeakMap<BrowserContext, BrowserVisualBaselineSnapshot>()
 
 export interface BrowserVisualLayoutState {
@@ -28,6 +30,12 @@ export interface BrowserVisualLayoutGuardResult {
 function metricsTimeout(timeoutMs: number): Promise<null> {
   return new Promise((resolve) => {
     setTimeout(() => resolve(null), Math.max(1, timeoutMs))
+  })
+}
+
+function delay(timeoutMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, Math.max(1, timeoutMs))
   })
 }
 
@@ -63,6 +71,48 @@ function snapshotFromMetrics(
     compact: state.compact,
     manualResizeDetached: state.manualResizeDetached
   })
+}
+
+async function waitForRecoveredVisualLayout(input: {
+  page: Page
+  readState: () => BrowserVisualLayoutState
+  baseline: BrowserVisualBaselineSnapshot
+  metricTimeoutMs: number
+}): Promise<{
+  stable: boolean
+  snapshot: BrowserVisualBaselineSnapshot | null
+  drift: BrowserVisualDriftKind[]
+}> {
+  const deadline = Date.now() + DEFAULT_RECOVERY_VERIFY_TIMEOUT_MS
+  let latestSnapshot: BrowserVisualBaselineSnapshot | null = null
+  let latestDrift: BrowserVisualDriftKind[] = []
+
+  while (true) {
+    const remainingMs = Math.max(1, deadline - Date.now())
+    const metrics = await readBrowserVisualMetrics(
+      input.page,
+      Math.min(input.metricTimeoutMs, remainingMs)
+    )
+    if (metrics) {
+      const snapshot = snapshotFromMetrics(metrics, input.readState())
+      const comparison = compareBrowserVisualBaseline(input.baseline, snapshot)
+      latestSnapshot = snapshot
+      latestDrift = comparison.drift
+      if (comparison.stable) {
+        return { stable: true, snapshot, drift: [] }
+      }
+    }
+
+    const remainingAfterReadMs = deadline - Date.now()
+    if (remainingAfterReadMs <= 0) break
+    await delay(Math.min(RECOVERY_VERIFY_INTERVAL_MS, remainingAfterReadMs))
+  }
+
+  return {
+    stable: false,
+    snapshot: latestSnapshot,
+    drift: latestDrift
+  }
 }
 
 export function getBrowserVisualLayoutBaseline(context: BrowserContext): BrowserVisualBaselineSnapshot | null {
@@ -164,23 +214,29 @@ export async function ensureBrowserVisualLayout(input: {
     }
   }
 
-  const recoveredMetrics = await readBrowserVisualMetrics(input.page, timeoutMs)
-  if (!recoveredMetrics) {
-    return {
-      status: 'failed',
-      message: 'Visual/Layout Guard không đọc được Chrome sau recovery.',
-      drift: comparison.drift,
-      snapshot: null
+  // Native Chrome bounds can settle before renderer metrics finish reflowing. Verify the
+  // recovered baseline with bounded polling so a successful placement is not false-failed
+  // just because window.outer/inner/visualViewport still report one transient stale frame.
+  const recovered = await waitForRecoveredVisualLayout({
+    page: input.page,
+    readState: input.readState,
+    baseline,
+    metricTimeoutMs: timeoutMs
+  })
+  if (!recovered.stable) {
+    if (!recovered.snapshot) {
+      return {
+        status: 'failed',
+        message: 'Visual/Layout Guard không đọc được Chrome sau recovery.',
+        drift: comparison.drift,
+        snapshot: null
+      }
     }
-  }
-  const recovered = snapshotFromMetrics(recoveredMetrics, input.readState())
-  const recoveredComparison = compareBrowserVisualBaseline(baseline, recovered)
-  if (!recoveredComparison.stable) {
     return {
       status: 'failed',
-      message: `Visual/Layout Guard vẫn còn drift sau recovery: ${recoveredComparison.drift.join(', ')}.`,
-      drift: recoveredComparison.drift,
-      snapshot: recovered
+      message: `Visual/Layout Guard vẫn còn drift sau recovery: ${recovered.drift.join(', ')}.`,
+      drift: recovered.drift,
+      snapshot: recovered.snapshot
     }
   }
 
@@ -188,6 +244,6 @@ export async function ensureBrowserVisualLayout(input: {
     status: 'recovered',
     message: 'Visual/Layout Guard đã recover layout về runtime baseline.',
     drift: comparison.drift,
-    snapshot: recovered
+    snapshot: recovered.snapshot
   }
 }
