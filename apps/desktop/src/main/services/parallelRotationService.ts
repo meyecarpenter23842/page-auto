@@ -381,16 +381,18 @@ export class ParallelRotationService {
       if (session.stopRequested) { if (session.inFlightCount === 0) this.finalizeStop(session); return }
       if (session.manualPaused) continue
 
-      const remainingTurns = session.turns.filter((turn) => !turn.done)
-      if (!remainingTurns.length) {
-        this.completeAccountCycle(session)
-        continue
-      }
       if (session.turns.every((turn) => turn.done && turn.unavailable)) {
         session.manualPaused = true
         session.status = 'paused'
         session.message = 'Không còn tài khoản khả dụng trong vòng hiện tại. Đã tạm dừng để người vận hành xử lý.'
         if (session.run.run.status === 'running') session.run = this.runs.pause(session.runId)
+        this.settleCycle()
+        continue
+      }
+
+      const remainingTurns = session.turns.filter((turn) => !turn.done)
+      if (!remainingTurns.length) {
+        this.completeAccountCycle(session)
         continue
       }
 
