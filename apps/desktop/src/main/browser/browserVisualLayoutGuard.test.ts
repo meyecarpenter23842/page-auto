@@ -134,6 +134,94 @@ describe('browserVisualLayoutGuard', () => {
     expect(result.snapshot?.outerWidth).toBe(baselineMetrics.outerWidth)
   })
 
+  it('refreshes only renderer geometry after an explicitly verified Compact placement recovery', async () => {
+    const context = {} as BrowserContext
+    const resized = {
+      ...baselineMetrics,
+      outerWidth: 1060,
+      innerWidth: 1044,
+      visualViewportWidth: 1044
+    }
+    const settledAfterPlacement = {
+      ...baselineMetrics,
+      outerWidth: 904,
+      innerWidth: 888,
+      visualViewportWidth: 888
+    }
+    let detached = false
+    const readState = () => ({ browserScale: 0.4, compact: true, manualResizeDetached: detached })
+    const page = pageWithMetrics([
+      baselineMetrics,
+      baselineMetrics,
+      baselineMetrics,
+      resized,
+      settledAfterPlacement,
+      settledAfterPlacement,
+      settledAfterPlacement
+    ])
+    await captureBrowserVisualLayoutBaseline(context, page, readState())
+    detached = true
+
+    const result = await ensureBrowserVisualLayout({
+      context,
+      page,
+      readState,
+      recover: async () => {
+        detached = false
+        return 'recovered_geometry'
+      }
+    })
+
+    expect(result.status).toBe('recovered')
+    expect(result.drift).toContain('window_bounds')
+    expect(result.drift).toContain('manual_resize_detached')
+    expect(result.snapshot?.outerWidth).toBe(904)
+    expect(result.snapshot?.manualResizeDetached).toBe(false)
+  })
+
+  it('does not hide DPR/scale contract drift behind Compact geometry refresh', async () => {
+    const context = {} as BrowserContext
+    const resized = {
+      ...baselineMetrics,
+      outerWidth: 1060,
+      innerWidth: 1044,
+      visualViewportWidth: 1044
+    }
+    const wrongScale = {
+      ...baselineMetrics,
+      outerWidth: 904,
+      innerWidth: 888,
+      visualViewportWidth: 888,
+      devicePixelRatio: 1
+    }
+    let detached = false
+    const readState = () => ({ browserScale: 0.4, compact: true, manualResizeDetached: detached })
+    const page = pageWithMetrics([
+      baselineMetrics,
+      baselineMetrics,
+      baselineMetrics,
+      resized,
+      wrongScale,
+      wrongScale,
+      wrongScale
+    ])
+    await captureBrowserVisualLayoutBaseline(context, page, readState())
+    detached = true
+
+    const result = await ensureBrowserVisualLayout({
+      context,
+      page,
+      readState,
+      recover: async () => {
+        detached = false
+        return 'recovered_geometry'
+      }
+    })
+
+    expect(result.status).toBe('failed')
+    expect(result.drift).toContain('device_pixel_ratio')
+  })
+
   it('can safely rebaseline a native non-compact layout instead of inventing preferred dimensions', async () => {
     const context = {} as BrowserContext
     const changed = { ...baselineMetrics, outerWidth: 1100, innerWidth: 1084, visualViewportWidth: 1084 }

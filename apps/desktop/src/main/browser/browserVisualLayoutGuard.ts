@@ -11,6 +11,11 @@ const DEFAULT_METRIC_TIMEOUT_MS = 1_500
 const DEFAULT_LAYOUT_SETTLE_TIMEOUT_MS = 1_500
 const LAYOUT_SETTLE_INTERVAL_MS = 100
 const STABLE_COMPARISONS_REQUIRED = 2
+const GEOMETRY_RECOVERY_DRIFT = new Set<BrowserVisualDriftKind>([
+  'window_bounds',
+  'layout_viewport',
+  'visual_viewport'
+])
 const baselines = new WeakMap<BrowserContext, BrowserVisualBaselineSnapshot>()
 
 export interface BrowserVisualLayoutState {
@@ -19,7 +24,11 @@ export interface BrowserVisualLayoutState {
   manualResizeDetached: boolean
 }
 
-export type BrowserVisualRecoveryDecision = 'recovered' | 'rebaseline' | 'failed'
+export type BrowserVisualRecoveryDecision =
+  | 'recovered'
+  | 'recovered_geometry'
+  | 'rebaseline'
+  | 'failed'
 
 export interface BrowserVisualLayoutGuardResult {
   status: 'captured' | 'ready' | 'recovered' | 'rebaselined' | 'failed'
@@ -150,6 +159,10 @@ async function waitForRecoveredVisualLayout(input: {
   }
 }
 
+function nonGeometryDrift(drift: readonly BrowserVisualDriftKind[]): BrowserVisualDriftKind[] {
+  return drift.filter((kind) => !GEOMETRY_RECOVERY_DRIFT.has(kind))
+}
+
 export function getBrowserVisualLayoutBaseline(context: BrowserContext): BrowserVisualBaselineSnapshot | null {
   return baselines.get(context) ?? null
 }
@@ -264,6 +277,40 @@ export async function ensureBrowserVisualLayout(input: {
     return {
       status: 'rebaselined',
       message: 'Visual/Layout Guard đã nhận runtime layout ổn định mới làm baseline an toàn.',
+      drift: comparison.drift,
+      snapshot: next
+    }
+  }
+  if (decision === 'recovered_geometry') {
+    const next = await waitForStableVisualSnapshot({
+      page: input.page,
+      readState: input.readState,
+      metricTimeoutMs: timeoutMs
+    })
+    if (!next) {
+      return {
+        status: 'failed',
+        message: 'Visual/Layout Guard không đọc được renderer ổn định sau native Compact recovery.',
+        drift: comparison.drift,
+        snapshot: null
+      }
+    }
+
+    const postRecovery = compareBrowserVisualBaseline(baseline, next)
+    const hardDrift = nonGeometryDrift(postRecovery.drift)
+    if (hardDrift.length > 0) {
+      return {
+        status: 'failed',
+        message: `Visual/Layout Guard vẫn còn contract drift sau native Compact recovery: ${hardDrift.join(', ')}.`,
+        drift: hardDrift,
+        snapshot: next
+      }
+    }
+
+    baselines.set(input.context, next)
+    return {
+      status: 'recovered',
+      message: 'Visual/Layout Guard đã recover native Compact placement và làm mới renderer geometry ổn định.',
       drift: comparison.drift,
       snapshot: next
     }

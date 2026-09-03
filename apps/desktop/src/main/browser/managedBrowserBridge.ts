@@ -20,7 +20,8 @@ import {
   getBrowserVisualLayoutBaseline,
   readBrowserVisualMetrics,
   type BrowserVisualLayoutGuardResult,
-  type BrowserVisualLayoutState
+  type BrowserVisualLayoutState,
+  type BrowserVisualRecoveryDecision
 } from './browserVisualLayoutGuard'
 import { runWithResizeWatcherPaused } from './resizeWatchGuard'
 
@@ -211,7 +212,7 @@ async function normalizeInitialManagedVisualLayout(
 async function recoverManagedVisualLayout(
   context: BrowserContext,
   page: Page
-): Promise<'recovered' | 'rebaseline' | 'failed'> {
+): Promise<BrowserVisualRecoveryDecision> {
   const expected = visualBaselinePlacement
   if (!expected) {
     manualResizeDetached = false
@@ -229,7 +230,7 @@ async function recoverManagedVisualLayout(
     () => applyBrowserPlacementToContext(context, expected),
     () => armResizeWatch(context)
   )
-  return await normalizeManagedPageZoom(context, page, 'recovery') ? 'recovered' : 'failed'
+  return await normalizeManagedPageZoom(context, page, 'recovery') ? 'recovered_geometry' : 'failed'
 }
 
 function visualContractFailure(message: string): BrowserVisualLayoutGuardResult {

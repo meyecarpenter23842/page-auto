@@ -312,7 +312,7 @@ realChromeDescribe('Issue #273 Batch 5 Windows visual recovery matrix', () => {
             compactDetached = false
             await applyBrowserWindowPlacement(compactContext!, compactPage, compactPlacement)
             const zoom = await normalizeAutomationPageZoom(compactContext!, compactPage)
-            return zoom.status === 'failed' ? 'failed' : 'recovered'
+            return zoom.status === 'failed' ? 'failed' : 'recovered_geometry'
           }
         })
       ])
@@ -320,7 +320,7 @@ realChromeDescribe('Issue #273 Batch 5 Windows visual recovery matrix', () => {
       expect(normalRecovery.status).toBe('rebaselined')
       expect(normalRecovery.drift).toContain('window_bounds')
       expect(normalRecovery.drift).toContain('manual_resize_detached')
-      expect(compactRecovery.status).toBe('recovered')
+      expect(compactRecovery.status, `${compactRecovery.message}; drift=${compactRecovery.drift.join(',')}`).toBe('recovered')
       expect(compactRecovery.drift).toContain('window_bounds')
       expect(compactRecovery.drift).toContain('manual_resize_detached')
 
