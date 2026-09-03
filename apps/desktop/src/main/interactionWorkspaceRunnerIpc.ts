@@ -6,9 +6,9 @@ import {
   type InteractionWorkspaceRunStartPayload
 } from '../shared/interactionWorkspaceRunner'
 import { parsePageJoinGroupWorkspaceConfig } from '../shared/pageJoinGroup'
-import { ScenarioActionWorkerManager } from './browser/scenarioActionWorkerManager'
 import { AppSettingsRepository } from './database/appSettingsRepository'
 import { ActionWorkspaceRepository } from './database/actionWorkspaceRepository'
+import { FacebookSessionPolicyWorkerManager } from './facebook/facebookSessionPolicy'
 import { AccountExecutionCoordinator } from './services/accountExecutionCoordinator'
 import { GroupWorkspaceRunnerService } from './services/groupWorkspaceRunnerService'
 import { InteractionWorkspaceRunnerService } from './services/interactionWorkspaceRunnerService'
@@ -25,7 +25,11 @@ export function registerInteractionWorkspaceRunnerIpcHandlers(
   options: InteractionWorkspaceRunnerIpcOptions
 ): InteractionWorkspaceRunnerIpcRuntime {
   const appSettings = new AppSettingsRepository(options.database)
-  const workers = new ScenarioActionWorkerManager(() => appSettings.get().runtime)
+  const workers = new FacebookSessionPolicyWorkerManager(
+    options.database,
+    options.dataDirectory,
+    () => appSettings.get().runtime
+  )
   const accountExecution = new AccountExecutionCoordinator()
   const workspaces = new ActionWorkspaceRepository(options.database)
   const interactionService = new InteractionWorkspaceRunnerService(

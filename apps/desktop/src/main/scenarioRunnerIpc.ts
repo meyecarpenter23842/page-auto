@@ -5,9 +5,9 @@ import {
   type ScenarioRunnerStartPayload
 } from '../shared/scenarioRunnerRuntime'
 import { BrowserWindowLayoutManager } from './browser/browserWindowLayoutManager'
-import { ScenarioActionWorkerManager } from './browser/scenarioActionWorkerManager'
 import { AppSettingsRepository } from './database/appSettingsRepository'
 import { BrowserWindowLayoutRepository } from './database/browserWindowLayoutRepository'
+import { FacebookSessionPolicyWorkerManager } from './facebook/facebookSessionPolicy'
 import { AccountExecutionCoordinator } from './services/accountExecutionCoordinator'
 import { PostingService } from './services/postingService'
 import { ScenarioPostActionAdapter } from './services/scenarioPostActionAdapter'
@@ -41,7 +41,12 @@ export function registerScenarioRunnerIpcHandlers(options: ScenarioRunnerIpcOpti
     () => browserWindowLayoutSettings.get()
   )
   const postAdapter = new ScenarioPostActionAdapter(options.database, posting)
-  const workers = new ScenarioActionWorkerManager(() => appSettings.get().runtime, postAdapter)
+  const workers = new FacebookSessionPolicyWorkerManager(
+    options.database,
+    options.dataDirectory,
+    () => appSettings.get().runtime,
+    postAdapter
+  )
   const service = new ScenarioRunnerService(
     options.database,
     workers,
