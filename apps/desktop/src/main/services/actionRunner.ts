@@ -6,6 +6,7 @@ import {
 } from '../../shared/actionRegistry'
 import { getActionOverrideValidationErrors } from '../../shared/actionOverrides'
 import {
+  ACTION_VERIFICATION_UNCERTAIN_CODE,
   actionRuntimeResult,
   type ActionExecutionSummary,
   type ActionLogEvent,
@@ -85,6 +86,10 @@ function stoppedResult(): ActionResult {
 
 function canRetry(result: ActionResult, attempt: number, policy: ActionRetryPolicy): boolean {
   if (attempt >= policy.maxAttempts || result.status !== 'failed' || !result.code) return false
+  // A consequential click may already have succeeded even when its final state cannot be
+  // verified. Retrying that result could repeat the action blindly, so this common code is
+  // never retryable even if a persisted retry policy accidentally lists it.
+  if (result.code === ACTION_VERIFICATION_UNCERTAIN_CODE) return false
   return policy.retryableCodes.includes(result.code)
 }
 
