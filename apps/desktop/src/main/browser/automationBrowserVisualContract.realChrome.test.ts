@@ -1,3 +1,4 @@
+import { createServer, type Server } from 'node:http'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -29,6 +30,32 @@ function launchShape() {
     windowWidth: 1280,
     windowHeight: 800
   })
+}
+
+async function startLocalPageServer(): Promise<{ server: Server; url: string }> {
+  const server = createServer((_request, response) => {
+    response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+    response.end('<!doctype html><title>visual-contract</title><main>ready</main>')
+  })
+  await new Promise<void>((resolve, reject) => {
+    const fail = (error: Error) => reject(error)
+    server.once('error', fail)
+    server.listen(0, '127.0.0.1', () => {
+      server.off('error', fail)
+      resolve()
+    })
+  })
+  const address = server.address()
+  if (!address || typeof address === 'string') {
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+    throw new Error('Unable to resolve local visual-contract server address')
+  }
+  return { server, url: `http://127.0.0.1:${address.port}/` }
+}
+
+async function closeServer(server: Server | null): Promise<void> {
+  if (!server) return
+  await new Promise<void>((resolve) => server.close(() => resolve()))
 }
 
 realChromeDescribe('automation browser visual contract on Windows Chrome', () => {
@@ -73,30 +100,37 @@ realChromeDescribe('automation browser visual contract on Windows Chrome', () =>
     }
   }, 45_000)
 
-  it('restores an already-open Chrome tab to 100 percent after live page zoom drift', async () => {
+  it('restores an already-open Chrome tab to 100 percent from a persisted true Chrome zoom', async () => {
     const profileDirectory = await mkdtemp(join(tmpdir(), 'page-auto-live-zoom-contract-'))
     let context: BrowserContext | null = null
     let session: CDPSession | null = null
+    let server: Server | null = null
 
     try {
+      const defaultDirectory = join(profileDirectory, 'Default')
+      await mkdir(defaultDirectory, { recursive: true })
+      await writeFile(join(defaultDirectory, 'Preferences'), JSON.stringify({
+        partition: {
+          // Chromium stores the default page zoom level per storage partition.
+          // `x` is the key for the default profile storage partition.
+          default_zoom_level: { x: 1.2 }
+        }
+      }), 'utf8')
+
+      const localPage = await startLocalPageServer()
+      server = localPage.server
+
       context = await chromium.launchPersistentContext(profileDirectory, {
         ...launchShape(),
         viewport: null
       })
       const page = context.pages()[0] ?? await context.newPage()
-      await page.goto('data:text/html,<title>live-zoom-contract</title><main>ready</main>')
+      await page.goto(localPage.url)
       session = await context.newCDPSession(page)
-
-      const initial = await readPageZoom(session)
-      expect(initial).not.toBeNull()
-      expect(initial).toBeCloseTo(1, 2)
-
-      await page.keyboard.press('Control+-')
-      await page.waitForTimeout(200)
 
       const drifted = await readPageZoom(session)
       expect(drifted).not.toBeNull()
-      expect(drifted ?? 1).toBeLessThan(0.97)
+      expect(Math.abs((drifted ?? 1) - 1)).toBeGreaterThan(0.05)
 
       const normalized = await normalizeAutomationPageZoom(context, page)
       expect(normalized.status).toBe('normalized')
@@ -111,6 +145,7 @@ realChromeDescribe('automation browser visual contract on Windows Chrome', () =>
     } finally {
       await session?.detach().catch(() => undefined)
       await context?.close().catch(() => undefined)
+      await closeServer(server)
       await rm(profileDirectory, { recursive: true, force: true })
     }
   }, 45_000)
