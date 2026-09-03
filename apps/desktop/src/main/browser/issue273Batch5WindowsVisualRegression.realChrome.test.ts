@@ -41,6 +41,30 @@ interface NativeBounds {
   height: number
 }
 
+function resizeTargetAwayFrom(
+  initial: NativeBounds,
+  widthDelta: number,
+  heightDelta: number,
+  minWidth: number,
+  minHeight: number
+): NativeBounds {
+  return {
+    width: initial.width - widthDelta >= minWidth
+      ? initial.width - widthDelta
+      : initial.width + widthDelta,
+    height: initial.height - heightDelta >= minHeight
+      ? initial.height - heightDelta
+      : initial.height + heightDelta
+  }
+}
+
+function maxBoundsDelta(left: NativeBounds, right: NativeBounds): number {
+  return Math.max(
+    Math.abs(left.width - right.width),
+    Math.abs(left.height - right.height)
+  )
+}
+
 async function startLocalPageServer(): Promise<{ server: Server; url: string }> {
   const server = createServer((_request, response) => {
     response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
@@ -258,12 +282,14 @@ realChromeDescribe('Issue #273 Batch 5 Windows visual recovery matrix', () => {
       expect(normalBaseline?.browserScale).toBe(1)
       expect(compactBaseline?.browserScale).toBeCloseTo(COMPACT_SCALE, 3)
 
+      const normalResizeTarget = resizeTargetAwayFrom(normalInitialBounds, 180, 90, 640, 520)
+      const compactResizeTarget = resizeTargetAwayFrom(compactInitialBounds, 120, 80, 520, 420)
       const [normalResizedBounds, compactResizedBounds] = await Promise.all([
-        setAndWaitForStableBounds(normalSession, normalWindowId, { width: 1040, height: 700 }),
-        setAndWaitForStableBounds(compactSession, compactWindowId, { width: 1050, height: 700 })
+        setAndWaitForStableBounds(normalSession, normalWindowId, normalResizeTarget),
+        setAndWaitForStableBounds(compactSession, compactWindowId, compactResizeTarget)
       ])
-      expect(Math.abs(normalResizedBounds.width - normalInitialBounds.width)).toBeGreaterThan(16)
-      expect(Math.abs(compactResizedBounds.width - compactInitialBounds.width)).toBeGreaterThan(16)
+      expect(maxBoundsDelta(normalResizedBounds, normalInitialBounds)).toBeGreaterThan(16)
+      expect(maxBoundsDelta(compactResizedBounds, compactInitialBounds)).toBeGreaterThan(16)
       normalDetached = true
       compactDetached = true
 
