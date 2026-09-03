@@ -2,6 +2,7 @@ import { chromium, type Browser, type BrowserContext } from 'playwright-core'
 import type { BrowserWindowPlacement } from '../../shared/browserWindowLayout'
 import { sameWholeChromeScale, wholeChromeScaleForLaunch } from '../../shared/browserWholeChromeScale'
 import { closeBrowserTarget } from './browserClose'
+import { closeConnectedChromiumProcess } from './browserProcessLifecycle'
 import {
   applyBrowserPlacementToContext,
   applyBrowserWindowPlacement,
@@ -24,6 +25,18 @@ function managedCdpEndpointFromArgs(argv: string[] = process.argv): string | nul
   if (!raw) return null
   const endpoint = raw.slice(MANAGED_CDP_ARG_PREFIX.length).trim()
   return endpoint || null
+}
+
+export function managedCdpLaunchArgs(args: string[] | undefined): string[] {
+  const retained = (args ?? []).filter((arg) =>
+    !arg.startsWith('--remote-debugging-address=')
+    && !arg.startsWith('--remote-debugging-port=')
+  )
+  return [
+    ...retained,
+    '--remote-debugging-address=127.0.0.1',
+    '--remote-debugging-port=0'
+  ]
 }
 
 export function managedCompactLaunchArgs(
@@ -169,10 +182,14 @@ export function installManagedBrowserReuse(): void {
       }
     }
 
-    const compactOptions = activePlacement
-      ? { ...options, args: managedCompactLaunchArgs(options?.args, activePlacement) }
-      : options
-    const context = await originalLaunchPersistentContext(userDataDir, compactOptions)
+    const compactArgs = activePlacement
+      ? managedCompactLaunchArgs(options?.args, activePlacement)
+      : (options?.args ?? [])
+    const persistentOptions = {
+      ...options,
+      args: managedCdpLaunchArgs(compactArgs)
+    }
+    const context = await originalLaunchPersistentContext(userDataDir, persistentOptions)
     const proxy = rememberContext(context, null, requestedScale)
     if (requestedScale !== null && activePlacement) {
       console.info(
@@ -200,10 +217,10 @@ export async function closeManagedPostingBrowser(): Promise<void> {
   launchedWholeChromeScale = null
 
   if (browser) {
-    await closeBrowserTarget(browser, 'Chrome managed của posting worker')
+    await closeConnectedChromiumProcess(browser, 'Chrome managed của automation worker')
     return
   }
-  await closeBrowserTarget(context, 'Persistent Chrome của posting worker')
+  await closeBrowserTarget(context, 'Persistent Chrome của automation worker')
 }
 
 export { managedCdpEndpointFromArgs }

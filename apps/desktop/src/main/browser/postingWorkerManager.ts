@@ -24,6 +24,7 @@ import type {
 } from '../../shared/posting'
 import { getEmailCodeProvider } from '../services/emailCodeProviderRegistry'
 import { configureGlobalBrowserLaunchBroker, setBrowserLaunchAwareTimeout } from './browserLaunchBroker'
+import { closeOrphanedProfileChrome } from './browserProcessLifecycle'
 import { BrowserWindowLayoutManager } from './browserWindowLayoutManager'
 import { facebookLaunchFingerprint, facebookLaunchReuseDecision } from './facebookLaunchFingerprint'
 import { getManagedBrowserEndpoint } from './managedBrowserRegistry'
@@ -43,6 +44,7 @@ interface AccountWorkerEntry {
   accountId: number
   profileDirectory: string
   launchFingerprint: string
+  managedEndpoint: string | null
   process: UtilityProcess
   ready: boolean
   pending: PendingJob | null
@@ -153,10 +155,12 @@ export class PostingWorkerManager {
         this.windowLayout?.release(job.accountId, 'posting')
         entry.shuttingDown = true
         entry.process.kill()
-        pending.resolve({
-          status: 'failed',
-          code: 'worker_timeout',
-          message: `Posting worker vượt giới hạn runtime ${runtime.maxAccountRuntimeSeconds}s; cần review trước khi retry để tránh đăng trùng.`
+        void this.cleanupWorkerBrowser(entry, 'worker timeout').finally(() => {
+          pending.resolve({
+            status: 'failed',
+            code: 'worker_timeout',
+            message: `Posting worker vượt giới hạn runtime ${runtime.maxAccountRuntimeSeconds}s; cần review trước khi retry để tránh đăng trùng.`
+          })
         })
       }, runtime.maxAccountRuntimeSeconds * 1000)
 
@@ -183,8 +187,9 @@ export class PostingWorkerManager {
       try {
         entry.process.kill()
       } catch {
-        // The pending Promise still settles below; exit cleanup is best-effort.
+        // Orphan cleanup below is still attempted.
       }
+      await this.cleanupWorkerBrowser(entry, 'active posting job cancelled')
       pending.resolve({
         status: 'failed',
         code: 'worker_crashed',
@@ -223,7 +228,7 @@ export class PostingWorkerManager {
       })
       forceTimer = setTimeout(() => {
         forced = true
-        accountDiagnostic(accountId, 'shutdown grace timeout → force kill worker; Chrome close chưa được xác nhận')
+        accountDiagnostic(accountId, 'shutdown grace timeout → force kill worker; running orphan cleanup')
         try {
           entry.process.kill()
         } finally {
@@ -243,12 +248,14 @@ export class PostingWorkerManager {
       }
     })
 
+    if (forced || exitCode !== 0) await this.cleanupWorkerBrowser(entry, 'posting worker shutdown fallback')
+
     if (!forced && exitCode === 0) {
       accountDiagnostic(accountId, 'RELEASE complete → posting worker xác nhận Chrome đã đóng')
     } else {
       accountDiagnostic(
         accountId,
-        `RELEASE warning → posting worker đã thoát${exitCode === null ? '' : ` code=${exitCode}`}; Chrome close không được xác nhận`
+        `RELEASE warning → posting worker đã thoát${exitCode === null ? '' : ` code=${exitCode}`}; orphan cleanup đã được chạy`
       )
     }
   }
@@ -276,10 +283,13 @@ export class PostingWorkerManager {
         entry.process.postMessage({ type: 'shutdown' })
       } catch {
         entry.process.kill()
+        void this.cleanupWorkerBrowser(entry, 'closeAll postMessage failure')
         this.windowLayout?.release(accountId, 'posting')
         continue
       }
-      setTimeout(() => entry.process.kill(), 500)
+      setTimeout(() => {
+        try { entry.process.kill() } finally { void this.cleanupWorkerBrowser(entry, 'closeAll force timeout') }
+      }, 500)
       this.windowLayout?.release(accountId, 'posting')
     }
     this.workers.clear()
@@ -295,6 +305,7 @@ export class PostingWorkerManager {
       accountId: job.accountId,
       profileDirectory: job.profileDirectory,
       launchFingerprint,
+      managedEndpoint,
       process: worker,
       ready: false,
       pending: null,
@@ -333,18 +344,25 @@ export class PostingWorkerManager {
     })
 
     worker.once('exit', (code) => {
+      const expectedShutdown = entry.shuttingDown
       if (this.workers.get(job.accountId) === entry) this.workers.delete(job.accountId)
       this.windowLayout?.release(job.accountId, 'posting')
       const pending = entry.pending
       entry.pending = null
-      if (!pending) return
-      clearTimeout(pending.timer)
-      diagnostic(pending.job, `WORKER EXIT code=${code}`)
-      pending.resolve({
-        status: 'failed',
-        code: 'worker_crashed',
-        message: `Posting worker thoát với code ${code}; trạng thái publish có thể chưa xác định, cần review trước khi retry.`
-      })
+      if (pending) clearTimeout(pending.timer)
+
+      const settle = (): void => {
+        if (!pending) return
+        diagnostic(pending.job, `WORKER EXIT code=${code}`)
+        pending.resolve({
+          status: 'failed',
+          code: 'worker_crashed',
+          message: `Posting worker thoát với code ${code}; trạng thái publish có thể chưa xác định, cần review trước khi retry.`
+        })
+      }
+
+      if (!expectedShutdown) void this.cleanupWorkerBrowser(entry, `unexpected worker exit code ${code}`).finally(settle)
+      else settle()
     })
 
     return entry
@@ -396,11 +414,25 @@ export class PostingWorkerManager {
       this.windowLayout?.release(entry.accountId, 'posting')
       entry.shuttingDown = true
       entry.process.kill()
-      pending.resolve({
-        status: 'failed',
-        code: 'worker_crashed',
-        message: error instanceof Error ? error.message : String(error)
+      void this.cleanupWorkerBrowser(entry, 'dispatch failure').finally(() => {
+        pending.resolve({
+          status: 'failed',
+          code: 'worker_crashed',
+          message: error instanceof Error ? error.message : String(error)
+        })
       })
+    }
+  }
+
+  private async cleanupWorkerBrowser(entry: AccountWorkerEntry, reason: string): Promise<void> {
+    try {
+      const closed = await closeOrphanedProfileChrome(entry.profileDirectory, entry.managedEndpoint)
+      if (closed) accountDiagnostic(entry.accountId, `${reason} → orphan Chrome closed`)
+    } catch (error) {
+      console.error(
+        `[PAGE-AUTO browser-close] account=${entry.accountId} ${reason} → orphan cleanup failed:`,
+        error instanceof Error ? error.message : String(error)
+      )
     }
   }
 }
