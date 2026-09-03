@@ -162,3 +162,28 @@ Invariant bắt buộc:
 - Trước migration schema phải audit model hiện có và chỉ thêm ownership/recovery field tối thiểu nếu status hiện tại chưa đủ; không thêm cột chỉ vì đoán.
 
 Audit Issue #263 tại `main@8adb1e2faf98d2990d5be7de494d4d05df2e1325` xác nhận `run_items` đã có `pending/processing/success/failed/skipped`, attempt/timestamp và `RunRepository.claimNext()` dùng transaction + conditional update, nhưng chưa lưu owner account/worker. Batch implementation phải tận dụng nền hiện có và bổ sung ownership/recovery tối thiểu nếu cần.
+
+### 4.7. Facebook Common Session Policy — `VALID / LOGGED_OUT / CHECKPOINT`
+
+Issue #266 chốt **một policy session duy nhất cho toàn app**. Mọi entrypoint có thể mở/chạy Facebook account (Account Manager, Kịch Bản, Tương tác, Nhóm, Page, Page Tab, Page Wall, scheduler/recovery và module tương lai) phải đi qua Facebook Common Runtime/Common Session Policy; business module không được vá login/checkpoint riêng theo từng màn.
+
+Top-level policy chỉ có ba trạng thái:
+
+- `VALID`: session đã được xác minh hợp lệ và đúng account UID; mới được phép chạy action/business target.
+- `LOGGED_OUT`: Facebook không còn session hợp lệ nhưng **không phải checkpoint**. Runtime phải tự recovery login trước khi trả quyền chạy action.
+- `CHECKPOINT`: bất kỳ checkpoint/identity verification/security review/account lock/disabled challenge/unsupported checkpoint nào cần xử lý thủ công. Account phải dừng Facebook action ngay; không auto-bypass.
+
+Recovery invariant cho `LOGGED_OUT`:
+
+1. Ngay tại execution/recovery boundary, Electron Main phải đọc lại **account canonical mới nhất từ DB**. Run snapshot được phép freeze business config/order nhưng **không được freeze cookie/password/2FA/UserAgent/proxy thành nguồn credential lâu dài**.
+2. Thứ tự recovery cố định: **cookie canonical mới nhất -> UID/UserName + password -> 2FA nếu Facebook yêu cầu trong login flow**.
+3. 2FA trong luồng login bình thường **không phải checkpoint**. Thiếu/sai 2FA giữ account ở nhánh login (`two_factor_required`/`two_factor_failed`) và không được chạy action cho tới khi login hợp lệ.
+4. Sau recovery phải verify session + account identity/UID; `click()`/navigation/submit thành công không được coi là recovery thành công.
+5. Khi recovery thành công, cookie mới đọc từ browser phải được persist lại canonical account; chỉ sau đó policy mới trở về `VALID` và workflow tiếp tục từ boundary an toàn.
+
+Checkpoint invariant:
+
+- Gặp `CHECKPOINT` ở trước action, giữa action, sau action, Page switch hay navigation đều phải kết thúc lượt Facebook của account đó và persist typed account status phù hợp (`checkpoint_*`, identity/security review, locked, disabled challenge...).
+- Multi-account workflow chỉ tiếp tục bằng account khác theo business policy; account checkpoint không được giữ chết slot/lease/claim/browser.
+- Pause/Resume/restart không được tin session snapshot cũ. Trước khi account quay lại pool phải chạy Common Session Gate bằng canonical credential mới nhất và chỉ tiếp tục khi xác nhận `VALID`.
+- Selector/detection checkpoint, login chain và account identity verification thuộc Common Runtime; business runner chỉ consume typed result và áp dụng orchestration policy.
