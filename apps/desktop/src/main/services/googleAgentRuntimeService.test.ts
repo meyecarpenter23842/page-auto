@@ -176,4 +176,41 @@ describe('GoogleAgentRuntimeService', () => {
     expect(prompt).toContain('Số lượng: 2 bài.')
     expect(prompt).toContain('dòng chỉ có ký tự |')
   })
+
+  it('forces short readable sections instead of a wall of text', () => {
+    const prompt = buildAgentBuilderPrompt({
+      ...generationInput('agent'),
+      structure: 'Hook → Bullet → CTA'
+    })
+
+    expect(prompt).toContain('Hook → Bullet → CTA')
+    expect(prompt).toContain('Tuyệt đối không viết toàn bộ bài thành một khối văn dài')
+    expect(prompt).toContain('Mỗi đoạn tối đa 3 câu')
+    expect(prompt).toContain('CTA hoặc thông tin liên hệ, nếu có, phải tách thành đoạn riêng')
+    expect(prompt).toContain('Không tự nhận đã trải nghiệm thực tế')
+    expect(prompt).toContain('Không tự thêm các khẳng định như “hàng đầu”')
+  })
+
+  it('preselects different layout recipes for a mixed random batch', () => {
+    const prompt = buildAgentBuilderPrompt({
+      ...generationInput('agent'),
+      action: 'random' as const,
+      postCount: 6,
+      subject: '',
+      sourceInfo: '',
+      randomSourcePosts: ['Nguồn hàng rõ ràng, giao nội thành.'],
+      structure: 'Trộn bố cục'
+    })
+
+    expect(prompt).toContain('BỐ CỤC TỪNG BÀI — Page-Auto đã chọn trước, không tự đổi')
+    const assignments = prompt
+      .split('\n')
+      .filter((line) => /^- Bài \d+: /.test(line))
+    expect(assignments).toHaveLength(6)
+
+    const names = assignments.map((line) => line
+      .replace(/^- Bài \d+: /, '')
+      .replace(/\.$/, ''))
+    expect(new Set(names).size).toBe(6)
+  })
 })

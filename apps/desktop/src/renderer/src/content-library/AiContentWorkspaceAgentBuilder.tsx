@@ -14,10 +14,13 @@ import './aiContentWorkspaceModes.css'
 const POST_TYPES = ['Bán hàng', 'Chia sẻ', 'Review', 'Giới thiệu'] as const
 const TONES = ['Tự nhiên', 'Gần gũi', 'Chuyên nghiệp', 'Ngắn gọn'] as const
 const STRUCTURES = [
-  'Hook → Nội dung → CTA',
-  'Vấn đề → Giải pháp → CTA',
-  'Thông tin → Lợi ích → CTA',
-  'Tự do'
+  'Trộn bố cục',
+  'Hook → Ý chính → CTA',
+  'Vấn đề → Giải pháp → Liên hệ',
+  'Hook → Bullet → CTA',
+  'Hỏi → Trả lời → Gợi ý',
+  'Thông tin nhanh',
+  'Chia sẻ tự nhiên'
 ] as const
 const LENGTHS = ['Ngắn', 'Trung bình', 'Dài'] as const
 
@@ -47,9 +50,7 @@ export function AiContentWorkspaceAgentBuilder() {
   const [randomSource, setRandomSource] = useState('')
   const [postType, setPostType] = useState<(typeof POST_TYPES)[number]>('Bán hàng')
   const [tone, setTone] = useState<(typeof TONES)[number]>('Tự nhiên')
-  const [structure, setStructure] = useState<(typeof STRUCTURES)[number]>(
-    'Hook → Nội dung → CTA'
-  )
+  const [structure, setStructure] = useState<(typeof STRUCTURES)[number]>('Trộn bố cục')
   const [length, setLength] = useState<(typeof LENGTHS)[number]>('Trung bình')
   const [postCount, setPostCount] = useState(5)
   const [emoji, setEmoji] = useState(true)
@@ -364,7 +365,7 @@ export function AiContentWorkspaceAgentBuilder() {
               </div>
 
               <label className="ai-field">
-                <span>Cấu trúc</span>
+                <span>Bố cục / mạch bài</span>
                 <select
                   value={structure}
                   onChange={(event) => setStructure(
