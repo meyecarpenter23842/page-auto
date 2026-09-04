@@ -30,4 +30,21 @@ describe('Content Library canonical category UI', () => {
     expect(categoryStyles).toContain('.content-library-category-dialog-backdrop')
     expect(categoryStyles).toContain('.content-library-check-cell')
   })
+
+  it('keeps the editor shell fixed and gives vertical scrolling to the article textarea', () => {
+    expect(categoryStyles).toContain('.content-library-editor-body')
+    expect(categoryStyles).toContain('overflow: hidden;')
+    expect(categoryStyles).toContain('.content-library-content-field textarea')
+    expect(categoryStyles).toContain('overflow-y: auto;')
+    expect(categoryStyles).toContain('resize: none;')
+  })
+
+  it('reduces permanent preview to source/spin actions and opens preview on demand', () => {
+    expect(workspace).toContain('onClick={showSourcePreview}>Xem gốc</button>')
+    expect(workspace).toContain('onClick={spinPreview}>Spin thử</button>')
+    expect(categoryStyles).toContain('.content-library-preview-head > div:first-child')
+    expect(categoryStyles).toContain('.content-library-preview-card:focus-within .content-library-preview')
+    expect(categoryStyles).toContain('display: none;')
+    expect(categoryStyles).toContain('position: fixed;')
+  })
 })
