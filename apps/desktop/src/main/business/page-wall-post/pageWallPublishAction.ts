@@ -168,7 +168,7 @@ async function resolvePageWallAdvanceCandidate(page: Locator, container: Locator
   return { button: null, strategy: 'none', counts }
 }
 
-async function resolvePageWallOptionalCtaPrompt(pageRoot: Locator): Promise<PageWallOptionalCtaPromptResolution> {
+export async function resolvePageWallOptionalCtaPrompt(pageRoot: Locator): Promise<PageWallOptionalCtaPromptResolution> {
   const empty: PageWallOptionalCtaPromptResolution = {
     dismissButton: null,
     titleVisible: 0,
