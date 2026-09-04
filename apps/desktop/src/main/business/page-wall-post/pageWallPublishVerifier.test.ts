@@ -149,7 +149,27 @@ describe('PageWallPublishVerifier', () => {
     )
   })
 
-  it('returns publish_unconfirmed instead of treating the click as success when evidence never appears', async () => {
+  it('uses the completed owned post-submit CTA as a final confirmation fallback', async () => {
+    const prepared = runtime()
+    const verifier = new PageWallPublishVerifier(
+      prepared.value,
+      'https://www.facebook.com/profile.php?id=90001',
+      1_000
+    )
+
+    const result = await verifier.verify('hello wall', baseline, {
+      postSubmitPromptCompleted: true
+    })
+
+    expect(mocks.findSingleNewPublishedPost).toHaveBeenCalledTimes(1)
+    expect(prepared.checkAccessBlock).toHaveBeenCalledWith('sau khi hoàn tất popup hậu Đăng Tường')
+    expect(result).toMatchObject({ status: 'success' })
+    expect(result.message).toContain('popup hậu Đăng')
+    expect(result.message).toContain('Không gửi lại Post')
+    expect(result.publishedUrl).toBeUndefined()
+  })
+
+  it('keeps publish_unconfirmed when neither wall evidence nor post-submit confirmation exists', async () => {
     const prepared = runtime()
     const verifier = new PageWallPublishVerifier(
       prepared.value,
@@ -162,6 +182,33 @@ describe('PageWallPublishVerifier', () => {
       code: 'publish_unconfirmed'
     })
     expect(mocks.findSingleNewPublishedPost).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not return CTA fallback success when a checkpoint is present after publish', async () => {
+    const checkAccessBlock: PreparedPageWallRuntime['checkAccessBlock'] = vi.fn(async (context) => {
+      if (context === 'khi xác minh bài mới trên Tường Page') {
+        return { status: 'success' as const, message: 'ok' }
+      }
+      return {
+        status: 'needs_login' as const,
+        code: 'verification_required' as const,
+        message: 'checkpoint'
+      }
+    })
+    const prepared = runtime(checkAccessBlock)
+    const verifier = new PageWallPublishVerifier(
+      prepared.value,
+      'https://www.facebook.com/profile.php?id=90001',
+      1_000
+    )
+
+    const result = await verifier.verify('hello wall', baseline, {
+      postSubmitPromptCompleted: true
+    })
+
+    expect(result.status).toBe('needs_login')
+    expect(result.code).toBe('verification_required')
+    expect(result.message).toContain('review Tường Page trước khi retry')
   })
 
   it('does not return success when a checkpoint overlay appears after immediate post evidence', async () => {

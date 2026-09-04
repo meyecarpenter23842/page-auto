@@ -12,6 +12,10 @@ import type { PreparedPageWallRuntime } from './pageWallTask'
 const WALL_VERIFY_POLL_MS = 500
 const WALL_CONTENT_FINGERPRINT_MIN = 12
 
+export interface PageWallPublishVerificationHints {
+  postSubmitPromptCompleted?: boolean
+}
+
 function publishUnconfirmed(message: string): PostingJobResult {
   return { status: 'failed', code: 'publish_unconfirmed', message }
 }
@@ -73,7 +77,11 @@ export class PageWallPublishVerifier {
     }
   }
 
-  async verify(content: string, baseline: PublishBaseline): Promise<PostingJobResult> {
+  async verify(
+    content: string,
+    baseline: PublishBaseline,
+    hints: PageWallPublishVerificationHints = {}
+  ): Promise<PostingJobResult> {
     if (!baseline.captured) {
       return publishUnconfirmed('Baseline Tường Page không hợp lệ; không thể xác minh bài mới sau publish.')
     }
@@ -97,6 +105,14 @@ export class PageWallPublishVerifier {
         await this.runtime.page.waitForTimeout(this.runtime.browser.pageSettleDelayMs)
       }
     } catch (error) {
+      if (hints.postSubmitPromptCompleted) {
+        const access = await this.runtime.checkAccessBlock('sau khi hoàn tất popup hậu Đăng Tường')
+        if (access.status !== 'success') return commonAfterPublish(access)
+        return {
+          status: 'success',
+          message: `Facebook đã hoàn tất popup hậu Đăng sau final Post nhưng không thể tải lại Tường để lấy permalink (${error instanceof Error ? error.message : String(error)}). Không gửi lại Post.`
+        }
+      }
       return publishUnconfirmed(
         `Đã gửi publish nhưng không thể tải lại Tường Page để xác minh (${error instanceof Error ? error.message : String(error)}). Không tự retry.`
       )
@@ -124,6 +140,19 @@ export class PageWallPublishVerifier {
         'Đã xác minh đúng một bài mới theo post key sau khi tải lại Tường Page; content wrapper Facebook không còn khớp fingerprint.',
         'sau khi xác minh post key mới trên Tường Page'
       )
+    }
+
+    // The owned CTA is not treated as generic DOM evidence. It is only a fallback
+    // when it appeared after final Post and the safe Not now/Để sau action completed.
+    // In that exact state Facebook has advanced beyond the publish click even if the
+    // wall feed has not exposed a stable wrapper/permalink yet. Never retry Post here.
+    if (hints.postSubmitPromptCompleted) {
+      const postSubmitAccess = await this.runtime.checkAccessBlock('sau khi hoàn tất popup hậu Đăng Tường')
+      if (postSubmitAccess.status !== 'success') return commonAfterPublish(postSubmitAccess)
+      return {
+        status: 'success',
+        message: 'Facebook đã hiển thị và hoàn tất popup hậu Đăng sau final Post; Tường chưa render được fingerprint/post key/permalink ổn định nhưng post-submit state đã được xác nhận. Không gửi lại Post.'
+      }
     }
 
     return publishUnconfirmed(

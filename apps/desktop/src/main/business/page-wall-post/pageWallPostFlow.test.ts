@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   contentFill: vi.fn(),
   mediaUpload: vi.fn(),
   publishClick: vi.fn(),
+  postSubmitComplete: vi.fn(),
   captureBaseline: vi.fn(),
   verify: vi.fn()
 }))
@@ -31,6 +32,12 @@ vi.mock('../../browser/posting/postingEngine', () => ({
 vi.mock('./pageWallPublishAction', () => ({
   PageWallPublishAction: class {
     click = mocks.publishClick
+  }
+}))
+
+vi.mock('./pageWallPostSubmitPrompt', () => ({
+  PageWallPostSubmitPrompt: class {
+    complete = mocks.postSubmitComplete
   }
 }))
 
@@ -65,6 +72,12 @@ describe('PageWallPostFlow', () => {
     mocks.contentFill.mockResolvedValue({ status: 'success', message: 'content ready' })
     mocks.mediaUpload.mockResolvedValue({ status: 'success', message: 'media ready' })
     mocks.publishClick.mockResolvedValue({ status: 'success', message: 'publish sent' })
+    mocks.postSubmitComplete.mockResolvedValue({
+      observed: false,
+      completed: false,
+      blockingResult: null,
+      message: 'no prompt'
+    })
     mocks.verify.mockResolvedValue({
       status: 'success',
       message: 'verified',
@@ -72,7 +85,7 @@ describe('PageWallPostFlow', () => {
     })
   })
 
-  it('runs baseline -> composer -> content -> media -> wall publish action -> wall verification', async () => {
+  it('runs baseline -> composer -> content -> media -> one publish -> post-submit completion -> wall verification', async () => {
     const prepared = runtime()
     const result = await new PageWallPostFlow(
       prepared.value,
@@ -86,8 +99,14 @@ describe('PageWallPostFlow', () => {
     expect(mocks.contentFill).toHaveBeenCalledWith({ kind: 'textbox' }, 'hello wall')
     expect(mocks.mediaUpload).toHaveBeenCalledWith({ kind: 'container' }, ['C:\\images\\one.jpg'])
     expect(prepared.pace).toHaveBeenNthCalledWith(2, 'media-to-publish')
+    expect(mocks.publishClick).toHaveBeenCalledTimes(1)
     expect(mocks.publishClick).toHaveBeenCalledWith({ kind: 'container' })
-    expect(mocks.verify).toHaveBeenCalledWith('hello wall', { captured: true, postKeys: new Set(['post:1']) })
+    expect(mocks.postSubmitComplete).toHaveBeenCalledTimes(1)
+    expect(mocks.verify).toHaveBeenCalledWith(
+      'hello wall',
+      { captured: true, postKeys: new Set(['post:1']) },
+      { postSubmitPromptCompleted: false }
+    )
     expect(result.status).toBe('success')
   })
 
@@ -116,8 +135,57 @@ describe('PageWallPostFlow', () => {
     expect(mocks.contentFill).not.toHaveBeenCalled()
     expect(mocks.mediaUpload).toHaveBeenCalledTimes(1)
     expect(mocks.publishClick).toHaveBeenCalledTimes(1)
-    expect(mocks.verify).toHaveBeenCalledWith('', expect.anything())
+    expect(mocks.postSubmitComplete).toHaveBeenCalledTimes(1)
+    expect(mocks.verify).toHaveBeenCalledWith('', expect.anything(), { postSubmitPromptCompleted: false })
     expect(result.status).toBe('success')
+  })
+
+  it('passes the completed post-submit CTA as confirmation without clicking Post again', async () => {
+    mocks.postSubmitComplete.mockResolvedValueOnce({
+      observed: true,
+      completed: true,
+      blockingResult: null,
+      message: 'dismissed'
+    })
+    const prepared = runtime()
+
+    await new PageWallPostFlow(
+      prepared.value,
+      'https://www.facebook.com/profile.php?id=90001',
+      30_000
+    ).execute('hello wall', [])
+
+    expect(mocks.publishClick).toHaveBeenCalledTimes(1)
+    expect(mocks.postSubmitComplete).toHaveBeenCalledTimes(1)
+    expect(mocks.verify).toHaveBeenCalledWith(
+      'hello wall',
+      expect.anything(),
+      { postSubmitPromptCompleted: true }
+    )
+  })
+
+  it('stops after a post-submit checkpoint result and never retries Post', async () => {
+    mocks.postSubmitComplete.mockResolvedValueOnce({
+      observed: true,
+      completed: true,
+      blockingResult: {
+        status: 'needs_login',
+        code: 'verification_required',
+        message: 'checkpoint after publish; review wall before retry'
+      },
+      message: 'checkpoint'
+    })
+    const prepared = runtime()
+
+    const result = await new PageWallPostFlow(
+      prepared.value,
+      'https://www.facebook.com/profile.php?id=90001',
+      30_000
+    ).execute('hello wall', [])
+
+    expect(mocks.publishClick).toHaveBeenCalledTimes(1)
+    expect(mocks.verify).not.toHaveBeenCalled()
+    expect(result).toMatchObject({ status: 'needs_login', code: 'verification_required' })
   })
 
   it('does not click publish when the verification baseline cannot be captured', async () => {
@@ -133,9 +201,10 @@ describe('PageWallPostFlow', () => {
     expect(result).toMatchObject({ status: 'failed', code: 'publish_unconfirmed' })
     expect(mocks.composerOpen).not.toHaveBeenCalled()
     expect(mocks.publishClick).not.toHaveBeenCalled()
+    expect(mocks.postSubmitComplete).not.toHaveBeenCalled()
   })
 
-  it('stops before verification when the wall publish action itself fails', async () => {
+  it('stops before post-submit completion and verification when the wall publish action itself fails', async () => {
     mocks.publishClick.mockResolvedValueOnce({
       status: 'failed',
       code: 'publish_action_failed',
@@ -150,6 +219,8 @@ describe('PageWallPostFlow', () => {
     ).execute('hello wall', [])
 
     expect(result).toMatchObject({ status: 'failed', code: 'publish_action_failed' })
+    expect(mocks.publishClick).toHaveBeenCalledTimes(1)
+    expect(mocks.postSubmitComplete).not.toHaveBeenCalled()
     expect(mocks.verify).not.toHaveBeenCalled()
   })
 })

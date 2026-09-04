@@ -1,6 +1,7 @@
 import type { PostingErrorCode, PostingJobResult } from '../../../shared/posting'
 import { MediaUploader, PostComposer } from '../../browser/posting/postingEngine'
 import { RobustComposerDetector } from '../../browser/posting/robustComposerDetector'
+import { PageWallPostSubmitPrompt } from './pageWallPostSubmitPrompt'
 import { PageWallPublishAction } from './pageWallPublishAction'
 import type { PreparedPageWallRuntime } from './pageWallTask'
 import { PageWallPublishVerifier } from './pageWallPublishVerifier'
@@ -81,6 +82,17 @@ export class PageWallPostFlow {
     ).click(composer.container)
     if (publishResult.status !== 'success') return publishResult
 
-    return verifier.verify(runtimeContent, baseline)
+    // Facebook can expose the already-owned Add button / Not now CTA only after
+    // the final Post click. Complete that post-submit stage without ever sending
+    // Post a second time, then let the wall verifier prefer stronger DOM/post-key evidence.
+    const postSubmit = await new PageWallPostSubmitPrompt(
+      this.runtime,
+      this.networkTimeoutMs
+    ).complete()
+    if (postSubmit.blockingResult) return postSubmit.blockingResult
+
+    return verifier.verify(runtimeContent, baseline, {
+      postSubmitPromptCompleted: postSubmit.observed && postSubmit.completed
+    })
   }
 }
