@@ -34,7 +34,7 @@ describe('actionRegistry', () => {
     expect(ACTION_RESULT_STATUSES).toEqual(['success', 'skipped', 'needs_attention', 'failed', 'stopped'])
   })
 
-  it('builds defaults and validates typed config without allowing secrets or unknown fields', () => {
+  it('builds defaults and validates typed config by the declared schema', () => {
     const view = getActionDefinition('view_newsfeed')!
     expect(createDefaultActionConfig(view)).toEqual({ durationSeconds: 15 })
     expect(validateActionConfig('view_newsfeed', {})).toEqual({ valid: true, value: { durationSeconds: 15 }, errors: [] })
@@ -42,5 +42,24 @@ describe('actionRegistry', () => {
     expect(validateActionConfig('facebook_search', {}).valid).toBe(false)
     expect(validateActionConfig('view_newsfeed', { cookie: 'x' }).valid).toBe(false)
     expect(validateActionConfig('view_newsfeed', { unknown: true }).valid).toBe(false)
+  })
+
+  it('allows a token field when the action schema explicitly declares it', () => {
+    const copyPost = getActionDefinition('copy_post')!
+    const originalSchema = copyPost.configSchema
+
+    try {
+      copyPost.configSchema = {
+        version: 1,
+        fields: [{ key: 'token', label: 'Token quét', kind: 'text', required: true }]
+      }
+      expect(validateActionConfig('copy_post', { token: 'test-token' })).toEqual({
+        valid: true,
+        value: { token: 'test-token' },
+        errors: []
+      })
+    } finally {
+      copyPost.configSchema = originalSchema
+    }
   })
 })

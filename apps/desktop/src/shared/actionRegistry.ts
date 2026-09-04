@@ -181,7 +181,6 @@ export const ACTION_REGISTRY: readonly ActionDefinition[] = [
 ] as const
 
 const ACTION_BY_ID = new Map(ACTION_REGISTRY.map((definition) => [definition.id, definition] as const))
-const forbiddenConfigKey = /(password|cookie|2fa|token|secret|credential|passphrase|otp)/i
 
 export function getActionDefinition(actionType: string): ActionDefinition | undefined {
   return ACTION_BY_ID.get(actionType)
@@ -199,14 +198,6 @@ export function createDefaultActionConfig(definition: ActionDefinition): ActionC
   return config
 }
 
-function assertNoForbiddenKeys(value: unknown, path: string, errors: string[]): void {
-  if (!value || typeof value !== 'object') return
-  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-    if (forbiddenConfigKey.test(key)) errors.push(`${path}${key}: không được lưu secret trong config action.`)
-    assertNoForbiddenKeys(child, `${path}${key}.`, errors)
-  }
-}
-
 export function validateActionConfig(actionType: string, input: unknown): ActionConfigValidation {
   const definition = getActionDefinition(actionType)
   if (!definition) return { valid: false, value: {}, errors: [`Action “${actionType}” chưa có trong registry.`] }
@@ -215,7 +206,6 @@ export function validateActionConfig(actionType: string, input: unknown): Action
   }
 
   const errors: string[] = []
-  assertNoForbiddenKeys(input, '', errors)
   const source = input as Record<string, unknown>
   const allowed = new Set(definition.configSchema.fields.map((field) => field.key))
   for (const key of Object.keys(source)) {
