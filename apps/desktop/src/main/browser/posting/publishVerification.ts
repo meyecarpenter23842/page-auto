@@ -156,7 +156,7 @@ export function singleNewFacebookPostFromHrefs(
     if (!rawHref || !isNewFacebookPostHref(rawHref, baseline)) continue
     const postKey = facebookPostKey(rawHref)
     const publishedUrl = absoluteFacebookPostUrl(rawHref)
-    if (!postKey || !publishedUrl) continue
+    if (!postKey || !publishedUrl || candidates.has(postKey)) continue
     candidates.set(postKey, { postKey, publishedUrl })
   }
 
