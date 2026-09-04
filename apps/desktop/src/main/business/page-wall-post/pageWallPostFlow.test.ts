@@ -87,8 +87,22 @@ describe('PageWallPostFlow', () => {
     expect(mocks.mediaUpload).toHaveBeenCalledWith({ kind: 'container' }, ['C:\\images\\one.jpg'])
     expect(prepared.pace).toHaveBeenNthCalledWith(2, 'media-to-publish')
     expect(mocks.publishClick).toHaveBeenCalledWith({ kind: 'container' })
-    expect(mocks.verify).toHaveBeenCalledTimes(1)
+    expect(mocks.verify).toHaveBeenCalledWith('hello wall', { captured: true, postKeys: new Set(['post:1']) })
     expect(result.status).toBe('success')
+  })
+
+  it('uses the exact same trimmed runtimeContent for composer fill and verification', async () => {
+    const prepared = runtime()
+    await new PageWallPostFlow(
+      prepared.value,
+      'https://www.facebook.com/profile.php?id=90001',
+      30_000
+    ).execute(' \n  [r3] Nội dung đã spin  \n ', [])
+
+    const filled = mocks.contentFill.mock.calls[0]?.[1]
+    const verified = mocks.verify.mock.calls[0]?.[0]
+    expect(filled).toBe('[r3] Nội dung đã spin')
+    expect(verified).toBe(filled)
   })
 
   it('supports image-only wall posts without forcing the text composer primitive', async () => {
@@ -102,6 +116,7 @@ describe('PageWallPostFlow', () => {
     expect(mocks.contentFill).not.toHaveBeenCalled()
     expect(mocks.mediaUpload).toHaveBeenCalledTimes(1)
     expect(mocks.publishClick).toHaveBeenCalledTimes(1)
+    expect(mocks.verify).toHaveBeenCalledWith('', expect.anything())
     expect(result.status).toBe('success')
   })
 

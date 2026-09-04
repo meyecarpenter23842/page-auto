@@ -3,6 +3,7 @@ import { pollForReady, readinessAttempts } from '../../browser/posting/postingRe
 import {
   capturePublishBaseline,
   findNewPublishedPost,
+  findSingleNewPublishedPost,
   type NewPublishedPost,
   type PublishBaseline
 } from '../../browser/posting/publishVerification'
@@ -110,6 +111,18 @@ export class PageWallPublishVerifier {
         reloaded,
         'Đã xác minh bài mới trên Tường Page sau khi tải lại surface.',
         'sau khi xác minh bài mới trên Tường Page'
+      )
+    }
+
+    // Facebook frequently changes the post text wrapper while keeping stable permalink/post IDs.
+    // Do not blindly accept any DOM change: only accept this fallback when the target wall has
+    // exactly one unique post key that did not exist in the pre-publish baseline.
+    const singleNewPost = await findSingleNewPublishedPost(this.runtime.page, baseline)
+    if (singleNewPost) {
+      return this.confirmedResult(
+        singleNewPost,
+        'Đã xác minh đúng một bài mới theo post key sau khi tải lại Tường Page; content wrapper Facebook không còn khớp fingerprint.',
+        'sau khi xác minh post key mới trên Tường Page'
       )
     }
 

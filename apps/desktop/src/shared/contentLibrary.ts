@@ -101,35 +101,60 @@ function decodeLegacyContentVariantEscapes(value: string): string {
   return result
 }
 
+function nextBraceDepth(value: string, initialDepth: number): number {
+  let depth = initialDepth
+  for (const char of value) {
+    if (char === '{') depth += 1
+    else if (char === '}') depth = Math.max(0, depth - 1)
+  }
+  return depth
+}
+
 function encodeContentVariant(value: string): string {
+  let depth = 0
   return value
     .replace(/\r\n/g, '\n')
     .split('\n')
     .map((line) => {
+      const currentDepth = depth
+      depth = nextBraceDepth(line, depth)
       const escapedBackslashes = line.replace(/\\/g, '\\\\')
-      return /^\s*\|\s*$/.test(line)
+      return currentDepth === 0 && /^\s*\|\s*$/.test(line)
         ? escapedBackslashes.replace('|', '\\|')
         : escapedBackslashes
     })
     .join('\n')
 }
 
+/**
+ * Legacy/import text parser only.
+ *
+ * The editor now manages library variants as separate UI items, so Runtime Spin never
+ * needs a separator character there. For backwards-compatible TXT/AI imports, a
+ * standalone `|` line still separates library variants, but only at brace depth 0.
+ * This preserves multiline Runtime Spin such as `{ Bài 1 \n|\n Bài 2 }` as one post.
+ */
 export function parseContentVariantText(value: string): string[] {
   const variants: string[] = []
   let lines: string[] = []
+  let braceDepth = 0
 
   const flush = () => {
     const normalized = lines.join('\n').trim()
     if (normalized) variants.push(normalized)
     lines = []
+    braceDepth = 0
   }
 
-  for (const line of value.replace(/\r\n/g, '\n').split('\n')) {
-    if (/^\s*\|\s*$/.test(line)) {
+  for (const rawLine of value.replace(/\r\n/g, '\n').split('\n')) {
+    if (braceDepth === 0 && /^\s*\|\s*$/.test(rawLine)) {
       flush()
       continue
     }
-    lines.push(decodeLegacyContentVariantEscapes(line))
+
+    const line = decodeLegacyContentVariantEscapes(rawLine)
+    lines.push(line)
+    braceDepth = nextBraceDepth(line, braceDepth)
   }
 
   flush()

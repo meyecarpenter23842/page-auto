@@ -21,8 +21,10 @@ export class PageWallPostFlow {
   }
 
   async execute(content: string, imagePaths: string[]): Promise<PostingJobResult> {
-    const normalizedContent = content.trim()
-    if (!normalizedContent && imagePaths.length === 0) {
+    // The dispatcher has already spun this attempt exactly once. From this point on,
+    // keep one immutable runtimeContent for composer fill + fingerprint + verification.
+    const runtimeContent = content.trim()
+    if (!runtimeContent && imagePaths.length === 0) {
       return failure('no_content', 'page_wall_post cần nội dung hoặc ít nhất một ảnh để đăng.')
     }
 
@@ -54,12 +56,12 @@ export class PageWallPostFlow {
       )
     }
 
-    if (normalizedContent) {
+    if (runtimeContent) {
       const contentResult = await new PostComposer(
         this.runtime.page,
         this.networkTimeoutMs,
         this.runtime.browser.pageSettleDelayMs
-      ).fill(composer.textbox, normalizedContent)
+      ).fill(composer.textbox, runtimeContent)
       if (contentResult.status !== 'success') return contentResult
     }
 
@@ -79,6 +81,6 @@ export class PageWallPostFlow {
     ).click(composer.container)
     if (publishResult.status !== 'success') return publishResult
 
-    return verifier.verify(content, baseline)
+    return verifier.verify(runtimeContent, baseline)
   }
 }
