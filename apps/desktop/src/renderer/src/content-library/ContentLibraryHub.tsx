@@ -3,6 +3,7 @@ import { AiContentWorkspaceAgentBuilder } from './AiContentWorkspaceAgentBuilder
 import { CONTENT_LIBRARY_EXTERNAL_CHANGE_EVENT } from './aiDraftResults'
 import { ContentLibraryWorkspace } from './ContentLibraryWorkspace'
 import './contentLibraryHub.css'
+import './contentLibraryDarkTheme.css'
 
 type ContentLibraryTab = 'library' | 'ai'
 
