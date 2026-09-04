@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  CANONICAL_CONTENT_LIBRARY_SET_ID,
+  type ContentLibraryItem
+} from '../../../shared/contentLibrary'
 import type { PageTabConfig, PageTabSummary } from '../../../shared/pageTabs'
-import type { PageWallRunNowResult } from '../../../shared/pageWall'
+import type {
+  PageWallCanonicalPostSelection,
+  PageWallRunNowResult
+} from '../../../shared/pageWall'
 import type { PageWallJobRecord, PageWallJobStatus } from '../../../shared/pageWallJobs'
 import './pageWallWorkspace.css'
 
@@ -63,6 +70,113 @@ function contentPreview(job: PageWallJobRecord): string {
   return normalized.length > 150 ? `${normalized.slice(0, 150)}…` : normalized
 }
 
+function canonicalPostId(item: ContentLibraryItem): number | null {
+  if (item.contentSetId !== CANONICAL_CONTENT_LIBRARY_SET_ID) return null
+  if (!Number.isSafeInteger(item.id) || item.id >= 0) return null
+  return Math.abs(item.id)
+}
+
+function canonicalPreview(item: ContentLibraryItem, variantIndex: number): string {
+  const value = item.variants[variantIndex]?.trim() ?? ''
+  if (value) {
+    const normalized = value.replace(/\s+/g, ' ')
+    return normalized.length > 180 ? `${normalized.slice(0, 180)}…` : normalized
+  }
+  return item.image.folderPath.trim() ? 'Bài chỉ dùng ảnh.' : 'Chưa có nội dung.'
+}
+
+function imageModeLabel(mode: ContentLibraryItem['image']['mode']): string {
+  if (mode === 'random') return 'Ngẫu nhiên'
+  if (mode === 'filename_match') return 'Khớp Group UID'
+  return 'Lần lượt'
+}
+
+function CanonicalPostPicker({
+  items,
+  loading,
+  error,
+  onClose,
+  onPick
+}: {
+  items: ContentLibraryItem[]
+  loading: boolean
+  error: string | null
+  onClose: () => void
+  onPick: (item: ContentLibraryItem, variantIndex: number) => void
+}) {
+  const [search, setSearch] = useState('')
+  const [variantByItem, setVariantByItem] = useState<Record<number, number>>({})
+  const rows = useMemo(() => {
+    const query = search.trim().toLocaleLowerCase('vi')
+    if (!query) return items
+    return items.filter((item) => [item.name, ...item.variants]
+      .some((value) => value.toLocaleLowerCase('vi').includes(query)))
+  }, [items, search])
+
+  return (
+    <div className="page-wall-library-backdrop" role="presentation" onMouseDown={onClose}>
+      <section className="page-wall-library-modal" role="dialog" aria-modal="true" aria-label="Chọn bài từ Thư viện bài viết" onMouseDown={(event) => event.stopPropagation()}>
+        <header className="page-wall-library-head">
+          <div>
+            <p className="eyebrow">Thư viện bài viết chung</p>
+            <h3>Chọn bài cho Đăng Tường</h3>
+            <p>Chỉ lấy snapshot để đăng. Bài gốc không bị copy, bind hay chỉnh sửa.</p>
+          </div>
+          <button type="button" aria-label="Đóng" onClick={onClose}>×</button>
+        </header>
+        <div className="page-wall-library-toolbar">
+          <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Tìm tên hoặc nội dung…" />
+          <span>{rows.length} bài</span>
+        </div>
+        {error ? <div className="page-tab-error page-wall-library-error">{error}</div> : null}
+        <div className="page-wall-library-list">
+          {loading ? <p className="page-wall-muted">Đang tải thư viện canonical…</p> : null}
+          {!loading && rows.map((item) => {
+            const postId = canonicalPostId(item)
+            const variantIndex = Math.min(
+              Math.max(0, variantByItem[item.id] ?? 0),
+              Math.max(0, item.variants.length - 1)
+            )
+            const filenameMatchBlocked = Boolean(item.image.folderPath.trim()) && item.image.mode === 'filename_match'
+            return (
+              <article key={item.id} className={filenameMatchBlocked ? 'page-wall-library-row blocked' : 'page-wall-library-row'}>
+                <div className="page-wall-library-copy">
+                  <div className="page-wall-library-title"><strong>{item.name}</strong><span>{postId ? `#${postId}` : '—'}</span></div>
+                  <p>{canonicalPreview(item, variantIndex)}</p>
+                  <div className="page-wall-library-meta">
+                    <span>{item.variants.length} biến thể</span>
+                    <span>{item.image.folderPath.trim() ? `${item.image.imagesPerPost} ảnh · ${imageModeLabel(item.image.mode)}` : 'Không ảnh'}</span>
+                    {filenameMatchBlocked ? <b>Ảnh Khớp Group UID không dùng cho Tường</b> : null}
+                  </div>
+                </div>
+                <div className="page-wall-library-actions">
+                  {item.variants.length > 1 ? (
+                    <select
+                      aria-label={`Biến thể của ${item.name}`}
+                      value={variantIndex}
+                      onChange={(event) => setVariantByItem((current) => ({ ...current, [item.id]: Number(event.target.value) }))}
+                    >
+                      {item.variants.map((_variant, index) => <option key={index} value={index}>Biến thể {index + 1}</option>)}
+                    </select>
+                  ) : <span>{item.variants.length === 1 ? 'Biến thể 1' : 'Chỉ ảnh'}</span>}
+                  <button
+                    className="pt-button primary"
+                    type="button"
+                    disabled={!postId || filenameMatchBlocked}
+                    onClick={() => onPick(item, variantIndex)}
+                  >Chọn bài</button>
+                </div>
+              </article>
+            )
+          })}
+          {!loading && rows.length === 0 ? <p className="page-wall-muted">Không có bài phù hợp.</p> : null}
+        </div>
+        <footer><span>Run/Hẹn sẽ materialize lại source này trước khi gửi sang production runtime.</span><button className="pt-button secondary" type="button" onClick={onClose}>Đóng</button></footer>
+      </section>
+    </div>
+  )
+}
+
 export function PageWallWorkspace({ activePageId: controlledPageId, scoped = false }: PageWallWorkspaceProps = {}) {
   const [tabs, setTabs] = useState<PageTabSummary[]>([])
   const [pageTabId, setPageTabId] = useState<number | null>(controlledPageId ?? null)
@@ -70,6 +184,11 @@ export function PageWallWorkspace({ activePageId: controlledPageId, scoped = fal
   const [accountId, setAccountId] = useState<number | null>(null)
   const [content, setContent] = useState('')
   const [imagePaths, setImagePaths] = useState<string[]>([])
+  const [canonicalSelection, setCanonicalSelection] = useState<PageWallCanonicalPostSelection | null>(null)
+  const [libraryOpen, setLibraryOpen] = useState(false)
+  const [libraryItems, setLibraryItems] = useState<ContentLibraryItem[]>([])
+  const [libraryLoading, setLibraryLoading] = useState(false)
+  const [libraryError, setLibraryError] = useState<string | null>(null)
   const [scheduleAt, setScheduleAt] = useState(() => localDateTimeInput(Date.now() + (10 * 60_000)))
   const [jobs, setJobs] = useState<PageWallJobRecord[]>([])
   const [busy, setBusy] = useState(false)
@@ -180,11 +299,12 @@ export function PageWallWorkspace({ activePageId: controlledPageId, scoped = fal
     [config]
   )
   const selectedAccount = runnableAccounts.find((account) => account.accountId === accountId) ?? null
+  const canonicalReady = Boolean(canonicalSelection?.content.trim() || canonicalSelection?.image.folderPath.trim())
   const materialReady = !loading
     && pageTabId !== null
     && accountId !== null
     && Boolean(config?.pageUid.trim())
-    && (content.trim().length > 0 || imagePaths.length > 0)
+    && (canonicalReady || content.trim().length > 0 || imagePaths.length > 0)
   const canRun = materialReady && !busy && !scheduling
   const scheduledTimestamp = scheduleAt ? new Date(scheduleAt).getTime() : Number.NaN
   const canSchedule = materialReady
@@ -193,12 +313,59 @@ export function PageWallWorkspace({ activePageId: controlledPageId, scoped = fal
     && Number.isFinite(scheduledTimestamp)
     && scheduledTimestamp > Date.now()
 
+  const openCanonicalLibrary = async () => {
+    setLibraryOpen(true)
+    setLibraryLoading(true)
+    setLibraryError(null)
+    try {
+      const library = await window.pageAuto.getContentLibrary({ id: CANONICAL_CONTENT_LIBRARY_SET_ID })
+      if (!library) throw new Error('Không đọc được Thư viện bài viết chung.')
+      setLibraryItems(library.items)
+    } catch (cause) {
+      setLibraryItems([])
+      setLibraryError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setLibraryLoading(false)
+    }
+  }
+
+  const chooseCanonicalPost = (item: ContentLibraryItem, variantIndex: number) => {
+    const postId = canonicalPostId(item)
+    if (!postId) {
+      setLibraryError('Bài được chọn không có Post ID canonical hợp lệ.')
+      return
+    }
+    if (item.image.folderPath.trim() && item.image.mode === 'filename_match') {
+      setLibraryError('Ảnh Khớp Group UID không áp dụng cho Đăng Tường. Hãy đổi mode ảnh của bài hoặc dùng ảnh tay.')
+      return
+    }
+    const source: PageWallCanonicalPostSelection = {
+      postId,
+      postName: item.name,
+      variantIndex,
+      content: item.variants[variantIndex]?.trim() ?? '',
+      image: {
+        folderPath: item.image.folderPath,
+        mode: item.image.mode,
+        imagesPerPost: item.image.imagesPerPost,
+        missingPolicy: item.image.missingPolicy
+      }
+    }
+    setCanonicalSelection(source)
+    setContent(source.content)
+    setImagePaths([])
+    setLibraryOpen(false)
+    setLibraryError(null)
+    addLog('info', `Đã chọn bài canonical #${postId} · ${item.name}${item.variants.length > 1 ? ` · biến thể ${variantIndex + 1}/${item.variants.length}` : ''}.`)
+  }
+
   const pickImages = async () => {
     try {
       const picked = await window.pageAuto.pickPageWallImages()
       if (picked.length === 0) return
+      setCanonicalSelection(null)
       setImagePaths(picked)
-      addLog('info', `Đã chọn ${picked.length} ảnh cho bài Tường.`)
+      addLog('info', `Đã chọn ${picked.length} ảnh tay cho bài Tường; nguồn canonical đã được tách thành bản nháp.`)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     }
@@ -215,13 +382,14 @@ export function PageWallWorkspace({ activePageId: controlledPageId, scoped = fal
     setBusy(true)
     setError(null)
     setResult(null)
-    addLog('info', `Bắt đầu Đăng ngay · Page ${config?.pageUid ?? '—'} · account ${selectedAccount?.uid ?? accountId}.`)
+    addLog('info', `Bắt đầu Đăng ngay · Page ${config?.pageUid ?? '—'} · account ${selectedAccount?.uid ?? accountId}${canonicalSelection ? ` · canonical #${canonicalSelection.postId}` : ''}.`)
     try {
       const next = await window.pageAuto.runPageWallNow({
         pageTabId,
         accountId,
         content,
-        imagePaths
+        imagePaths,
+        ...(canonicalSelection ? { canonicalPost: canonicalSelection } : {})
       })
       setResult(next)
       addLog(logTone(next), `${statusLabel(next.status)}${next.code ? ` · ${next.code}` : ''}: ${next.message}`)
@@ -245,9 +413,10 @@ export function PageWallWorkspace({ activePageId: controlledPageId, scoped = fal
         accountId,
         content,
         imagePaths,
+        ...(canonicalSelection ? { canonicalPost: canonicalSelection } : {}),
         scheduledAt: scheduledTimestamp
       })
-      addLog('success', `Đã hẹn job #${job.id} lúc ${formatDateTime(job.scheduledAt)} · Page ${job.pageUid} · account ${job.accountUid}.`)
+      addLog('success', `Đã hẹn job #${job.id} lúc ${formatDateTime(job.scheduledAt)} · Page ${job.pageUid} · account ${job.accountUid} · snapshot ${job.imagePaths.length} ảnh.`)
       await refreshJobs(true)
       setScheduleAt(localDateTimeInput(Math.max(Date.now(), job.scheduledAt) + (10 * 60_000)))
     } catch (cause) {
@@ -330,28 +499,53 @@ export function PageWallWorkspace({ activePageId: controlledPageId, scoped = fal
         </section>
 
         <section className="page-wall-card page-wall-compose-card">
-          <div className="page-wall-card-head"><strong>Nội dung bài</strong><small>{content.length.toLocaleString('vi-VN')} ký tự</small></div>
+          <div className="page-wall-card-head page-wall-compose-head">
+            <div><strong>Nội dung bài</strong><small>{content.length.toLocaleString('vi-VN')} ký tự</small></div>
+            <button className="pt-button secondary" type="button" disabled={busy || scheduling} onClick={() => void openCanonicalLibrary()}>Chọn từ thư viện</button>
+          </div>
+          {canonicalSelection ? (
+            <div className="page-wall-canonical-source">
+              <div><span>CANONICAL</span><strong>#{canonicalSelection.postId} · {canonicalSelection.postName}</strong><small>Biến thể {canonicalSelection.variantIndex + 1}</small></div>
+              <button type="button" disabled={busy || scheduling} onClick={() => setCanonicalSelection(null)}>Chuyển nhập tay</button>
+            </div>
+          ) : null}
           <textarea
             className="page-wall-content"
             value={content}
             disabled={busy || scheduling}
-            onChange={(event) => setContent(event.target.value)}
+            onChange={(event) => {
+              if (canonicalSelection) setCanonicalSelection(null)
+              setContent(event.target.value)
+            }}
             placeholder="Nhập nội dung cần đăng lên Tường Page…"
           />
         </section>
 
         <section className="page-wall-card page-wall-media-card">
-          <div className="page-wall-card-head"><strong>Ảnh</strong><small>{imagePaths.length} file</small></div>
+          <div className="page-wall-card-head"><strong>Ảnh</strong><small>{canonicalSelection?.image.folderPath.trim() ? 'Từ bài canonical' : `${imagePaths.length} file`}</small></div>
           <div className="page-wall-media-actions">
-            <button className="pt-button secondary" type="button" disabled={busy || scheduling} onClick={() => void pickImages()}>Chọn ảnh</button>
-            <button className="pt-button secondary" type="button" disabled={busy || scheduling || imagePaths.length === 0} onClick={() => setImagePaths([])}>Bỏ ảnh</button>
+            <button className="pt-button secondary" type="button" disabled={busy || scheduling} onClick={() => void pickImages()}>Chọn ảnh tay</button>
+            <button
+              className="pt-button secondary"
+              type="button"
+              disabled={busy || scheduling || (!canonicalSelection?.image.folderPath.trim() && imagePaths.length === 0)}
+              onClick={() => { setCanonicalSelection(null); setImagePaths([]) }}
+            >Bỏ ảnh</button>
           </div>
-          <div className="page-wall-media-list">
-            {imagePaths.map((path, index) => (
-              <div key={`${path}-${index}`} title={path}><span>{index + 1}</span><b>{fileName(path)}</b></div>
-            ))}
-            {imagePaths.length === 0 ? <p>Không chọn ảnh thì bài sẽ đăng text-only.</p> : null}
-          </div>
+          {canonicalSelection?.image.folderPath.trim() ? (
+            <div className="page-wall-canonical-media">
+              <span>Folder canonical</span>
+              <b title={canonicalSelection.image.folderPath}>{canonicalSelection.image.folderPath}</b>
+              <small>{canonicalSelection.image.imagesPerPost} ảnh · {imageModeLabel(canonicalSelection.image.mode)} · snapshot khi Đăng/Hẹn</small>
+            </div>
+          ) : (
+            <div className="page-wall-media-list">
+              {imagePaths.map((path, index) => (
+                <div key={`${path}-${index}`} title={path}><span>{index + 1}</span><b>{fileName(path)}</b></div>
+              ))}
+              {imagePaths.length === 0 ? <p>Không chọn ảnh thì bài sẽ đăng text-only.</p> : null}
+            </div>
+          )}
         </section>
       </div>
 
@@ -369,7 +563,7 @@ export function PageWallWorkspace({ activePageId: controlledPageId, scoped = fal
         <div className="page-wall-runbar page-wall-schedulebar">
           <div>
             <strong>Hẹn đăng</strong>
-            <span>Persist SQLite; Electron Main tự nhận job đến hạn và chạy cùng Page Wall production runtime.</span>
+            <span>Persist SQLite; material được snapshot trước khi lưu job, không đọc lại thư viện lúc đến giờ.</span>
           </div>
           <div className="page-wall-schedule-controls">
             <input
@@ -471,6 +665,16 @@ export function PageWallWorkspace({ activePageId: controlledPageId, scoped = fal
         <strong>Lifecycle</strong>
         <span>Đăng ngay và Hẹn giờ đều là one-shot rõ ràng; Chrome đóng sau kết quả bình thường. Login/checkpoint cần thao tác tay vẫn giữ browser. Group rotation giữ nguyên lifecycle riêng.</span>
       </footer>
+
+      {libraryOpen ? (
+        <CanonicalPostPicker
+          items={libraryItems}
+          loading={libraryLoading}
+          error={libraryError}
+          onClose={() => setLibraryOpen(false)}
+          onPick={chooseCanonicalPost}
+        />
+      ) : null}
     </section>
   )
 }

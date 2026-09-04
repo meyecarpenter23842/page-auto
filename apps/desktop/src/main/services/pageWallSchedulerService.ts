@@ -5,7 +5,7 @@ import { PageWallJobRepository } from '../database/pageWallJobRepository'
 import type { PageWallPreparationResult } from './pageWallRunNowService'
 
 interface PageWallJobPreparer {
-  prepare(payload: PageWallRunNowPayload): PageWallPreparationResult
+  prepare(payload: PageWallRunNowPayload): Promise<PageWallPreparationResult>
 }
 
 interface PageWallScheduledExecutor {
@@ -44,12 +44,15 @@ export class PageWallSchedulerService {
     if (options.autoStart !== false) this.start()
   }
 
-  create(payload: PageWallSchedulePayload): PageWallJobRecord {
+  async create(payload: PageWallSchedulePayload): Promise<PageWallJobRecord> {
     if (!Number.isFinite(payload.scheduledAt) || payload.scheduledAt <= this.now()) {
       throw new Error('Thời gian Hẹn đăng phải nằm trong tương lai.')
     }
 
-    const preparation = this.preparer.prepare(payload)
+    // Canonical Post Library selections are materialized here, before the job is
+    // persisted. From this point on the scheduled job owns an immutable content +
+    // concrete-image snapshot and never re-reads the live library at execution time.
+    const preparation = await this.preparer.prepare(payload)
     if (!preparation.ok) throw new Error(preparation.result.message)
     const prepared = preparation.prepared
     const job = this.jobs.create({
