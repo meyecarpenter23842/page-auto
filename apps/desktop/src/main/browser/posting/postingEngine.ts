@@ -1,5 +1,6 @@
 import type { Locator, Page } from 'playwright-core'
 import type { BrowserSettings } from '../../../shared/appSettings'
+import { spinContent } from '../../../shared/contentSpin'
 import type { PostingJobRequest, PostingJobResult } from '../../../shared/posting'
 import {
   FacebookCommonRuntime,
@@ -27,6 +28,7 @@ import {
   formatPublishCandidateDiagnostics,
   type RobustComposerHandle
 } from './robustComposerDetector'
+import { groupTargetNameFromFacebookTitle } from './groupSpinContext'
 
 type PostingCode = NonNullable<PostingJobResult['code']>
 type MediaFileTarget = {
@@ -514,8 +516,14 @@ export async function executePostingJob(job: PostingJobRequest): Promise<Posting
     if (navigation.status !== 'success') return finish(navigation)
     engineDiagnostic(job, 'state=group_surface ready')
 
+    const groupTargetName = groupTargetNameFromFacebookTitle(await page.title().catch(() => ''))
+    const runtimeContent = spinContent(job.content, { targetName: groupTargetName })
+    if (job.content.includes('[u]') && !groupTargetName) {
+      engineDiagnostic(job, 'spin [u] unresolved because live Group name was unavailable; token kept literal')
+    }
+
     await runtime.pace('group-to-composer')
-    engineDiagnostic(job, `material ready contentLength=${job.content.trim().length} imageCount=${job.imagePaths.length}`)
+    engineDiagnostic(job, `material ready contentLength=${runtimeContent.trim().length} imageCount=${job.imagePaths.length}`)
     const resultDetector = new PublishResultDetector(
       page,
       runtime.browser,
@@ -542,9 +550,9 @@ export async function executePostingJob(job: PostingJobRequest): Promise<Posting
       page,
       job.network.networkTimeoutMs,
       runtime.browser.pageSettleDelayMs
-    ).fill(composer.textbox, job.content)
+    ).fill(composer.textbox, runtimeContent)
     if (contentResult.status !== 'success') return finish(contentResult)
-    engineDiagnostic(job, `state=content_ready length=${job.content.trim().length}`)
+    engineDiagnostic(job, `state=content_ready length=${runtimeContent.trim().length}`)
     engineDiagnostic(job, `publish candidates before media ${await composerDetector.publishDiagnostics()}`)
 
     const mediaResult = await new MediaUploader(
@@ -567,7 +575,7 @@ export async function executePostingJob(job: PostingJobRequest): Promise<Posting
     if (publishResult.status !== 'success') return finish(publishResult)
     engineDiagnostic(job, 'state=publish_click sent; sweeping posted>pending>declined>removed>posted')
 
-    const confirmed = await resultDetector.detect(job.content, publishBaseline)
+    const confirmed = await resultDetector.detect(runtimeContent, publishBaseline)
     if (confirmed.status !== 'success' || !job.session.validateAfterRun) return finish(confirmed)
 
     const after = await runtime.validateAfterTask()

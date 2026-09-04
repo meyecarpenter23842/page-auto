@@ -32,6 +32,37 @@ describe('contentSpin', () => {
     }
   })
 
+  it('randoms one whole branch when a pipe is outside braces', () => {
+    expect(spinContent('Bài A|Bài B|Bài C', { random: () => 0.5 })).toBe('Bài B')
+  })
+
+  it('keeps text outside braces and spins each brace group independently', () => {
+    const values = [0.5, 0.99]
+    let index = 0
+    const result = spinContent(
+      '🔥 {Giá tốt|Hàng mới|Ưu đãi hôm nay} - nội dung cố định - {Inbox ngay|Liên hệ ngay|Xem thêm}',
+      { random: () => values[index++] ?? 0 }
+    )
+
+    expect(result).toBe('🔥 Hàng mới - nội dung cố định - Xem thêm')
+  })
+
+  it('chooses the outer branch before spinning pipes inside braces', () => {
+    const values = [0.4, 0.99, 0]
+    let index = 0
+    const result = spinContent(
+      'Bài 1|🔥 {Giá tốt|Hàng mới} - {Inbox|Liên hệ}|Bài 3',
+      { random: () => values[index++] ?? 0 }
+    )
+
+    expect(result).toBe('🔥 Hàng mới - Inbox')
+  })
+
+  it('leaves malformed or nested brace structure untouched instead of guessing', () => {
+    expect(spinContent('Giữ {A|{B|C}} nguyên', { random: () => 0 })).toBe('Giữ {A|{B|C}} nguyên')
+    expect(spinContent('Giữ {A|B nguyên', { random: () => 0 })).toBe('Giữ {A|B nguyên')
+  })
+
   it('adds the selected literal icon token to AI lines without touching separators or hashtags', () => {
     const output = 'Mở bài\n\n- Ý chính\n#Hashtag\n|\nBài tiếp'
     expect(addSpinTokenToAiLines(output, '[r3]')).toBe(

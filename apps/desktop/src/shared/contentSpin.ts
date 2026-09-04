@@ -59,13 +59,59 @@ function randomDigits(random: () => number, length = 6): string {
   return result
 }
 
+function splitTopLevelSpinBranches(source: string): string[] | null {
+  const branches: string[] = []
+  let depth = 0
+  let start = 0
+
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index]
+    if (character === '{') {
+      if (depth !== 0) return null
+      depth = 1
+      continue
+    }
+    if (character === '}') {
+      if (depth !== 1) return null
+      depth = 0
+      continue
+    }
+    if (character === '|' && depth === 0) {
+      branches.push(source.slice(start, index))
+      start = index + 1
+    }
+  }
+
+  if (depth !== 0) return null
+  branches.push(source.slice(start))
+  return branches
+}
+
+function spinStructuredContent(source: string, random: () => number): string {
+  const branches = splitTopLevelSpinBranches(source)
+  if (!branches) return source
+
+  const chosenBranch = branches.length > 1
+    ? branches[randomIndex(branches.length, random)] ?? ''
+    : branches[0] ?? ''
+
+  return chosenBranch
+    .trim()
+    .replace(/\{([^{}]*)\}/g, (_match, rawOptions: string) => {
+      const options = rawOptions.split('|')
+      const selected = options[randomIndex(options.length, random)] ?? ''
+      return selected.trim()
+    })
+}
+
 export function spinContent(source: string, context: ContentSpinContext = {}): string {
   const random = context.random ?? Math.random
   const now = context.now ?? new Date()
   const targetName = context.targetName?.trim() || context.recipientName?.trim() || null
   const shortRecipientName = nameWithoutSurname(context.recipientName)
+  const structured = spinStructuredContent(source, random)
 
-  return source.replace(TOKEN_PATTERN, (original, rawToken: string) => {
+  return structured.replace(TOKEN_PATTERN, (original, rawToken: string) => {
     if (rawToken === 'u') return targetName ?? original
     if (rawToken === 'f') return shortRecipientName ?? original
     if (rawToken === 'g') return random() < 0.5 ? 'anh' : 'chị'

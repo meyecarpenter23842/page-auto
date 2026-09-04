@@ -33,12 +33,12 @@ export async function executeFacebookPostTaskJob(job: FacebookPostTaskJobRequest
   const validationError = validateFacebookPostTaskJob(job)
   if (validationError) return invalidTask(validationError)
 
-  const runtimeJob = spinJobContent(job)
-  if (isGroupPostTaskJob(runtimeJob)) {
-    return executePostingJob(legacyPostingJobFromGroupTask(runtimeJob))
+  if (isGroupPostTaskJob(job)) {
+    // Group posting resolves [u] only after the real Group surface is open.
+    return executePostingJob(legacyPostingJobFromGroupTask(job))
   }
-  if (isPageWallPostTaskJob(runtimeJob)) {
-    return executePageWallPostJob(runtimeJob)
+  if (isPageWallPostTaskJob(job)) {
+    return executePageWallPostJob(spinJobContent(job))
   }
 
   return invalidTask('Facebook posting worker nhận task type chưa được hỗ trợ.')
