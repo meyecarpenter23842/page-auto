@@ -127,3 +127,128 @@ html[data-theme='dark'] .content-library-category-dialog-backdrop {
 html[data-theme='dark'] .content-library-category-dialog {
   box-shadow: 0 22px 54px rgba(0, 0, 0, .4);
 }
+
+/* Keep the editor card fixed: only the article textarea owns vertical scrolling. */
+.content-library-editor-body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.content-library-editor-topline,
+.content-library-variant-bar,
+.content-library-spinbar,
+.content-library-spin-note,
+.content-library-preview-card {
+  flex: none;
+}
+
+.content-library-editor-layout {
+  min-height: 0;
+  flex: 1;
+  align-items: stretch;
+}
+
+.content-library-compose {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.content-library-content-field {
+  min-height: 0;
+  flex: 1;
+}
+
+.content-library-content-field textarea {
+  min-height: 0;
+  height: 100%;
+  flex: 1;
+  resize: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.content-library-settings {
+  position: static;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* Permanent preview is reduced to two actions. Preview appears only while a trigger owns focus. */
+.content-library-preview-card {
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.content-library-preview-head {
+  justify-content: flex-end;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.content-library-preview-head > div:first-child {
+  display: none;
+}
+
+.content-library-preview-actions button {
+  padding: 5px 9px;
+}
+
+.content-library-preview {
+  display: none;
+}
+
+.content-library-preview-card:focus-within::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 89;
+  background: rgba(2, 6, 23, .64);
+  backdrop-filter: blur(2px);
+  pointer-events: none;
+}
+
+.content-library-preview-card:focus-within .content-library-preview {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 90;
+  display: block;
+  width: min(780px, calc(100vw - 72px));
+  height: min(68vh, 620px);
+  min-height: 320px;
+  max-height: none;
+  transform: translate(-50%, -50%);
+  padding: 18px;
+  overflow: auto;
+  border: 1px solid var(--cl-border-strong);
+  border-radius: 14px;
+  color: var(--cl-text);
+  background: var(--cl-surface);
+  box-shadow: 0 28px 80px rgba(0, 0, 0, .42);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+@media (max-height: 760px) {
+  .content-library-editor-body {
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+
+  .content-library-field textarea {
+    min-height: 180px;
+  }
+
+  .content-library-preview-card:focus-within .content-library-preview {
+    height: min(72vh, 520px);
+    min-height: 260px;
+  }
+}
