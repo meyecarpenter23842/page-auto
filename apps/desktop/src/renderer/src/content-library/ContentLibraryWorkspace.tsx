@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  CANONICAL_CONTENT_LIBRARY_SET_ID,
   CONTENT_LIBRARY_IMAGE_MODES,
   CONTENT_LIBRARY_MISSING_POLICIES,
   DEFAULT_CONTENT_LIBRARY_IMAGE,
@@ -16,6 +17,7 @@ import {
   replaceEditorVariant
 } from './contentLibraryEditor'
 import './contentLibrary.css'
+import './contentLibraryCategories.css'
 
 interface ItemEditorDraft {
   id: number | null
@@ -28,6 +30,11 @@ interface ItemEditorDraft {
 interface PreviewState {
   mode: 'source' | 'spin'
   content: string
+}
+
+interface CategoryDialogState {
+  mode: 'create' | 'rename'
+  name: string
 }
 
 const CONTENT_SPIN_TOKEN_HINTS = [
@@ -83,6 +90,9 @@ export function ContentLibraryWorkspace() {
   const [selectedSetId, setSelectedSetId] = useState<number | null>(null)
   const [details, setDetails] = useState<ContentLibrarySetDetails | null>(null)
   const [selectedItemId, setSelectedItemId] = useState<number | null>(null)
+  const [checkedItemIds, setCheckedItemIds] = useState<number[]>([])
+  const [moveTarget, setMoveTarget] = useState('none')
+  const [categoryDialog, setCategoryDialog] = useState<CategoryDialogState | null>(null)
   const [editor, setEditor] = useState<ItemEditorDraft | null>(null)
   const [activeVariantIndex, setActiveVariantIndex] = useState(0)
   const [setSearch, setSetSearch] = useState('')
@@ -143,14 +153,18 @@ export function ContentLibraryWorkspace() {
     setError(null)
     try {
       const result = await operation()
-      const resultSetId = typeof result === 'boolean' ? preferredSetId : result.id
+      const resultSetId = preferredSetId !== undefined
+        ? preferredSetId
+        : typeof result === 'boolean'
+          ? selectedSetId
+          : result.id
       await load(resultSetId, preferredItemId)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
       setBusy(false)
     }
-  }, [load])
+  }, [load, selectedSetId])
 
   const filteredSets = useMemo(() => {
     const query = setSearch.trim().toLocaleLowerCase('vi')
@@ -166,15 +180,23 @@ export function ContentLibraryWorkspace() {
     ))
   }, [details, itemSearch])
 
+  const categorySets = useMemo(() => sets.filter((item) => item.id !== CANONICAL_CONTENT_LIBRARY_SET_ID), [sets])
   const activeVariant = editor?.variants[activeVariantIndex] ?? ''
   const previewContent = preview?.content ?? activeVariant
   const previewMode = preview?.mode ?? 'source'
+  const isAllPosts = details?.id === CANONICAL_CONTENT_LIBRARY_SET_ID
+  const moveCandidateIds = checkedItemIds.length > 0
+    ? checkedItemIds
+    : selectedItemId === null
+      ? []
+      : [selectedItemId]
 
   const chooseSet = async (id: number) => {
     const requestId = ++sourceLoadSequence.current
     setBusy(true)
     setSelectedSetId(id)
     setSelectedItemId(null)
+    setCheckedItemIds([])
     setEditor(null)
     setActiveVariantIndex(0)
     setPreview(null)
@@ -201,16 +223,44 @@ export function ContentLibraryWorkspace() {
     setError(null)
   }
 
-  const createSet = async () => {
-    const name = window.prompt('Tên nguồn bài viết mới:', `Nguồn bài viết ${sets.length + 1}`)?.trim()
-    if (!name) return
+  const toggleCheckedItem = (itemId: number, checked: boolean) => {
+    setCheckedItemIds((current) => checked
+      ? current.includes(itemId) ? current : [...current, itemId]
+      : current.filter((id) => id !== itemId))
+  }
+
+  const openCreateCategory = () => {
+    setCategoryDialog({ mode: 'create', name: `Danh mục ${categorySets.length + 1}` })
+    setError(null)
+  }
+
+  const openRenameCategory = () => {
+    if (!details || details.id === CANONICAL_CONTENT_LIBRARY_SET_ID) return
+    setCategoryDialog({ mode: 'rename', name: details.name })
+    setError(null)
+  }
+
+  const saveCategoryDialog = async () => {
+    if (!categoryDialog) return
+    const name = categoryDialog.name.trim()
+    if (!name) {
+      setError('Tên danh mục không được để trống.')
+      return
+    }
+
     setBusy(true)
     setError(null)
     try {
-      const created = await window.pageAuto.createContentLibrary({ name })
-      await load(created.id, null)
-      setEditor(blankEditor(0))
-      setActiveVariantIndex(0)
+      if (categoryDialog.mode === 'create') {
+        const created = await window.pageAuto.createContentLibrary({ name })
+        setCategoryDialog(null)
+        setCheckedItemIds([])
+        await load(created.id, null)
+      } else if (details && details.id !== CANONICAL_CONTENT_LIBRARY_SET_ID) {
+        const renamed = await window.pageAuto.renameContentLibrary({ id: details.id, name })
+        setCategoryDialog(null)
+        await load(renamed.id, selectedItemId)
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -218,17 +268,35 @@ export function ContentLibraryWorkspace() {
     }
   }
 
-  const renameSet = async () => {
-    if (!details) return
-    const name = window.prompt('Đổi tên nguồn bài viết:', details.name)?.trim()
-    if (!name || name === details.name) return
-    await mutate(() => window.pageAuto.renameContentLibrary({ id: details.id, name }), details.id, selectedItemId)
+  const deleteCategory = async () => {
+    if (!details || details.id === CANONICAL_CONTENT_LIBRARY_SET_ID) return
+    const confirmed = window.confirm(
+      `Xóa danh mục “${details.name}”? Bài viết vẫn được giữ nguyên trong “Tất cả bài viết”.`
+    )
+    if (!confirmed) return
+    setCheckedItemIds([])
+    await mutate(
+      () => window.pageAuto.deleteContentLibrary({ id: details.id }),
+      CANONICAL_CONTENT_LIBRARY_SET_ID,
+      null
+    )
   }
 
-  const deleteSet = async () => {
-    if (!details || !window.confirm(`Xóa nguồn “${details.name}” và toàn bộ bài viết bên trong?`)) return
-    const fallback = sets.find((item) => item.id !== details.id)?.id ?? null
-    await mutate(() => window.pageAuto.deleteContentLibrary({ id: details.id }), fallback, null)
+  const moveSelectedToCategory = async () => {
+    if (!details || moveCandidateIds.length === 0) return
+    const targetContentSetId = moveTarget === 'none' ? null : Number(moveTarget)
+    setCheckedItemIds([])
+    await mutate(
+      () => window.pageAuto.moveContentLibraryItem({
+        contentSetId: details.id,
+        itemId: moveCandidateIds[0]!,
+        direction: 'up',
+        itemIds: moveCandidateIds,
+        targetContentSetId
+      }),
+      details.id,
+      null
+    )
   }
 
   const startNewItem = () => {
@@ -259,9 +327,10 @@ export function ContentLibraryWorkspace() {
       setBusy(true)
       setError(null)
       try {
+        const previousIds = new Set(details.items.map((item) => item.id))
         const saved = await window.pageAuto.createContentLibraryItem({ contentSetId: details.id, ...draft })
-        const created = saved.items.at(-1) ?? null
-        await load(saved.id, created?.id ?? null)
+        const created = saved.items.find((item) => !previousIds.has(item.id)) ?? saved.items[0] ?? null
+        await load(details.id, created?.id ?? null)
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : String(cause))
       } finally {
@@ -271,7 +340,7 @@ export function ContentLibraryWorkspace() {
     }
 
     await mutate(
-      () => window.pageAuto.updateContentLibraryItem({ id: editor.id!, ...draft }),
+      () => window.pageAuto.updateContentLibraryItem({ id: editor.id!, contentSetId: details.id, ...draft }),
       details.id,
       editor.id
     )
@@ -284,6 +353,7 @@ export function ContentLibraryWorkspace() {
     setBusy(true)
     setError(null)
     try {
+      const previousIds = new Set(details.items.map((item) => item.id))
       const saved = await window.pageAuto.createContentLibraryItem({
         contentSetId: details.id,
         name: `${source.name} Copy`,
@@ -291,8 +361,8 @@ export function ContentLibraryWorkspace() {
         variants: [...source.variants],
         image: { ...source.image }
       })
-      const created = saved.items.at(-1) ?? null
-      await load(saved.id, created?.id ?? null)
+      const created = saved.items.find((item) => !previousIds.has(item.id)) ?? saved.items[0] ?? null
+      await load(details.id, created?.id ?? null)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -303,12 +373,13 @@ export function ContentLibraryWorkspace() {
   const deleteItem = async () => {
     if (!details || !selectedItemId) return
     const source = details.items.find((item) => item.id === selectedItemId)
-    if (!source || !window.confirm(`Xóa “${source.name}”?`)) return
+    if (!source || !window.confirm(`Xóa vĩnh viễn “${source.name}” khỏi kho bài gốc?`)) return
+    setCheckedItemIds((current) => current.filter((id) => id !== source.id))
     await mutate(() => window.pageAuto.deleteContentLibraryItem({ id: source.id }), details.id, null)
   }
 
   const moveItem = async (direction: 'up' | 'down') => {
-    if (!details || !selectedItemId) return
+    if (!details || !selectedItemId || details.id === CANONICAL_CONTENT_LIBRARY_SET_ID) return
     await mutate(
       () => window.pageAuto.moveContentLibraryItem({ contentSetId: details.id, itemId: selectedItemId, direction }),
       details.id,
@@ -450,7 +521,7 @@ export function ContentLibraryWorkspace() {
               <span>⌕</span>
               <input value={setSearch} onChange={(event) => setSetSearch(event.target.value)} placeholder="Tìm..." />
             </label>
-            <button className="content-library-button primary" type="button" disabled={busy} onClick={() => void createSet()}>+</button>
+            <button className="content-library-button primary" type="button" disabled={busy} onClick={openCreateCategory}>+</button>
           </div>
           <div className="content-library-source-list">
             {filteredSets.map((item) => (
@@ -464,23 +535,23 @@ export function ContentLibraryWorkspace() {
                 <span className="content-library-source-icon">▤</span>
                 <span>
                   <strong>{item.name}</strong>
-                  <small>{item.enabledCount}/{item.itemCount} bài bật</small>
+                  <small>{item.itemCount} bài</small>
                 </span>
               </button>
             ))}
-            {!filteredSets.length ? <div className="content-library-empty">Chưa có thư viện bài viết.</div> : null}
+            {!filteredSets.length ? <div className="content-library-empty">Chưa có danh mục phù hợp.</div> : null}
           </div>
-          {details ? (
+          {details && details.id !== CANONICAL_CONTENT_LIBRARY_SET_ID ? (
             <div className="content-library-source-actions">
-              <button type="button" disabled={busy} onClick={() => void renameSet()}>Đổi tên</button>
-              <button className="danger" type="button" disabled={busy} onClick={() => void deleteSet()}>Xóa</button>
+              <button type="button" disabled={busy} onClick={openRenameCategory}>Đổi tên</button>
+              <button className="danger" type="button" disabled={busy} onClick={() => void deleteCategory()}>Xóa</button>
             </div>
           ) : null}
         </aside>
 
         <section className="content-library-panel content-library-items">
           <div className="content-library-heading">
-            <div><p className="eyebrow">BÀI VIẾT</p><h2>{details?.name ?? 'Chưa chọn thư viện'}</h2></div>
+            <div><p className="eyebrow">BÀI VIẾT</p><h2>{details?.name ?? 'Chưa chọn danh mục'}</h2></div>
             {details ? <span>{details.itemCount}</span> : null}
           </div>
           <div className="content-library-toolbar">
@@ -491,9 +562,9 @@ export function ContentLibraryWorkspace() {
             <button className="content-library-button primary" type="button" disabled={!details || busy} onClick={startNewItem}>+ Bài</button>
           </div>
           <div className="content-library-table-wrap">
-            <table className="content-library-table">
+            <table className="content-library-table content-library-category-table">
               <thead>
-                <tr><th>STT</th><th>Tên bài</th><th>Loại</th><th>Biến thể</th><th>Trạng thái</th></tr>
+                <tr><th aria-label="Chọn"></th><th>STT</th><th>Tên bài</th><th>Loại</th><th>Biến thể</th><th>Trạng thái</th></tr>
               </thead>
               <tbody>
                 {filteredItems.map((item) => (
@@ -502,6 +573,14 @@ export function ContentLibraryWorkspace() {
                     className={item.id === selectedItemId ? 'active' : ''}
                     onClick={() => chooseItem(item)}
                   >
+                    <td className="content-library-check-cell" onClick={(event) => event.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        aria-label={`Chọn ${item.name}`}
+                        checked={checkedItemIds.includes(item.id)}
+                        onChange={(event) => toggleCheckedItem(item.id, event.target.checked)}
+                      />
+                    </td>
                     <td>{item.sortOrder + 1}</td>
                     <td><strong>{item.name}</strong><small>{item.variants[0]?.replace(/\s+/g, ' ').slice(0, 55) || 'Không có chữ'}</small></td>
                     <td><span className="content-library-type">{itemType(item)}</span></td>
@@ -510,14 +589,31 @@ export function ContentLibraryWorkspace() {
                   </tr>
                 ))}
                 {details && !filteredItems.length ? (
-                  <tr><td colSpan={5}><div className="content-library-empty">Chưa có bài viết phù hợp.</div></td></tr>
+                  <tr><td colSpan={6}><div className="content-library-empty">Chưa có bài viết phù hợp.</div></td></tr>
                 ) : null}
               </tbody>
             </table>
           </div>
-          <div className="content-library-row-actions">
-            <button type="button" disabled={busy || currentIndex <= 0} onClick={() => void moveItem('up')}>↑</button>
-            <button type="button" disabled={busy || currentIndex < 0 || !details || currentIndex >= details.items.length - 1} onClick={() => void moveItem('down')}>↓</button>
+          <div className="content-library-row-actions content-library-category-actions">
+            <div className="content-library-category-move">
+              <span>{moveCandidateIds.length > 0 ? `${moveCandidateIds.length} bài` : 'Chọn bài'}</span>
+              <select
+                aria-label="Danh mục đích"
+                value={moveTarget}
+                disabled={busy || moveCandidateIds.length === 0}
+                onChange={(event) => setMoveTarget(event.target.value)}
+              >
+                <option value="none">Không danh mục</option>
+                {categorySets.map((category) => (
+                  <option key={category.id} value={String(category.id)}>{category.name}</option>
+                ))}
+              </select>
+              <button type="button" disabled={busy || moveCandidateIds.length === 0} onClick={() => void moveSelectedToCategory()}>
+                Chuyển
+              </button>
+            </div>
+            <button type="button" disabled={busy || isAllPosts || currentIndex <= 0} onClick={() => void moveItem('up')}>↑</button>
+            <button type="button" disabled={busy || isAllPosts || currentIndex < 0 || !details || currentIndex >= details.items.length - 1} onClick={() => void moveItem('down')}>↓</button>
             <button type="button" disabled={busy || !selectedItemId} onClick={() => void duplicateItem()}>Nhân bản</button>
             <button className="danger" type="button" disabled={busy || !selectedItemId} onClick={() => void deleteItem()}>Xóa</button>
           </div>
@@ -626,7 +722,7 @@ export function ContentLibraryWorkspace() {
                   </div>
 
                   <p className="content-library-spin-note">
-                    <code>A|B|C</code> random cả nhánh; <code>{'{A|B|C}'}</code> chỉ random phần trong ngoặc.
+                    <code>A|B|C</code> random cả nhánh; <code>{'{A|B|C}'}</code> random đúng cấp hiện tại rồi tiếp tục xử lý nhóm lồng bên trong.
                     Token cần tên thật như <code>[u]</code>/<code>[f]</code> sẽ giữ nguyên nếu flow không có context.
                   </p>
 
@@ -726,13 +822,50 @@ export function ContentLibraryWorkspace() {
               </div>
             </div>
           ) : (
-            <div className="content-library-empty editor-empty">Chọn một thư viện rồi tạo hoặc chọn bài viết.</div>
+            <div className="content-library-empty editor-empty">Chọn một danh mục rồi tạo hoặc chọn bài viết.</div>
           )}
         </section>
       </div>
 
+      {categoryDialog ? (
+        <div className="content-library-category-dialog-backdrop" role="presentation" onMouseDown={() => !busy && setCategoryDialog(null)}>
+          <form
+            className="content-library-category-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label={categoryDialog.mode === 'create' ? 'Tạo danh mục' : 'Đổi tên danh mục'}
+            onMouseDown={(event) => event.stopPropagation()}
+            onSubmit={(event) => {
+              event.preventDefault()
+              void saveCategoryDialog()
+            }}
+          >
+            <div>
+              <p className="eyebrow">DANH MỤC BÀI VIẾT</p>
+              <h3>{categoryDialog.mode === 'create' ? 'Tạo danh mục' : 'Đổi tên danh mục'}</h3>
+            </div>
+            <label className="content-library-field">
+              <span>Tên danh mục</span>
+              <input
+                autoFocus
+                value={categoryDialog.name}
+                maxLength={120}
+                onChange={(event) => setCategoryDialog({ ...categoryDialog, name: event.target.value })}
+              />
+            </label>
+            <p>Danh mục chỉ để gom bài; bài gốc vẫn nằm trong “Tất cả bài viết”.</p>
+            <div className="content-library-category-dialog-actions">
+              <button type="button" disabled={busy} onClick={() => setCategoryDialog(null)}>Hủy</button>
+              <button className="primary" type="submit" disabled={busy || !categoryDialog.name.trim()}>
+                {busy ? 'Đang lưu...' : 'Lưu'}
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
+
       <p className="content-library-footnote">
-        Thư viện là canonical dùng chung toàn app. Runtime Spin chỉ tạo nội dung cho từng lượt đăng thực tế.
+        Thư viện là một kho canonical dùng chung toàn app; Danh mục chỉ là cách gom bài. Runtime Spin chỉ tạo nội dung cho từng lượt đăng thực tế.
       </p>
     </section>
   )

@@ -40,6 +40,10 @@ describe('contentSpin', () => {
     expect(spinContent('Bài A|Bài B|Bài C', { random: () => 0.5 })).toBe('Bài B')
   })
 
+  it('spins one basic brace group', () => {
+    expect(spinContent('{A|B|C}', { random: () => 0.99 })).toBe('C')
+  })
+
   it('keeps text outside braces and spins each brace group independently', () => {
     const values = [0.5, 0.99]
     let index = 0
@@ -49,6 +53,51 @@ describe('contentSpin', () => {
     )
 
     expect(result).toBe('🔥 Hàng mới - nội dung cố định - Xem thêm')
+  })
+
+  it('spins nested groups recursively and chooses each parent before its selected child', () => {
+    const values = [0.5, 0.99]
+    let index = 0
+    expect(spinContent('{A|B{X|Y}|C}', { random: () => values[index++] ?? 0 })).toBe('BY')
+    expect(index).toBe(2)
+  })
+
+  it('supports deeper recursive groups without consuming random values from unchosen siblings', () => {
+    const values = [0.5, 0.99, 0]
+    let index = 0
+    const result = spinContent('{A|B{X|Y{1|2}}|C}', { random: () => values[index++] ?? 0 })
+
+    expect(result).toBe('BY1')
+    expect(index).toBe(3)
+  })
+
+  it('spins a multiline outer article, then its nested group, then an independent hashtag sibling', () => {
+    const source = [
+      '{',
+      '[r2] [g] [f] đang xem ưu đãi {A|B|C}',
+      'Mã: [n] - Ngày [d] - Giờ [t]',
+      '|',
+      '[r5] [u] có hàng mới {X|Y|Z}',
+      'Mã chữ: [w][w][w] - Inbox ngay',
+      '|',
+      '[r8] Giá tốt hôm nay {10%|20%|30%}',
+      'Liên hệ {Hotline|Zalo|Inbox} ngay',
+      '}',
+      '{#MyTho|#HungPhat|#NguonHang}'
+    ].join('\n')
+    const values = [0.5, 0.5, 0.5, 0, 0, 0, 0]
+    let index = 0
+
+    const result = spinContent(source, {
+      random: () => values[index++] ?? 0,
+      now: new Date(2026, 8, 4, 12, 3, 58)
+    })
+
+    expect(result).toContain('[u] có hàng mới Y')
+    expect(result).toContain('Mã chữ: aaa - Inbox ngay')
+    expect(result).toContain('#HungPhat')
+    expect(result).not.toContain('Giá tốt hôm nay')
+    expect(source).toContain('{X|Y|Z}')
   })
 
   it('spins a multiline full-post brace and hashtag brace like the real editor case', () => {
@@ -78,20 +127,33 @@ describe('contentSpin', () => {
     expect(source).toContain('#tag-a')
   })
 
-  it('chooses the outer branch before spinning pipes inside braces', () => {
-    const values = [0.4, 0.99, 0]
+  it('chooses the top-level branch before recursively spinning groups inside that branch', () => {
+    const values = [0.4, 0.99, 0.99, 0]
     let index = 0
     const result = spinContent(
-      'Bài 1|🔥 {Giá tốt|Hàng mới} - {Inbox|Liên hệ}|Bài 3',
+      'Bài 1|🔥 {Giá tốt|Hàng {mới|hot}} - {Inbox|Liên hệ}|Bài 3',
       { random: () => values[index++] ?? 0 }
     )
 
-    expect(result).toBe('🔥 Hàng mới - Inbox')
+    expect(result).toBe('🔥 Hàng hot - Inbox')
+    expect(index).toBe(4)
   })
 
-  it('leaves malformed or nested brace structure untouched instead of guessing', () => {
-    expect(spinContent('Giữ {A|{B|C}} nguyên', { random: () => 0 })).toBe('Giữ {A|{B|C}} nguyên')
-    expect(spinContent('Giữ {A|B nguyên', { random: () => 0 })).toBe('Giữ {A|B nguyên')
+  it('leaves malformed brace structure untouched instead of partially spinning it', () => {
+    const source = 'Giữ {A|B{X|Y} nguyên'
+    expect(spinContent(source, { random: () => 0.99 })).toBe(source)
+    expect(spinContent('{A|B{X|Y}', { random: () => 0.99 })).toBe('{A|B{X|Y}')
+  })
+
+  it('keeps unknown and unavailable context tokens literal after recursive structural spin', () => {
+    expect(spinContent('{[u] [unknown]|[f]}', { random: () => 0 })).toBe('[u] [unknown]')
+  })
+
+  it('does not mutate canonical source and each invocation performs a fresh single structural spin', () => {
+    const source = '{A{1|2}|B{3|4}}'
+    expect(spinContent(source, { random: () => 0 })).toBe('A1')
+    expect(spinContent(source, { random: () => 0.99 })).toBe('B4')
+    expect(source).toBe('{A{1|2}|B{3|4}}')
   })
 
   it('adds the selected literal icon token to AI lines without touching separators or hashtags', () => {

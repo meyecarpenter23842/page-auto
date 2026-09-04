@@ -60,11 +60,17 @@ export interface ContentLibraryItemIdPayload { id: number }
 export interface CreateContentLibrarySetInput { name: string }
 export interface RenameContentLibrarySetInput { id: number; name: string }
 export interface CreateContentLibraryItemInput extends ContentLibraryItemDraft { contentSetId: number }
-export interface UpdateContentLibraryItemInput extends ContentLibraryItemDraft { id: number }
+export interface UpdateContentLibraryItemInput extends ContentLibraryItemDraft {
+  id: number
+  contentSetId?: number
+}
 export interface MoveContentLibraryItemInput {
   contentSetId: number
   itemId: number
   direction: 'up' | 'down'
+  /** Optional batch category move; when present the normal up/down fields are ignored by canonical IPC. */
+  itemIds?: number[]
+  targetContentSetId?: number | null
 }
 
 export interface ContentLibraryTextFileResult {

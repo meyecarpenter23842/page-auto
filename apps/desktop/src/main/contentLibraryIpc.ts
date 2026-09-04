@@ -13,8 +13,7 @@ import {
   type UpdateContentLibraryItemInput
 } from '../shared/contentLibrary'
 import { CanonicalContentLibraryRepository } from './database/canonicalContentLibraryRepository'
-import { ContentLibraryRepository } from './database/contentLibraryRepository'
-import { LegacyCanonicalPostBridge } from './database/legacyCanonicalPostBridge'
+import { CanonicalPostCollectionRepository } from './database/canonicalPostCollectionRepository'
 
 export interface ContentLibraryIpcRuntime {
   dispose: () => void
@@ -23,63 +22,52 @@ export interface ContentLibraryIpcRuntime {
 const MAX_IMPORT_FILE_BYTES = 10 * 1024 * 1024
 
 export function registerContentLibraryIpcHandlers(database: Database.Database): ContentLibraryIpcRuntime {
-  const library = new ContentLibraryRepository(database)
   const canonicalLibrary = new CanonicalContentLibraryRepository(database)
-  const bridge = new LegacyCanonicalPostBridge(database)
+  const categories = new CanonicalPostCollectionRepository(database)
 
-  ipcMain.handle(CONTENT_LIBRARY_IPC.list, () => {
-    const canonical = canonicalLibrary.summary()
-    return [canonical, ...library.list()]
-  })
-  ipcMain.handle(CONTENT_LIBRARY_IPC.get, (_event, payload: ContentLibrarySetIdPayload) => {
-    if (payload.id === CANONICAL_CONTENT_LIBRARY_SET_ID) return canonicalLibrary.get()
-    bridge.syncGlobalSet(payload.id)
-    return library.get(payload.id)
-  })
-  ipcMain.handle(CONTENT_LIBRARY_IPC.createSet, (_event, input: CreateContentLibrarySetInput) => {
-    const created = library.createSet(input)
-    bridge.syncGlobalSet(created.id)
-    return created
-  })
+  ipcMain.handle(CONTENT_LIBRARY_IPC.list, () => [canonicalLibrary.summary(), ...categories.list()])
+  ipcMain.handle(CONTENT_LIBRARY_IPC.get, (_event, payload: ContentLibrarySetIdPayload) => (
+    payload.id === CANONICAL_CONTENT_LIBRARY_SET_ID ? canonicalLibrary.get() : categories.get(payload.id)
+  ))
+  ipcMain.handle(CONTENT_LIBRARY_IPC.createSet, (_event, input: CreateContentLibrarySetInput) => categories.create(input))
   ipcMain.handle(CONTENT_LIBRARY_IPC.renameSet, (_event, input: RenameContentLibrarySetInput) => {
     if (input.id === CANONICAL_CONTENT_LIBRARY_SET_ID) {
       throw new Error('“Tất cả bài viết” là kho bài gốc và không thể đổi tên.')
     }
-    const renamed = library.renameSet(input)
-    bridge.syncGlobalSet(renamed.id)
-    return renamed
+    return categories.rename(input)
   })
   ipcMain.handle(CONTENT_LIBRARY_IPC.deleteSet, (_event, payload: ContentLibrarySetIdPayload) => {
     if (payload.id === CANONICAL_CONTENT_LIBRARY_SET_ID) {
-      throw new Error('“Tất cả bài viết” là kho bài gốc và không thể xóa như một nguồn.')
+      throw new Error('“Tất cả bài viết” là kho bài gốc và không thể xóa.')
     }
-    const deleted = library.deleteSet(payload.id)
-    if (deleted) bridge.syncGlobalSet(payload.id)
-    return deleted
+    return categories.delete(payload.id)
   })
-  ipcMain.handle(CONTENT_LIBRARY_IPC.createItem, (_event, input: CreateContentLibraryItemInput) => {
-    if (input.contentSetId === CANONICAL_CONTENT_LIBRARY_SET_ID) return canonicalLibrary.create(input)
-    const result = library.createItem(input)
-    bridge.syncGlobalSet(result.id)
-    return result
-  })
+  ipcMain.handle(CONTENT_LIBRARY_IPC.createItem, (_event, input: CreateContentLibraryItemInput) => (
+    input.contentSetId === CANONICAL_CONTENT_LIBRARY_SET_ID
+      ? canonicalLibrary.create(input)
+      : categories.createPost(input.contentSetId, input)
+  ))
   ipcMain.handle(CONTENT_LIBRARY_IPC.updateItem, (_event, input: UpdateContentLibraryItemInput) => {
-    if (input.id < 0) return canonicalLibrary.update(input)
-    const result = library.updateItem(input)
-    bridge.syncGlobalSet(result.id)
-    return result
+    const updated = canonicalLibrary.update(input)
+    if (input.contentSetId !== undefined && input.contentSetId !== CANONICAL_CONTENT_LIBRARY_SET_ID) {
+      return categories.setItemEnabled(input.contentSetId, input.id, input.enabled)
+    }
+    return updated
   })
   ipcMain.handle(CONTENT_LIBRARY_IPC.deleteItem, (_event, payload: ContentLibraryItemIdPayload) => {
-    if (payload.id < 0) return canonicalLibrary.delete(payload.id)
-    const result = library.deleteItem(payload.id)
-    bridge.syncGlobalSet(result.id)
-    return result
+    categories.deleteCanonicalItem(payload.id)
+    return canonicalLibrary.get()
   })
   ipcMain.handle(CONTENT_LIBRARY_IPC.moveItem, (_event, input: MoveContentLibraryItemInput) => {
-    if (input.contentSetId === CANONICAL_CONTENT_LIBRARY_SET_ID || input.itemId < 0) return canonicalLibrary.move()
-    const result = library.moveItem(input)
-    bridge.syncGlobalSet(result.id)
-    return result
+    if (input.itemIds?.length) {
+      const targetContentSetId = input.targetContentSetId ?? null
+      categories.moveItems(input.itemIds, targetContentSetId)
+      return targetContentSetId === null
+        ? canonicalLibrary.get()
+        : categories.get(targetContentSetId) ?? canonicalLibrary.get()
+    }
+    if (input.contentSetId === CANONICAL_CONTENT_LIBRARY_SET_ID) return canonicalLibrary.move()
+    return categories.moveItem(input.contentSetId, input.itemId, input.direction)
   })
   ipcMain.handle(CONTENT_LIBRARY_IPC.pickImageFolder, async () => {
     const result = await dialog.showOpenDialog({ title: 'Chọn folder ảnh cho bài viết', properties: ['openDirectory'] })

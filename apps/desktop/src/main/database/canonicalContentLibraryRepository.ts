@@ -100,7 +100,15 @@ export class CanonicalContentLibraryRepository {
 
   private reconcileLegacyWriters(): void {
     this.bridge.reconcileAllPages()
-    this.bridge.syncAllGlobalSets()
+    const rows = this.client.prepare(`
+      SELECT cs.id
+      FROM content_sets cs
+      LEFT JOIN post_collection_legacy_sources legacy
+        ON legacy.content_set_id = cs.id
+      WHERE cs.page_tab_id IS NULL AND legacy.content_set_id IS NULL
+      ORDER BY cs.id
+    `).all() as Array<{ id: number }>
+    rows.forEach((row) => this.bridge.syncGlobalSet(Number(row.id)))
   }
 
   private mirrorLegacyGlobalSource(postId: number, input: ContentLibraryItemDraft, now: number): void {

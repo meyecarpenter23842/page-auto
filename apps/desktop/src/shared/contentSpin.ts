@@ -59,49 +59,83 @@ function randomDigits(random: () => number, length = 6): string {
   return result
 }
 
-function splitTopLevelSpinBranches(source: string): string[] | null {
+function hasBalancedSpinBraces(source: string): boolean {
+  let depth = 0
+  for (const character of source) {
+    if (character === '{') depth += 1
+    else if (character === '}') {
+      if (depth === 0) return false
+      depth -= 1
+    }
+  }
+  return depth === 0
+}
+
+function splitAtCurrentDepth(source: string): string[] {
   const branches: string[] = []
   let depth = 0
   let start = 0
 
   for (let index = 0; index < source.length; index += 1) {
     const character = source[index]
-    if (character === '{') {
-      if (depth !== 0) return null
-      depth = 1
-      continue
-    }
-    if (character === '}') {
-      if (depth !== 1) return null
-      depth = 0
-      continue
-    }
-    if (character === '|' && depth === 0) {
+    if (character === '{') depth += 1
+    else if (character === '}') depth -= 1
+    else if (character === '|' && depth === 0) {
       branches.push(source.slice(start, index))
       start = index + 1
     }
   }
 
-  if (depth !== 0) return null
   branches.push(source.slice(start))
   return branches
 }
 
-function spinStructuredContent(source: string, random: () => number): string {
-  const branches = splitTopLevelSpinBranches(source)
-  if (!branches) return source
+function matchingBraceIndex(source: string, openIndex: number): number {
+  let depth = 0
+  for (let index = openIndex; index < source.length; index += 1) {
+    const character = source[index]
+    if (character === '{') depth += 1
+    else if (character === '}') {
+      depth -= 1
+      if (depth === 0) return index
+    }
+  }
+  return -1
+}
 
+function spinBraceGroups(source: string, random: () => number): string {
+  let result = ''
+  let index = 0
+
+  while (index < source.length) {
+    if (source[index] !== '{') {
+      result += source[index] ?? ''
+      index += 1
+      continue
+    }
+
+    const closeIndex = matchingBraceIndex(source, index)
+    if (closeIndex < 0) return source
+
+    const rawGroup = source.slice(index + 1, closeIndex)
+    const options = splitAtCurrentDepth(rawGroup)
+    const selected = options[randomIndex(options.length, random)] ?? ''
+    result += spinBraceGroups(selected.trim(), random)
+    index = closeIndex + 1
+  }
+
+  return result
+}
+
+function spinStructuredContent(source: string, random: () => number): string {
+  if (!hasBalancedSpinBraces(source)) return source
+
+  const branches = splitAtCurrentDepth(source)
   const chosenBranch = branches.length > 1
     ? branches[randomIndex(branches.length, random)] ?? ''
     : branches[0] ?? ''
 
-  return chosenBranch
-    .trim()
-    .replace(/\{([^{}]*)\}/g, (_match, rawOptions: string) => {
-      const options = rawOptions.split('|')
-      const selected = options[randomIndex(options.length, random)] ?? ''
-      return selected.trim()
-    })
+  return spinBraceGroups(chosenBranch.trim(), random)
 }
 
 export function spinContent(source: string, context: ContentSpinContext = {}): string {
