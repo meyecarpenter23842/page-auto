@@ -6,6 +6,7 @@ import type {
   PageWallRunNowResult
 } from '../../shared/pageWall'
 import type { PostingJobResult } from '../../shared/posting'
+import { PageWallMaterialResolver } from './pageWallMaterialResolver'
 
 const supportedImageExtensions = new Set(['.jpg', '.jpeg', '.png', '.webp'])
 
@@ -74,10 +75,11 @@ function normalizeImagePaths(paths: string[]): string[] {
 export class PageWallRunNowService {
   constructor(
     private readonly pageTabs: PageWallPageTabSource,
-    private readonly posting: PageWallPostingExecutor
+    private readonly posting: PageWallPostingExecutor,
+    private readonly materialResolver = new PageWallMaterialResolver()
   ) {}
 
-  prepare(payload: PageWallRunNowPayload): PageWallPreparationResult {
+  async prepare(payload: PageWallRunNowPayload): Promise<PageWallPreparationResult> {
     if (!Number.isInteger(payload.pageTabId) || payload.pageTabId <= 0) {
       return { ok: false, result: failure(payload, 'Page Tab không hợp lệ.') }
     }
@@ -98,16 +100,24 @@ export class PageWallRunNowService {
       return { ok: false, result: failure(payload, 'Page Tab chưa có Page UID hợp lệ.', 'page_navigation_failed') }
     }
 
-    const imagePaths = normalizeImagePaths(payload.imagePaths)
-    const unsupported = imagePaths.find((path) => !supportedImageExtensions.has(extname(path).toLowerCase()))
-    if (unsupported) {
-      return {
-        ok: false,
-        result: failure(payload, 'Danh sách ảnh có file không được hỗ trợ. Chỉ dùng JPG, JPEG, PNG hoặc WEBP.', 'media_failed')
+    let content = payload.content
+    let imagePaths = normalizeImagePaths(payload.imagePaths)
+    if (payload.canonicalPost) {
+      const resolved = await this.materialResolver.resolve(payload.canonicalPost)
+      if (!resolved.ok) return { ok: false, result: failure(payload, resolved.message, resolved.code) }
+      content = resolved.material.content
+      imagePaths = resolved.material.imagePaths
+    } else {
+      const unsupported = imagePaths.find((path) => !supportedImageExtensions.has(extname(path).toLowerCase()))
+      if (unsupported) {
+        return {
+          ok: false,
+          result: failure(payload, 'Danh sách ảnh có file không được hỗ trợ. Chỉ dùng JPG, JPEG, PNG hoặc WEBP.', 'media_failed')
+        }
       }
     }
 
-    if (!payload.content.trim() && imagePaths.length === 0) {
+    if (!content.trim() && imagePaths.length === 0) {
       return { ok: false, result: failure(payload, 'Hãy nhập nội dung hoặc chọn ít nhất một ảnh.', 'no_content') }
     }
 
@@ -117,7 +127,7 @@ export class PageWallRunNowService {
         input: {
           accountId: payload.accountId,
           pageUid,
-          content: payload.content,
+          content,
           imagePaths
         },
         pageTabName: pageTab.name,
@@ -128,7 +138,7 @@ export class PageWallRunNowService {
   }
 
   async execute(payload: PageWallRunNowPayload): Promise<PageWallRunNowResult> {
-    const preparation = this.prepare(payload)
+    const preparation = await this.prepare(payload)
     if (!preparation.ok) return preparation.result
 
     const result = await this.posting.executePageWallPostNow(preparation.prepared.input)

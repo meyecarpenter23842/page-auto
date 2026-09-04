@@ -6,6 +6,7 @@ import {
 } from '../../shared/pageTabs'
 import type { PageWallExecutionInput, PageWallRunNowPayload } from '../../shared/pageWall'
 import type { PostingJobResult } from '../../shared/posting'
+import { PageWallMaterialResolver } from './pageWallMaterialResolver'
 import { PageWallRunNowService } from './pageWallRunNowService'
 
 function pageTab(enabled = true): PageTabConfig {
@@ -51,9 +52,16 @@ function setup(config: PageTabConfig | null = pageTab()) {
     message: 'published',
     publishedUrl: 'https://www.facebook.com/Page/posts/pfbidNew'
   }))
+  const materialResolver = new PageWallMaterialResolver({
+    list: vi.fn(async (folderPath: string) => [
+      `${folderPath}\\one.jpg`,
+      `${folderPath}\\two.webp`
+    ])
+  })
   const service = new PageWallRunNowService(
     { get: vi.fn(() => config) },
-    { executePageWallPostNow }
+    { executePageWallPostNow },
+    materialResolver
   )
   return { service, executePageWallPostNow }
 }
@@ -81,6 +89,35 @@ describe('PageWallRunNowService', () => {
     })
   })
 
+  it('materializes a canonical Post Library selection immediately before production execution', async () => {
+    const { service, executePageWallPostNow } = setup()
+
+    const result = await service.execute(payload({
+      content: 'stale renderer text must not win',
+      imagePaths: ['C:\\manual\\stale.jpg'],
+      canonicalPost: {
+        postId: 101,
+        postName: 'Bài dùng chung',
+        variantIndex: 1,
+        content: 'Biến thể canonical số 2',
+        image: {
+          folderPath: 'D:\\canonical',
+          mode: 'sequential',
+          imagesPerPost: 1,
+          missingPolicy: 'text_only'
+        }
+      }
+    }))
+
+    expect(result.status).toBe('success')
+    expect(executePageWallPostNow).toHaveBeenCalledWith({
+      accountId: 11,
+      pageUid: '90001',
+      content: 'Biến thể canonical số 2',
+      imagePaths: ['D:\\canonical\\one.jpg']
+    })
+  })
+
   it('rejects an account that is not enabled for the selected Page Tab', async () => {
     const { service, executePageWallPostNow } = setup(pageTab(false))
 
@@ -91,7 +128,7 @@ describe('PageWallRunNowService', () => {
     expect(executePageWallPostNow).not.toHaveBeenCalled()
   })
 
-  it('requires content or media and rejects unsupported media before opening Facebook', async () => {
+  it('requires content or media and rejects unsupported manual media before opening Facebook', async () => {
     const { service, executePageWallPostNow } = setup()
 
     await expect(service.execute(payload({ content: '  ', imagePaths: [] }))).resolves.toMatchObject({

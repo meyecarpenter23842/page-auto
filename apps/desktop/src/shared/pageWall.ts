@@ -1,8 +1,18 @@
+import type { PageTabImageConfig } from './pageTabs'
 import type {
   PostingErrorCode,
   PostingResultStatus,
   PostingSessionValidation
 } from './posting'
+
+/** Secret-free canonical post snapshot selected by the renderer from the shared Post Library. */
+export interface PageWallCanonicalPostSelection {
+  postId: number
+  postName: string
+  variantIndex: number
+  content: string
+  image: PageTabImageConfig
+}
 
 /** Secret-free renderer -> Main payload for a one-shot Page Wall publish. */
 export interface PageWallRunNowPayload {
@@ -10,6 +20,11 @@ export interface PageWallRunNowPayload {
   accountId: number
   content: string
   imagePaths: string[]
+  /**
+   * When present, Main materializes this canonical-library selection immediately before
+   * Run/Hẹn. The resolved content + concrete image paths are then detached from the library.
+   */
+  canonicalPost?: PageWallCanonicalPostSelection
 }
 
 /** Internal Main input after Page Tab/account membership has been validated. */
