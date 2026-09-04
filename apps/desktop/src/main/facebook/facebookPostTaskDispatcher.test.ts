@@ -46,9 +46,10 @@ describe('executeFacebookPostTaskJob', () => {
     mocks.executeWall.mockResolvedValue({ status: 'success', message: 'wall ok' })
   })
 
-  it('keeps legacy Group execution behind the explicit group_post adapter', async () => {
+  it('keeps Group spin source intact so the Group runtime can resolve [u] from the live surface', async () => {
     const legacy = {
       ...commonBase(),
+      content: '{Giá tốt|Hàng mới} [u]',
       groupUid: '777'
     } as PostingJobRequest
     const task = groupPostTaskFromLegacy(legacy)
@@ -58,11 +59,17 @@ describe('executeFacebookPostTaskJob', () => {
     expect(mocks.executeWall).not.toHaveBeenCalled()
   })
 
-  it('dispatches page_wall_post directly to the Page Wall executor without synthesizing a Group UID', async () => {
-    const task = pageWallPostTaskFromBase(commonBase())
+  it('spins page_wall_post content before dispatching it to the Page Wall executor', async () => {
+    const task = pageWallPostTaskFromBase({
+      ...commonBase(),
+      content: '{Nội dung tường}'
+    })
 
     await expect(executeFacebookPostTaskJob(task)).resolves.toMatchObject({ status: 'success', message: 'wall ok' })
-    expect(mocks.executeWall).toHaveBeenCalledWith(task)
+    expect(mocks.executeWall).toHaveBeenCalledWith({
+      ...task,
+      content: 'Nội dung tường'
+    })
     expect(mocks.executeGroup).not.toHaveBeenCalled()
   })
 

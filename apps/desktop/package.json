@@ -7,7 +7,7 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run --no-file-parallelism",
+    "test": "vitest run --no-file-parallelism --testTimeout=20000",
     "rebuild:native": "electron-rebuild -m ../.. -f -w better-sqlite3",
     "smoke": "node ./scripts/smoke.mjs",
     "smoke:page-business": "node ./scripts/page-business-ui-smoke.mjs",

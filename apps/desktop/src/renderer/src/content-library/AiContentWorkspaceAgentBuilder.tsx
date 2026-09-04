@@ -4,6 +4,11 @@ import type {
   AiContentAction,
   GenerateAiPostsResult
 } from '../../../shared/aiAgents'
+import {
+  CONTENT_SPIN_ICON_OPTIONS,
+  addSpinTokenToAiLines,
+  type ContentSpinIconToken
+} from '../../../shared/contentSpin'
 import { AiAgentManagerModal } from './AiAgentManagerModal'
 import { AiDraftResultsPanel, type AiIncomingDraftBatch } from './AiDraftResultsPanel'
 import { captureAiRequestContext } from './aiDraftResults'
@@ -14,10 +19,13 @@ import './aiContentWorkspaceModes.css'
 const POST_TYPES = ['Bán hàng', 'Chia sẻ', 'Review', 'Giới thiệu'] as const
 const TONES = ['Tự nhiên', 'Gần gũi', 'Chuyên nghiệp', 'Ngắn gọn'] as const
 const STRUCTURES = [
-  'Hook → Nội dung → CTA',
-  'Vấn đề → Giải pháp → CTA',
-  'Thông tin → Lợi ích → CTA',
-  'Tự do'
+  'Trộn bố cục',
+  'Hook → Ý chính → CTA',
+  'Vấn đề → Giải pháp → Liên hệ',
+  'Hook → Bullet → CTA',
+  'Hỏi → Trả lời → Gợi ý',
+  'Thông tin nhanh',
+  'Chia sẻ tự nhiên'
 ] as const
 const LENGTHS = ['Ngắn', 'Trung bình', 'Dài'] as const
 
@@ -47,10 +55,9 @@ export function AiContentWorkspaceAgentBuilder() {
   const [randomSource, setRandomSource] = useState('')
   const [postType, setPostType] = useState<(typeof POST_TYPES)[number]>('Bán hàng')
   const [tone, setTone] = useState<(typeof TONES)[number]>('Tự nhiên')
-  const [structure, setStructure] = useState<(typeof STRUCTURES)[number]>(
-    'Hook → Nội dung → CTA'
-  )
+  const [structure, setStructure] = useState<(typeof STRUCTURES)[number]>('Trộn bố cục')
   const [length, setLength] = useState<(typeof LENGTHS)[number]>('Trung bình')
+  const [lineSpinToken, setLineSpinToken] = useState<ContentSpinIconToken | ''>('')
   const [postCount, setPostCount] = useState(5)
   const [emoji, setEmoji] = useState(true)
   const [hashtag, setHashtag] = useState(false)
@@ -161,7 +168,11 @@ export function AiContentWorkspaceAgentBuilder() {
       setGenerationVersion(version)
       setResultAction(requestContext.action)
       setResultPostCount(requestContext.postCount)
-      setIncomingBatch({ version, output: result.output, warning: result.warning })
+      setIncomingBatch({
+        version,
+        output: addSpinTokenToAiLines(result.output, lineSpinToken),
+        warning: result.warning
+      })
     } catch (cause) {
       setGenerationError(errorMessage(cause))
     } finally {
@@ -186,9 +197,7 @@ export function AiContentWorkspaceAgentBuilder() {
           >
             <option value="">{enabledAgents.length ? 'Chọn Agent' : 'Chưa có Agent'}</option>
             {enabledAgents.map((agent) => (
-              <option key={agent.id} value={agent.id}>
-                {agent.name}
-              </option>
+              <option key={agent.id} value={agent.id}>{agent.name}</option>
             ))}
           </select>
           <button
@@ -364,7 +373,7 @@ export function AiContentWorkspaceAgentBuilder() {
               </div>
 
               <label className="ai-field">
-                <span>Cấu trúc</span>
+                <span>Bố cục / mạch bài</span>
                 <select
                   value={structure}
                   onChange={(event) => setStructure(
@@ -404,6 +413,24 @@ export function AiContentWorkspaceAgentBuilder() {
                   </label>
                 </div>
               </div>
+
+              <label className="ai-field">
+                <span>Ký tự spin đầu dòng</span>
+                <select
+                  value={lineSpinToken}
+                  onChange={(event) => setLineSpinToken(
+                    event.target.value as ContentSpinIconToken | ''
+                  )}
+                >
+                  <option value="">Không dùng</option>
+                  {CONTENT_SPIN_ICON_OPTIONS.map((option) => (
+                    <option key={option.token} value={option.token}>{option.label}</option>
+                  ))}
+                </select>
+                <small>
+                  AI giữ nguyên token như [r3] ở đầu dòng; Page-Auto tự spin khi đăng. App cũng hỗ trợ [u] [g] [f] [n] [d] [t] [w].
+                </small>
+              </label>
 
               <div className="ai-image-option disabled" aria-disabled="true">
                 <span><input type="checkbox" disabled /><b>Tạo ảnh bằng AI</b></span>
