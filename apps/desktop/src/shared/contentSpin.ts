@@ -107,7 +107,7 @@ function spinStructuredContent(source: string, random: () => number): string {
 export function spinContent(source: string, context: ContentSpinContext = {}): string {
   const random = context.random ?? Math.random
   const now = context.now ?? new Date()
-  const targetName = context.targetName?.trim() || context.recipientName?.trim() || null
+  const targetName = context.targetName?.trim() || null
   const shortRecipientName = nameWithoutSurname(context.recipientName)
   const structured = spinStructuredContent(source, random)
 

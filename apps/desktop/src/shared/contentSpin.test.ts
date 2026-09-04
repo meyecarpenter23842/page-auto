@@ -23,6 +23,10 @@ describe('contentSpin', () => {
     expect(spinContent('[u] / [f]', { random: () => 0 })).toBe('[u] / [f]')
   })
 
+  it('never substitutes recipient data for an unresolved target [u]', () => {
+    expect(spinContent('[u] / [f]', { recipientName: 'Nguyễn Văn An', random: () => 0 })).toBe('[u] / Văn An')
+  })
+
   it('resolves every icon token from its own configured pool', () => {
     for (const option of CONTENT_SPIN_ICON_OPTIONS) {
       const first = spinContent(option.token, { random: () => 0 })
@@ -45,6 +49,33 @@ describe('contentSpin', () => {
     )
 
     expect(result).toBe('🔥 Hàng mới - nội dung cố định - Xem thêm')
+  })
+
+  it('spins a multiline full-post brace and hashtag brace like the real editor case', () => {
+    const source = [
+      '{',
+      '[f]Bài số 1',
+      '',
+      'Nội dung một',
+      '|',
+      '[f]Bài số 2',
+      '',
+      'Nội dung hai',
+      '|',
+      '[f]Bài số 3',
+      '',
+      'Nội dung ba',
+      '}',
+      '{#tag-a|#tag-b|#tag-c}'
+    ].join('\n')
+    const values = [0.5, 0.99]
+    let index = 0
+
+    const result = spinContent(source, { random: () => values[index++] ?? 0 })
+
+    expect(result).toBe('[f]Bài số 2\n\nNội dung hai\n#tag-c')
+    expect(source).toContain('[f]Bài số 1')
+    expect(source).toContain('#tag-a')
   })
 
   it('chooses the outer branch before spinning pipes inside braces', () => {

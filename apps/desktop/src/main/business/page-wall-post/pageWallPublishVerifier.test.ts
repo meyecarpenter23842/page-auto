@@ -4,12 +4,14 @@ import type { PreparedPageWallRuntime } from './pageWallTask'
 
 const mocks = vi.hoisted(() => ({
   capturePublishBaseline: vi.fn(),
-  findNewPublishedPost: vi.fn()
+  findNewPublishedPost: vi.fn(),
+  findSingleNewPublishedPost: vi.fn()
 }))
 
 vi.mock('../../browser/posting/publishVerification', () => ({
   capturePublishBaseline: mocks.capturePublishBaseline,
-  findNewPublishedPost: mocks.findNewPublishedPost
+  findNewPublishedPost: mocks.findNewPublishedPost,
+  findSingleNewPublishedPost: mocks.findSingleNewPublishedPost
 }))
 
 import { PageWallPublishVerifier } from './pageWallPublishVerifier'
@@ -42,6 +44,7 @@ describe('PageWallPublishVerifier', () => {
     vi.clearAllMocks()
     mocks.capturePublishBaseline.mockResolvedValue(baseline)
     mocks.findNewPublishedPost.mockResolvedValue(null)
+    mocks.findSingleNewPublishedPost.mockResolvedValue(null)
   })
 
   it('captures a pre-publish baseline from the current Page wall', async () => {
@@ -79,6 +82,7 @@ describe('PageWallPublishVerifier', () => {
       12,
       true
     )
+    expect(mocks.findSingleNewPublishedPost).not.toHaveBeenCalled()
   })
 
   it('reloads the same Page wall and verifies again when immediate DOM evidence is absent', async () => {
@@ -102,6 +106,26 @@ describe('PageWallPublishVerifier', () => {
     expect(prepared.checkAccessBlock).toHaveBeenCalledWith('khi xác minh bài mới trên Tường Page')
     expect(prepared.checkAccessBlock).toHaveBeenCalledWith('sau khi xác minh bài mới trên Tường Page')
     expect(result).toMatchObject({ status: 'success', publishedUrl: published.publishedUrl })
+  })
+
+  it('falls back to exactly one new post key after reload when Facebook text scoping changed', async () => {
+    mocks.findSingleNewPublishedPost.mockResolvedValueOnce(published)
+    const prepared = runtime()
+    const verifier = new PageWallPublishVerifier(
+      prepared.value,
+      'https://www.facebook.com/profile.php?id=90001',
+      1_000
+    )
+
+    const result = await verifier.verify('nội dung dài cần verify', baseline)
+
+    expect(mocks.findSingleNewPublishedPost).toHaveBeenCalledWith(prepared.value.page, baseline)
+    expect(prepared.checkAccessBlock).toHaveBeenCalledWith('sau khi xác minh post key mới trên Tường Page')
+    expect(result).toMatchObject({
+      status: 'success',
+      publishedUrl: published.publishedUrl
+    })
+    expect(result.message).toContain('đúng một bài mới theo post key')
   })
 
   it('uses new post-key evidence for image-only posts without weakening text verification', async () => {
@@ -137,6 +161,7 @@ describe('PageWallPublishVerifier', () => {
       status: 'failed',
       code: 'publish_unconfirmed'
     })
+    expect(mocks.findSingleNewPublishedPost).toHaveBeenCalledTimes(1)
   })
 
   it('does not return success when a checkpoint overlay appears after immediate post evidence', async () => {
@@ -179,5 +204,6 @@ describe('PageWallPublishVerifier', () => {
     expect(result.status).toBe('needs_login')
     expect(result.code).toBe('verification_required')
     expect(result.message).toContain('review Tường Page trước khi retry')
+    expect(mocks.findSingleNewPublishedPost).not.toHaveBeenCalled()
   })
 })
