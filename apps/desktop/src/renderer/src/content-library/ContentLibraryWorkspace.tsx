@@ -10,6 +10,7 @@ import {
   type ContentLibrarySetDetails,
   type ContentLibrarySetSummary
 } from '../../../shared/contentLibrary'
+import { CONTENT_SPIN_ICON_OPTIONS, spinContent } from '../../../shared/contentSpin'
 import './contentLibrary.css'
 
 interface ItemEditorDraft {
@@ -19,6 +20,16 @@ interface ItemEditorDraft {
   variantText: string
   image: ContentLibraryItemDraft['image']
 }
+
+const CONTENT_SPIN_TOKEN_HINTS = [
+  { token: '[u]', label: 'Tên Page/Group thật' },
+  { token: '[g]', label: 'Ngẫu nhiên anh/chị' },
+  { token: '[f]', label: 'Tên người nhận bỏ họ' },
+  { token: '[n]', label: '6 số ngẫu nhiên' },
+  { token: '[d]', label: 'Ngày dd/MM/yyyy' },
+  { token: '[t]', label: 'Giờ HH:mm:ss' },
+  { token: '[w]', label: 'Chữ thường a-z' }
+] as const
 
 function editorFromItem(item: ContentLibraryItem): ItemEditorDraft {
   return { id: item.id, name: item.name, enabled: item.enabled, variantText: formatContentVariantText(item.variants), image: { ...item.image } }
@@ -53,6 +64,7 @@ export function ContentLibraryWorkspace() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const sourceLoadSequence = useRef(0)
+  const variantTextareaRef = useRef<HTMLTextAreaElement | null>(null)
 
   const load = useCallback(async (preferredSetId?: number | null, preferredItemId?: number | null) => {
     const requestId = ++sourceLoadSequence.current
@@ -258,9 +270,37 @@ export function ContentLibraryWorkspace() {
     if (file) setEditor((current) => current ? { ...current, variantText: file.content } : current)
   }
 
-  const randomPreview = () => {
+  const insertSpinSnippet = (snippet: string) => {
+    if (!editor) return
+    const textarea = variantTextareaRef.current
+    const start = textarea?.selectionStart ?? editor.variantText.length
+    const end = textarea?.selectionEnd ?? start
+    const nextCursor = start + snippet.length
+    setEditor({
+      ...editor,
+      variantText: `${editor.variantText.slice(0, start)}${snippet}${editor.variantText.slice(end)}`
+    })
+    setPreview(null)
+    window.requestAnimationFrame(() => {
+      const current = variantTextareaRef.current
+      if (!current) return
+      current.focus()
+      current.setSelectionRange(nextCursor, nextCursor)
+    })
+  }
+
+  const pickPreviewVariant = (): string | null => {
     const variants = parseContentVariantText(editor?.variantText ?? '')
-    setPreview(variants.length ? (variants[Math.floor(Math.random() * variants.length)] ?? variants[0] ?? '') : 'Chưa có nội dung để xem thử.')
+    return variants.length ? (variants[Math.floor(Math.random() * variants.length)] ?? variants[0] ?? null) : null
+  }
+
+  const randomPreview = () => {
+    setPreview(pickPreviewVariant() ?? 'Chưa có nội dung để xem thử.')
+  }
+
+  const spinPreview = () => {
+    const source = pickPreviewVariant()
+    setPreview(source ? spinContent(source) : 'Chưa có nội dung để Spin thử.')
   }
 
   const currentIndex = details?.items.findIndex((item) => item.id === selectedItemId) ?? -1
@@ -294,8 +334,22 @@ export function ContentLibraryWorkspace() {
           {editor && details ? <div className="content-library-editor-body">
             <label className="content-library-toggle"><input type="checkbox" checked={editor.enabled} onChange={(event) => setEditor({ ...editor, enabled: event.target.checked })} /><span>Dùng bài này</span></label>
             <label className="content-library-field"><span>Tên bài</span><input value={editor.name} onChange={(event) => setEditor({ ...editor, name: event.target.value })} placeholder="Ví dụ: Mỹ phẩm 01" /></label>
-            <label className="content-library-field"><span>Nội dung · phân cách biến thể bằng |</span><textarea rows={9} value={editor.variantText} onChange={(event) => { setEditor({ ...editor, variantText: event.target.value }); setPreview(null) }} placeholder={'Nội dung A\n|\nNội dung B'} /></label>
-            <div className="content-library-inline-actions"><button type="button" onClick={() => void importText()}>Import TXT</button><button type="button" onClick={randomPreview}>Xem thử</button></div>
+            <label className="content-library-field"><span>Nội dung · dòng chỉ có | = tách biến thể thư viện</span><textarea ref={variantTextareaRef} rows={9} value={editor.variantText} onChange={(event) => { setEditor({ ...editor, variantText: event.target.value }); setPreview(null) }} placeholder={'Nội dung A|Nội dung B\n|\nBiến thể thư viện khác'} /></label>
+            <div className="content-library-spin-guide">
+              <div className="content-library-spin-guide-head"><strong>Runtime Spin</strong><small>Chèn token vào canonical; app chỉ spin 1 lần ngay trước khi đăng.</small></div>
+              <div className="content-library-spin-token-list">
+                {CONTENT_SPIN_TOKEN_HINTS.map((item) => <button key={item.token} className="content-library-spin-token" type="button" title={item.label} onClick={() => insertSpinSnippet(item.token)}><code>{item.token}</code><span>{item.label}</span></button>)}
+              </div>
+              <div className="content-library-spin-pools">
+                {CONTENT_SPIN_ICON_OPTIONS.map((item) => <button key={item.token} className="content-library-spin-pool" type="button" title={`Pool: ${item.pool.join(' ')}`} onClick={() => insertSpinSnippet(item.token)}><code>{item.token}</code><span>{item.samples.join(' ')}</span></button>)}
+              </div>
+              <div className="content-library-spin-grammar">
+                <button type="button" onClick={() => insertSpinSnippet('A|B|C')}>A|B|C</button>
+                <button type="button" onClick={() => insertSpinSnippet('{A|B|C}')}>{'{A|B|C}'}</button>
+                <span>Dấu <code>|</code> nằm trong nội dung là Runtime Spin. Chỉ một dòng đứng riêng <code>|</code> mới tách biến thể Post Library.</span>
+              </div>
+            </div>
+            <div className="content-library-inline-actions"><button type="button" onClick={() => void importText()}>Import TXT</button><button type="button" onClick={randomPreview}>Xem biến thể</button><button type="button" onClick={spinPreview}>Spin thử</button></div>
             {preview !== null ? <div className="content-library-preview">{preview}</div> : null}
             <div className="content-library-divider"><span>Ảnh</span></div>
             <label className="content-library-field"><span>Folder ảnh</span><div className="content-library-folder"><input value={editor.image.folderPath} onChange={(event) => setEditor({ ...editor, image: { ...editor.image, folderPath: event.target.value } })} placeholder="Không bắt buộc" /><button type="button" onClick={() => void pickFolder()}>Chọn</button></div></label>
@@ -306,7 +360,7 @@ export function ContentLibraryWorkspace() {
           </div> : <div className="content-library-empty editor-empty">Chọn một nguồn rồi tạo hoặc chọn bài viết.</div>}
         </aside>
       </div>
-      <p className="content-library-footnote">Nguồn ở đây là dữ liệu dùng chung toàn app. K4.5.1 chưa đổi runtime Page/Kịch Bản; consumer sẽ tham chiếu nguồn và snapshot nội dung ở lô tiếp theo.</p>
+      <p className="content-library-footnote">Đây là canonical dùng chung toàn app. Runtime Spin chỉ tạo bản nội dung dùng để đăng và không ghi ngược vào bài gốc.</p>
     </section>
   )
 }

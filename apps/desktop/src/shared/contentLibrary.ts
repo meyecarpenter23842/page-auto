@@ -79,15 +79,14 @@ export const DEFAULT_CONTENT_LIBRARY_IMAGE: ContentLibraryImageConfig = {
   missingPolicy: 'text_only'
 }
 
-export function parseContentVariantText(value: string): string[] {
-  const variants: string[] = []
-  let buffer = ''
+function decodeLegacyContentVariantEscapes(value: string): string {
+  let result = ''
   let escaped = false
 
-  for (const char of value.replace(/\r\n/g, '\n')) {
+  for (const char of value) {
     if (escaped) {
-      if (char === '|' || char === '\\') buffer += char
-      else buffer += `\\${char}`
+      if (char === '|' || char === '\\') result += char
+      else result += `\\${char}`
       escaped = false
       continue
     }
@@ -95,23 +94,50 @@ export function parseContentVariantText(value: string): string[] {
       escaped = true
       continue
     }
-    if (char === '|') {
-      const normalized = buffer.trim()
-      if (normalized) variants.push(normalized)
-      buffer = ''
-      continue
-    }
-    buffer += char
+    result += char
   }
 
-  if (escaped) buffer += '\\'
-  const tail = buffer.trim()
-  if (tail) variants.push(tail)
+  if (escaped) result += '\\'
+  return result
+}
+
+function encodeContentVariant(value: string): string {
+  return value
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((line) => {
+      const escapedBackslashes = line.replace(/\\/g, '\\\\')
+      return /^\s*\|\s*$/.test(line)
+        ? escapedBackslashes.replace('|', '\\|')
+        : escapedBackslashes
+    })
+    .join('\n')
+}
+
+export function parseContentVariantText(value: string): string[] {
+  const variants: string[] = []
+  let lines: string[] = []
+
+  const flush = () => {
+    const normalized = lines.join('\n').trim()
+    if (normalized) variants.push(normalized)
+    lines = []
+  }
+
+  for (const line of value.replace(/\r\n/g, '\n').split('\n')) {
+    if (/^\s*\|\s*$/.test(line)) {
+      flush()
+      continue
+    }
+    lines.push(decodeLegacyContentVariantEscapes(line))
+  }
+
+  flush()
   return variants
 }
 
 export function formatContentVariantText(variants: readonly string[]): string {
   return variants
-    .map((variant) => variant.replace(/\\/g, '\\\\').replace(/\|/g, '\\|'))
+    .map(encodeContentVariant)
     .join('\n|\n')
 }
