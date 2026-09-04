@@ -182,7 +182,6 @@ export function ContentLibraryWorkspace() {
 
   const categorySets = useMemo(() => sets.filter((item) => item.id !== CANONICAL_CONTENT_LIBRARY_SET_ID), [sets])
   const activeVariant = editor?.variants[activeVariantIndex] ?? ''
-  const previewContent = preview?.content ?? activeVariant
   const previewMode = preview?.mode ?? 'source'
   const isAllPosts = details?.id === CANONICAL_CONTENT_LIBRARY_SET_ID
   const moveCandidateIds = checkedItemIds.length > 0
@@ -719,28 +718,16 @@ export function ContentLibraryWorkspace() {
                     <button className="content-library-spin-skeleton" type="button" onClick={() => insertSpinSnippet('{A|B|C}')}>
                       + {'{A|B|C}'}
                     </button>
+                    <div className="content-library-preview-actions content-library-preview-launchers">
+                      <button type="button" onClick={showSourcePreview}>Xem gốc</button>
+                      <button className="primary" type="button" onClick={spinPreview}>Spin thử</button>
+                    </div>
                   </div>
 
                   <p className="content-library-spin-note">
                     <code>A|B|C</code> random cả nhánh; <code>{'{A|B|C}'}</code> random đúng cấp hiện tại rồi tiếp tục xử lý nhóm lồng bên trong.
                     Token cần tên thật như <code>[u]</code>/<code>[f]</code> sẽ giữ nguyên nếu flow không có context.
                   </p>
-
-                  <div className="content-library-preview-card">
-                    <div className="content-library-preview-head">
-                      <div>
-                        <strong>Xem trước bài</strong>
-                        <span className={previewMode === 'spin' ? 'spin' : ''}>{previewMode === 'spin' ? 'Spin thử' : 'Bản gốc'}</span>
-                      </div>
-                      <div className="content-library-preview-actions">
-                        <button type="button" onClick={showSourcePreview}>Xem gốc</button>
-                        <button className="primary" type="button" onClick={spinPreview}>Spin thử</button>
-                      </div>
-                    </div>
-                    <div className="content-library-preview">
-                      {previewContent || 'Biến thể hiện tại chưa có nội dung.'}
-                    </div>
-                  </div>
                 </div>
 
                 <aside className="content-library-settings">
@@ -826,6 +813,34 @@ export function ContentLibraryWorkspace() {
           )}
         </section>
       </div>
+
+      {preview ? (
+        <div className="content-library-preview-modal-backdrop" role="presentation" onMouseDown={() => setPreview(null)}>
+          <section
+            className="content-library-preview-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label={previewMode === 'spin' ? 'Spin thử bài viết' : 'Xem bài gốc'}
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="content-library-preview-modal-head">
+              <div>
+                <p className="eyebrow">XEM TRƯỚC BÀI</p>
+                <h3>{previewMode === 'spin' ? 'Spin thử' : 'Bản gốc'}</h3>
+              </div>
+              <button type="button" aria-label="Đóng xem trước" onClick={() => setPreview(null)}>×</button>
+            </div>
+            <div className="content-library-preview-modal-body">
+              {preview.content}
+            </div>
+            <div className="content-library-preview-modal-actions">
+              <button type="button" onClick={showSourcePreview}>Xem gốc</button>
+              <button className="primary" type="button" onClick={spinPreview}>Spin thử</button>
+              <button type="button" onClick={() => setPreview(null)}>Đóng</button>
+            </div>
+          </section>
+        </div>
+      ) : null}
 
       {categoryDialog ? (
         <div className="content-library-category-dialog-backdrop" role="presentation" onMouseDown={() => !busy && setCategoryDialog(null)}>
