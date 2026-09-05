@@ -64,6 +64,9 @@ function statusText(status: PageWallPlanStatus): string {
   if (status === 'disabled') return 'Tạm tắt'
   return 'Cần xử lý'
 }
+function isWallAccountSelectable(account: WallAccount): boolean {
+  return account.status !== 'disabled'
+}
 function canonicalPostId(item: ContentLibraryItem): number | null {
   if (item.contentSetId !== CANONICAL_CONTENT_LIBRARY_SET_ID || !Number.isSafeInteger(item.id) || item.id >= 0) return null
   return Math.abs(item.id)
@@ -157,7 +160,8 @@ function PostEditorModal({ item, variantIndex, onClose, onSaved }: { item: Conte
   const [image, setImage] = useState<ContentLibraryImageConfig>(() => item ? { ...item.image } : { ...DEFAULT_CONTENT_LIBRARY_IMAGE })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const canSave = Boolean(name.trim() && (text.trim() || image.folderPath.trim()) && !busy)
+  const imageCountValid = Number.isSafeInteger(image.imagesPerPost) && image.imagesPerPost >= 1 && image.imagesPerPost <= 50
+  const canSave = Boolean(name.trim() && (text.trim() || image.folderPath.trim()) && imageCountValid && !busy)
   const pickFolder = async () => {
     const folderPath = await window.pageAuto.pickContentLibraryImageFolder()
     if (folderPath) setImage((current) => ({ ...current, folderPath }))
@@ -186,6 +190,7 @@ function PostEditorModal({ item, variantIndex, onClose, onSaved }: { item: Conte
       {error ? <div className="page-tab-error">{error}</div> : null}
       <label><span>Tên bài</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="Ví dụ: Khuyến mãi tháng 9" autoFocus /></label>
       <label><span>Nội dung{item && item.variants.length > 1 ? ` · biến thể ${safeIndex + 1}/${item.variants.length}` : ''}</span><textarea value={text} onChange={(event) => setText(event.target.value)} placeholder="Nhập nội dung bài…" /></label>
+      <label><span>Số ảnh mỗi bài</span><input aria-label="Số ảnh mỗi bài" type="number" min={1} max={50} value={image.imagesPerPost} onChange={(event) => setImage((current) => ({ ...current, imagesPerPost: Math.max(1, Math.min(50, Number(event.target.value) || 1)) }))} /><small>Mỗi lượt đăng lấy tối đa số ảnh này từ folder đã chọn.</small></label>
       <div className="page-wall-folder-row"><div><span>Folder ảnh</span><b>{image.folderPath || 'Không dùng ảnh'}</b></div><button className="pt-button secondary" type="button" onClick={() => void pickFolder()}>Chọn folder</button><button type="button" disabled={!image.folderPath} onClick={() => setImage((current) => ({ ...current, folderPath: '' }))}>Bỏ ảnh</button></div>
       <footer><button type="button" onClick={onClose}>Hủy</button><button className="pt-button primary" type="button" disabled={!canSave} onClick={() => void save()}>{busy ? 'Đang lưu…' : 'Lưu vào Thư viện'}</button></footer>
     </section>
@@ -204,7 +209,7 @@ function ScheduleModal({ draft, accounts, libraryItems, busy, onChange, onChoose
   onClose: () => void
   onSave: () => void
 }) {
-  const runnable = accounts.filter((account) => account.enabled && account.status !== 'disabled')
+  const runnable = accounts.filter(isWallAccountSelectable)
   const postItem = draft.post ? libraryItems.find((item) => canonicalPostId(item) === draft.post?.postId) ?? null : null
   const toggle = (accountId: number) => onChange({ ...draft, accountIds: draft.accountIds.includes(accountId) ? draft.accountIds.filter((id) => id !== accountId) : [...draft.accountIds, accountId] })
   const setTime = (index: number, value: string) => onChange({ ...draft, times: draft.times.map((time, current) => current === index ? value : time) })
@@ -218,7 +223,7 @@ function ScheduleModal({ draft, accounts, libraryItems, busy, onChange, onChoose
       <header><div><small>LỊCH ĐĂNG TƯỜNG</small><h3>{draft.planIds.length ? 'Sửa lịch đăng' : 'Hẹn giờ đăng bài'}</h3></div><button type="button" onClick={onClose}>×</button></header>
       <div className="page-wall-schedule-step"><b>1. Chọn bài viết</b><div className={`page-wall-selected-post compact ${draft.post ? 'ready' : 'empty'}`}><div><small>BÀI ĐANG CHỌN</small><strong>{postSummary}</strong>{postItem?.image.folderPath ? <span>{postItem.image.imagesPerPost} ảnh/lượt · {postItem.image.folderPath}</span> : <span>{draft.post ? 'Không ảnh' : 'Chọn bài trước khi lưu lịch'}</span>}</div><div><button className="pt-button secondary" type="button" onClick={onChoosePost}>Chọn</button><button type="button" onClick={onAddPost}>Thêm</button><button type="button" disabled={!draft.post || !postItem} onClick={onEditPost}>Sửa</button></div></div></div>
       <div className="page-wall-schedule-step"><b>2. Thời gian đăng bài</b><div className="page-wall-plan-kind"><label><input type="radio" checked={draft.scheduleKind === 'specific_date'} onChange={() => onChange({ ...draft, scheduleKind: 'specific_date' })} /> Ngày cụ thể</label><label><input type="radio" checked={draft.scheduleKind === 'daily'} onChange={() => onChange({ ...draft, scheduleKind: 'daily' })} /> Mỗi ngày</label></div>{draft.scheduleKind === 'specific_date' ? <label className="page-wall-date-field"><span>Ngày chạy</span><input type="date" value={draft.localDate} onChange={(event) => onChange({ ...draft, localDate: event.target.value })} /></label> : null}<div className="page-wall-time-list">{draft.times.map((time, index) => <div className="page-wall-time-chip" key={`${index}-${time}`}><input type="time" value={time} onChange={(event) => setTime(index, event.target.value)} /><button type="button" aria-label={`Xóa giờ ${time}`} disabled={draft.times.length === 1} onClick={() => onChange({ ...draft, times: draft.times.filter((_value, current) => current !== index) })}>×</button></div>)}<button className="page-wall-add-time" type="button" disabled={draft.times.length >= 12} onClick={() => onChange({ ...draft, times: [...draft.times, '12:00'] })}>+ Thêm giờ</button></div>{!timesValid ? <small className="page-wall-time-error">Giờ chạy phải hợp lệ và không được trùng nhau.</small> : null}</div>
-      <div className="page-wall-schedule-step accounts"><div className="page-wall-step-title"><b>3. Chọn tài khoản muốn đăng</b><span>{draft.accountIds.length}/{runnable.length} TK</span></div><div className="page-wall-mini-account-tools"><button type="button" onClick={() => onChange({ ...draft, accountIds: runnable.map((account) => account.accountId) })}>Chọn tất cả</button><button type="button" onClick={() => onChange({ ...draft, accountIds: [] })}>Bỏ chọn</button><label><span>TK song song</span><input type="number" min={1} max={20} value={draft.accountConcurrency} onChange={(event) => onChange({ ...draft, accountConcurrency: Math.max(1, Math.min(20, Number(event.target.value) || 1)) })} /></label></div><div className="page-wall-schedule-account-table"><table><thead><tr><th></th><th>UID</th><th>Tên</th><th>Trạng thái</th></tr></thead><tbody>{accounts.map((account) => { const canUse = account.enabled && account.status !== 'disabled'; const selected = draft.accountIds.includes(account.accountId); return <tr key={account.accountId} className={`${selected ? 'selected' : ''} ${!canUse ? 'disabled' : ''}`} onClick={() => { if (canUse && !busy) toggle(account.accountId) }}><td><input type="checkbox" checked={selected} disabled={!canUse || busy} onClick={(event) => event.stopPropagation()} onChange={() => toggle(account.accountId)} /></td><td><b>{account.uid}</b></td><td>{account.name || '—'}</td><td>{account.status}</td></tr> })}</tbody></table></div></div>
+      <div className="page-wall-schedule-step accounts"><div className="page-wall-step-title"><b>3. Chọn tài khoản muốn đăng</b><span>{draft.accountIds.length}/{runnable.length} TK</span></div><div className="page-wall-mini-account-tools"><button type="button" onClick={() => onChange({ ...draft, accountIds: runnable.map((account) => account.accountId) })}>Chọn tất cả</button><button type="button" onClick={() => onChange({ ...draft, accountIds: [] })}>Bỏ chọn</button><label><span>TK song song</span><input type="number" min={1} max={20} value={draft.accountConcurrency} onChange={(event) => onChange({ ...draft, accountConcurrency: Math.max(1, Math.min(20, Number(event.target.value) || 1)) })} /></label></div><div className="page-wall-schedule-account-table"><table><thead><tr><th></th><th>UID</th><th>Tên</th><th>Trạng thái</th></tr></thead><tbody>{accounts.map((account) => { const canUse = isWallAccountSelectable(account); const selected = draft.accountIds.includes(account.accountId); return <tr key={account.accountId} className={`${selected ? 'selected' : ''} ${!canUse ? 'disabled' : ''}`} onClick={() => { if (canUse && !busy) toggle(account.accountId) }}><td><input type="checkbox" checked={selected} disabled={!canUse || busy} onClick={(event) => event.stopPropagation()} onChange={() => toggle(account.accountId)} /></td><td><b>{account.uid}</b></td><td>{account.name || '—'}</td><td>{account.status}</td></tr> })}</tbody></table></div></div>
       <div className="page-wall-schedule-review"><strong>{draft.scheduleKind === 'daily' ? 'Mỗi ngày' : draft.localDate || 'Chưa chọn ngày'} · {uniqueMinutes.map(minuteToTime).join(', ') || 'Chưa có giờ'}</strong><span>{postSummary} · {draft.accountIds.length} TK · song song {draft.accountConcurrency}</span></div>
       <footer><button type="button" onClick={onClose}>Hủy</button><button className="pt-button primary" type="button" disabled={!canSave} onClick={onSave}>{busy ? 'Đang lưu…' : 'Lưu lịch'}</button></footer>
     </section>
@@ -271,7 +276,7 @@ export function PageWallWorkspace({ activePageId: controlledPageId, scoped = fal
     void window.pageAuto.getPageTab({ id: pageTabId }).then((next) => {
       if (cancelled) return
       setConfig(next)
-      const runnable = (next?.accounts ?? []).filter((account) => account.enabled && account.status !== 'disabled').sort((a, b) => a.sortOrder - b.sortOrder)
+      const runnable = (next?.accounts ?? []).filter(isWallAccountSelectable).sort((a, b) => a.sortOrder - b.sortOrder)
       setSelectedIds(runnable.map((account) => account.accountId))
       setLastResults([])
     }).catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)))
@@ -282,7 +287,7 @@ export function PageWallWorkspace({ activePageId: controlledPageId, scoped = fal
   }, [pageTabId, refreshDashboard, refreshLibrary])
 
   const accounts = useMemo(() => [...(config?.accounts ?? [])].sort((a, b) => a.sortOrder - b.sortOrder), [config])
-  const runnableIds = useMemo(() => accounts.filter((account) => account.enabled && account.status !== 'disabled').map((account) => account.accountId), [accounts])
+  const runnableIds = useMemo(() => accounts.filter(isWallAccountSelectable).map((account) => account.accountId), [accounts])
   const selectedRunnable = selectedIds.filter((id) => runnableIds.includes(id))
   const scheduleGroups = useMemo(() => groupSchedulePlans(dashboard.plans), [dashboard.plans])
   const canRun = Boolean(pageTabId && selectedRunnable.length && canonical && !busy)
@@ -387,7 +392,7 @@ export function PageWallWorkspace({ activePageId: controlledPageId, scoped = fal
     <div className="page-wall-three-regions" data-testid="page-wall-three-regions">
       <section className="pt-panel page-wall-region accounts" data-testid="page-wall-region-accounts">
         <div className="page-wall-region-head"><div><p className="eyebrow">1 · TÀI KHOẢN</p><h3>Chọn tài khoản chạy</h3></div><span>{selectedRunnable.length}/{runnableIds.length}</span></div>
-        <div className="page-wall-account-table-wrap"><table className="page-wall-account-table"><thead><tr><th></th><th>#</th><th>UID</th><th>Tên</th><th>Trạng thái</th></tr></thead><tbody>{accounts.map((account, index) => { const runnable = account.enabled && account.status !== 'disabled'; const selected = selectedIds.includes(account.accountId); return <tr key={account.accountId} data-account-id={account.accountId} className={`${selected ? 'selected' : ''} ${!runnable ? 'disabled' : ''}`} onClick={() => { if (runnable && !busy) toggleAccount(account.accountId) }}><td><input type="checkbox" aria-label={`Chọn ${account.uid}`} disabled={!runnable || busy} checked={selected} onClick={(event) => event.stopPropagation()} onChange={() => toggleAccount(account.accountId)} /></td><td>{index + 1}</td><td><b>{account.uid}</b></td><td>{account.name || '—'}</td><td><span className={`status-${account.status}`}>{account.status}</span></td></tr> })}</tbody></table></div>
+        <div className="page-wall-account-table-wrap"><table className="page-wall-account-table"><thead><tr><th></th><th>#</th><th>UID</th><th>Tên</th><th>Trạng thái</th></tr></thead><tbody>{accounts.map((account, index) => { const runnable = isWallAccountSelectable(account); const selected = selectedIds.includes(account.accountId); return <tr key={account.accountId} data-account-id={account.accountId} className={`${selected ? 'selected' : ''} ${!runnable ? 'disabled' : ''}`} onClick={() => { if (runnable && !busy) toggleAccount(account.accountId) }}><td><input type="checkbox" aria-label={`Chọn ${account.uid}`} disabled={!runnable || busy} checked={selected} onClick={(event) => event.stopPropagation()} onChange={() => toggleAccount(account.accountId)} /></td><td>{index + 1}</td><td><b>{account.uid}</b></td><td>{account.name || '—'}</td><td><span className={`status-${account.status}`}>{account.status}</span></td></tr> })}</tbody></table></div>
         <div className="page-wall-account-controls" data-testid="page-wall-account-controls"><div><button type="button" disabled={busy} onClick={() => setSelectedIds(runnableIds)}>Chọn tất cả</button><button type="button" disabled={busy} onClick={() => setSelectedIds([])}>Bỏ chọn</button></div><label><span>TK chạy song song</span><input type="number" min={1} max={20} value={accountConcurrency} disabled={busy} onChange={(event) => setAccountConcurrency(Math.max(1, Math.min(20, Number(event.target.value) || 1)))} /></label></div>
       </section>
 

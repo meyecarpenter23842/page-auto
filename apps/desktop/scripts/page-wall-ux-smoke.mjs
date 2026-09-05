@@ -57,8 +57,8 @@ try {
         pageUid: page.pageUid,
         rotation: page.rotation,
         accounts: [
-          { accountId: accountA.id, enabled: true, sortOrder: 0, postsPerTurn: null },
-          { accountId: accountB.id, enabled: true, sortOrder: 1, postsPerTurn: null }
+          { accountId: accountA.id, enabled: false, sortOrder: 0, postsPerTurn: null },
+          { accountId: accountB.id, enabled: false, sortOrder: 1, postsPerTurn: null }
         ],
         schedules,
         groupUids: page.groupUids,
@@ -140,9 +140,13 @@ try {
   await rows.first().waitFor({ state: 'visible' })
   invariant(await rows.count() === 2, `Wall smoke cần 2 account, thực tế ${await rows.count()}.`)
 
-  await wallRoot.getByRole('button', { name: 'Bỏ chọn', exact: true }).first().click()
   const firstCheckbox = rows.nth(0).locator('input[type="checkbox"]')
   const secondCheckbox = rows.nth(1).locator('input[type="checkbox"]')
+  const initialAccountCount = await wallRoot.locator('[data-testid="page-wall-region-accounts"] .page-wall-region-head > span').innerText()
+  invariant(initialAccountCount.includes('2/2'), `Wall vẫn coi Page-level enabled=false là không chọn được: ${initialAccountCount}`)
+  invariant(!(await firstCheckbox.isDisabled()) && !(await secondCheckbox.isDisabled()), 'Wall vẫn disable checkbox vì cờ enabled của Page Tab.')
+
+  await wallRoot.getByRole('button', { name: 'Bỏ chọn', exact: true }).first().click()
   invariant(!(await firstCheckbox.isChecked()) && !(await secondCheckbox.isChecked()), 'Bỏ chọn không bỏ hết account Wall.')
 
   await rows.nth(0).locator('td').nth(2).click()
@@ -206,29 +210,46 @@ try {
     editor: Number(getComputedStyle(document.querySelector('.page-wall-modal-backdrop.editor')).zIndex || 0)
   }))
   invariant(editorLayers.editor > editorLayers.schedule, `Editor bài vẫn nằm sau popup lịch: ${JSON.stringify(editorLayers)}`)
-  await editor.getByRole('button', { name: '×', exact: true }).click()
+  await editor.locator('label').filter({ hasText: 'Tên bài' }).locator('input').fill('Smoke Added Post')
+  await editor.locator('label').filter({ hasText: 'Nội dung' }).locator('textarea').fill('Nội dung bài mới để kiểm tra số ảnh')
+  const imageCount = editor.getByLabel('Số ảnh mỗi bài')
+  await imageCount.fill('4')
+  invariant(await imageCount.inputValue() === '4', 'Không nhập được số ảnh mỗi bài trong modal Thêm bài.')
+  await editor.getByRole('button', { name: 'Lưu vào Thư viện', exact: true }).click()
   await editor.waitFor({ state: 'detached' })
 
+  const savedImageCount = await windowPage.evaluate(async () => {
+    const library = await window.pageAuto.getContentLibrary({ id: -1 })
+    const item = library?.items.find((candidate) => candidate.name === 'Smoke Added Post')
+    return item?.image.imagesPerPost ?? null
+  })
+  invariant(savedImageCount === 4, `Số ảnh mỗi bài không được persist vào canonical post: ${savedImageCount}`)
+
   scheduleDialog = windowPage.getByRole('dialog', { name: 'Thiết lập lịch đăng' })
+  invariant((await scheduleDialog.innerText()).includes('Smoke Added Post'), 'Bài vừa thêm không được set lại vào schedule draft.')
   await scheduleDialog.getByRole('button', { name: '+ Thêm giờ', exact: true }).click()
   invariant(await scheduleDialog.locator('input[type="time"]').count() === 2, 'Thêm giờ trong popup lịch không thêm slot thứ hai.')
 
   await scheduleDialog.getByRole('button', { name: 'Bỏ chọn', exact: true }).click()
   const scheduleRows = scheduleDialog.locator('.page-wall-schedule-account-table tbody tr')
+  const scheduleFirstCheckbox = scheduleRows.nth(0).locator('input[type="checkbox"]')
+  invariant(!(await scheduleFirstCheckbox.isDisabled()), 'Popup lịch vẫn disable account vì Page-level enabled=false.')
   await scheduleRows.nth(0).locator('td').nth(1).click()
-  invariant(await scheduleRows.nth(0).locator('input[type="checkbox"]').isChecked(), 'Click dòng account trong popup lịch không chọn được.')
+  invariant(await scheduleFirstCheckbox.isChecked(), 'Click dòng account trong popup lịch không chọn được.')
 
   await windowPage.screenshot({ path: modalScreenshotPath, fullPage: true })
   await scheduleDialog.getByRole('button', { name: 'Lưu lịch', exact: true }).click()
   await scheduleDialog.waitFor({ state: 'detached' })
   await wallRoot.locator('.page-wall-plan-row').first().waitFor({ state: 'visible' })
   const planText = await wallRoot.locator('.page-wall-plan-row').first().innerText()
-  invariant(planText.includes('Smoke Wall Post') && planText.includes('1 TK'), `Lịch lưu xong không hiện đúng summary: ${planText}`)
+  invariant(planText.includes('Smoke Added Post') && planText.includes('1 TK'), `Lịch lưu xong không hiện đúng summary: ${planText}`)
 
   await windowPage.screenshot({ path: layoutScreenshotPath, fullPage: true })
   console.log('Page Wall UX smoke passed:', {
     pageId: setup.pageId,
     accountSelectionReal: true,
+    pageRotationDisabledAccountsSelectable: true,
+    canonicalImageCountPersistence: true,
     layoutLeftPlusRightStack: true,
     darkThemeNoWhitePanels: true,
     scheduleChildModalsAboveParent: true,

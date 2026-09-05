@@ -92,16 +92,19 @@ export class PageWallRunNowService {
     const pageTab = this.pageTabs.get(payload.pageTabId)
     if (!pageTab) return { ok: false, result: failure(payload, 'Page Tab không còn tồn tại.') }
 
-    const runnableAccounts = pageTab.accounts
+    // The Page-level enabled flag belongs to the legacy/rotation configuration.
+    // Page Wall owns an explicit account selection, so an explicitly ticked account
+    // only needs to belong to the canonical Page and not be truly disabled.
+    const legacyRunnableAccounts = pageTab.accounts
       .filter((account) => account.enabled && account.status !== 'disabled')
       .sort((left, right) => left.sortOrder - right.sortOrder || left.accountId - right.accountId)
     const accountRef = payload.accountId === undefined
-      ? runnableAccounts[0]
-      : runnableAccounts.find((account) => account.accountId === payload.accountId)
+      ? legacyRunnableAccounts[0]
+      : pageTab.accounts.find((account) => account.accountId === payload.accountId && account.status !== 'disabled')
     if (!accountRef) {
       const message = payload.accountId === undefined
         ? 'Page chưa có tài khoản canonical đang bật để chạy Đăng Tường.'
-        : 'Tài khoản không thuộc danh sách đang bật của Page Tab.'
+        : 'Tài khoản không thuộc Page canonical hoặc đã bị vô hiệu hóa.'
       return { ok: false, result: failure(payload, message, 'no_enabled_account') }
     }
 
