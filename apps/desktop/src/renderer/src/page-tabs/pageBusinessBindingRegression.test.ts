@@ -62,7 +62,7 @@ describe('Page business binding regression', () => {
     expect(wallSource).toContain('if (runnable && !busy) toggleAccount(account.accountId)')
     expect(wallSource).toContain('event.stopPropagation()')
     expect(wallCssSource).toContain('.page-wall-account-table tbody tr.selected')
-    expect(wallCssSource).toContain('cursor:pointer')
+    expect(wallCssSource).toMatch(/\.page-wall-account-table tbody tr\s*\{[^}]*cursor:\s*pointer;/s)
   })
 
   it('makes the selected canonical post explicit and edits the common library instead of a Wall-only store', () => {
