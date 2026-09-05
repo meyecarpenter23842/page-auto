@@ -13,6 +13,7 @@ import { latestSchemaVersion, migrations } from './migrations'
 import { PAGE_BUSINESS_BINDING_SCHEMA_VERSION, applyPageBusinessBindingMigration } from './pageBusinessBindingMigration'
 import { applyPageJoinGroupOwnershipRepair } from './pageJoinGroupOwnershipMigration'
 import { PAGE_WALL_SCHEMA_VERSION, applyPageWallMigration } from './pageWallMigration'
+import { PAGE_WALL_RECURRING_SCHEMA_VERSION, applyPageWallRecurringMigration } from './pageWallRecurringMigration'
 import { SCENARIO_SCHEMA_VERSION, applyScenarioMigration } from './scenarioMigration'
 import { STORY_SCHEMA_VERSION, applyStoryMigration } from './storyMigration'
 
@@ -73,6 +74,7 @@ export function initializeDatabase(databaseFile: string): DatabaseRuntime {
   applyActionWorkspaceMigration(client)
   applyPageBusinessBindingMigration(client)
   applyPageJoinGroupOwnershipRepair(client)
+  applyPageWallRecurringMigration(client)
 
   const schemaVersion = Math.max(
     latestSchemaVersion,
@@ -85,7 +87,8 @@ export function initializeDatabase(databaseFile: string): DatabaseRuntime {
     COPY_POST_SCHEMA_VERSION,
     STORY_SCHEMA_VERSION,
     ACTION_WORKSPACE_SCHEMA_VERSION,
-    PAGE_BUSINESS_BINDING_SCHEMA_VERSION
+    PAGE_BUSINESS_BINDING_SCHEMA_VERSION,
+    PAGE_WALL_RECURRING_SCHEMA_VERSION
   )
   const orm = drizzle(client)
   orm

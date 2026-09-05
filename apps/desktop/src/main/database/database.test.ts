@@ -10,18 +10,32 @@ import { HotmailRepository } from './hotmailRepository'
 import { initializeDatabase } from './index'
 
 const tempDirectories: string[] = []
+const runtimes = new Set<ReturnType<typeof initializeDatabase>>()
 
 afterEach(() => {
+  for (const runtime of runtimes) {
+    try {
+      runtime.close()
+    } catch {
+      // A test may have already closed the runtime explicitly.
+    }
+  }
+  runtimes.clear()
   for (const directory of tempDirectories.splice(0)) {
     rmSync(directory, { recursive: true, force: true })
   }
 })
 
+function trackRuntime(runtime: ReturnType<typeof initializeDatabase>) {
+  runtimes.add(runtime)
+  return runtime
+}
+
 function createRuntime() {
   const directory = mkdtempSync(join(tmpdir(), 'page-auto-db-'))
   tempDirectories.push(directory)
   const databaseFile = join(directory, 'page-auto.sqlite')
-  return { directory, databaseFile, runtime: initializeDatabase(databaseFile) }
+  return { directory, databaseFile, runtime: trackRuntime(initializeDatabase(databaseFile)) }
 }
 
 describe('initializeDatabase', () => {
@@ -86,9 +100,10 @@ describe('initializeDatabase', () => {
       { version: 17, name: 'story_library' },
       { version: 18, name: 'action_workspace_persistence' },
       { version: 19, name: 'page_business_explicit_bindings' },
-      { version: 20, name: 'page_tab_group_post_concurrency_and_run_claim_owner' }
+      { version: 20, name: 'page_tab_group_post_concurrency_and_run_claim_owner' },
+      { version: 21, name: 'page_wall_recurring_schedule_rules' }
     ])
-    expect(schemaVersion?.value).toBe('20')
+    expect(schemaVersion?.value).toBe('21')
     expect(executionLogsTable?.name).toBe('execution_logs')
     expect(postLibraryTable?.name).toBe('page_tab_posts')
     expect(pageTabColumns.some((column) => column.name === 'account_order_mode')).toBe(true)
@@ -113,12 +128,12 @@ describe('initializeDatabase', () => {
     const { databaseFile, runtime } = createRuntime()
     runtime.close()
 
-    const reopened = initializeDatabase(databaseFile)
+    const reopened = trackRuntime(initializeDatabase(databaseFile))
     const count = reopened.client
       .prepare('SELECT COUNT(*) AS count FROM __page_auto_migrations')
       .get() as { count: number }
 
-    expect(count.count).toBe(20)
+    expect(count.count).toBe(21)
     reopened.close()
   })
 
