@@ -12,6 +12,7 @@ import { HOTMAIL_SCHEMA_VERSION, applyHotmailMigration } from './hotmailMigratio
 import { latestSchemaVersion, migrations } from './migrations'
 import { PAGE_BUSINESS_BINDING_SCHEMA_VERSION, applyPageBusinessBindingMigration } from './pageBusinessBindingMigration'
 import { applyPageJoinGroupOwnershipRepair } from './pageJoinGroupOwnershipMigration'
+import { PAGE_WALL_FINITE_PLAN_SCHEMA_VERSION, applyPageWallFinitePlanMigration } from './pageWallFinitePlanMigration'
 import { PAGE_WALL_SCHEMA_VERSION, applyPageWallMigration } from './pageWallMigration'
 import { PAGE_WALL_RECURRING_SCHEMA_VERSION, applyPageWallRecurringMigration } from './pageWallRecurringMigration'
 import { SCENARIO_SCHEMA_VERSION, applyScenarioMigration } from './scenarioMigration'
@@ -75,6 +76,7 @@ export function initializeDatabase(databaseFile: string): DatabaseRuntime {
   applyPageBusinessBindingMigration(client)
   applyPageJoinGroupOwnershipRepair(client)
   applyPageWallRecurringMigration(client)
+  applyPageWallFinitePlanMigration(client)
 
   const schemaVersion = Math.max(
     latestSchemaVersion,
@@ -88,7 +90,8 @@ export function initializeDatabase(databaseFile: string): DatabaseRuntime {
     STORY_SCHEMA_VERSION,
     ACTION_WORKSPACE_SCHEMA_VERSION,
     PAGE_BUSINESS_BINDING_SCHEMA_VERSION,
-    PAGE_WALL_RECURRING_SCHEMA_VERSION
+    PAGE_WALL_RECURRING_SCHEMA_VERSION,
+    PAGE_WALL_FINITE_PLAN_SCHEMA_VERSION
   )
   const orm = drizzle(client)
   orm
