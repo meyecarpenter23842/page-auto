@@ -34,7 +34,7 @@ export class PageWallPostFlow {
       this.wallUrl,
       this.networkTimeoutMs
     )
-    const baseline = await verifier.captureBaseline()
+    const baseline = await verifier.captureBaseline(runtimeContent)
     if (!baseline.captured) {
       return failure(
         'publish_unconfirmed',
