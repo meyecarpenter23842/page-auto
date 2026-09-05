@@ -69,7 +69,6 @@ try {
       accounts: []
     })
 
-    // Page created after all bindings must remain canonical-only until explicitly added.
     const pageD = await window.pageAuto.createPageTab({ name: 'Smoke Page D', pageUid: '910000004' })
     return { a: pageA.id, b: pageB.id, c: pageC.id, d: pageD.id }
   })
@@ -149,7 +148,16 @@ try {
   await windowPage.locator('.business-page_wall_post .page-business-page-chip').filter({ hasText: 'Smoke Page B' }).waitFor({ state: 'visible' })
   const wallChips = await tabText('.business-page_wall_post .page-business-page-chip')
   invariant(wallChips.length === 1 && wallChips[0].includes('Smoke Page B'), 'Đăng Tường không giữ binding độc lập Page B.')
-  invariant(await windowPage.locator('.page-wall-target-card select').first().inputValue() === String(ids.b), 'Đăng Tường không nhận activePageId trực tiếp từ binding Page B.')
+  await windowPage.locator('.business-page_wall_post .page-wall-common-frame').waitFor({ state: 'visible' })
+  invariant(await windowPage.locator('.business-page_wall_post .page-wall-account-grid').count() === 0, 'Đăng Tường vẫn còn mini-grid account riêng.')
+  invariant(await windowPage.locator('.business-page_wall_post .page-wall-target-card').count() === 0, 'Đăng Tường vẫn còn target/account card riêng của 2.1B.')
+  const wallModeLabels = await tabText('.business-page_wall_post .page-wall-mode-selector button')
+  for (const expected of ['Đăng ngay', 'Hẹn 1 lần', 'Lịch chạy']) {
+    invariant(wallModeLabels.some((label) => label.includes(expected)), `Đăng Tường thiếu mode ${expected}.`)
+  }
+  invariant((await windowPage.locator('.business-page_wall_post .page-wall-head').innerText()).includes('Đăng Tường Page'), 'Đăng Tường không nhận activePageId trực tiếp từ binding Page B.')
+  invariant((await windowPage.locator('.business-page_wall_post .page-wall-secondary-tools').innerText()).includes('Lịch đã hẹn'), 'Lịch đã hẹn chưa được hạ xuống secondary tool.')
+  invariant((await windowPage.locator('.business-page_wall_post .page-wall-secondary-tools').innerText()).includes('Log'), 'Log chưa được hạ xuống secondary tool.')
 
   await windowPage.getByRole('tab', { name: /Sửa Page/ }).click()
   await windowPage.locator('.business-page_edit .page-business-page-chip').filter({ hasText: 'Smoke Page A' }).waitFor({ state: 'visible' })
@@ -194,6 +202,8 @@ try {
     compactGroupUiRestored: true,
     controlledPageSwitch: true,
     independentBindings: true,
+    wallUsesCommonFrame: true,
+    wallModeSelector: true,
     newPageNotAutoBound: true,
     unlinkKeepsCanonical: true,
     screenshotPath

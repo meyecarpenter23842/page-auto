@@ -36,9 +36,20 @@ describe('Page business binding regression', () => {
     expect(coreSource).not.toContain("findIndex((button) => button.classList.contains('active'))")
   })
 
-  it('drives Đăng Tường from the bound Page id and keeps Hành động Page-free', () => {
+  it('keeps Đăng Tường on the bound Page while removing its private account and recurring subsystems', () => {
     expect(wallSource).toContain('activePageId: controlledPageId')
-    expect(wallSource).toContain('disabled={scoped || operationBusy}')
+    expect(wallSource).toContain("pageBusinessTypeOf(workspace) === 'page_wall_post'")
+    expect(wallSource).toContain('parsePageWallBusinessSchedule')
+    expect(wallSource).toContain('serializePageWallBusinessSchedule')
+    expect(wallSource).toContain("type WallMode = 'now' | 'once' | 'recurring'")
+    expect(wallSource).toContain('Đăng ngay')
+    expect(wallSource).toContain('Hẹn 1 lần')
+    expect(wallSource).toContain('Lịch chạy')
+    expect(wallSource).not.toContain('page-wall-account-grid')
+    expect(wallSource).not.toContain('setAccountId')
+    expect(wallSource).not.toContain('getPageWallRecurringPlan')
+    expect(wallSource).not.toContain('savePageWallRecurringPlan')
+    expect(wallSource).not.toContain('clearPageWallRecurringPlan')
     expect(actionSource).toContain('savedWorkspaces.filter((workspace) => !isPageBusinessWorkspace(workspace))')
   })
 })

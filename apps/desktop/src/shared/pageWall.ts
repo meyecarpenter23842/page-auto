@@ -17,7 +17,11 @@ export interface PageWallCanonicalPostSelection {
 /** Secret-free renderer -> Main payload for a one-shot Page Wall publish. */
 export interface PageWallRunNowPayload {
   pageTabId: number
-  accountId: number
+  /**
+   * Optional compatibility override. New Page Wall UI does not own account selection:
+   * Main resolves the first enabled canonical Page account by sortOrder when omitted.
+   */
+  accountId?: number
   content: string
   imagePaths: string[]
   /**

@@ -33,6 +33,8 @@ export interface PageWallJobRecord {
   accountName: string | null
   content: string
   imagePaths: string[]
+  /** Derived from the audit marker for recurring jobs; absent/null for one-shot jobs. */
+  occurrenceKey?: string | null
   resultStatus: PostingResultStatus | null
   resultCode: PostingErrorCode | null
   resultMessage: string | null

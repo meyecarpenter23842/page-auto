@@ -1,8 +1,6 @@
 import type { PageWallRunNowPayload } from '../../shared/pageWall'
 import {
-  activePageWallRecurringWindow,
   normalizePageWallRecurringSchedules,
-  pageWallRecurringOccurrenceKey,
   type PageWallRecurringPagePayload,
   type PageWallRecurringPlanRecord,
   type SavePageWallRecurringPlanInput
@@ -20,42 +18,27 @@ interface PageWallRecurringOptions {
   now?: () => number
 }
 
-function runPayload(plan: PageWallRecurringPlanRecord): PageWallRunNowPayload {
-  return {
-    pageTabId: plan.pageTabId,
-    accountId: plan.accountId,
-    content: plan.content,
-    imagePaths: [...plan.imagePaths],
-    ...(plan.canonicalPost ? { canonicalPost: plan.canonicalPost } : {})
-  }
-}
-
-function inputRunPayload(input: SavePageWallRecurringPlanInput): PageWallRunNowPayload {
-  return {
-    pageTabId: input.pageTabId,
-    accountId: input.accountId,
-    content: input.content,
-    imagePaths: [...input.imagePaths],
-    ...(input.canonicalPost ? { canonicalPost: input.canonicalPost } : {})
-  }
-}
-
+/**
+ * Compatibility facade for databases/UI builds that still know the v21 recurring API.
+ *
+ * Batch 2.1C deliberately removes the v21 service from the automatic runtime path:
+ * no timer is started and no occurrence is materialized here. The production recurring
+ * path is now PageWallSchedulerService reading the page_wall_post business binding and
+ * reusing the common Page schedule-window contract.
+ */
 export class PageWallRecurringService {
-  private readonly pollIntervalMs: number
   private readonly now: () => number
-  private timer: NodeJS.Timeout | null = null
-  private ticking = false
-  private disposed = false
 
   constructor(
     private readonly repository: PageWallRecurringRepository,
     private readonly preparer: PageWallRecurringPreparer,
-    private readonly wakeConcreteScheduler: () => void | Promise<void>,
+    wakeConcreteScheduler: () => void | Promise<void>,
     options: PageWallRecurringOptions = {}
   ) {
-    this.pollIntervalMs = Math.max(1_000, Math.floor(options.pollIntervalMs ?? 10_000))
     this.now = options.now ?? (() => Date.now())
-    if (options.autoStart !== false) this.start()
+    void wakeConcreteScheduler
+    void options.pollIntervalMs
+    void options.autoStart
   }
 
   get(payload: PageWallRecurringPagePayload): PageWallRecurringPlanRecord | null {
@@ -71,12 +54,14 @@ export class PageWallRecurringService {
       throw new Error('Lịch chạy đang bật cần ít nhất một khung giờ bật.')
     }
 
-    // Reuse the same Main preparation contract as Run now / one-shot schedule. This
-    // verifies canonical Page membership/account ownership and that the selected
-    // source can currently be materialized, without persisting the temporary material.
-    const preparation = await this.preparer.prepare(inputRunPayload(input))
+    const preparation = await this.preparer.prepare({
+      pageTabId: input.pageTabId,
+      accountId: input.accountId,
+      content: input.content,
+      imagePaths: [...input.imagePaths],
+      ...(input.canonicalPost ? { canonicalPost: input.canonicalPost } : {})
+    })
     if (!preparation.ok) throw new Error(preparation.result.message)
-
     return this.repository.save({ ...input, schedules }, this.now())
   }
 
@@ -85,60 +70,15 @@ export class PageWallRecurringService {
   }
 
   start(): void {
-    if (this.disposed || this.timer) return
-    void this.tick()
-    this.timer = setInterval(() => void this.tick(), this.pollIntervalMs)
+    // Intentionally inert. Kept only so old Main wiring can dispose safely during the
+    // migration window without reviving the duplicate v21 recurring scheduler.
   }
 
-  async tick(nowMs = this.now()): Promise<number> {
-    if (this.disposed || this.ticking) return 0
-    this.ticking = true
-    let createdCount = 0
-    try {
-      const now = new Date(nowMs)
-      for (const plan of this.repository.listEnabled()) {
-        const window = activePageWallRecurringWindow(plan.schedules, now)
-        if (!window) continue
-        const occurrenceKey = pageWallRecurringOccurrenceKey(window, now)
-        if (this.repository.occurrenceExists(plan.id, occurrenceKey)) continue
-
-        const preparation = await this.preparer.prepare(runPayload(plan))
-        if (!preparation.ok) {
-          this.repository.setLastError(plan.id, preparation.result.message, nowMs)
-          continue
-        }
-
-        const prepared = preparation.prepared
-        const job = this.repository.createOccurrenceJob(plan.id, occurrenceKey, {
-          // The window is active now. Persist a concrete due snapshot immediately;
-          // the existing concrete scheduler owns concurrency and execution from here.
-          scheduledAt: nowMs,
-          pageTabId: plan.pageTabId,
-          pageTabName: prepared.pageTabName,
-          pageUid: prepared.input.pageUid,
-          accountId: prepared.input.accountId,
-          accountUid: prepared.accountUid,
-          accountName: prepared.accountName,
-          content: prepared.input.content,
-          imagePaths: [...prepared.input.imagePaths]
-        }, nowMs)
-        if (!job) continue
-
-        createdCount += 1
-        this.repository.setLastError(plan.id, null, nowMs)
-      }
-
-      if (createdCount > 0) await this.wakeConcreteScheduler()
-      return createdCount
-    } finally {
-      this.ticking = false
-    }
+  async tick(): Promise<number> {
+    return 0
   }
 
   dispose(): void {
-    if (this.disposed) return
-    this.disposed = true
-    if (this.timer) clearInterval(this.timer)
-    this.timer = null
+    // No timer/resources are owned by this compatibility facade.
   }
 }
