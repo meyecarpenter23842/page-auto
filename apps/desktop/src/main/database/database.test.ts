@@ -102,9 +102,10 @@ describe('initializeDatabase', () => {
       { version: 19, name: 'page_business_explicit_bindings' },
       { version: 20, name: 'page_tab_group_post_concurrency_and_run_claim_owner' },
       { version: 21, name: 'page_wall_recurring_schedule_rules' },
-      { version: 22, name: 'page_wall_finite_plans' }
+      { version: 22, name: 'page_wall_finite_plans' },
+      { version: 23, name: 'page_scenario_schedules' }
     ])
-    expect(schemaVersion?.value).toBe('22')
+    expect(schemaVersion?.value).toBe('23')
     expect(executionLogsTable?.name).toBe('execution_logs')
     expect(postLibraryTable?.name).toBe('page_tab_posts')
     expect(pageTabColumns.some((column) => column.name === 'account_order_mode')).toBe(true)
@@ -134,7 +135,7 @@ describe('initializeDatabase', () => {
       .prepare('SELECT COUNT(*) AS count FROM __page_auto_migrations')
       .get() as { count: number }
 
-    expect(count.count).toBe(22)
+    expect(count.count).toBe(23)
     reopened.close()
   })
 

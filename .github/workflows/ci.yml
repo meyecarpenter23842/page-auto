@@ -56,6 +56,17 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Page Scenario schedule UI smoke
+        run: node apps/desktop/scripts/page-scenario-ui-smoke.mjs
+
+      - name: Upload Page Scenario UI evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: PageAuto-page-scenario-ui-${{ github.sha }}
+          path: dist/page-scenario-ui-smoke.png
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Page Wall UX interaction smoke
         run: node apps/desktop/scripts/page-wall-ux-smoke.mjs
 
