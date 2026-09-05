@@ -42,7 +42,8 @@ describe('Page business binding regression', () => {
     expect(wallSource).toContain("type Mode = 'now' | 'schedule'")
     expect(wallSource).toContain('window.pageWallFinite.getDashboard')
     expect(wallSource).toContain('window.pageWallFinite.runNow')
-    expect(wallSource).toContain('window.pageWallFinite.savePlan')
+    expect(wallSource).toContain('window.pageWallFinite.saveSchedule')
+    expect(wallSource).toContain('window.pageWallFinite.deleteSchedule')
     expect(wallSource).toContain('buildPageWallFiniteTasks')
     expect(wallSource).toContain('Đăng ngay')
     expect(wallSource).toContain('Lịch chạy')
@@ -55,7 +56,41 @@ describe('Page business binding regression', () => {
     expect(actionSource).toContain('savedWorkspaces.filter((workspace) => !isPageBusinessWorkspace(workspace))')
   })
 
-  it('renders Đăng Tường as a native three-region workspace with selected-account concurrency and finite plans', () => {
+  it('makes the account grid actually selectable by row and checkbox with visible selected state', () => {
+    expect(wallSource).toContain('data-account-id={account.accountId}')
+    expect(wallSource).toContain("selected ? 'selected' : ''")
+    expect(wallSource).toContain('if (runnable && !busy) toggleAccount(account.accountId)')
+    expect(wallSource).toContain('event.stopPropagation()')
+    expect(wallCssSource).toContain('.page-wall-account-table tbody tr.selected')
+    expect(wallCssSource).toContain('cursor:pointer')
+  })
+
+  it('makes the selected canonical post explicit and edits the common library instead of a Wall-only store', () => {
+    expect(wallSource).toContain('data-testid="page-wall-selected-post"')
+    expect(wallSource).toContain('Chọn từ Thư viện')
+    expect(wallSource).toContain('Thêm bài')
+    expect(wallSource).toContain('Sửa bài')
+    expect(wallSource).toContain('Bỏ chọn')
+    expect(wallSource).toContain('window.pageAuto.createContentLibraryItem')
+    expect(wallSource).toContain('window.pageAuto.updateContentLibraryItem')
+    expect(wallSource).toContain('CANONICAL_CONTENT_LIBRARY_SET_ID')
+    expect(wallSource).not.toContain('createPageTabPost')
+  })
+
+  it('uses a FPlus-style complete schedule dialog with post, accounts, multi-time and concurrency', () => {
+    expect(wallSource).toContain('aria-label="Thiết lập lịch đăng"')
+    expect(wallSource).toContain('1. Chọn bài viết')
+    expect(wallSource).toContain('2. Thời gian đăng bài')
+    expect(wallSource).toContain('3. Chọn tài khoản muốn đăng')
+    expect(wallSource).toContain('+ Thêm giờ')
+    expect(wallSource).toContain('+ Thêm lịch')
+    expect(wallSource).toContain('TK song song')
+    expect(wallSource).toContain('taskCount: scheduleDraft.accountIds.length')
+    expect(wallSource).not.toContain('Số task')
+    expect(wallSource).not.toContain('Lưu kế hoạch')
+  })
+
+  it('renders Đăng Tường as the locked native three-region workspace', () => {
     expect(bindingScopeSource).not.toContain('page-wall-group-layout')
     expect(bindingScopeSource).not.toContain('openWallTool')
     expect(bindingScopeSource).not.toContain('querySelector<HTMLElement>')
@@ -66,7 +101,6 @@ describe('Page business binding regression', () => {
     expect(wallSource).toContain('Chọn tất cả')
     expect(wallSource).toContain('Bỏ chọn')
     expect(wallSource).toContain('TK chạy song song')
-    expect(wallSource).toContain('Chọn từ Thư viện')
     expect(wallSource).toContain('Chạy đúng các TK đang tick')
     expect(wallSource).toContain('data-testid="page-wall-plan-list"')
     expect(wallCssSource).toContain('.page-wall-three-regions')

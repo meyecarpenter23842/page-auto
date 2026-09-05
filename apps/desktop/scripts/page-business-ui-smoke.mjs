@@ -106,10 +106,10 @@ try {
   invariant(rotationInputWidth <= 72, `Input Vòng chạy không còn compact (~3 chữ số): ${rotationInputWidth}px.`)
 
   await windowPage.getByRole('button', { name: 'Lịch chạy', exact: true }).click()
-  const scheduleDialog = windowPage.getByRole('dialog', { name: 'Ngày và khung giờ' })
-  await scheduleDialog.waitFor({ state: 'visible' })
-  await scheduleDialog.getByRole('button', { name: 'Đóng', exact: true }).click()
-  await scheduleDialog.waitFor({ state: 'detached' })
+  const groupScheduleDialog = windowPage.getByRole('dialog', { name: 'Ngày và khung giờ' })
+  await groupScheduleDialog.waitFor({ state: 'visible' })
+  await groupScheduleDialog.getByRole('button', { name: 'Đóng', exact: true }).click()
+  await groupScheduleDialog.waitFor({ state: 'detached' })
 
   await windowPage.getByRole('button', { name: 'Nhận diện', exact: true }).click()
   await windowPage.locator('.page-business-group-pane .pt-identity-panel.issue98-identity-modal').waitFor({ state: 'visible' })
@@ -169,16 +169,34 @@ try {
   invariant(accountControlsText.includes('Bỏ chọn'), 'Đăng Tường thiếu Bỏ chọn.')
   invariant(accountControlsText.includes('TK chạy song song'), 'Đăng Tường thiếu cấu hình TK chạy song song.')
 
+  await windowPage.locator('.business-page_wall_post [data-testid="page-wall-selected-post"]').waitFor({ state: 'visible' })
+  const postRegionText = await windowPage.locator('.business-page_wall_post [data-testid="page-wall-region-content"]').innerText()
+  invariant(postRegionText.includes('Chọn từ Thư viện'), 'Đăng Tường thiếu thao tác chọn bài từ Thư viện.')
+  invariant(postRegionText.includes('Thêm bài'), 'Đăng Tường thiếu thao tác thêm bài canonical.')
+  invariant(postRegionText.includes('Sửa bài'), 'Đăng Tường thiếu thao tác sửa bài canonical.')
+  invariant(postRegionText.includes('Bỏ chọn'), 'Đăng Tường thiếu thao tác bỏ bài đang chọn.')
+
   const nowPanelText = await windowPage.locator('.business-page_wall_post .page-wall-now-panel').innerText()
   invariant(nowPanelText.includes('Chạy đúng các TK đang tick'), 'Đăng ngay chưa mô tả chạy đúng TK đang tick.')
+  invariant(nowPanelText.includes('Chưa chọn tài khoản') || nowPanelText.includes('Chưa chọn bài viết'), 'Đăng ngay không nói rõ lý do chưa thể chạy.')
 
   await windowPage.locator('.business-page_wall_post .page-wall-mode-tabs button').filter({ hasText: 'Lịch chạy' }).click()
   await windowPage.locator('.business-page_wall_post [data-testid="page-wall-plan-list"]').waitFor({ state: 'visible' })
   const schedulePanelText = await windowPage.locator('.business-page_wall_post .page-wall-schedule-panel').innerText()
-  invariant(schedulePanelText.includes('Mỗi ngày'), 'Lịch Tường thiếu Mỗi ngày.')
-  invariant(schedulePanelText.includes('Ngày cụ thể'), 'Lịch Tường thiếu Ngày cụ thể.')
-  invariant(schedulePanelText.includes('Số task'), 'Lịch Tường thiếu số task hữu hạn.')
-  invariant(schedulePanelText.includes('Lưu kế hoạch'), 'Lịch Tường thiếu thao tác lưu kế hoạch hữu hạn.')
+  invariant(schedulePanelText.includes('+ Thêm lịch'), 'Lịch Tường thiếu nút Thêm lịch.')
+  invariant(schedulePanelText.includes('Mỗi lịch tự giữ bài + tài khoản + ngày/giờ + concurrency.'), 'Lịch Tường chưa mô tả schedule self-contained.')
+  invariant(!schedulePanelText.includes('Số task'), 'Lịch Tường vẫn lộ Số task kỹ thuật ra UI.')
+  invariant(!schedulePanelText.includes('Lưu kế hoạch'), 'Lịch Tường vẫn còn editor kế hoạch inline cũ.')
+
+  await windowPage.locator('.business-page_wall_post .page-wall-schedule-toolbar button').filter({ hasText: '+ Thêm lịch' }).click()
+  const wallScheduleDialog = windowPage.getByRole('dialog', { name: 'Thiết lập lịch đăng' })
+  await wallScheduleDialog.waitFor({ state: 'visible' })
+  const wallScheduleText = await wallScheduleDialog.innerText()
+  for (const expected of ['1. Chọn bài viết', '2. Thời gian đăng bài', '3. Chọn tài khoản muốn đăng', '+ Thêm giờ', 'TK song song']) {
+    invariant(wallScheduleText.includes(expected), `Popup lịch Đăng Tường thiếu ${expected}.`)
+  }
+  await wallScheduleDialog.getByRole('button', { name: '×', exact: true }).click()
+  await wallScheduleDialog.waitFor({ state: 'detached' })
 
   await windowPage.getByRole('tab', { name: /Sửa Page/ }).click()
   await windowPage.locator('.business-page_edit .page-business-page-chip').filter({ hasText: 'Smoke Page A' }).waitFor({ state: 'visible' })
@@ -213,9 +231,13 @@ try {
   await windowPage.locator('.business-page_edit .page-business-page-chip').filter({ hasText: 'Smoke Page A' }).waitFor({ state: 'visible' })
   invariant((await tabText('.business-page_edit .page-business-page-chip')).some((text) => text.includes('Smoke Page A')), 'Unlink Nhóm làm mất binding độc lập của Sửa Page.')
 
-  await windowPage.getByRole('tab', { name: /^Nhóm/ }).click()
-  await windowPage.locator('.page-business-group-pane .pt-compact-config-launchers').waitFor({ state: 'visible' })
+  // Leave CI evidence on the UI this batch actually changes, with the complete schedule dialog visible.
+  await windowPage.getByRole('tab', { name: /Đăng Tường/ }).click()
+  await windowPage.locator('.business-page_wall_post .page-wall-mode-tabs button').filter({ hasText: 'Lịch chạy' }).click()
+  await windowPage.locator('.business-page_wall_post .page-wall-schedule-toolbar button').filter({ hasText: '+ Thêm lịch' }).click()
+  await windowPage.getByRole('dialog', { name: 'Thiết lập lịch đăng' }).waitFor({ state: 'visible' })
   await windowPage.screenshot({ path: screenshotPath, fullPage: true })
+
   console.log('Page business UI smoke passed:', {
     actionWorkspaceClean: true,
     groupUiRendered: true,
@@ -224,7 +246,10 @@ try {
     controlledPageSwitch: true,
     independentBindings: true,
     wallNativeThreeRegions: true,
-    wallFiniteModes: true,
+    wallAccountSelectionUi: true,
+    wallCanonicalPostPicker: true,
+    wallCompleteScheduleDialog: true,
+    wallMultiTimeScheduleUi: true,
     newPageNotAutoBound: true,
     unlinkKeepsCanonical: true,
     screenshotPath

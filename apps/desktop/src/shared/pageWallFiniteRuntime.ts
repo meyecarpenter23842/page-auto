@@ -6,11 +6,14 @@ export const PAGE_WALL_FINITE_IPC = {
   dashboard: 'page-wall-finite:dashboard',
   runNow: 'page-wall-finite:run-now',
   savePlan: 'page-wall-finite:plans:save',
-  deletePlan: 'page-wall-finite:plans:delete'
+  deletePlan: 'page-wall-finite:plans:delete',
+  saveSchedule: 'page-wall-finite:schedules:save',
+  deleteSchedule: 'page-wall-finite:schedules:delete'
 } as const
 
 export interface PageWallFinitePagePayload { pageTabId: number }
 export interface PageWallFinitePlanIdPayload { planId: number }
+export interface PageWallFinitePlanIdsPayload { planIds: number[] }
 
 export interface PageWallFiniteRunNowPayload {
   pageTabId: number
@@ -32,6 +35,17 @@ export interface SavePageWallFinitePlanPayload {
   input: SavePageWallPlanInput
 }
 
+export interface SavePageWallFiniteScheduleInput extends Omit<SavePageWallPlanInput, 'minuteOfDay'> {
+  /** One finite plan-slot is persisted per minute. UI presents the slots as one schedule. */
+  minuteOfDays: number[]
+}
+
+export interface SavePageWallFiniteSchedulePayload {
+  /** Existing slot ids when editing. Missing/excess ids are created/deleted atomically. */
+  planIds?: number[]
+  input: SavePageWallFiniteScheduleInput
+}
+
 export interface PageWallFinitePlanView extends PageWallPlanRecord {
   latestOccurrence: PageWallPlanOccurrenceRecord | null
 }
@@ -46,6 +60,8 @@ export interface PageWallFiniteApi {
   runNow(payload: PageWallFiniteRunNowPayload): Promise<PageWallFiniteRunNowResult>
   savePlan(payload: SavePageWallFinitePlanPayload): Promise<PageWallPlanRecord>
   deletePlan(payload: PageWallFinitePlanIdPayload): Promise<boolean>
+  saveSchedule(payload: SavePageWallFiniteSchedulePayload): Promise<PageWallPlanRecord[]>
+  deleteSchedule(payload: PageWallFinitePlanIdsPayload): Promise<number>
 }
 
 function positiveIds(values: number[]): number[] {
@@ -57,6 +73,16 @@ function positiveIds(values: number[]): number[] {
     result.push(value)
   }
   return result
+}
+
+export function normalizePageWallScheduleMinutes(values: readonly number[]): number[] {
+  const minutes = [...new Set(values
+    .filter((value) => Number.isSafeInteger(value) && value >= 0 && value <= 1439)
+    .map((value) => Math.floor(value)))]
+    .sort((left, right) => left - right)
+  if (minutes.length === 0) throw new Error('Lịch Đăng Tường cần ít nhất một giờ chạy.')
+  if (minutes.length > 12) throw new Error('Một lịch Đăng Tường hỗ trợ tối đa 12 giờ chạy.')
+  return minutes
 }
 
 export function buildPageWallFiniteTasks(input: {
