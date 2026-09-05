@@ -27,6 +27,7 @@ import type { FacebookCheckpoint282RunPayload } from '../shared/facebookCheckpoi
 import type { CreatePageTabInput, PageTabIdPayload, UpdatePageTabPayload } from '../shared/pageTabs'
 import type { PageWallRunNowPayload } from '../shared/pageWall'
 import type { PageWallJobIdPayload, PageWallSchedulePayload } from '../shared/pageWallJobs'
+import type { PageWallRecurringPagePayload, SavePageWallRecurringPlanInput } from '../shared/pageWallRecurring'
 import type { ExecuteSinglePostingJobPayload } from '../shared/posting'
 import type { RotationPageTabPayload } from '../shared/rotation'
 import type { CreateRunPayload, RunIdPayload } from '../shared/runs'
@@ -43,6 +44,7 @@ import { CaptchaSettingsRepository } from './database/captchaSettingsRepository'
 import { ExecutionLogRepository } from './database/executionLogRepository'
 import { PageTabRepository } from './database/pageTabRepository'
 import { PageWallJobRepository } from './database/pageWallJobRepository'
+import { PageWallRecurringRepository } from './database/pageWallRecurringRepository'
 import { RunRepository } from './database/runRepository'
 import { AccountExecutionCoordinator } from './services/accountExecutionCoordinator'
 import { Checkpoint282RunLifecycle } from './services/checkpoint282RunLifecycle'
@@ -50,6 +52,7 @@ import { Checkpoint282RuntimeController } from './services/checkpoint282RuntimeC
 import { ConfigBackupService } from './services/configBackupService'
 import { LogMaintenanceService } from './services/logMaintenanceService'
 import { PageTabWorkerManager } from './services/pageTabWorkerManager'
+import { PageWallRecurringService } from './services/pageWallRecurringService'
 import { PageWallRunNowService } from './services/pageWallRunNowService'
 import { PageWallSchedulerService } from './services/pageWallSchedulerService'
 import { PostingService } from './services/postingService'
@@ -74,6 +77,7 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
   const captchaSettings = new CaptchaSettingsRepository(options.database)
   const pageTabs = new PageTabRepository(options.database)
   const pageWallJobs = new PageWallJobRepository(options.database)
+  const pageWallRecurringPlans = new PageWallRecurringRepository(options.database, pageWallJobs)
   const runs = new RunRepository(options.database)
   const executionLogs = new ExecutionLogRepository(options.database)
   const recovery = new RuntimeRecoveryService(options.database, executionLogs)
@@ -141,6 +145,11 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
   )
   const pageWallRunNowService = new PageWallRunNowService(pageTabs, { executePageWallPostNow })
   const pageWallScheduler = new PageWallSchedulerService(pageWallJobs, pageWallRunNowService, { executePageWallPostNow }, () => appSettings.get().runtime.maxActivePageTabs)
+  const pageWallRecurring = new PageWallRecurringService(
+    pageWallRecurringPlans,
+    pageWallRunNowService,
+    () => pageWallScheduler.tick()
+  )
 
   // Direct single-post IPC retains coordinator wrapping. Page Tab rotation owns the
   // lease at the rolling-pool layer, so its executor must stay raw to avoid double-locking.
@@ -246,6 +255,9 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
   ipcMain.handle(IPC_CHANNELS.pageWallSchedule, (_event, payload: PageWallSchedulePayload) => pageWallScheduler.create(payload))
   ipcMain.handle(IPC_CHANNELS.pageWallJobsList, () => pageWallScheduler.list())
   ipcMain.handle(IPC_CHANNELS.pageWallJobCancel, (_event, payload: PageWallJobIdPayload) => pageWallScheduler.cancel(payload))
+  ipcMain.handle(IPC_CHANNELS.pageWallRecurringGet, (_event, payload: PageWallRecurringPagePayload) => pageWallRecurring.get(payload))
+  ipcMain.handle(IPC_CHANNELS.pageWallRecurringSave, (_event, payload: SavePageWallRecurringPlanInput) => pageWallRecurring.save(payload))
+  ipcMain.handle(IPC_CHANNELS.pageWallRecurringClear, (_event, payload: PageWallRecurringPagePayload) => pageWallRecurring.clear(payload))
 
   ipcMain.handle(IPC_CHANNELS.runsLatestForPageTab, (_event, payload: CreateRunPayload) => runs.getLatestForPageTab(payload.pageTabId))
   ipcMain.handle(IPC_CHANNELS.runsCreate, (_event, payload: CreateRunPayload) => runs.createForPageTab(payload.pageTabId))
@@ -338,6 +350,7 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
 
   return {
     dispose: () => {
+      pageWallRecurring.dispose()
       pageWallScheduler.dispose()
       rotation.dispose()
       stopBrowserDockAccountClosed()
