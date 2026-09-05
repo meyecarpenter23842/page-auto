@@ -56,6 +56,19 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Page Wall UX interaction smoke
+        run: node apps/desktop/scripts/page-wall-ux-smoke.mjs
+
+      - name: Upload Page Wall UX evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: PageAuto-page-wall-ux-${{ github.sha }}
+          path: |
+            dist/page-wall-ux-smoke.png
+            dist/page-wall-schedule-smoke.png
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Package Windows portable
         run: npm run package:portable
 

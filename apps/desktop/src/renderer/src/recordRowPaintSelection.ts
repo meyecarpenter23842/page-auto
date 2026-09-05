@@ -1,5 +1,6 @@
 const ROW_SELECTOR = 'table:not(.account-grid):not(.pt-account-picker-grid) tbody tr, .quick-page-row'
 const INTERACTIVE_SELECTOR = 'input,button,select,a,textarea,[contenteditable="true"]'
+const ROW_PAINT_EXCLUDED_SELECTOR = '.page-wall-account-table, .page-wall-schedule-account-table'
 
 function isEmptyTableRow(row: HTMLElement): boolean {
   if (row.matches('.quick-page-row')) return false
@@ -75,6 +76,7 @@ export function installRecordRowPaintSelection(doc: Document = document): () => 
     if (!(target instanceof Element)) return null
     const row = target.closest<HTMLElement>(ROW_SELECTOR)
     if (!row || isEmptyTableRow(row)) return null
+    if (row.closest(ROW_PAINT_EXCLUDED_SELECTOR)) return null
     return row
   }
 
