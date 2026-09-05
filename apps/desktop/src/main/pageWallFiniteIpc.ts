@@ -3,15 +3,18 @@ import type Database from 'better-sqlite3'
 import type { PageWallRunNowPayload } from '../shared/pageWall'
 import {
   PAGE_WALL_FINITE_IPC,
+  normalizePageWallScheduleMinutes,
   type PageWallFiniteApi,
   type PageWallFiniteDashboard,
   type PageWallFinitePagePayload,
   type PageWallFinitePlanIdPayload,
+  type PageWallFinitePlanIdsPayload,
   type PageWallFiniteRunNowPayload,
   type PageWallFiniteRunNowResult,
-  type SavePageWallFinitePlanPayload
+  type SavePageWallFinitePlanPayload,
+  type SavePageWallFiniteSchedulePayload
 } from '../shared/pageWallFiniteRuntime'
-import type { PageWallPlanRecord, PageWallPlanTaskDefinition } from '../shared/pageWallPlans'
+import type { PageWallPlanRecord, PageWallPlanTaskDefinition, SavePageWallPlanInput } from '../shared/pageWallPlans'
 import { AppSettingsRepository } from './database/appSettingsRepository'
 import { BrowserWindowLayoutRepository } from './database/browserWindowLayoutRepository'
 import { CanonicalPostRepository } from './database/canonicalPostRepository'
@@ -45,6 +48,18 @@ function positiveUniqueIds(values: number[]): number[] {
 
 function limitConcurrency(value: number, max: number): number {
   return Math.max(1, Math.min(max, Math.floor(value || 1)))
+}
+
+function singleSlotInput(payload: SavePageWallFiniteSchedulePayload, minuteOfDay: number): SavePageWallPlanInput {
+  return {
+    pageTabId: payload.input.pageTabId,
+    scheduleKind: payload.input.scheduleKind,
+    localDate: payload.input.scheduleKind === 'specific_date' ? payload.input.localDate : null,
+    minuteOfDay,
+    accountConcurrency: payload.input.accountConcurrency,
+    tasks: payload.input.tasks,
+    enabled: payload.input.enabled
+  }
 }
 
 export interface PageWallFiniteRuntime {
@@ -267,6 +282,33 @@ export function registerPageWallFiniteRuntime(database: Database.Database, dataD
     return { accountConcurrency: concurrency, requestedAccountIds: accountIds, results }
   }
 
+  const saveSchedule = (payload: SavePageWallFiniteSchedulePayload): PageWallPlanRecord[] => {
+    const minuteOfDays = normalizePageWallScheduleMinutes(payload.input.minuteOfDays)
+    const planIds = positiveUniqueIds(payload.planIds ?? [])
+    return database.transaction(() => {
+      for (const planId of planIds) {
+        const existing = plans.get(planId)
+        if (!existing) throw new Error(`Không tìm thấy slot lịch Đăng Tường #${planId}.`)
+        if (existing.pageTabId !== payload.input.pageTabId) throw new Error('Slot lịch không thuộc đúng Page đang sửa.')
+        if (plans.listOccurrences(planId, 1).length > 0) throw new Error('Lịch đã phát sinh lượt chạy; hãy tạo lịch mới thay vì sửa lịch sử.')
+      }
+
+      const saved: PageWallPlanRecord[] = []
+      for (let index = 0; index < minuteOfDays.length; index += 1) {
+        const input = singleSlotInput(payload, minuteOfDays[index]!)
+        const existingId = planIds[index]
+        saved.push(existingId ? plans.update(existingId, input) : plans.create(input))
+      }
+      for (const staleId of planIds.slice(minuteOfDays.length)) plans.delete(staleId)
+      return saved
+    })()
+  }
+
+  const deleteSchedule = (payload: PageWallFinitePlanIdsPayload): number => {
+    const planIds = positiveUniqueIds(payload.planIds)
+    return database.transaction(() => planIds.reduce((count, id) => count + (plans.delete(id) ? 1 : 0), 0))()
+  }
+
   const api: PageWallFiniteApi = {
     getDashboard: async (payload) => getDashboard(payload),
     runNow: runBatch,
@@ -275,13 +317,21 @@ export function registerPageWallFiniteRuntime(database: Database.Database, dataD
       void tick()
       return record
     },
-    deletePlan: async (payload: PageWallFinitePlanIdPayload) => plans.delete(payload.planId)
+    deletePlan: async (payload: PageWallFinitePlanIdPayload) => plans.delete(payload.planId),
+    saveSchedule: async (payload) => {
+      const records = saveSchedule(payload)
+      void tick()
+      return records
+    },
+    deleteSchedule: async (payload) => deleteSchedule(payload)
   }
 
   ipcMain.handle(PAGE_WALL_FINITE_IPC.dashboard, (_event, payload: PageWallFinitePagePayload) => api.getDashboard(payload))
   ipcMain.handle(PAGE_WALL_FINITE_IPC.runNow, (_event, payload: PageWallFiniteRunNowPayload) => api.runNow(payload))
   ipcMain.handle(PAGE_WALL_FINITE_IPC.savePlan, (_event, payload: SavePageWallFinitePlanPayload) => api.savePlan(payload))
   ipcMain.handle(PAGE_WALL_FINITE_IPC.deletePlan, (_event, payload: PageWallFinitePlanIdPayload) => api.deletePlan(payload))
+  ipcMain.handle(PAGE_WALL_FINITE_IPC.saveSchedule, (_event, payload: SavePageWallFiniteSchedulePayload) => api.saveSchedule(payload))
+  ipcMain.handle(PAGE_WALL_FINITE_IPC.deleteSchedule, (_event, payload: PageWallFinitePlanIdsPayload) => api.deleteSchedule(payload))
 
   // Resume pending finite occurrences after an app restart. Legacy recovery may have
   // marked a consequential running job failed; those occurrences are finalized below.
