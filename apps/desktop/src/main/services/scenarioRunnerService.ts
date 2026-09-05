@@ -15,12 +15,14 @@ import { BrowserWindowLayoutManager } from '../browser/browserWindowLayoutManage
 import { ScenarioActionWorkerManager } from '../browser/scenarioActionWorkerManager'
 import { AccountRepository } from '../database/accountRepository'
 import { BrowserWindowLayoutRepository } from '../database/browserWindowLayoutRepository'
+import { PageTabRepository } from '../database/pageTabRepository'
 import { ScenarioRepository } from '../database/scenarioRepository'
 import { StoryRepository } from '../database/storyRepository'
 import { scenarioActionJobForCommonSessionPolicy } from '../facebook/facebookSessionPolicy'
 import { AccountExecutionCoordinator } from './accountExecutionCoordinator'
 import { redactExecutionText } from './executionLogSanitizer'
 import { runRollingAccountPool } from './rollingAccountPool'
+import { resolveScenarioRunnerExecutionContext, scenarioRunnerActor } from './scenarioRunnerExecutionContext'
 
 interface ActiveScenarioRun {
   snapshot: ScenarioRunnerSnapshot
@@ -86,6 +88,7 @@ export class ScenarioRunnerService {
   private readonly accounts: AccountRepository
   private readonly scenarios: ScenarioRepository
   private readonly stories: StoryRepository
+  private readonly pageTabs: PageTabRepository
   private readonly browserWindowLayout = new BrowserWindowLayoutManager()
   private readonly browserWindowLayoutSettings: BrowserWindowLayoutRepository
   private active: ActiveScenarioRun | null = null
@@ -101,6 +104,7 @@ export class ScenarioRunnerService {
     this.accounts = new AccountRepository(database)
     this.scenarios = new ScenarioRepository(database)
     this.stories = new StoryRepository(database)
+    this.pageTabs = new PageTabRepository(database)
     this.browserWindowLayoutSettings = new BrowserWindowLayoutRepository(database)
   }
 
@@ -128,12 +132,28 @@ export class ScenarioRunnerService {
     if (accounts.length !== accountIds.length) throw new Error('Một số tài khoản đã chọn không còn tồn tại.')
     if (!accounts.length) throw new Error('Không tìm thấy tài khoản hợp lệ.')
 
+    const requestedContext = payload.executionContext ?? { kind: 'profile' as const }
+    const pageTab = requestedContext.kind === 'page' ? this.pageTabs.get(requestedContext.pageTabId) : null
+    const executionContext = resolveScenarioRunnerExecutionContext(
+      requestedContext,
+      pageTab
+        ? {
+            pageTabId: pageTab.id,
+            pageUid: pageTab.pageUid,
+            enabledAccountIds: pageTab.accounts.filter((item) => item.enabled).map((item) => item.accountId)
+          }
+        : null,
+      accountIds
+    )
+    const resolvedPayload: ScenarioRunnerStartPayload = { ...payload, executionContext }
+
     const runId = `scenario-${Date.now()}-${Math.floor(Math.random() * 10000)}`
     const snapshot: ScenarioRunnerSnapshot = {
       runId,
       state: 'running',
       startedAt: Date.now(),
       finishedAt: null,
+      executionContext,
       accountRuntimes: accountIds.map((accountId): ScenarioRunnerAccountRuntime => ({
         accountId,
         state: 'queued',
@@ -165,8 +185,9 @@ export class ScenarioRunnerService {
       storyRuntimeByActionId
     }
     this.active = active
-    this.log(active, 'info', `Bắt đầu phiên ${runId}: ${accounts.length} tài khoản, ${scenarios.length} kịch bản.`)
-    void this.execute(active, accounts, scenarios, payload).catch((error) => {
+    const actorLabel = executionContext.kind === 'page' ? `Page ${executionContext.pageUid}` : 'Profile'
+    this.log(active, 'info', `Bắt đầu phiên ${runId}: ${accounts.length} tài khoản, ${scenarios.length} kịch bản · actor ${actorLabel}.`)
+    void this.execute(active, accounts, scenarios, resolvedPayload).catch((error) => {
       if (this.active !== active) return
       active.snapshot.state = 'failed'
       active.snapshot.finishedAt = Date.now()
@@ -351,7 +372,7 @@ export class ScenarioRunnerService {
               scenarioActionId: action.id,
               actionType: action.actionType,
               label: action.label,
-              actor: { kind: 'profile', accountId: account.id, accountUid: account.uid },
+              actor: scenarioRunnerActor(payload.executionContext ?? { kind: 'profile' }, account),
               config: parsedConfig,
               ...(action.actionType === 'post_story' ? { runtimeData: active.storyRuntimeByActionId.get(action.id) ?? { stories: [] } } : {}),
               retry: { maxAttempts: 1, delayMs: 0, retryableCodes: [] }
