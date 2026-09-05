@@ -1,15 +1,21 @@
 import { describe, expect, it } from 'vitest'
 import type { PageWallPlanOccurrenceRecord } from './pageWallPlans'
 import {
+  PAGE_WALL_PUBLISH_UNCONFIRMED_LABEL,
   buildPageWallFiniteTasks,
   canEditPageWallFiniteSchedule,
   normalizePageWallImmediateDelaySeconds,
   normalizePageWallScheduleMinutes,
   pageWallFiniteScheduleRuntimeState,
+  summarizePageWallFiniteOccurrenceJobs,
   type PageWallFinitePlanView
 } from './pageWallFiniteRuntime'
 
-function occurrence(status: PageWallPlanOccurrenceRecord['status'], localDate = '2026-09-05'): PageWallPlanOccurrenceRecord {
+function occurrence(
+  status: PageWallPlanOccurrenceRecord['status'],
+  localDate = '2026-09-05',
+  resultMessage: string | null = null
+): PageWallPlanOccurrenceRecord {
   return {
     id: 10,
     planId: 1,
@@ -19,7 +25,7 @@ function occurrence(status: PageWallPlanOccurrenceRecord['status'], localDate = 
     status,
     accountConcurrency: 1,
     taskCount: 1,
-    resultMessage: null,
+    resultMessage,
     createdAt: 1,
     startedAt: status === 'pending' ? null : 1,
     finishedAt: ['success', 'failed', 'needs_attention', 'cancelled'].includes(status) ? 2 : null,
@@ -92,6 +98,47 @@ describe('Page Wall FPlus-style multi-time schedule', () => {
   })
 })
 
+describe('Page Wall finite occurrence outcome semantics', () => {
+  it('maps publish_unconfirmed to needs_attention without claiming publish success', () => {
+    const summary = summarizePageWallFiniteOccurrenceJobs([{
+      status: 'failed',
+      resultStatus: 'failed',
+      resultCode: 'publish_unconfirmed'
+    }])
+
+    expect(summary.status).toBe('needs_attention')
+    expect(summary.needsAttention).toBe(true)
+    expect(summary.successCount).toBe(0)
+    expect(summary.publishUnconfirmedCount).toBe(1)
+    expect(summary.message).toContain(PAGE_WALL_PUBLISH_UNCONFIRMED_LABEL)
+    expect(summary.message).toContain('Không tự retry')
+  })
+
+  it('keeps a genuine publish failure as failed', () => {
+    expect(summarizePageWallFiniteOccurrenceJobs([{
+      status: 'failed',
+      resultStatus: 'failed',
+      resultCode: 'publish_action_failed'
+    }])).toMatchObject({
+      status: 'failed',
+      needsAttention: false,
+      publishUnconfirmedCount: 0
+    })
+  })
+
+  it('keeps login/checkpoint outcomes in needs_attention', () => {
+    expect(summarizePageWallFiniteOccurrenceJobs([{
+      status: 'failed',
+      resultStatus: 'needs_login',
+      resultCode: 'verification_required'
+    }])).toMatchObject({
+      status: 'needs_attention',
+      needsAttention: true,
+      publishUnconfirmedCount: 0
+    })
+  })
+})
+
 describe('Page Wall schedule runtime view', () => {
   it('shows a successful daily occurrence as completed today while keeping the plan active for tomorrow', () => {
     const state = pageWallFiniteScheduleRuntimeState([
@@ -108,6 +155,21 @@ describe('Page Wall schedule runtime view', () => {
     ], '2026-09-05')
 
     expect(state).toEqual({ label: 'Đã chạy 1/2 hôm nay', tone: 'completed' })
+  })
+
+  it('shows publish uncertainty as attention instead of latest-run failure', () => {
+    const state = pageWallFiniteScheduleRuntimeState([
+      plan({
+        status: 'needs_attention',
+        latestOccurrence: occurrence(
+          'needs_attention',
+          '2026-09-05',
+          `${PAGE_WALL_PUBLISH_UNCONFIRMED_LABEL}: 1/1 task chưa có evidence đủ chắc.`
+        )
+      })
+    ], '2026-09-05')
+
+    expect(state).toEqual({ label: PAGE_WALL_PUBLISH_UNCONFIRMED_LABEL, tone: 'needs_attention' })
   })
 
   it('allows editing historical success but blocks editing while an occurrence is pending/running', () => {
