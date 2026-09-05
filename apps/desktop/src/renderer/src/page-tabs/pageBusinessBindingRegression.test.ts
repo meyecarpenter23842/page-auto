@@ -38,7 +38,7 @@ describe('Page business binding regression', () => {
 
   it('drives Đăng Tường from the bound Page id and keeps Hành động Page-free', () => {
     expect(wallSource).toContain('activePageId: controlledPageId')
-    expect(wallSource).toContain('disabled={scoped || busy || scheduling}')
+    expect(wallSource).toContain('disabled={scoped || operationBusy}')
     expect(actionSource).toContain('savedWorkspaces.filter((workspace) => !isPageBusinessWorkspace(workspace))')
   })
 })
