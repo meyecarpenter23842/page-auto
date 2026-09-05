@@ -148,16 +148,37 @@ try {
   await windowPage.locator('.business-page_wall_post .page-business-page-chip').filter({ hasText: 'Smoke Page B' }).waitFor({ state: 'visible' })
   const wallChips = await tabText('.business-page_wall_post .page-business-page-chip')
   invariant(wallChips.length === 1 && wallChips[0].includes('Smoke Page B'), 'Đăng Tường không giữ binding độc lập Page B.')
-  await windowPage.locator('.business-page_wall_post .page-wall-common-frame').waitFor({ state: 'visible' })
-  invariant(await windowPage.locator('.business-page_wall_post .page-wall-account-grid').count() === 0, 'Đăng Tường vẫn còn mini-grid account riêng.')
-  invariant(await windowPage.locator('.business-page_wall_post .page-wall-target-card').count() === 0, 'Đăng Tường vẫn còn target/account card riêng của 2.1B.')
-  const wallModeLabels = await tabText('.business-page_wall_post .page-wall-mode-selector button')
-  for (const expected of ['Đăng ngay', 'Hẹn 1 lần', 'Lịch chạy']) {
+  await windowPage.locator('.business-page_wall_post [data-testid="page-wall-three-regions"]').waitFor({ state: 'visible' })
+  await windowPage.locator('.business-page_wall_post [data-testid="page-wall-region-accounts"]').waitFor({ state: 'visible' })
+  await windowPage.locator('.business-page_wall_post [data-testid="page-wall-region-content"]').waitFor({ state: 'visible' })
+  await windowPage.locator('.business-page_wall_post [data-testid="page-wall-region-control"]').waitFor({ state: 'visible' })
+  invariant(await windowPage.locator('.business-page_wall_post .page-wall-common-frame').count() === 0, 'Đăng Tường vẫn render common-frame legacy.')
+  invariant(await windowPage.locator('.business-page_wall_post .page-wall-group-layout').count() === 0, 'Đăng Tường vẫn render wrapper/group layout legacy.')
+
+  const wallModeLabels = await tabText('.business-page_wall_post .page-wall-mode-tabs button')
+  for (const expected of ['Đăng ngay', 'Lịch chạy']) {
     invariant(wallModeLabels.some((label) => label.includes(expected)), `Đăng Tường thiếu mode ${expected}.`)
   }
-  invariant((await windowPage.locator('.business-page_wall_post .page-wall-head').innerText()).includes('Đăng Tường Page'), 'Đăng Tường không nhận activePageId trực tiếp từ binding Page B.')
-  invariant((await windowPage.locator('.business-page_wall_post .page-wall-secondary-tools').innerText()).includes('Lịch đã hẹn'), 'Lịch đã hẹn chưa được hạ xuống secondary tool.')
-  invariant((await windowPage.locator('.business-page_wall_post .page-wall-secondary-tools').innerText()).includes('Log'), 'Log chưa được hạ xuống secondary tool.')
+  invariant(!wallModeLabels.some((label) => label.includes('Hẹn 1 lần')), 'Đăng Tường vẫn còn mode Hẹn 1 lần.')
+
+  const wallHeaderText = await windowPage.locator('.business-page_wall_post .page-wall-finite-head').innerText()
+  invariant(wallHeaderText.includes('Smoke Page B') && wallHeaderText.includes('910000002'), 'Đăng Tường không nhận activePageId/Page UID B trực tiếp từ binding.')
+
+  const accountControlsText = await windowPage.locator('.business-page_wall_post [data-testid="page-wall-account-controls"]').innerText()
+  invariant(accountControlsText.includes('Chọn tất cả'), 'Đăng Tường thiếu Chọn tất cả.')
+  invariant(accountControlsText.includes('Bỏ chọn'), 'Đăng Tường thiếu Bỏ chọn.')
+  invariant(accountControlsText.includes('TK chạy song song'), 'Đăng Tường thiếu cấu hình TK chạy song song.')
+
+  const nowPanelText = await windowPage.locator('.business-page_wall_post .page-wall-now-panel').innerText()
+  invariant(nowPanelText.includes('Chạy đúng các TK đang tick'), 'Đăng ngay chưa mô tả chạy đúng TK đang tick.')
+
+  await windowPage.locator('.business-page_wall_post .page-wall-mode-tabs button').filter({ hasText: 'Lịch chạy' }).click()
+  await windowPage.locator('.business-page_wall_post [data-testid="page-wall-plan-list"]').waitFor({ state: 'visible' })
+  const schedulePanelText = await windowPage.locator('.business-page_wall_post .page-wall-schedule-panel').innerText()
+  invariant(schedulePanelText.includes('Mỗi ngày'), 'Lịch Tường thiếu Mỗi ngày.')
+  invariant(schedulePanelText.includes('Ngày cụ thể'), 'Lịch Tường thiếu Ngày cụ thể.')
+  invariant(schedulePanelText.includes('Số task'), 'Lịch Tường thiếu số task hữu hạn.')
+  invariant(schedulePanelText.includes('Lưu kế hoạch'), 'Lịch Tường thiếu thao tác lưu kế hoạch hữu hạn.')
 
   await windowPage.getByRole('tab', { name: /Sửa Page/ }).click()
   await windowPage.locator('.business-page_edit .page-business-page-chip').filter({ hasText: 'Smoke Page A' }).waitFor({ state: 'visible' })
@@ -202,8 +223,8 @@ try {
     compactGroupUiRestored: true,
     controlledPageSwitch: true,
     independentBindings: true,
-    wallUsesCommonFrame: true,
-    wallModeSelector: true,
+    wallNativeThreeRegions: true,
+    wallFiniteModes: true,
     newPageNotAutoBound: true,
     unlinkKeepsCanonical: true,
     screenshotPath
