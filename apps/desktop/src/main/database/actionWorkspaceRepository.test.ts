@@ -31,7 +31,7 @@ describe('ActionWorkspaceRepository', () => {
   it('applies latest schema and restores config with ordered account bindings', () => {
     const { runtime, workspaces } = setup()
     const schemaVersion = runtime.client.prepare("SELECT value FROM app_settings WHERE key = 'schema_version'").get() as { value: string }
-    expect(schemaVersion.value).toBe('21')
+    expect(schemaVersion.value).toBe('22')
 
     const created = workspaces.create({
       type: 'interaction',

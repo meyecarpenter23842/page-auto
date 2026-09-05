@@ -25,7 +25,7 @@ describe('StoryRepository', () => {
   it('creates and updates reusable Story drafts', () => {
     const { runtime, stories } = setup()
     const schema = runtime.client.prepare("SELECT value FROM app_settings WHERE key = 'schema_version'").get() as { value: string }
-    expect(schema.value).toBe('21')
+    expect(schema.value).toBe('22')
 
     const created = stories.create({
       name: 'Story A',
