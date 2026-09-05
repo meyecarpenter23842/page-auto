@@ -1,8 +1,13 @@
+import {
+  parsePageBusinessBindingConfig,
+  parsePageWallBusinessSchedule
+} from '../../shared/pageBusinessBindings'
 import type { PageWallExecutionInput, PageWallRunNowPayload } from '../../shared/pageWall'
 import type { PageWallJobIdPayload, PageWallJobRecord, PageWallSchedulePayload } from '../../shared/pageWallJobs'
 import type { PostingJobResult } from '../../shared/posting'
 import { PageWallJobRepository } from '../database/pageWallJobRepository'
 import type { PageWallPreparationResult } from './pageWallRunNowService'
+import { scheduleWindowKey } from './rotationSchedule'
 
 interface PageWallJobPreparer {
   prepare(payload: PageWallRunNowPayload): Promise<PageWallPreparationResult>
@@ -25,6 +30,7 @@ interface ActiveScheduledJob {
 
 export class PageWallSchedulerService {
   private readonly active = new Map<number, ActiveScheduledJob>()
+  private readonly failedOccurrenceKeys = new Set<string>()
   private readonly pollIntervalMs: number
   private readonly now: () => number
   private timer: NodeJS.Timeout | null = null
@@ -89,6 +95,8 @@ export class PageWallSchedulerService {
     if (this.disposed || this.claiming) return
     this.claiming = true
     try {
+      await this.materializeRecurringOccurrences(now)
+
       const maxConcurrent = Math.max(1, Math.min(20, Math.floor(this.getMaxConcurrent() || 1)))
       while (!this.disposed && this.active.size < maxConcurrent) {
         const activePageTabs = [...this.active.values()].map((entry) => entry.pageTabId)
@@ -106,6 +114,52 @@ export class PageWallSchedulerService {
     this.disposed = true
     if (this.timer) clearInterval(this.timer)
     this.timer = null
+  }
+
+  private async materializeRecurringOccurrences(nowMs: number): Promise<void> {
+    const now = new Date(nowMs)
+    for (const binding of this.jobs.listPageWallBusinessBindings()) {
+      const base = parsePageBusinessBindingConfig(binding.configJson)
+      if (!base || base.pageBusinessType !== 'page_wall_post') continue
+      const schedule = parsePageWallBusinessSchedule(binding.configJson)
+      if (!schedule?.enabled) continue
+
+      const windowKey = scheduleWindowKey(schedule.schedules, now)
+      if (!windowKey) continue
+      const occurrenceKey = `wall-binding:${binding.id}:${windowKey}`
+      if (this.jobs.recurringOccurrenceExists(base.pageTabId, occurrenceKey)) continue
+      if (this.failedOccurrenceKeys.has(occurrenceKey)) continue
+
+      const preparation = await this.preparer.prepare({
+        pageTabId: base.pageTabId,
+        content: schedule.content,
+        imagePaths: [...schedule.imagePaths],
+        ...(schedule.canonicalPost ? { canonicalPost: schedule.canonicalPost } : {})
+      })
+      if (!preparation.ok) {
+        // Preparation is safe to retry after an app restart because no consequential
+        // Facebook click happened. Within this process, avoid hammering a bad source
+        // every scheduler tick for the same window.
+        this.failedOccurrenceKeys.add(occurrenceKey)
+        console.warn(`[PAGE-AUTO wall-scheduler] occurrence=${occurrenceKey} skipped: ${preparation.result.message}`)
+        continue
+      }
+
+      const prepared = preparation.prepared
+      this.jobs.createRecurringOccurrence({
+        scheduledAt: nowMs,
+        pageTabId: base.pageTabId,
+        pageTabName: prepared.pageTabName,
+        pageUid: prepared.input.pageUid,
+        accountId: prepared.input.accountId,
+        accountUid: prepared.accountUid,
+        accountName: prepared.accountName,
+        content: prepared.input.content,
+        imagePaths: [...prepared.input.imagePaths]
+      }, occurrenceKey, nowMs)
+    }
+
+    if (this.failedOccurrenceKeys.size > 512) this.failedOccurrenceKeys.clear()
   }
 
   private launch(job: PageWallJobRecord): void {

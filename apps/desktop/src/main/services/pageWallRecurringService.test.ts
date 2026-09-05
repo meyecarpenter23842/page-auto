@@ -22,11 +22,11 @@ afterEach(() => {
 })
 
 function setup() {
-  const directory = mkdtempSync(join(tmpdir(), 'page-auto-wall-recurring-'))
+  const directory = mkdtempSync(join(tmpdir(), 'page-auto-wall-recurring-compat-'))
   tempDirectories.push(directory)
   const runtime = initializeDatabase(join(directory, 'page-auto.sqlite'))
   const now = new Date(2026, 8, 4, 10, 30, 0, 0)
-  let nowMs = now.getTime()
+  const nowMs = now.getTime()
 
   runtime.client.prepare(`
     INSERT INTO accounts (id, uid, status, created_at, updated_at)
@@ -47,19 +47,19 @@ function setup() {
     ok: true,
     prepared: {
       input: {
-        accountId: payload.accountId,
+        accountId: payload.accountId ?? 11,
         pageUid: '90001',
-        content: payload.canonicalPost?.content ?? payload.content,
-        imagePaths: payload.canonicalPost ? ['C:\\resolved\\canonical.jpg'] : [...payload.imagePaths]
+        content: payload.content,
+        imagePaths: [...payload.imagePaths]
       },
       pageTabName: 'Page A',
       accountUid: '10001',
-      accountName: 'Smoke Account'
+      accountName: null
     }
   }))
   const wake = vi.fn(async () => undefined)
   const service = new PageWallRecurringService(plans, { prepare }, wake, {
-    autoStart: false,
+    autoStart: true,
     now: () => nowMs
   })
   const window: PageWallRecurringScheduleWindow = {
@@ -69,31 +69,17 @@ function setup() {
     enabled: true,
     sortOrder: 0
   }
-
-  return {
-    runtime,
-    jobs,
-    plans,
-    prepare,
-    wake,
-    service,
-    window,
-    now,
-    setNow: (next: Date) => { nowMs = next.getTime() }
-  }
+  return { runtime, jobs, service, prepare, wake, window }
 }
 
 describe('Page Wall recurring schedule helpers', () => {
-  it('finds the active local window and produces a stable per-day occurrence key', () => {
+  it('keeps legacy helper behavior stable for existing v21 data', () => {
     const now = new Date(2026, 8, 4, 10, 30, 0, 0)
     const window: PageWallRecurringScheduleWindow = {
       dayOfWeek: now.getDay(), startMinute: 600, endMinute: 660, enabled: true, sortOrder: 0
     }
     expect(activePageWallRecurringWindow([window], now)).toEqual(window)
     expect(pageWallRecurringOccurrenceKey(window, now)).toContain(':600-660')
-  })
-
-  it('rejects overlapping enabled windows on the same day', () => {
     expect(() => normalizePageWallRecurringSchedules([
       { dayOfWeek: 1, startMinute: 600, endMinute: 660, enabled: true, sortOrder: 0 },
       { dayOfWeek: 1, startMinute: 630, endMinute: 700, enabled: true, sortOrder: 1 }
@@ -101,115 +87,24 @@ describe('Page Wall recurring schedule helpers', () => {
   })
 })
 
-describe('PageWallRecurringService', () => {
-  it('materializes exactly one immutable concrete job for an active window', async () => {
+describe('PageWallRecurringService v21 compatibility facade', () => {
+  it('can read/write legacy v21 plans but never materializes jobs or starts a second scheduler', async () => {
     const prepared = setup()
-    await prepared.service.save({
+    const saved = await prepared.service.save({
       pageTabId: 7,
       accountId: 11,
       enabled: true,
-      content: 'snapshot v1',
-      imagePaths: ['C:\\media\\one.jpg'],
-      schedules: [prepared.window]
-    })
-
-    expect(await prepared.service.tick()).toBe(1)
-    expect(await prepared.service.tick()).toBe(0)
-    expect(prepared.jobs.list()).toHaveLength(1)
-    expect(prepared.jobs.list()[0]).toMatchObject({
-      pageTabId: 7,
-      accountId: 11,
-      content: 'snapshot v1',
-      imagePaths: ['C:\\media\\one.jpg']
-    })
-    expect(prepared.wake).toHaveBeenCalledTimes(1)
-
-    await prepared.service.save({
-      pageTabId: 7,
-      accountId: 11,
-      enabled: true,
-      content: 'source changed after concrete job',
-      imagePaths: [],
-      schedules: [prepared.window]
-    })
-    expect(await prepared.service.tick()).toBe(0)
-    expect(prepared.jobs.list()).toHaveLength(1)
-    expect(prepared.jobs.list()[0]?.content).toBe('snapshot v1')
-
-    prepared.service.dispose()
-    prepared.runtime.close()
-  })
-
-  it('creates a new occurrence on the next matching local date but never catches up after a missed window', async () => {
-    const prepared = setup()
-    await prepared.service.save({
-      pageTabId: 7,
-      accountId: 11,
-      enabled: true,
-      content: 'weekly',
+      content: 'legacy source',
       imagePaths: [],
       schedules: [prepared.window]
     })
 
-    expect(await prepared.service.tick()).toBe(1)
-    const nextWeek = new Date(prepared.now)
-    nextWeek.setDate(nextWeek.getDate() + 7)
-    prepared.setNow(nextWeek)
-    expect(await prepared.service.tick()).toBe(1)
-    expect(prepared.jobs.list()).toHaveLength(2)
-
-    const afterWindow = new Date(nextWeek)
-    afterWindow.setHours(12, 0, 0, 0)
-    prepared.setNow(afterWindow)
+    expect(saved.pageTabId).toBe(7)
+    expect(prepared.service.get({ pageTabId: 7 })?.enabled).toBe(true)
     expect(await prepared.service.tick()).toBe(0)
-    expect(prepared.jobs.list()).toHaveLength(2)
-
-    prepared.service.dispose()
-    prepared.runtime.close()
-  })
-
-  it('does not reserve an occurrence when materialization fails, so a later safe tick can recover', async () => {
-    const prepared = setup()
-    prepared.prepare.mockResolvedValueOnce({
-      ok: true,
-      prepared: {
-        input: { accountId: 11, pageUid: '90001', content: 'save-check', imagePaths: [] },
-        pageTabName: 'Page A', accountUid: '10001', accountName: null
-      }
-    })
-    prepared.prepare.mockResolvedValueOnce({
-      ok: false,
-      result: {
-        pageTabId: 7,
-        accountId: 11,
-        status: 'failed',
-        code: 'media_failed',
-        message: 'folder unavailable'
-      }
-    })
-    prepared.prepare.mockResolvedValue({
-      ok: true,
-      prepared: {
-        input: { accountId: 11, pageUid: '90001', content: 'recovered', imagePaths: [] },
-        pageTabName: 'Page A', accountUid: '10001', accountName: null
-      }
-    })
-
-    await prepared.service.save({
-      pageTabId: 7,
-      accountId: 11,
-      enabled: true,
-      content: 'source',
-      imagePaths: [],
-      schedules: [prepared.window]
-    })
-    expect(await prepared.service.tick()).toBe(0)
-    expect(prepared.plans.get(7)?.lastError).toContain('folder unavailable')
     expect(prepared.jobs.list()).toHaveLength(0)
-
-    expect(await prepared.service.tick()).toBe(1)
-    expect(prepared.plans.get(7)?.lastError).toBeNull()
-    expect(prepared.jobs.list()).toHaveLength(1)
+    expect(prepared.wake).not.toHaveBeenCalled()
+    expect(prepared.prepare).toHaveBeenCalledTimes(1)
 
     prepared.service.dispose()
     prepared.runtime.close()

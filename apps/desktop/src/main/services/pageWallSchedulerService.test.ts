@@ -21,20 +21,23 @@ function setup(executeResult: PostingJobResult = { status: 'success', message: '
   const runtime = initializeDatabase(join(directory, 'page-auto.sqlite'))
   const jobs = new PageWallJobRepository(runtime.client)
   let now = 1_000
-  const prepare = vi.fn(async (payload: PageWallRunNowPayload): Promise<PageWallPreparationResult> => ({
-    ok: true,
-    prepared: {
-      input: {
-        accountId: payload.accountId,
-        pageUid: payload.pageTabId === 7 ? '90001' : '90002',
-        content: payload.canonicalPost?.content ?? payload.content,
-        imagePaths: payload.canonicalPost ? ['C:\\resolved\\canonical.jpg'] : [...payload.imagePaths]
-      },
-      pageTabName: payload.pageTabId === 7 ? 'Page A' : 'Page B',
-      accountUid: payload.accountId === 11 ? '10001' : '10002',
-      accountName: null
+  const prepare = vi.fn(async (payload: PageWallRunNowPayload): Promise<PageWallPreparationResult> => {
+    const accountId = payload.accountId ?? 11
+    return {
+      ok: true,
+      prepared: {
+        input: {
+          accountId,
+          pageUid: payload.pageTabId === 7 ? '90001' : '90002',
+          content: payload.canonicalPost?.content ?? payload.content,
+          imagePaths: payload.canonicalPost ? ['C:\\resolved\\canonical.jpg'] : [...payload.imagePaths]
+        },
+        pageTabName: payload.pageTabId === 7 ? 'Page A' : 'Page B',
+        accountUid: accountId === 11 ? '10001' : '10002',
+        accountName: null
+      }
     }
-  }))
+  })
   const executePageWallPostNow = vi.fn(async () => executeResult)
   const service = new PageWallSchedulerService(
     jobs,
@@ -137,6 +140,49 @@ describe('PageWallSchedulerService', () => {
       content: 'Snapshot lúc bấm Hẹn',
       imagePaths: ['C:\\resolved\\canonical.jpg']
     })
+
+    service.dispose()
+    runtime.close()
+  })
+
+  it('materializes recurring Wall config from the page_wall_post binding through the same concrete scheduler exactly once per window', async () => {
+    const { runtime, jobs, service, prepare, executePageWallPostNow, setNow } = setup()
+    const active = new Date(2026, 8, 5, 10, 30, 0, 0)
+    const now = active.getTime()
+    setNow(now)
+    runtime.client.prepare(`
+      INSERT INTO action_workspaces(workspace_type, label, config_json, created_at, updated_at)
+      VALUES ('interaction', 'Page A · Đăng Tường', ?, ?, ?)
+    `).run(JSON.stringify({
+      pageBusinessType: 'page_wall_post',
+      pageTabId: 7,
+      wallSchedule: {
+        enabled: true,
+        content: 'recurring content',
+        imagePaths: [],
+        schedules: [{
+          dayOfWeek: active.getDay(),
+          startMinute: 10 * 60,
+          endMinute: 11 * 60,
+          enabled: true,
+          sortOrder: 0
+        }]
+      }
+    }), now, now)
+
+    await service.tick()
+    await flush()
+    await service.tick()
+    await flush()
+
+    expect(prepare).toHaveBeenCalledWith({
+      pageTabId: 7,
+      content: 'recurring content',
+      imagePaths: []
+    })
+    expect(executePageWallPostNow).toHaveBeenCalledTimes(1)
+    expect(jobs.list()).toHaveLength(1)
+    expect(jobs.list()[0]?.logs.some((entry) => entry.message.includes('[wall-occurrence:wall-binding:'))).toBe(true)
 
     service.dispose()
     runtime.close()
