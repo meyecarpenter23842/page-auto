@@ -52,8 +52,8 @@ interface ScheduleGroup {
 }
 
 function timeToMinute(value: string): number {
-  const [hour, minute] = value.split(':').map(Number)
-  return Math.max(0, Math.min(1439, (hour || 0) * 60 + (minute || 0)))
+  const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(value)
+  return match ? Number(match[1]) * 60 + Number(match[2]) : -1
 }
 function minuteToTime(value: number): string { return `${String(Math.floor(value / 60)).padStart(2, '0')}:${String(value % 60).padStart(2, '0')}` }
 function localDateInput(): string { const now = new Date(); const shifted = new Date(now.getTime() - now.getTimezoneOffset() * 60_000); return shifted.toISOString().slice(0, 10) }
@@ -140,7 +140,7 @@ function LibraryPicker({ items, onClose, onPick }: { items: ContentLibraryItem[]
       <div className="page-wall-library-list">{filtered.map((item) => {
         const postId = canonicalPostId(item)
         const variantIndex = Math.min(variants[item.id] ?? 0, Math.max(0, item.variants.length - 1))
-        const blocked = item.image.folderPath.trim() && item.image.mode === 'filename_match'
+        const blocked = Boolean(item.image.folderPath.trim()) && item.image.mode === 'filename_match'
         return <article key={item.id} className="page-wall-library-item">
           <div><strong>{item.name}</strong><p>{item.variants[variantIndex] || (item.image.folderPath ? 'Bài chỉ có ảnh' : 'Không có nội dung')}</p><small>{postId ? `Post #${postId}` : 'Không có canonical id'} · {item.variants.length || 1} biến thể · {item.image.folderPath ? `${item.image.imagesPerPost} ảnh/lượt` : 'Không ảnh'}</small></div>
           <div>{item.variants.length > 1 ? <select value={variantIndex} onChange={(event) => setVariants((current) => ({ ...current, [item.id]: Number(event.target.value) }))}>{item.variants.map((_value, index) => <option key={index} value={index}>Biến thể {index + 1}</option>)}</select> : null}<button className="pt-button primary" type="button" disabled={!postId || blocked} onClick={() => onPick(item, variantIndex)}>Chọn bài này</button></div>
@@ -208,14 +208,16 @@ function ScheduleModal({ draft, accounts, libraryItems, busy, onChange, onChoose
   const postItem = draft.post ? libraryItems.find((item) => canonicalPostId(item) === draft.post?.postId) ?? null : null
   const toggle = (accountId: number) => onChange({ ...draft, accountIds: draft.accountIds.includes(accountId) ? draft.accountIds.filter((id) => id !== accountId) : [...draft.accountIds, accountId] })
   const setTime = (index: number, value: string) => onChange({ ...draft, times: draft.times.map((time, current) => current === index ? value : time) })
-  const uniqueMinutes = (() => { try { return normalizePageWallScheduleMinutes(draft.times.map(timeToMinute)) } catch { return [] } })()
-  const canSave = Boolean(draft.post && draft.accountIds.length && uniqueMinutes.length && (draft.scheduleKind === 'daily' || draft.localDate) && !busy)
+  const rawMinutes = draft.times.map(timeToMinute)
+  const uniqueMinutes = (() => { try { return normalizePageWallScheduleMinutes(rawMinutes) } catch { return [] } })()
+  const timesValid = rawMinutes.every((minute) => minute >= 0) && uniqueMinutes.length === draft.times.length
+  const canSave = Boolean(draft.post && draft.accountIds.length && timesValid && uniqueMinutes.length && (draft.scheduleKind === 'daily' || draft.localDate) && !busy)
   const postSummary = draft.post ? `#${draft.post.postId} · ${draft.post.postName} · Biến thể ${draft.post.variantIndex + 1}` : 'Chưa chọn bài'
   return <div className="page-wall-modal-backdrop schedule" role="presentation" onMouseDown={onClose}>
     <section className="page-wall-schedule-dialog" role="dialog" aria-modal="true" aria-label="Thiết lập lịch đăng" onMouseDown={(event) => event.stopPropagation()}>
       <header><div><small>LỊCH ĐĂNG TƯỜNG</small><h3>{draft.planIds.length ? 'Sửa lịch đăng' : 'Hẹn giờ đăng bài'}</h3></div><button type="button" onClick={onClose}>×</button></header>
       <div className="page-wall-schedule-step"><b>1. Chọn bài viết</b><div className={`page-wall-selected-post compact ${draft.post ? 'ready' : 'empty'}`}><div><small>BÀI ĐANG CHỌN</small><strong>{postSummary}</strong>{postItem?.image.folderPath ? <span>{postItem.image.imagesPerPost} ảnh/lượt · {postItem.image.folderPath}</span> : <span>{draft.post ? 'Không ảnh' : 'Chọn bài trước khi lưu lịch'}</span>}</div><div><button className="pt-button secondary" type="button" onClick={onChoosePost}>Chọn</button><button type="button" onClick={onAddPost}>Thêm</button><button type="button" disabled={!draft.post || !postItem} onClick={onEditPost}>Sửa</button></div></div></div>
-      <div className="page-wall-schedule-step"><b>2. Thời gian đăng bài</b><div className="page-wall-plan-kind"><label><input type="radio" checked={draft.scheduleKind === 'specific_date'} onChange={() => onChange({ ...draft, scheduleKind: 'specific_date' })} /> Ngày cụ thể</label><label><input type="radio" checked={draft.scheduleKind === 'daily'} onChange={() => onChange({ ...draft, scheduleKind: 'daily' })} /> Mỗi ngày</label></div>{draft.scheduleKind === 'specific_date' ? <label className="page-wall-date-field"><span>Ngày chạy</span><input type="date" value={draft.localDate} onChange={(event) => onChange({ ...draft, localDate: event.target.value })} /></label> : null}<div className="page-wall-time-list">{draft.times.map((time, index) => <div className="page-wall-time-chip" key={`${index}-${time}`}><input type="time" value={time} onChange={(event) => setTime(index, event.target.value)} /><button type="button" aria-label={`Xóa giờ ${time}`} disabled={draft.times.length === 1} onClick={() => onChange({ ...draft, times: draft.times.filter((_value, current) => current !== index) })}>×</button></div>)}<button className="page-wall-add-time" type="button" disabled={draft.times.length >= 12} onClick={() => onChange({ ...draft, times: [...draft.times, '12:00'] })}>+ Thêm giờ</button></div></div>
+      <div className="page-wall-schedule-step"><b>2. Thời gian đăng bài</b><div className="page-wall-plan-kind"><label><input type="radio" checked={draft.scheduleKind === 'specific_date'} onChange={() => onChange({ ...draft, scheduleKind: 'specific_date' })} /> Ngày cụ thể</label><label><input type="radio" checked={draft.scheduleKind === 'daily'} onChange={() => onChange({ ...draft, scheduleKind: 'daily' })} /> Mỗi ngày</label></div>{draft.scheduleKind === 'specific_date' ? <label className="page-wall-date-field"><span>Ngày chạy</span><input type="date" value={draft.localDate} onChange={(event) => onChange({ ...draft, localDate: event.target.value })} /></label> : null}<div className="page-wall-time-list">{draft.times.map((time, index) => <div className="page-wall-time-chip" key={`${index}-${time}`}><input type="time" value={time} onChange={(event) => setTime(index, event.target.value)} /><button type="button" aria-label={`Xóa giờ ${time}`} disabled={draft.times.length === 1} onClick={() => onChange({ ...draft, times: draft.times.filter((_value, current) => current !== index) })}>×</button></div>)}<button className="page-wall-add-time" type="button" disabled={draft.times.length >= 12} onClick={() => onChange({ ...draft, times: [...draft.times, '12:00'] })}>+ Thêm giờ</button></div>{!timesValid ? <small className="page-wall-time-error">Giờ chạy phải hợp lệ và không được trùng nhau.</small> : null}</div>
       <div className="page-wall-schedule-step accounts"><div className="page-wall-step-title"><b>3. Chọn tài khoản muốn đăng</b><span>{draft.accountIds.length}/{runnable.length} TK</span></div><div className="page-wall-mini-account-tools"><button type="button" onClick={() => onChange({ ...draft, accountIds: runnable.map((account) => account.accountId) })}>Chọn tất cả</button><button type="button" onClick={() => onChange({ ...draft, accountIds: [] })}>Bỏ chọn</button><label><span>TK song song</span><input type="number" min={1} max={20} value={draft.accountConcurrency} onChange={(event) => onChange({ ...draft, accountConcurrency: Math.max(1, Math.min(20, Number(event.target.value) || 1)) })} /></label></div><div className="page-wall-schedule-account-table"><table><thead><tr><th></th><th>UID</th><th>Tên</th><th>Trạng thái</th></tr></thead><tbody>{accounts.map((account) => { const canUse = account.enabled && account.status !== 'disabled'; const selected = draft.accountIds.includes(account.accountId); return <tr key={account.accountId} className={`${selected ? 'selected' : ''} ${!canUse ? 'disabled' : ''}`} onClick={() => { if (canUse && !busy) toggle(account.accountId) }}><td><input type="checkbox" checked={selected} disabled={!canUse || busy} onClick={(event) => event.stopPropagation()} onChange={() => toggle(account.accountId)} /></td><td><b>{account.uid}</b></td><td>{account.name || '—'}</td><td>{account.status}</td></tr> })}</tbody></table></div></div>
       <div className="page-wall-schedule-review"><strong>{draft.scheduleKind === 'daily' ? 'Mỗi ngày' : draft.localDate || 'Chưa chọn ngày'} · {uniqueMinutes.map(minuteToTime).join(', ') || 'Chưa có giờ'}</strong><span>{postSummary} · {draft.accountIds.length} TK · song song {draft.accountConcurrency}</span></div>
       <footer><button type="button" onClick={onClose}>Hủy</button><button className="pt-button primary" type="button" disabled={!canSave} onClick={onSave}>{busy ? 'Đang lưu…' : 'Lưu lịch'}</button></footer>
@@ -332,8 +334,9 @@ export function PageWallWorkspace({ activePageId: controlledPageId, scoped = fal
     accountIds: [...selectedRunnable], accountConcurrency, post: canonical ? { postId: canonical.postId, postName: canonical.postName, variantIndex: canonical.variantIndex } : null
   })
   const openEditSchedule = (group: ScheduleGroup) => {
-    if (!group.editable || group.source?.kind !== 'canonical') return
-    const item = libraryItems.find((candidate) => canonicalPostId(candidate) === group.source?.postId)
+    const source = group.source
+    if (!group.editable || source?.kind !== 'canonical') return
+    const item = libraryItems.find((candidate) => canonicalPostId(candidate) === source.postId)
     setScheduleDraft({
       planIds: group.planIds,
       scheduleKind: group.scheduleKind,
@@ -341,7 +344,7 @@ export function PageWallWorkspace({ activePageId: controlledPageId, scoped = fal
       times: group.minutes.map(minuteToTime),
       accountIds: group.accountIds,
       accountConcurrency: group.accountConcurrency,
-      post: { postId: group.source.postId, postName: item?.name ?? `Post #${group.source.postId}`, variantIndex: group.source.variantIndex }
+      post: { postId: source.postId, postName: item?.name ?? `Post #${source.postId}`, variantIndex: source.variantIndex }
     })
   }
   const saveSchedule = async () => {

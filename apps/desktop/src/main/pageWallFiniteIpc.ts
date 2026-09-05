@@ -54,7 +54,7 @@ function singleSlotInput(payload: SavePageWallFiniteSchedulePayload, minuteOfDay
   return {
     pageTabId: payload.input.pageTabId,
     scheduleKind: payload.input.scheduleKind,
-    localDate: payload.input.scheduleKind === 'specific_date' ? payload.input.localDate : null,
+    localDate: payload.input.scheduleKind === 'specific_date' ? (payload.input.localDate ?? null) : null,
     minuteOfDay,
     accountConcurrency: payload.input.accountConcurrency,
     tasks: payload.input.tasks,
@@ -215,9 +215,6 @@ export function registerPageWallFiniteRuntime(database: Database.Database, dataD
     const bundle = plans.createOccurrenceWithJobs({ planId: plan.id, localDate, scheduledAt, jobs: concrete }, now)
     if (!bundle) return
 
-    // Finite-plan jobs belong to the occurrence runner, not the legacy Wall scheduler.
-    // Park them synchronously before yielding; the occurrence runner restores the real
-    // scheduled_at in the same atomic claim that moves each job to running.
     const parkAt = scheduledAt + PARK_MS
     const park = database.prepare("UPDATE page_wall_jobs SET scheduled_at = ?, updated_at = ? WHERE id = ? AND status = 'pending'")
     for (const item of bundle.jobs) park.run(parkAt, now, item.job.id)
@@ -333,8 +330,6 @@ export function registerPageWallFiniteRuntime(database: Database.Database, dataD
   ipcMain.handle(PAGE_WALL_FINITE_IPC.saveSchedule, (_event, payload: SavePageWallFiniteSchedulePayload) => api.saveSchedule(payload))
   ipcMain.handle(PAGE_WALL_FINITE_IPC.deleteSchedule, (_event, payload: PageWallFinitePlanIdsPayload) => api.deleteSchedule(payload))
 
-  // Resume pending finite occurrences after an app restart. Legacy recovery may have
-  // marked a consequential running job failed; those occurrences are finalized below.
   const pending = database.prepare("SELECT id FROM page_wall_plan_occurrences WHERE status = 'pending' ORDER BY scheduled_at, id").all() as Array<{ id: number }>
   for (const row of pending) {
     const occurrence = plans.getOccurrence(row.id)
