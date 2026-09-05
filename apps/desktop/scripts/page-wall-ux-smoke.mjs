@@ -167,6 +167,11 @@ try {
   await picker.waitFor({ state: 'detached' })
   invariant((await wallRoot.locator('[data-testid="page-wall-selected-post"]').innerText()).includes('Smoke Wall Post'), 'Post Picker không set bài đang chọn ở Đăng ngay.')
 
+  const immediateDelay = wallRoot.getByLabel('Delay giữa lượt Đăng ngay')
+  await immediateDelay.fill('7')
+  invariant(await immediateDelay.inputValue() === '7', 'Không nhập được delay riêng cho Đăng ngay.')
+  invariant((await wallRoot.locator('.page-wall-now-summary').innerText()).includes('delay 7s'), 'Summary Đăng ngay không phản ánh delay đã chọn.')
+
   await wallRoot.locator('.page-wall-mode-tabs button').filter({ hasText: 'Lịch chạy' }).click()
   await wallRoot.locator('.page-wall-schedule-toolbar button').filter({ hasText: '+ Thêm lịch' }).click()
 
@@ -188,6 +193,15 @@ try {
   })
   invariant(modalGeometry.left >= 8 && modalGeometry.top >= 8 && modalGeometry.right <= await windowPage.evaluate(() => innerWidth) - 8 && modalGeometry.bottom <= await windowPage.evaluate(() => innerHeight) - 8, `Popup lịch bị tràn màn hình: ${JSON.stringify(modalGeometry)}`)
   invariant(Math.abs(modalGeometry.centerX - modalGeometry.viewportX) < 90 && Math.abs(modalGeometry.centerY - modalGeometry.viewportY) < 90, `Popup lịch không đứng giữa màn hình: ${JSON.stringify(modalGeometry)}`)
+
+  const tomorrowDate = await windowPage.evaluate(() => {
+    const date = new Date()
+    date.setDate(date.getDate() + 1)
+    const shifted = new Date(date.getTime() - date.getTimezoneOffset() * 60_000)
+    return shifted.toISOString().slice(0, 10)
+  })
+  await scheduleDialog.getByLabel('Ngày cụ thể').check()
+  await scheduleDialog.locator('input[type="date"]').fill(tomorrowDate)
 
   await scheduleDialog.getByRole('button', { name: 'Chọn', exact: true }).click()
   picker = windowPage.getByRole('dialog', { name: 'Chọn bài từ Thư viện' })
@@ -240,9 +254,36 @@ try {
   await windowPage.screenshot({ path: modalScreenshotPath, fullPage: true })
   await scheduleDialog.getByRole('button', { name: 'Lưu lịch', exact: true }).click()
   await scheduleDialog.waitFor({ state: 'detached' })
-  await wallRoot.locator('.page-wall-plan-row').first().waitFor({ state: 'visible' })
-  const planText = await wallRoot.locator('.page-wall-plan-row').first().innerText()
+  const planRow = wallRoot.locator('.page-wall-plan-row').first()
+  await planRow.waitFor({ state: 'visible' })
+  const planText = await planRow.innerText()
   invariant(planText.includes('Smoke Added Post') && planText.includes('1 TK'), `Lịch lưu xong không hiện đúng summary: ${planText}`)
+
+  const editButton = planRow.getByRole('button', { name: 'Sửa', exact: true })
+  invariant(!(await editButton.isDisabled()), 'Nút Sửa lịch đang bị khóa dù lịch không có occurrence đang chạy.')
+  await editButton.click()
+  scheduleDialog = windowPage.getByRole('dialog', { name: 'Thiết lập lịch đăng' })
+  await scheduleDialog.waitFor({ state: 'visible' })
+  invariant((await scheduleDialog.innerText()).includes('Sửa lịch đăng'), 'Nút Sửa không mở popup chỉnh lịch.')
+  await scheduleDialog.getByRole('button', { name: '×', exact: true }).click()
+  await scheduleDialog.waitFor({ state: 'detached' })
+
+  await planRow.getByRole('button', { name: 'Tạm dừng', exact: true }).click()
+  await planRow.getByRole('button', { name: 'Bắt đầu', exact: true }).waitFor({ state: 'visible' })
+  invariant((await planRow.innerText()).includes('Tạm dừng'), 'Dòng lịch không cập nhật trạng thái Tạm dừng.')
+  const pausedStatuses = await windowPage.evaluate(async (pageId) => {
+    const dashboard = await window.pageWallFinite.getDashboard({ pageTabId: pageId })
+    return dashboard.plans.map((plan) => plan.status)
+  }, setup.pageId)
+  invariant(pausedStatuses.length === 2 && pausedStatuses.every((status) => status === 'disabled'), `Pause không persist toàn bộ plan-slot: ${JSON.stringify(pausedStatuses)}`)
+
+  await planRow.getByRole('button', { name: 'Bắt đầu', exact: true }).click()
+  await planRow.getByRole('button', { name: 'Tạm dừng', exact: true }).waitFor({ state: 'visible' })
+  const resumedStatuses = await windowPage.evaluate(async (pageId) => {
+    const dashboard = await window.pageWallFinite.getDashboard({ pageTabId: pageId })
+    return dashboard.plans.map((plan) => plan.status)
+  }, setup.pageId)
+  invariant(resumedStatuses.length === 2 && resumedStatuses.every((status) => status === 'active'), `Bắt đầu lại không persist toàn bộ plan-slot: ${JSON.stringify(resumedStatuses)}`)
 
   await windowPage.screenshot({ path: layoutScreenshotPath, fullPage: true })
   console.log('Page Wall UX smoke passed:', {
@@ -250,6 +291,9 @@ try {
     accountSelectionReal: true,
     pageRotationDisabledAccountsSelectable: true,
     canonicalImageCountPersistence: true,
+    immediateDelayControl: true,
+    scheduleEditOpens: true,
+    schedulePauseResumePersists: true,
     layoutLeftPlusRightStack: true,
     darkThemeNoWhitePanels: true,
     scheduleChildModalsAboveParent: true,
