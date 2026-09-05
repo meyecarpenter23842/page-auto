@@ -8,6 +8,10 @@ export type ScenarioRunnerState = 'running' | 'stopping' | 'completed' | 'stoppe
 export type ScenarioRunnerAccountState = 'queued' | 'running' | 'completed' | 'failed' | 'needs_attention' | 'stopped'
 export type ScenarioRunnerLogLevel = 'debug' | 'info' | 'warning' | 'error'
 
+export type ScenarioRunnerExecutionContext =
+  | { kind: 'profile' }
+  | { kind: 'page'; pageTabId: number; pageUid: string }
+
 export interface ScenarioRunnerRuntimeSettings {
   randomScenarios: boolean
   randomScenarioCount: number
@@ -37,6 +41,7 @@ export interface ScenarioRunnerStartPayload {
   accountIds: number[]
   scenarioIds: number[]
   settings: ScenarioRunnerRuntimeSettings
+  executionContext?: ScenarioRunnerExecutionContext
 }
 
 export interface ScenarioRunnerAccountRuntime {
@@ -66,6 +71,7 @@ export interface ScenarioRunnerSnapshot {
   state: ScenarioRunnerState
   startedAt: number
   finishedAt: number | null
+  executionContext?: ScenarioRunnerExecutionContext
   accountRuntimes: ScenarioRunnerAccountRuntime[]
   logs: ScenarioRunnerLogEntry[]
   message: string | null

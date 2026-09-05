@@ -9,6 +9,7 @@ import {
   ScopedPageWallWorkspace
 } from './PageBusinessBindingScope'
 import { PageJoinGroupWorkspace } from './PageJoinGroupWorkspace'
+import { PageScenarioWorkspace } from './PageScenarioWorkspace'
 import './pageBusinessWorkspace.css'
 import './pageTabs3c.css'
 import './pageTabs3d.css'
@@ -71,15 +72,11 @@ const businesses: PageBusinessDefinition[] = [
   {
     id: 'scenario',
     label: 'Chạy kịch bản',
-    status: 'Page binding',
+    status: 'Common runner',
     title: 'Chạy kịch bản',
-    description: 'Chọn Page riêng cho nghiệp vụ Chạy kịch bản; không tự lấy toàn bộ Page từ Quản lý Page.',
+    description: 'Chạy Kịch bản dùng chung bằng actor Page và tài khoản canonical của Page đang chọn.',
     bindingType: 'run_scenario',
-    items: [
-      { title: 'Page context', description: 'Page được chọn riêng tại tab này; account vẫn lấy từ Page canonical.' },
-      { title: 'Kịch bản dùng chung', description: 'Kịch bản/action vẫn dùng registry chung, không copy module action theo Page.' },
-      { title: 'Runtime riêng', description: 'Phần chọn kịch bản + Run now + lịch sẽ nối trên binding này, không làm bẩn Hành động.' }
-    ]
+    items: []
   }
 ]
 
@@ -377,7 +374,7 @@ export function PageBusinessWorkspace() {
     {activeBusiness === 'wall' ? <PageBusinessBindingScope businessType="page_wall_post" label="Đăng Tường">{({ activePage }) => <ScopedPageWallWorkspace activePageId={activePage.id} />}</PageBusinessBindingScope> : null}
     {activeBusiness === 'edit' && active ? <BoundPlaceholder business={active} /> : null}
     {activeBusiness === 'join' ? <PageJoinGroupWorkspace /> : null}
-    {activeBusiness === 'scenario' && active ? <BoundPlaceholder business={active} /> : null}
+    {activeBusiness === 'scenario' ? <PageBusinessBindingScope businessType="run_scenario" label="Chạy kịch bản">{({ activePage }) => <PageScenarioWorkspace page={activePage} />}</PageBusinessBindingScope> : null}
 
     {activeBusiness === 'groups' ? <CompactGroupConfigControls /> : null}
     {runtimeControlsOpen ? <PageRuntimeQuickControls onClose={() => setRuntimeControlsOpen(false)} /> : null}
