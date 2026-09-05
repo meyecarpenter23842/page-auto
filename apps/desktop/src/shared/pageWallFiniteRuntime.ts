@@ -71,6 +71,59 @@ export interface PageWallFiniteRuntimeState {
   tone: PageWallFiniteRuntimeTone
 }
 
+export const PAGE_WALL_PUBLISH_UNCONFIRMED_LABEL = 'Đã gửi · chưa xác minh'
+
+type PageWallFiniteFinishedJob = Pick<PageWallJobRecord, 'status' | 'resultStatus' | 'resultCode'>
+export interface PageWallFiniteOccurrenceSummary {
+  status: 'success' | 'failed' | 'needs_attention'
+  message: string
+  needsAttention: boolean
+  successCount: number
+  publishUnconfirmedCount: number
+}
+
+/**
+ * `publish_unconfirmed` is a terminal uncertainty after the consequential Post click,
+ * not proof that Facebook rejected the post. Keep the concrete job terminal so it can
+ * never be auto-claimed/retried, but surface the finite occurrence as needs_attention.
+ */
+export function summarizePageWallFiniteOccurrenceJobs(
+  jobs: readonly PageWallFiniteFinishedJob[]
+): PageWallFiniteOccurrenceSummary {
+  const successCount = jobs.filter((job) => job.status === 'success').length
+  const needsLogin = jobs.some((job) => job.resultStatus === 'needs_login')
+  const publishUnconfirmedCount = jobs.filter((job) => (
+    job.resultStatus === 'failed' && job.resultCode === 'publish_unconfirmed'
+  )).length
+  const needsAttention = needsLogin || publishUnconfirmedCount > 0
+  const failed = jobs.some((job) => job.status !== 'success')
+  const status: PageWallFiniteOccurrenceSummary['status'] = needsAttention
+    ? 'needs_attention'
+    : failed
+      ? 'failed'
+      : 'success'
+
+  if (publishUnconfirmedCount > 0) {
+    return {
+      status,
+      message: `${PAGE_WALL_PUBLISH_UNCONFIRMED_LABEL}: ${publishUnconfirmedCount}/${jobs.length} task đã gửi publish nhưng Facebook chưa cung cấp evidence đủ chắc. Không tự retry.`,
+      needsAttention,
+      successCount,
+      publishUnconfirmedCount
+    }
+  }
+
+  return {
+    status,
+    message: needsLogin
+      ? `${successCount}/${jobs.length} task thành công. Có tài khoản cần đăng nhập/xác minh.`
+      : `${successCount}/${jobs.length} task thành công.`,
+    needsAttention,
+    successCount,
+    publishUnconfirmedCount
+  }
+}
+
 export interface PageWallFiniteApi {
   getDashboard(payload: PageWallFinitePagePayload): Promise<PageWallFiniteDashboard>
   runNow(payload: PageWallFiniteRunNowPayload): Promise<PageWallFiniteRunNowResult>
@@ -131,6 +184,12 @@ export function pageWallFiniteScheduleRuntimeState(
   const hasActiveFuture = plans.some((plan) => plan.status === 'active' || plan.status === 'needs_attention')
   if (!hasActiveFuture && plans.some((plan) => plan.status === 'disabled')) {
     return { label: 'Tạm dừng', tone: 'disabled' }
+  }
+  if (occurrences.some((occurrence) => (
+    occurrence.status === 'needs_attention'
+    && occurrence.resultMessage?.startsWith(PAGE_WALL_PUBLISH_UNCONFIRMED_LABEL)
+  ))) {
+    return { label: PAGE_WALL_PUBLISH_UNCONFIRMED_LABEL, tone: 'needs_attention' }
   }
   if (occurrences.some((occurrence) => occurrence.status === 'needs_attention') || plans.some((plan) => plan.status === 'needs_attention')) {
     return { label: 'Cần xử lý', tone: 'needs_attention' }

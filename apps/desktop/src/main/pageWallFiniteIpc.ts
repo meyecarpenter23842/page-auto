@@ -5,6 +5,7 @@ import {
   PAGE_WALL_FINITE_IPC,
   normalizePageWallImmediateDelaySeconds,
   normalizePageWallScheduleMinutes,
+  summarizePageWallFiniteOccurrenceJobs,
   type PageWallFiniteApi,
   type PageWallFiniteDashboard,
   type PageWallFinitePagePayload,
@@ -198,16 +199,17 @@ export function registerPageWallFiniteRuntime(database: Database.Database, dataD
       }
     }).then(() => {
       const refreshed = plans.listOccurrenceJobs(occurrence.id).map((item) => item.job)
-      const needsAttention = refreshed.some((job) => job.resultStatus === 'needs_login')
-      const failed = refreshed.some((job) => job.status !== 'success')
-      const status = needsAttention ? 'needs_attention' : failed ? 'failed' : 'success'
-      const successCount = refreshed.filter((job) => job.status === 'success').length
-      markOccurrence(occurrence.id, status, `${successCount}/${refreshed.length} task thành công.`, Date.now(), true)
+      const summary = summarizePageWallFiniteOccurrenceJobs(refreshed)
+      markOccurrence(occurrence.id, summary.status, summary.message, Date.now(), true)
       const plan = plans.get(occurrence.planId)
       if (plan?.scheduleKind === 'specific_date') {
-        plans.setStatus(plan.id, needsAttention ? 'needs_attention' : 'completed', needsAttention ? 'Có tài khoản cần đăng nhập/xác minh.' : null)
-      } else if (needsAttention && plan) {
-        plans.setStatus(plan.id, 'needs_attention', 'Có tài khoản cần đăng nhập/xác minh.')
+        plans.setStatus(
+          plan.id,
+          summary.needsAttention ? 'needs_attention' : 'completed',
+          summary.needsAttention ? summary.message : null
+        )
+      } else if (summary.needsAttention && plan) {
+        plans.setStatus(plan.id, 'needs_attention', summary.message)
       }
     }).catch((error) => {
       markOccurrence(occurrence.id, 'failed', error instanceof Error ? error.message : String(error), Date.now(), true)
