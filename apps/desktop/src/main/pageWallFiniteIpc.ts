@@ -3,6 +3,7 @@ import type Database from 'better-sqlite3'
 import type { PageWallRunNowPayload } from '../shared/pageWall'
 import {
   PAGE_WALL_FINITE_IPC,
+  normalizePageWallImmediateDelaySeconds,
   normalizePageWallScheduleMinutes,
   type PageWallFiniteApi,
   type PageWallFiniteDashboard,
@@ -12,7 +13,8 @@ import {
   type PageWallFiniteRunNowPayload,
   type PageWallFiniteRunNowResult,
   type SavePageWallFinitePlanPayload,
-  type SavePageWallFiniteSchedulePayload
+  type SavePageWallFiniteSchedulePayload,
+  type SetPageWallFiniteScheduleEnabledPayload
 } from '../shared/pageWallFiniteRuntime'
 import type { PageWallPlanRecord, PageWallPlanTaskDefinition, SavePageWallPlanInput } from '../shared/pageWallPlans'
 import { AppSettingsRepository } from './database/appSettingsRepository'
@@ -48,6 +50,10 @@ function positiveUniqueIds(values: number[]): number[] {
 
 function limitConcurrency(value: number, max: number): number {
   return Math.max(1, Math.min(max, Math.floor(value || 1)))
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 function singleSlotInput(payload: SavePageWallFiniteSchedulePayload, minuteOfDay: number): SavePageWallPlanInput {
@@ -256,7 +262,23 @@ export function registerPageWallFiniteRuntime(database: Database.Database, dataD
     const accountIds = positiveUniqueIds(payload.accountIds)
     if (accountIds.length === 0) throw new Error('Hãy tick ít nhất một tài khoản để Đăng ngay.')
     const concurrency = limitConcurrency(payload.accountConcurrency, 20)
+    const delayBetweenRunsSec = normalizePageWallImmediateDelaySeconds(payload.delayBetweenRunsSec)
+    const delayMs = delayBetweenRunsSec * 1_000
     const results: PageWallFiniteRunNowResult['results'] = []
+    let nextLaunchAt = 0
+    let launchGate: Promise<void> = Promise.resolve()
+
+    const waitForLaunchSlot = (): Promise<void> => {
+      if (delayMs === 0) return Promise.resolve()
+      const slot = launchGate.then(async () => {
+        const waitMs = Math.max(0, nextLaunchAt - Date.now())
+        if (waitMs > 0) await sleep(waitMs)
+        nextLaunchAt = Date.now() + delayMs
+      })
+      launchGate = slot.catch(() => undefined)
+      return slot
+    }
+
     await runRollingAccountPool({
       items: accountIds.map((accountId, order) => ({ accountId, order })),
       concurrency,
@@ -264,6 +286,8 @@ export function registerPageWallFiniteRuntime(database: Database.Database, dataD
       waitUntilRunnable: async () => !disposed,
       shouldStop: () => disposed,
       run: async (item) => {
+        await waitForLaunchSlot()
+        if (disposed) return
         const result = await runNow.execute({
           pageTabId: payload.pageTabId,
           accountId: item.accountId,
@@ -276,7 +300,7 @@ export function registerPageWallFiniteRuntime(database: Database.Database, dataD
     })
     const order = new Map(accountIds.map((id, index) => [id, index]))
     results.sort((left, right) => (order.get(left.accountId) ?? 0) - (order.get(right.accountId) ?? 0))
-    return { accountConcurrency: concurrency, requestedAccountIds: accountIds, results }
+    return { accountConcurrency: concurrency, delayBetweenRunsSec, requestedAccountIds: accountIds, results }
   }
 
   const saveSchedule = (payload: SavePageWallFiniteSchedulePayload): PageWallPlanRecord[] => {
@@ -287,7 +311,18 @@ export function registerPageWallFiniteRuntime(database: Database.Database, dataD
         const existing = plans.get(planId)
         if (!existing) throw new Error(`Không tìm thấy slot lịch Đăng Tường #${planId}.`)
         if (existing.pageTabId !== payload.input.pageTabId) throw new Error('Slot lịch không thuộc đúng Page đang sửa.')
-        if (plans.listOccurrences(planId, 1).length > 0) throw new Error('Lịch đã phát sinh lượt chạy; hãy tạo lịch mới thay vì sửa lịch sử.')
+        const history = plans.listOccurrences(planId, 1_000)
+        const latest = history[0]
+        if (latest?.status === 'pending' || latest?.status === 'running') {
+          throw new Error('Lịch đang có lượt chạy; hãy chờ lượt hiện tại kết thúc rồi sửa.')
+        }
+        if (
+          payload.input.scheduleKind === 'specific_date'
+          && payload.input.localDate
+          && history.some((occurrence) => occurrence.localDate === payload.input.localDate)
+        ) {
+          throw new Error(`Ngày ${payload.input.localDate} đã có lượt chạy; hãy chọn ngày khác để không chạy trùng lịch sử.`)
+        }
       }
 
       const saved: PageWallPlanRecord[] = []
@@ -296,7 +331,12 @@ export function registerPageWallFiniteRuntime(database: Database.Database, dataD
         const existingId = planIds[index]
         saved.push(existingId ? plans.update(existingId, input) : plans.create(input))
       }
-      for (const staleId of planIds.slice(minuteOfDays.length)) plans.delete(staleId)
+      for (const staleId of planIds.slice(minuteOfDays.length)) {
+        if (plans.listOccurrences(staleId, 1).length > 0) {
+          throw new Error('Không thể xóa bớt giờ đã có lịch sử chạy; hãy giữ giờ đó hoặc tạo lịch mới.')
+        }
+        plans.delete(staleId)
+      }
       return saved
     })()
   }
@@ -304,6 +344,24 @@ export function registerPageWallFiniteRuntime(database: Database.Database, dataD
   const deleteSchedule = (payload: PageWallFinitePlanIdsPayload): number => {
     const planIds = positiveUniqueIds(payload.planIds)
     return database.transaction(() => planIds.reduce((count, id) => count + (plans.delete(id) ? 1 : 0), 0))()
+  }
+
+  const setScheduleEnabled = (payload: SetPageWallFiniteScheduleEnabledPayload): PageWallPlanRecord[] => {
+    const planIds = positiveUniqueIds(payload.planIds)
+    if (planIds.length === 0) throw new Error('Lịch Đăng Tường cần ít nhất một plan-slot.')
+    const today = localDateKey(new Date())
+    return database.transaction(() => planIds.map((planId) => {
+      const plan = plans.get(planId)
+      if (!plan) throw new Error(`Không tìm thấy slot lịch Đăng Tường #${planId}.`)
+      if (plan.pageTabId !== payload.pageTabId) throw new Error('Slot lịch không thuộc đúng Page đang thao tác.')
+      if (payload.enabled && plan.status === 'completed') {
+        throw new Error('Lịch ngày cụ thể này đã hoàn tất; hãy Sửa sang ngày/giờ mới trước khi bắt đầu lại.')
+      }
+      if (payload.enabled && plan.scheduleKind === 'specific_date' && plan.localDate && plan.localDate < today) {
+        throw new Error('Ngày của lịch đã qua; hãy Sửa lịch sang ngày mới trước khi bắt đầu lại.')
+      }
+      return plans.setStatus(planId, payload.enabled ? 'active' : 'disabled', null)
+    }))()
   }
 
   const api: PageWallFiniteApi = {
@@ -320,7 +378,12 @@ export function registerPageWallFiniteRuntime(database: Database.Database, dataD
       void tick()
       return records
     },
-    deleteSchedule: async (payload) => deleteSchedule(payload)
+    deleteSchedule: async (payload) => deleteSchedule(payload),
+    setScheduleEnabled: async (payload) => {
+      const records = setScheduleEnabled(payload)
+      if (payload.enabled) void tick()
+      return records
+    }
   }
 
   ipcMain.handle(PAGE_WALL_FINITE_IPC.dashboard, (_event, payload: PageWallFinitePagePayload) => api.getDashboard(payload))
@@ -329,6 +392,7 @@ export function registerPageWallFiniteRuntime(database: Database.Database, dataD
   ipcMain.handle(PAGE_WALL_FINITE_IPC.deletePlan, (_event, payload: PageWallFinitePlanIdPayload) => api.deletePlan(payload))
   ipcMain.handle(PAGE_WALL_FINITE_IPC.saveSchedule, (_event, payload: SavePageWallFiniteSchedulePayload) => api.saveSchedule(payload))
   ipcMain.handle(PAGE_WALL_FINITE_IPC.deleteSchedule, (_event, payload: PageWallFinitePlanIdsPayload) => api.deleteSchedule(payload))
+  ipcMain.handle(PAGE_WALL_FINITE_IPC.setScheduleEnabled, (_event, payload: SetPageWallFiniteScheduleEnabledPayload) => api.setScheduleEnabled(payload))
 
   const pending = database.prepare("SELECT id FROM page_wall_plan_occurrences WHERE status = 'pending' ORDER BY scheduled_at, id").all() as Array<{ id: number }>
   for (const row of pending) {

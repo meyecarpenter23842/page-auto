@@ -7,7 +7,8 @@ import {
   type PageWallFinitePlanIdsPayload,
   type PageWallFiniteRunNowPayload,
   type SavePageWallFinitePlanPayload,
-  type SavePageWallFiniteSchedulePayload
+  type SavePageWallFiniteSchedulePayload,
+  type SetPageWallFiniteScheduleEnabledPayload
 } from '../shared/pageWallFiniteRuntime'
 
 const pageWallFinite: PageWallFiniteApi = {
@@ -16,7 +17,8 @@ const pageWallFinite: PageWallFiniteApi = {
   savePlan: (payload: SavePageWallFinitePlanPayload) => ipcRenderer.invoke(PAGE_WALL_FINITE_IPC.savePlan, payload),
   deletePlan: (payload: PageWallFinitePlanIdPayload) => ipcRenderer.invoke(PAGE_WALL_FINITE_IPC.deletePlan, payload),
   saveSchedule: (payload: SavePageWallFiniteSchedulePayload) => ipcRenderer.invoke(PAGE_WALL_FINITE_IPC.saveSchedule, payload),
-  deleteSchedule: (payload: PageWallFinitePlanIdsPayload) => ipcRenderer.invoke(PAGE_WALL_FINITE_IPC.deleteSchedule, payload)
+  deleteSchedule: (payload: PageWallFinitePlanIdsPayload) => ipcRenderer.invoke(PAGE_WALL_FINITE_IPC.deleteSchedule, payload),
+  setScheduleEnabled: (payload: SetPageWallFiniteScheduleEnabledPayload) => ipcRenderer.invoke(PAGE_WALL_FINITE_IPC.setScheduleEnabled, payload)
 }
 
 contextBridge.exposeInMainWorld('pageWallFinite', pageWallFinite)

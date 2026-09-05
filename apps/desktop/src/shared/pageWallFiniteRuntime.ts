@@ -8,7 +8,8 @@ export const PAGE_WALL_FINITE_IPC = {
   savePlan: 'page-wall-finite:plans:save',
   deletePlan: 'page-wall-finite:plans:delete',
   saveSchedule: 'page-wall-finite:schedules:save',
-  deleteSchedule: 'page-wall-finite:schedules:delete'
+  deleteSchedule: 'page-wall-finite:schedules:delete',
+  setScheduleEnabled: 'page-wall-finite:schedules:set-enabled'
 } as const
 
 export interface PageWallFinitePagePayload { pageTabId: number }
@@ -19,6 +20,8 @@ export interface PageWallFiniteRunNowPayload {
   pageTabId: number
   accountIds: number[]
   accountConcurrency: number
+  /** Additional Wall-only spacing between immediate-run starts. The first account starts immediately. */
+  delayBetweenRunsSec?: number
   content: string
   imagePaths: string[]
   canonicalPost?: PageWallCanonicalPostSelection
@@ -26,6 +29,7 @@ export interface PageWallFiniteRunNowPayload {
 
 export interface PageWallFiniteRunNowResult {
   accountConcurrency: number
+  delayBetweenRunsSec: number
   requestedAccountIds: number[]
   results: PageWallRunNowResult[]
 }
@@ -46,6 +50,12 @@ export interface SavePageWallFiniteSchedulePayload {
   input: SavePageWallFiniteScheduleInput
 }
 
+export interface SetPageWallFiniteScheduleEnabledPayload {
+  pageTabId: number
+  planIds: number[]
+  enabled: boolean
+}
+
 export interface PageWallFinitePlanView extends PageWallPlanRecord {
   latestOccurrence: PageWallPlanOccurrenceRecord | null
 }
@@ -55,6 +65,12 @@ export interface PageWallFiniteDashboard {
   jobs: PageWallJobRecord[]
 }
 
+export type PageWallFiniteRuntimeTone = 'active' | 'running' | 'completed' | 'disabled' | 'needs_attention' | 'failed'
+export interface PageWallFiniteRuntimeState {
+  label: string
+  tone: PageWallFiniteRuntimeTone
+}
+
 export interface PageWallFiniteApi {
   getDashboard(payload: PageWallFinitePagePayload): Promise<PageWallFiniteDashboard>
   runNow(payload: PageWallFiniteRunNowPayload): Promise<PageWallFiniteRunNowResult>
@@ -62,6 +78,7 @@ export interface PageWallFiniteApi {
   deletePlan(payload: PageWallFinitePlanIdPayload): Promise<boolean>
   saveSchedule(payload: SavePageWallFiniteSchedulePayload): Promise<PageWallPlanRecord[]>
   deleteSchedule(payload: PageWallFinitePlanIdsPayload): Promise<number>
+  setScheduleEnabled(payload: SetPageWallFiniteScheduleEnabledPayload): Promise<PageWallPlanRecord[]>
 }
 
 function positiveIds(values: number[]): number[] {
@@ -75,6 +92,14 @@ function positiveIds(values: number[]): number[] {
   return result
 }
 
+export function normalizePageWallImmediateDelaySeconds(value: number | undefined): number {
+  const normalized = value ?? 0
+  if (!Number.isInteger(normalized) || normalized < 0 || normalized > 3600) {
+    throw new Error('Delay giữa lượt Đăng ngay phải từ 0 đến 3600 giây.')
+  }
+  return normalized
+}
+
 export function normalizePageWallScheduleMinutes(values: readonly number[]): number[] {
   const minutes = [...new Set(values
     .filter((value) => Number.isSafeInteger(value) && value >= 0 && value <= 1439)
@@ -83,6 +108,57 @@ export function normalizePageWallScheduleMinutes(values: readonly number[]): num
   if (minutes.length === 0) throw new Error('Lịch Đăng Tường cần ít nhất một giờ chạy.')
   if (minutes.length > 12) throw new Error('Một lịch Đăng Tường hỗ trợ tối đa 12 giờ chạy.')
   return minutes
+}
+
+export function canEditPageWallFiniteSchedule(plans: readonly PageWallFinitePlanView[]): boolean {
+  return plans.length > 0 && plans.every((plan) => {
+    const status = plan.latestOccurrence?.status
+    return status !== 'pending' && status !== 'running'
+  })
+}
+
+export function pageWallFiniteScheduleRuntimeState(
+  plans: readonly PageWallFinitePlanView[],
+  todayLocalDate: string
+): PageWallFiniteRuntimeState {
+  if (plans.length === 0) return { label: 'Đang chờ', tone: 'active' }
+
+  const occurrences = plans.map((plan) => plan.latestOccurrence).filter((value): value is PageWallPlanOccurrenceRecord => Boolean(value))
+  if (occurrences.some((occurrence) => occurrence.status === 'running' || occurrence.status === 'pending')) {
+    return { label: 'Đang chạy', tone: 'running' }
+  }
+
+  const hasActiveFuture = plans.some((plan) => plan.status === 'active' || plan.status === 'needs_attention')
+  if (!hasActiveFuture && plans.some((plan) => plan.status === 'disabled')) {
+    return { label: 'Tạm dừng', tone: 'disabled' }
+  }
+  if (occurrences.some((occurrence) => occurrence.status === 'needs_attention') || plans.some((plan) => plan.status === 'needs_attention')) {
+    return { label: 'Cần xử lý', tone: 'needs_attention' }
+  }
+  if (occurrences.some((occurrence) => occurrence.status === 'failed')) {
+    return { label: 'Lỗi lượt gần nhất', tone: 'failed' }
+  }
+
+  if (plans[0]?.scheduleKind === 'daily') {
+    const successToday = plans.filter((plan) => (
+      plan.latestOccurrence?.localDate === todayLocalDate
+      && plan.latestOccurrence.status === 'success'
+    )).length
+    if (successToday === plans.length && successToday > 0) {
+      return { label: 'Đã chạy hôm nay · chờ ngày mai', tone: 'completed' }
+    }
+    if (successToday > 0) {
+      return { label: `Đã chạy ${successToday}/${plans.length} hôm nay`, tone: 'completed' }
+    }
+  }
+
+  if (plans.every((plan) => plan.status === 'completed' || plan.latestOccurrence?.status === 'success')) {
+    return { label: 'Đã chạy', tone: 'completed' }
+  }
+  if (plans.some((plan) => plan.status === 'disabled')) {
+    return { label: 'Tạm dừng', tone: 'disabled' }
+  }
+  return { label: 'Đang chờ', tone: 'active' }
 }
 
 export function buildPageWallFiniteTasks(input: {
