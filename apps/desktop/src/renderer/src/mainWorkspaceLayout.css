@@ -19,6 +19,14 @@
   flex: 0 0 auto;
 }
 
+/* The Page Tabs entrance animation may animate with transform, but it must release
+   that transform afterwards. A retained transform makes fixed Wall dialogs use the
+   workspace (to the right of the sidebar) as their containing block instead of the
+   renderer viewport, which shifts supposedly centered modals to the right. */
+.workspace.workspace-page-tabs.workspace-transition {
+  animation-fill-mode: none;
+}
+
 /* Every main route gets exactly the height left below the fixed top bar. */
 .workspace > .account-manager,
 .workspace > .email-shell,
