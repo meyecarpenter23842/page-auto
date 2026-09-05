@@ -58,7 +58,7 @@ function localDateInput(): string {
 }
 
 function isScenarioAccountSelectable(account: ScenarioAccount): boolean {
-  return account.enabled && account.status !== 'disabled'
+  return account.status !== 'disabled'
 }
 
 function groupSignature(plan: PageScenarioPlanView): string {
