@@ -118,8 +118,25 @@ describe('PageWallRunNowService', () => {
     })
   })
 
-  it('rejects an account that is not enabled for the selected Page Tab', async () => {
+  it('allows an explicitly selected Wall account even when the Page rotation enabled flag is off', async () => {
     const { service, executePageWallPostNow } = setup(pageTab(false))
+
+    await expect(service.execute(payload())).resolves.toMatchObject({
+      status: 'success',
+      accountId: 11
+    })
+    expect(executePageWallPostNow).toHaveBeenCalledWith({
+      accountId: 11,
+      pageUid: '90001',
+      content: 'hello wall',
+      imagePaths: []
+    })
+  })
+
+  it('still rejects an explicitly selected account whose canonical account status is disabled', async () => {
+    const config = pageTab(false)
+    config.accounts[0]!.status = 'disabled'
+    const { service, executePageWallPostNow } = setup(config)
 
     await expect(service.execute(payload())).resolves.toMatchObject({
       status: 'failed',
