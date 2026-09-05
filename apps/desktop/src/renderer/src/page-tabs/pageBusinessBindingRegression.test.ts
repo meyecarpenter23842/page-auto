@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 
 const bindingScopeSource = readFileSync(new URL('./PageBusinessBindingScope.tsx', import.meta.url), 'utf8')
 const bindingCssSource = readFileSync(new URL('./pageBusinessBindings.css', import.meta.url), 'utf8')
+const wallLayoutCssSource = readFileSync(new URL('./pageWallGroupLayout.css', import.meta.url), 'utf8')
 const groupManagerSource = readFileSync(new URL('./PageTabsManagerV2.tsx', import.meta.url), 'utf8')
 const wallSource = readFileSync(new URL('./PageWallWorkspace.tsx', import.meta.url), 'utf8')
 const coreSource = readFileSync(new URL('./PageBusinessWorkspaceCore.tsx', import.meta.url), 'utf8')
@@ -51,5 +52,18 @@ describe('Page business binding regression', () => {
     expect(wallSource).not.toContain('savePageWallRecurringPlan')
     expect(wallSource).not.toContain('clearPageWallRecurringPlan')
     expect(actionSource).toContain('savedWorkspaces.filter((workspace) => !isPageBusinessWorkspace(workspace))')
+  })
+
+  it('lays Đăng Tường out like the existing Nhóm workspace without inventing a second account editor', () => {
+    expect(bindingScopeSource).toContain('className="page-business-scoped-child ready page-wall-group-layout"')
+    expect(bindingScopeSource).toContain('className="pt-panel page-wall-page-accounts"')
+    expect(bindingScopeSource).toContain('Danh sách này chỉ hiển thị. Bật/tắt, thêm/xóa và sắp xếp tài khoản tại Quản lý Page.')
+    expect(bindingScopeSource).toContain('Preview bài hiện tại')
+    expect(bindingScopeSource).toContain("openWallTool('Lịch đã hẹn')")
+    expect(bindingScopeSource).toContain("openWallTool('Log')")
+    expect(bindingScopeSource).not.toContain('startPageWallRotation')
+    expect(wallLayoutCssSource).toContain('.page-wall-group-layout')
+    expect(wallLayoutCssSource).toContain('.page-wall-group-right')
+    expect(wallLayoutCssSource).toContain('.page-wall-mode-selector')
   })
 })
