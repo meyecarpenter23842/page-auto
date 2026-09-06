@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { registerAccountGroupIpcHandlers, type AccountGroupIpcRuntime } from './accountGroupIpc'
 import { registerActionWorkspaceIpcHandlers, type ActionWorkspaceIpcRuntime } from './actionWorkspaceIpc'
 import { registerAiAgentIpcHandlers, type AiAgentIpcRuntime } from './aiAgentIpc'
+import { registerChangeInfoAuditIpcHandlers, type ChangeInfoAuditIpcRuntime } from './changeInfoAuditIpc'
 import { registerCheckpoint282WorkbenchIpcHandlers, type Checkpoint282WorkbenchIpcRuntime } from './checkpoint282WorkbenchIpc'
 import { registerContentLibraryIpcHandlers, type ContentLibraryIpcRuntime } from './contentLibraryIpc'
 import { registerCopyPostIpcHandlers, type CopyPostIpcRuntime } from './copyPostIpc'
@@ -24,6 +25,7 @@ let accountGroupIpcRuntime: AccountGroupIpcRuntime | null = null
 let actionWorkspaceIpcRuntime: ActionWorkspaceIpcRuntime | null = null
 let interactionWorkspaceRunnerIpcRuntime: InteractionWorkspaceRunnerIpcRuntime | null = null
 let aiAgentIpcRuntime: AiAgentIpcRuntime | null = null
+let changeInfoAuditIpcRuntime: ChangeInfoAuditIpcRuntime | null = null
 let checkpoint282WorkbenchIpcRuntime: Checkpoint282WorkbenchIpcRuntime | null = null
 let contentLibraryIpcRuntime: ContentLibraryIpcRuntime | null = null
 let copyPostIpcRuntime: CopyPostIpcRuntime | null = null
@@ -105,6 +107,7 @@ app.whenReady().then(() => {
       database: databaseRuntime.client,
       dataDirectory
     })
+    changeInfoAuditIpcRuntime = registerChangeInfoAuditIpcHandlers({ database: databaseRuntime.client, dataDirectory })
     aiAgentIpcRuntime = registerAiAgentIpcHandlers(databaseRuntime.client)
     contentLibraryIpcRuntime = registerContentLibraryIpcHandlers(databaseRuntime.client)
     copyPostIpcRuntime = registerCopyPostIpcHandlers(databaseRuntime.client)
@@ -138,6 +141,8 @@ app.whenReady().then(() => {
     contentLibraryIpcRuntime = null
     aiAgentIpcRuntime?.dispose()
     aiAgentIpcRuntime = null
+    changeInfoAuditIpcRuntime?.dispose()
+    changeInfoAuditIpcRuntime = null
     interactionWorkspaceRunnerIpcRuntime?.dispose()
     interactionWorkspaceRunnerIpcRuntime = null
     actionWorkspaceIpcRuntime?.dispose()
@@ -175,6 +180,8 @@ app.on('before-quit', () => {
   contentLibraryIpcRuntime = null
   aiAgentIpcRuntime?.dispose()
   aiAgentIpcRuntime = null
+  changeInfoAuditIpcRuntime?.dispose()
+  changeInfoAuditIpcRuntime = null
   interactionWorkspaceRunnerIpcRuntime?.dispose()
   interactionWorkspaceRunnerIpcRuntime = null
   actionWorkspaceIpcRuntime?.dispose()
