@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
+const appSource = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8')
 const accountSource = readFileSync(new URL('../accounts/AccountManager.tsx', import.meta.url), 'utf8')
 const actionWorkspaceSource = readFileSync(new URL('./ActionWorkspace.tsx', import.meta.url), 'utf8')
 const changeInfoSource = readFileSync(new URL('./ChangeInfoWorkspace.tsx', import.meta.url), 'utf8')
@@ -11,6 +12,10 @@ describe('Change Info workspace shell', () => {
     expect(accountSource).toContain('Sửa thông tin')
     expect(accountSource).toContain("type: 'change_info'")
     expect(accountSource).toContain('selected.map((account) => ({ accountId: account.id, enabled: true }))')
+    expect(appSource).toContain('onOpenChangeInfoWorkspace={openChangeInfoWorkspace}')
+    expect(appSource).toContain('ACTION_WORKSPACE_OPEN_REQUEST_KEY')
+    expect(appSource).toContain("setActiveRoute('actions')")
+    expect(actionWorkspaceSource).toContain('window.sessionStorage.getItem(ACTION_WORKSPACE_OPEN_REQUEST_KEY)')
     expect(actionWorkspaceSource).toContain("tab.type === 'change_info'")
     expect(registrySource).toContain("id: 'change_info'")
   })
