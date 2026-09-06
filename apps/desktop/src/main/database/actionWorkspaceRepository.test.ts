@@ -31,7 +31,7 @@ describe('ActionWorkspaceRepository', () => {
   it('applies latest schema and restores config with ordered account bindings', () => {
     const { runtime, workspaces } = setup()
     const schemaVersion = runtime.client.prepare("SELECT value FROM app_settings WHERE key = 'schema_version'").get() as { value: string }
-    expect(schemaVersion.value).toBe('23')
+    expect(schemaVersion.value).toBe('24')
 
     const created = workspaces.create({
       type: 'interaction',
@@ -49,6 +49,18 @@ describe('ActionWorkspaceRepository', () => {
     ])
     expect(JSON.parse(created.configJson)).toMatchObject({ targetMode: 'friends', repeat: false })
     expect(workspaces.list()).toEqual([created])
+  })
+
+  it('persists change_info workspace type with canonical account bindings', () => {
+    const { workspaces } = setup()
+    const created = workspaces.create({
+      type: 'change_info',
+      label: 'Sửa thông tin',
+      configJson: JSON.stringify({ version: 1, actions: {} }),
+      accounts: [{ accountId: 1, enabled: true }, { accountId: 2, enabled: true }]
+    }, 1000)
+    expect(created.type).toBe('change_info')
+    expect(created.accounts.map((item) => item.accountId)).toEqual([1, 2])
   })
 
   it('updates config and account order atomically', () => {
