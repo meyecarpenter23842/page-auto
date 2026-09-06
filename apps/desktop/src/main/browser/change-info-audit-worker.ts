@@ -185,6 +185,14 @@ async function runBioAudit(command: AuditBioCommand): Promise<ChangeInfoBioAudit
 
   const runtime = opened.runtime
   try {
+    await runtime.page.goto('https://www.facebook.com/', {
+      waitUntil: 'domcontentloaded',
+      timeout: runtime.browser.navigationTimeoutMs
+    })
+    if (runtime.browser.pageSettleDelayMs > 0) {
+      await runtime.page.waitForTimeout(runtime.browser.pageSettleDelayMs)
+    }
+
     const session = await withoutFacebookInteractionPacing(runtime.page, () => (
       validateFacebookSession(runtime.context, runtime.page)
     ))
