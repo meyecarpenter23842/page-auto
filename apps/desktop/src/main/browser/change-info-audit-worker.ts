@@ -125,10 +125,10 @@ async function collectBioEvidence(
     for (const candidate of textCandidates) {
       let region: Element | null = candidate
       for (let depth = 0; depth < 5 && region?.parentElement; depth += 1) {
-        const parent = region.parentElement
-        const text = normalize((parent as HTMLElement).innerText || parent.textContent)
-        const hasControl = parent.querySelector(interactiveSelector) !== null
-        if (hasControl && text.length > 0 && text.length <= 1200) region = parent
+        const parentElement: HTMLElement = region.parentElement
+        const text = normalize(parentElement.innerText || parentElement.textContent)
+        const hasControl = parentElement.querySelector(interactiveSelector) !== null
+        if (hasControl && text.length > 0 && text.length <= 1200) region = parentElement
         else break
       }
       if (!region) continue
