@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
 import type { AccountRecord } from '../../../shared/accounts'
 import type { ActionWorkspaceRecord, ActionWorkspaceType } from '../../../shared/actionWorkspaces'
+import { DEFAULT_CHANGE_INFO_WORKSPACE_DRAFT, serializeChangeInfoWorkspaceDraft } from '../../../shared/changeInfoWorkspace'
 import { isPageBusinessWorkspace } from '../../../shared/pageBusinessBindings'
 import { DEFAULT_GROUP_WORKSPACE_DRAFT, serializeGroupWorkspaceDraft } from '../../../shared/groupWorkspaceConfig'
 import { ScenarioWorkspace } from '../scenarios/ScenarioWorkspace'
+import { ChangeInfoWorkspace } from './ChangeInfoWorkspace'
 import { GroupWorkspace } from './GroupWorkspace'
 import { InteractionWorkspace } from './InteractionWorkspace'
 import { ACTION_WORKSPACE_DEFINITIONS, getActionWorkspaceDefinition } from './actionWorkspaceRegistry'
@@ -12,6 +14,7 @@ import './actionWorkspace.css'
 
 const SCENARIO_TAB_ID = 'scenario'
 const ACTIVE_TAB_STORAGE_KEY = 'page-auto:actions:active-tab'
+export const ACTION_WORKSPACE_OPEN_REQUEST_KEY = 'page-auto:actions:open-workspace-id'
 
 function workspaceTabId(id: number): string {
   return `workspace-${id}`
@@ -20,6 +23,7 @@ function workspaceTabId(id: number): string {
 function defaultConfigJson(type: ActionWorkspaceType): string {
   if (type === 'interaction') return serializeInteractionWorkspaceDraft(DEFAULT_INTERACTION_WORKSPACE_DRAFT)
   if (type === 'group') return serializeGroupWorkspaceDraft(DEFAULT_GROUP_WORKSPACE_DRAFT)
+  if (type === 'change_info') return serializeChangeInfoWorkspaceDraft(DEFAULT_CHANGE_INFO_WORKSPACE_DRAFT)
   return '{}'
 }
 
@@ -34,11 +38,16 @@ function nextWorkspaceLabel(type: ActionWorkspaceType, workspaces: ActionWorkspa
 
 function restoreActiveTab(workspaces: ActionWorkspaceRecord[]): string {
   try {
+    const requestedId = Number(window.sessionStorage.getItem(ACTION_WORKSPACE_OPEN_REQUEST_KEY))
+    if (Number.isInteger(requestedId) && workspaces.some((workspace) => workspace.id === requestedId)) {
+      window.sessionStorage.removeItem(ACTION_WORKSPACE_OPEN_REQUEST_KEY)
+      return workspaceTabId(requestedId)
+    }
     const stored = window.localStorage.getItem(ACTIVE_TAB_STORAGE_KEY)
     if (stored === SCENARIO_TAB_ID) return SCENARIO_TAB_ID
     if (stored && workspaces.some((workspace) => workspaceTabId(workspace.id) === stored)) return stored
   } catch {
-    // localStorage can be unavailable in hardened renderer environments.
+    // local/session storage can be unavailable in hardened renderer environments.
   }
   return workspaces[0] ? workspaceTabId(workspaces[0].id) : SCENARIO_TAB_ID
 }
@@ -169,6 +178,7 @@ export function ActionWorkspace() {
           <div className="action-workspace-panel" role="tabpanel" aria-label={tab.label} hidden={activeTabId !== workspaceTabId(tab.id)} key={tab.id}>
             {tab.type === 'interaction' ? <InteractionWorkspace workspace={tab} availableAccounts={accounts} onWorkspaceSaved={handleWorkspaceSaved} /> : null}
             {tab.type === 'group' ? <GroupWorkspace workspace={tab} availableAccounts={accounts} onWorkspaceSaved={handleWorkspaceSaved} /> : null}
+            {tab.type === 'change_info' ? <ChangeInfoWorkspace workspace={tab} availableAccounts={accounts} onWorkspaceSaved={handleWorkspaceSaved} /> : null}
           </div>
         ))}
       </div>
