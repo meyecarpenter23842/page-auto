@@ -37,4 +37,9 @@ nsis:
   shortcutName: PageAuto
   artifactName: PageAuto-Setup-${version}.${ext}
 
+publish:
+  provider: generic
+  url: https://pub-4e0416c66f7b4c7e9542bb6296775673.r2.dev
+  channel: latest
+
 artifactName: PageAuto-${version}-win-${arch}.${ext}

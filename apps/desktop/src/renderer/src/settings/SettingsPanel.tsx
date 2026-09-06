@@ -10,14 +10,16 @@ import { LoggingSettingsPanel } from './LoggingSettingsPanel'
 import { NetworkSettingsPanel } from './NetworkSettingsPanel'
 import { RuntimeSettingsPanel } from './RuntimeSettingsPanel'
 import { SessionSettingsPanel } from './SessionSettingsPanel'
+import { UpdateSettingsSection } from './UpdateSettingsSection'
 import './settings.css'
 import './settingsScrollFix.css'
 
 interface SettingsPanelProps { appInfo: AppInfo | null }
-type SettingsSection = 'appearance' | 'browser' | 'slots' | 'session' | 'network' | 'runtime' | 'logs' | 'captcha' | 'advanced' | 'health'
+type SettingsSection = 'appearance' | 'update' | 'browser' | 'slots' | 'session' | 'network' | 'runtime' | 'logs' | 'captcha' | 'advanced' | 'health'
 
 const sections: Array<{ id: SettingsSection; label: string; mark: string }> = [
   { id: 'appearance', label: 'Giao diện', mark: 'UI' },
+  { id: 'update', label: 'Cập nhật', mark: 'UP' },
   { id: 'browser', label: 'Trình duyệt', mark: 'BR' },
   { id: 'slots', label: 'Chrome Slots', mark: 'SL' },
   { id: 'session', label: 'Đăng nhập', mark: 'SS' },
@@ -34,6 +36,7 @@ export function SettingsPanel({ appInfo }: SettingsPanelProps) {
 
   let panel = <BrowserSettingsSection appInfo={appInfo} />
   if (activeSection === 'appearance') panel = <AppearanceSettingsSection />
+  else if (activeSection === 'update') panel = <UpdateSettingsSection appInfo={appInfo} />
   else if (activeSection === 'slots') panel = <BrowserSlotsSettingsSection />
   else if (activeSection === 'session') panel = <SessionSettingsPanel />
   else if (activeSection === 'network') panel = <NetworkSettingsPanel />
@@ -46,24 +49,28 @@ export function SettingsPanel({ appInfo }: SettingsPanelProps) {
   const active = sections.find((section) => section.id === activeSection)
   const heading = activeSection === 'appearance'
     ? 'Chế độ sáng & tối'
-    : activeSection === 'browser'
-      ? 'Thiết lập trình duyệt'
-      : activeSection === 'slots'
-        ? 'Theo dõi sức chứa & slot Chrome'
-        : active?.label
+    : activeSection === 'update'
+      ? 'Cập nhật PAGE-AUTO'
+      : activeSection === 'browser'
+        ? 'Thiết lập trình duyệt'
+        : activeSection === 'slots'
+          ? 'Theo dõi sức chứa & slot Chrome'
+          : active?.label
   const footer = activeSection === 'appearance'
     ? 'Giao diện được lưu local và tự áp dụng ở lần mở app tiếp theo.'
-    : activeSection === 'session'
-      ? 'Session, locale và policy được lưu local và dùng trực tiếp bởi worker.'
-      : activeSection === 'network'
-        ? 'Proxy preflight, timeout và policy mạng được dùng trực tiếp bởi posting runtime.'
-        : activeSection === 'runtime'
-          ? 'Giới hạn tab, launch spacing, timeout và retry policy được Main áp dụng trực tiếp.'
-          : activeSection === 'logs'
-            ? 'Mức log, evidence và retention được áp dụng trực tiếp cho posting/runtime log.'
-            : activeSection === 'slots'
-              ? 'Slot map chỉ đọc trạng thái mỗi giây; chỉ nút Sắp xếp lại Chrome mới compact vị trí.'
-              : 'Thay đổi được lưu bằng nút trong màn cài đặt đang mở.'
+    : activeSection === 'update'
+      ? 'Bản cập nhật được kiểm tra và tải từ R2; chỉ cài sau khi tải hoàn tất.'
+      : activeSection === 'session'
+        ? 'Session, locale và policy được lưu local và dùng trực tiếp bởi worker.'
+        : activeSection === 'network'
+          ? 'Proxy preflight, timeout và policy mạng được dùng trực tiếp bởi posting runtime.'
+          : activeSection === 'runtime'
+            ? 'Giới hạn tab, launch spacing, timeout và retry policy được Main áp dụng trực tiếp.'
+            : activeSection === 'logs'
+              ? 'Mức log, evidence và retention được áp dụng trực tiếp cho posting/runtime log.'
+              : activeSection === 'slots'
+                ? 'Slot map chỉ đọc trạng thái mỗi giây; chỉ nút Sắp xếp lại Chrome mới compact vị trí.'
+                : 'Thay đổi được lưu bằng nút trong màn cài đặt đang mở.'
 
   return <div className="settings-shell">
     <aside className="settings-menu" aria-label="Nhóm cài đặt">

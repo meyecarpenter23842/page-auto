@@ -1,6 +1,6 @@
 {
   "name": "page-auto",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "workspaces": [
     "apps/desktop"
@@ -16,7 +16,10 @@
     "verify:portable": "npm run verify:portable -w @page-auto/desktop",
     "package:installer": "npm run package:installer -w @page-auto/desktop",
     "verify:installer-config": "npm run verify:installer-config -w @page-auto/desktop",
-    "verify:installer": "npm run verify:installer -w @page-auto/desktop"
+    "verify:installer": "npm run verify:installer -w @page-auto/desktop",
+    "package:update": "npm run package:update -w @page-auto/desktop",
+    "verify:updater-config": "npm run verify:updater-config -w @page-auto/desktop",
+    "verify:update-artifacts": "npm run verify:update-artifacts -w @page-auto/desktop"
   },
   "engines": {
     "node": ">=22.12.0"
