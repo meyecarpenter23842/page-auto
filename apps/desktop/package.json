@@ -12,7 +12,10 @@
     "smoke": "node ./scripts/smoke.mjs",
     "smoke:page-business": "node ./scripts/page-business-ui-smoke.mjs",
     "package:portable": "npm run build && electron-builder --win --x64 --dir --publish never && electron-builder --win zip --x64 --publish never",
-    "verify:portable": "node ./scripts/verify-portable.mjs"
+    "verify:portable": "node ./scripts/verify-portable.mjs",
+    "package:installer": "npm run build && electron-builder --win nsis --x64 --publish never",
+    "verify:installer-config": "node ./scripts/verify-installer-config.mjs",
+    "verify:installer": "node ./scripts/verify-installer.mjs"
   },
   "dependencies": {
     "better-sqlite3": "13.0.3",
