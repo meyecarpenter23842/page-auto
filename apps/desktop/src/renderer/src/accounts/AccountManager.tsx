@@ -15,6 +15,7 @@ import {
   type ImportPreset
 } from '../../../shared/accounts'
 import type { AccountGroupOverview } from '../../../shared/accountGroups'
+import { DEFAULT_CHANGE_INFO_WORKSPACE_DRAFT, serializeChangeInfoWorkspaceDraft } from '../../../shared/changeInfoWorkspace'
 import { openAccountProfilesBatch } from './accountProfileBatch'
 import { AccountColumnManager as ColumnManager } from './AccountColumnManager'
 import { AccountEditor } from './AccountEditor'
@@ -40,7 +41,11 @@ import { Checkpoint956Dialog } from './Checkpoint956Dialog'
 import './accounts.css'
 import './accountEnhancements.css'
 
-export function AccountManager() {
+interface AccountManagerProps {
+  onOpenChangeInfoWorkspace?: (workspaceId: number) => void
+}
+
+export function AccountManager({ onOpenChangeInfoWorkspace }: AccountManagerProps = {}) {
   const [accounts, setAccounts] = useState<AccountRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -254,6 +259,28 @@ export function AccountManager() {
     await refreshAccountsAndGroups()
   }
 
+  const openChangeInfo = async () => {
+    if (selected.length === 0) return
+    setContextMenu(null)
+    try {
+      const existing = await window.pageAuto.listActionWorkspaces()
+      const used = new Set(existing.filter((item) => item.type === 'change_info').map((item) => item.label))
+      let index = 1
+      while (used.has(index === 1 ? 'Sửa thông tin' : `Sửa thông tin ${index}`)) index += 1
+      const label = index === 1 ? 'Sửa thông tin' : `Sửa thông tin ${index}`
+      const created = await window.pageAuto.createActionWorkspace({
+        type: 'change_info',
+        label,
+        configJson: serializeChangeInfoWorkspaceDraft(DEFAULT_CHANGE_INFO_WORKSPACE_DRAFT),
+        accounts: selected.map((account) => ({ accountId: account.id, enabled: true }))
+      })
+      setNotice(`Đã tạo ${created.label} cho ${selected.length} tài khoản.`)
+      onOpenChangeInfoWorkspace?.(created.id)
+    } catch (error) {
+      setNotice(`Không mở được Sửa thông tin: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
   const openProfile = async (openManagerAfter = false) => {
     if (selected.length === 0 || openingProfiles || checkingLive) return
     const targets = selected.map((account) => ({ id: account.id, uid: account.uid }))
@@ -356,7 +383,7 @@ export function AccountManager() {
     setPaintValue(null)
     setSelectedIds((current) => current.has(account.id) ? current : new Set([account.id]))
     const menuWidth = 220
-    const menuHeight = 390
+    const menuHeight = 430
     setContextMenu({
       x: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
       y: Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8))
@@ -375,6 +402,7 @@ export function AccountManager() {
             <button className="button danger" type="button" disabled={selectedIds.size === 0} onClick={() => void deleteSelected()}>Xóa</button>
           </div>
           <div className="toolbar-group">
+            <button className="button secondary" type="button" disabled={selectedIds.size === 0} onClick={() => void openChangeInfo()}>Sửa thông tin</button>
             <button className="button secondary" type="button" disabled={selectedIds.size === 0 || openingProfiles || checkingLive} onClick={() => void openProfile(true)}>Cửa sổ Chrome</button>
             <button className="button secondary" type="button" disabled={selectedIds.size === 0 || openingProfiles || checkingLive} onClick={() => void checkLiveSelected()}>{checkingLive ? 'Đang Check Live…' : 'Check Live'}</button>
             <button className="button secondary" type="button" onClick={() => setGroupManagerOpen(true)}>Quản lý nhóm ({groupOverview.groups.length})</button>
@@ -429,7 +457,7 @@ export function AccountManager() {
                         beginPaint(event, account.id)
                       }}
                     />
-                        </td>
+                  </td>
                   {visibleColumns.map((column) => <td key={column.id} style={{ width: layout.widths[column.id], maxWidth: layout.widths[column.id] }}>{renderCell(account, column)}</td>)}
                 </tr>
               ))}
@@ -443,6 +471,7 @@ export function AccountManager() {
         <div className="account-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onPointerDown={(event) => event.stopPropagation()}>
           <div className="context-menu-meta">Đã chọn {selected.length} tài khoản</div>
           <button type="button" disabled={selected.length !== 1} onClick={() => { setEditorAccount(selected[0] ?? null); setContextMenu(null) }}>Sửa tài khoản</button>
+          <button type="button" disabled={selectedIds.size === 0} onClick={() => void openChangeInfo()}>Sửa thông tin…</button>
           <button type="button" disabled={selectedIds.size === 0 || openingProfiles || checkingLive} onClick={() => void openProfile()}>{openingProfiles ? 'Đang mở…' : selected.length > 1 ? `Mở ${selected.length} Chrome` : 'Mở Chrome'}</button>
           <button type="button" disabled={selectedIds.size === 0} onClick={() => {
             const targets = sortedAccounts.filter((account) => selectedIds.has(account.id))
