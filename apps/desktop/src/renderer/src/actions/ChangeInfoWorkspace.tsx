@@ -118,43 +118,55 @@ export function ChangeInfoWorkspace({ workspace, availableAccounts, onWorkspaceS
   }
 
   const setActionEnabled = (key: string, enabled: boolean) => {
-    setDraft((current) => ({
-      ...current,
-      actions: {
-        ...current.actions,
-        [key]: { ...current.actions[key], enabled }
+    setDraft((current) => {
+      const currentAction = current.actions[key]
+      if (!currentAction) return current
+      return {
+        ...current,
+        actions: {
+          ...current.actions,
+          [key]: { ...currentAction, enabled }
+        }
       }
-    }))
+    })
     markDirty()
   }
 
   const setSourceType = (key: string, type: ChangeInfoDataSourceType) => {
     const catalog = getChangeInfoCatalogItem(key)
     if (!catalog) return
-    setDraft((current) => ({
-      ...current,
-      actions: {
-        ...current.actions,
-        [key]: {
-          ...current.actions[key],
-          source: createChangeInfoDataSourceConfig(catalog, type)
+    setDraft((current) => {
+      const currentAction = current.actions[key]
+      if (!currentAction) return current
+      return {
+        ...current,
+        actions: {
+          ...current.actions,
+          [key]: {
+            ...currentAction,
+            source: createChangeInfoDataSourceConfig(catalog, type)
+          }
         }
       }
-    }))
+    })
     markDirty()
   }
 
   const patchSource = (key: string, patch: Partial<ChangeInfoDataSourceConfig>) => {
-    setDraft((current) => ({
-      ...current,
-      actions: {
-        ...current.actions,
-        [key]: {
-          ...current.actions[key],
-          source: { ...current.actions[key]!.source, ...patch }
+    setDraft((current) => {
+      const currentAction = current.actions[key]
+      if (!currentAction) return current
+      return {
+        ...current,
+        actions: {
+          ...current.actions,
+          [key]: {
+            ...currentAction,
+            source: { ...currentAction.source, ...patch }
+          }
         }
       }
-    }))
+    })
     markDirty()
   }
 
