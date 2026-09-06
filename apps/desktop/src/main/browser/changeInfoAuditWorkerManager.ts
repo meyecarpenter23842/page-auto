@@ -1,5 +1,5 @@
 import { join } from 'node:path'
-import { utilityProcess, type UtilityProcess } from 'electron'
+import { utilityProcess } from 'electron'
 import type { RuntimeSettings } from '../../shared/appSettings'
 import type { ChangeInfoBioAuditResult } from '../../shared/changeInfoAudit'
 import type { ScenarioActionWorkerJob } from '../../shared/scenarioActionWorker'
@@ -97,7 +97,8 @@ export class ChangeInfoAuditWorkerManager {
           return
         }
         if (!isAuditResultMessage(event)) return
-        finish(messagePayload(event) && (messagePayload(event) as AuditResultMessage).result)
+        const payload = messagePayload(event) as AuditResultMessage
+        finish(payload.result)
       })
 
       worker.once('exit', (code) => {
