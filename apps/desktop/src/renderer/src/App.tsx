@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { AppInfo } from '../../ipc/channels'
 import { AccountManager } from './accounts/AccountManager'
-import { ActionWorkspace } from './actions/ActionWorkspace'
+import { ACTION_WORKSPACE_OPEN_REQUEST_KEY, ActionWorkspace } from './actions/ActionWorkspace'
 import { ContentLibraryHub } from './content-library/ContentLibraryHub'
 import { HotmailAuto } from './hotmail/HotmailAuto'
 import { ExecutionLogs } from './logs/ExecutionLogs'
@@ -65,6 +65,15 @@ export function App() {
     }
   }
 
+  const openChangeInfoWorkspace = (workspaceId: number) => {
+    try {
+      window.sessionStorage.setItem(ACTION_WORKSPACE_OPEN_REQUEST_KEY, String(workspaceId))
+    } catch {
+      // The workspace still exists in SQLite; user can open it manually if session storage is unavailable.
+    }
+    setActiveRoute('actions')
+  }
+
   const workspaceClass = activeRoute === 'page-tabs'
     ? 'workspace workspace-page-tabs'
     : activeRoute === 'settings'
@@ -119,7 +128,7 @@ export function App() {
           </div>
         </header>
 
-        {activeRoute === 'accounts' ? <AccountManager /> : activeRoute === 'hotmail' ? <HotmailAuto /> : activeRoute === 'content-library' ? <ContentLibraryHub /> : activeRoute === 'page-tabs' ? <PageBusinessWorkspace /> : activeRoute === 'actions' ? <ActionWorkspace /> : activeRoute === 'logs' ? <ExecutionLogs /> : <SettingsPanel appInfo={appInfo} />}
+        {activeRoute === 'accounts' ? <AccountManager onOpenChangeInfoWorkspace={openChangeInfoWorkspace} /> : activeRoute === 'hotmail' ? <HotmailAuto /> : activeRoute === 'content-library' ? <ContentLibraryHub /> : activeRoute === 'page-tabs' ? <PageBusinessWorkspace /> : activeRoute === 'actions' ? <ActionWorkspace /> : activeRoute === 'logs' ? <ExecutionLogs /> : <SettingsPanel appInfo={appInfo} />}
       </main>
     </div>
   )

@@ -78,6 +78,9 @@ describe('initializeDatabase', () => {
     const storyItemsTable = runtime.client
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'story_items'")
       .get() as { name: string } | undefined
+    const actionWorkspacePresetsTable = runtime.client
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'action_workspace_presets'")
+      .get() as { name: string } | undefined
 
     expect(existsSync(databaseFile)).toBe(true)
     expect(migrations).toEqual([
@@ -103,9 +106,10 @@ describe('initializeDatabase', () => {
       { version: 20, name: 'page_tab_group_post_concurrency_and_run_claim_owner' },
       { version: 21, name: 'page_wall_recurring_schedule_rules' },
       { version: 22, name: 'page_wall_finite_plans' },
-      { version: 23, name: 'page_scenario_schedules' }
+      { version: 23, name: 'page_scenario_schedules' },
+      { version: 24, name: 'action_workspace_presets' }
     ])
-    expect(schemaVersion?.value).toBe('23')
+    expect(schemaVersion?.value).toBe('24')
     expect(executionLogsTable?.name).toBe('execution_logs')
     expect(postLibraryTable?.name).toBe('page_tab_posts')
     expect(pageTabColumns.some((column) => column.name === 'account_order_mode')).toBe(true)
@@ -122,6 +126,7 @@ describe('initializeDatabase', () => {
     expect(emailProxySettingsTable?.name).toBe('email_proxy_settings')
     expect(accountGroupsTable?.name).toBe('account_groups')
     expect(storyItemsTable?.name).toBe('story_items')
+    expect(actionWorkspacePresetsTable?.name).toBe('action_workspace_presets')
 
     runtime.close()
   })
@@ -135,7 +140,7 @@ describe('initializeDatabase', () => {
       .prepare('SELECT COUNT(*) AS count FROM __page_auto_migrations')
       .get() as { count: number }
 
-    expect(count.count).toBe(23)
+    expect(count.count).toBe(24)
     reopened.close()
   })
 
