@@ -38,16 +38,21 @@ export function PageBusinessBindingScope({ businessType, label, children }: Prop
   const [pickerOpen, setPickerOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const refresh = useCallback(async (preferred?: number) => {
-    const [nextPages, workspaces] = await Promise.all([window.pageAuto.listPageTabs(), window.pageAuto.listActionWorkspaces()])
+    const nextPages = await window.pageAuto.listPageTabs()
+    setPages(nextPages)
+
+    const workspaces = await window.pageAuto.listActionWorkspaces()
     const next = workspaces.flatMap((workspace): BindingRecord[] => {
       if (pageBusinessTypeOf(workspace) !== businessType) return []
       const pageTabId = pageBusinessPageIdOf(workspace)
       return pageTabId ? [{ workspace, pageTabId }] : []
     }).sort((a, b) => a.workspace.id - b.workspace.id)
-    setPages(nextPages); setBindings(next); setActiveWorkspaceId((current) => {
+    setBindings(next)
+    setActiveWorkspaceId((current) => {
       const wanted = preferred ?? current
       return wanted && next.some((item) => item.workspace.id === wanted) ? wanted : next[0]?.workspace.id ?? null
-    }); setError(null)
+    })
+    setError(null)
   }, [businessType])
   useEffect(() => { void refresh().catch((cause) => setError(cause instanceof Error ? cause.message : String(cause))) }, [refresh])
   const activeBinding = bindings.find((item) => item.workspace.id === activeWorkspaceId) ?? null
