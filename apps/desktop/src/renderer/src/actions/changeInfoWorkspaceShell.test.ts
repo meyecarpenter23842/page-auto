@@ -20,13 +20,16 @@ describe('Change Info workspace shell', () => {
     expect(registrySource).toContain("id: 'change_info'")
   })
 
-  it('renders catalog, Data Source and presets while keeping Facebook Start locked before live audit', () => {
-    expect(changeInfoSource).toContain('Chọn thay đổi')
-    expect(changeInfoSource).toContain('Nguồn dữ liệu')
-    expect(changeInfoSource).toContain('Phân bổ snapshot')
+  it('renders a dense desktop operation form with accounts, inline Data Source and presets while Facebook Start stays locked', () => {
+    expect(changeInfoSource).toContain('Tài khoản chạy')
+    expect(changeInfoSource).toContain('change-info-groups')
+    expect(changeInfoSource).toContain('change-info-inline-editor')
+    expect(changeInfoSource).toContain('aria-label={`Nguồn ${catalog.label}`}')
     expect(changeInfoSource).toContain('window.pageAutoChangeInfo.listPresets')
     expect(changeInfoSource).toContain('window.pageAutoChangeInfo.savePreset')
-    expect(changeInfoSource).toContain('Live audit required')
-    expect(changeInfoSource).toContain('<button type="button" disabled>Bắt đầu</button>')
+    expect(changeInfoSource).toContain('Chế độ cấu hình · chưa chạy thay đổi trên Facebook')
+    expect(changeInfoSource).toContain('className="change-info-start" disabled>Bắt đầu</button>')
+    expect(changeInfoSource).not.toContain('Live audit required')
+    expect(changeInfoSource).not.toContain('ACCOUNT / PROFILE COMPOSER')
   })
 })
