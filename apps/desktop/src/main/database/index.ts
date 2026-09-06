@@ -5,6 +5,7 @@ import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { appSettings } from './schema'
 import { ACCOUNT_GROUP_SCHEMA_VERSION, applyAccountGroupMigration } from './accountGroupMigration'
 import { ACTION_WORKSPACE_SCHEMA_VERSION, applyActionWorkspaceMigration } from './actionWorkspaceMigration'
+import { ACTION_WORKSPACE_PRESET_SCHEMA_VERSION, applyActionWorkspacePresetMigration } from './actionWorkspacePresetMigration'
 import { CANONICAL_POST_SCHEMA_VERSION, applyCanonicalPostMigration } from './canonicalPostMigration'
 import { CONTENT_LIBRARY_SCHEMA_VERSION, applyContentLibraryMigration } from './contentLibraryMigration'
 import { COPY_POST_SCHEMA_VERSION, applyCopyPostMigration } from './copyPostMigration'
@@ -74,6 +75,7 @@ export function initializeDatabase(databaseFile: string): DatabaseRuntime {
   applyCopyPostMigration(client)
   applyStoryMigration(client)
   applyActionWorkspaceMigration(client)
+  applyActionWorkspacePresetMigration(client)
   applyPageBusinessBindingMigration(client)
   applyPageJoinGroupOwnershipRepair(client)
   applyPageWallRecurringMigration(client)
@@ -91,6 +93,7 @@ export function initializeDatabase(databaseFile: string): DatabaseRuntime {
     COPY_POST_SCHEMA_VERSION,
     STORY_SCHEMA_VERSION,
     ACTION_WORKSPACE_SCHEMA_VERSION,
+    ACTION_WORKSPACE_PRESET_SCHEMA_VERSION,
     PAGE_BUSINESS_BINDING_SCHEMA_VERSION,
     PAGE_WALL_RECURRING_SCHEMA_VERSION,
     PAGE_WALL_FINITE_PLAN_SCHEMA_VERSION,
