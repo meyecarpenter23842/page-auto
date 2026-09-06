@@ -7,6 +7,7 @@ import {
   type CreateActionWorkspaceInput,
   type UpdateActionWorkspacePayload
 } from '../../shared/actionWorkspaces'
+import { normalizePersistedActionWorkspaceType } from './actionWorkspaceCompatibility'
 
 interface WorkspaceRow {
   id: number
@@ -28,7 +29,7 @@ function requiredText(value: string, label: string): string {
   return normalized
 }
 
-function workspaceType(value: string): ActionWorkspaceType {
+function validatedWorkspaceType(value: string): ActionWorkspaceType {
   if (!(ACTION_WORKSPACE_TYPES as readonly string[]).includes(value)) {
     throw new Error('Loại workspace không hợp lệ.')
   }
@@ -86,7 +87,10 @@ export class ActionWorkspaceRepository {
       FROM action_workspaces
       ORDER BY id
     `).all() as Array<Record<string, unknown>>
-    return rows.map((row) => this.hydrate(toWorkspaceRow(row)))
+    return rows.flatMap((row) => {
+      const record = this.hydrate(toWorkspaceRow(row))
+      return record ? [record] : []
+    })
   }
 
   get(id: number): ActionWorkspaceRecord | null {
@@ -106,7 +110,7 @@ export class ActionWorkspaceRepository {
   }
 
   create(input: CreateActionWorkspaceInput, now = Date.now()): ActionWorkspaceRecord {
-    const type = workspaceType(input.type)
+    const type = validatedWorkspaceType(input.type)
     const label = requiredText(input.label, 'Tên tab')
     const configJson = normalizeConfigJson(input.configJson)
     const accounts = normalizeAccounts(this.client, input.accounts ?? [])
@@ -154,7 +158,10 @@ export class ActionWorkspaceRepository {
     return record
   }
 
-  private hydrate(row: WorkspaceRow): ActionWorkspaceRecord {
+  private hydrate(row: WorkspaceRow): ActionWorkspaceRecord | null {
+    const type = normalizePersistedActionWorkspaceType(row.workspaceType, row.configJson)
+    if (!type) return null
+
     const accounts = this.client.prepare(`
       SELECT account_id AS accountId, sort_order AS sortOrder, enabled
       FROM action_workspace_accounts
@@ -164,7 +171,7 @@ export class ActionWorkspaceRepository {
 
     return {
       id: row.id,
-      type: workspaceType(row.workspaceType),
+      type,
       label: row.label,
       configJson: row.configJson,
       accounts: accounts.map((item) => ({
