@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { AccountRecord } from '../../../shared/accounts'
+import type { ChangeInfoBioAuditResult } from '../../../shared/changeInfoAudit'
 import type {
   ActionWorkspaceAccountInput,
   ActionWorkspacePresetRecord,
@@ -97,11 +98,14 @@ export function ChangeInfoWorkspace({ workspace, availableAccounts, onWorkspaceS
   const [presetId, setPresetId] = useState<number | null>(null)
   const [presetBusy, setPresetBusy] = useState(false)
   const [presetError, setPresetError] = useState<string | null>(null)
+  const [bioAuditBusy, setBioAuditBusy] = useState(false)
+  const [bioAuditResult, setBioAuditResult] = useState<ChangeInfoBioAuditResult | null>(null)
 
   const currentSignature = useMemo(() => signature(draft, accountBindings), [draft, accountBindings])
   const isDirty = currentSignature !== savedSignature
   const selectedIds = useMemo(() => new Set(accountBindings.map((item) => item.accountId)), [accountBindings])
-  const enabledAccountCount = accountBindings.filter((item) => item.enabled).length
+  const enabledBindings = useMemo(() => accountBindings.filter((item) => item.enabled), [accountBindings])
+  const enabledAccountCount = enabledBindings.length
   const enabledItems = useMemo(() => enabledChangeInfoCatalogItems(draft), [draft])
   const validationErrors = useMemo(() => validateChangeInfoWorkspaceDraft(draft), [draft])
   const accountMap = useMemo(() => new Map(availableAccounts.map((account) => [account.id, account] as const)), [availableAccounts])
@@ -128,17 +132,20 @@ export function ChangeInfoWorkspace({ workspace, availableAccounts, onWorkspaceS
       const added = accountIds.filter((id) => !existing.has(id)).map((accountId) => ({ accountId, enabled: true }))
       return [...kept, ...added]
     })
+    setBioAuditResult(null)
     setShowAccountPicker(false)
     markDirty()
   }
 
   const setAccountEnabled = (accountId: number, enabled: boolean) => {
     setAccountBindings((current) => current.map((binding) => binding.accountId === accountId ? { ...binding, enabled } : binding))
+    setBioAuditResult(null)
     markDirty()
   }
 
   const setAllAccountsEnabled = (enabled: boolean) => {
     setAccountBindings((current) => current.map((binding) => ({ ...binding, enabled })))
+    setBioAuditResult(null)
     markDirty()
   }
 
@@ -289,6 +296,39 @@ export function ChangeInfoWorkspace({ workspace, availableAccounts, onWorkspaceS
     if (path) patchSource(key, { path })
   }
 
+  const runBioAudit = async () => {
+    if (bioAuditBusy) return
+    const binding = enabledBindings[0]
+    if (enabledBindings.length !== 1 || !binding) {
+      setBioAuditResult({
+        status: 'failed',
+        accountId: binding?.accountId ?? 0,
+        uid: '',
+        code: 'audit_single_account_required',
+        message: 'Bật đúng 1 tài khoản để audit live Tiểu sử.'
+      })
+      return
+    }
+
+    setBioAuditBusy(true)
+    setBioAuditResult(null)
+    try {
+      const result = await window.pageAutoChangeInfo.auditBio({ accountId: binding.accountId })
+      setBioAuditResult(result)
+      console.info('[PAGE-AUTO change-info-audit]', JSON.stringify(result))
+    } catch (error) {
+      setBioAuditResult({
+        status: 'failed',
+        accountId: binding.accountId,
+        uid: accountMap.get(binding.accountId)?.uid ?? '',
+        code: 'audit_ipc_failed',
+        message: error instanceof Error ? error.message : String(error)
+      })
+    } finally {
+      setBioAuditBusy(false)
+    }
+  }
+
   const renderSourceEditor = (key: string) => {
     const catalog = getChangeInfoCatalogItem(key)
     const action = draft.actions[key]
@@ -328,7 +368,10 @@ export function ChangeInfoWorkspace({ workspace, availableAccounts, onWorkspaceS
                 <input type="checkbox" checked={enabled} onChange={(event) => setActionEnabled(item.key, event.target.checked)} />
                 <span>{item.label}</span>
               </label>
-              {item.destructive ? <small className="change-info-sensitive">Nhạy cảm</small> : null}
+              <div className="change-info-action-meta">
+                {item.key === 'bio' ? <button type="button" className="change-info-audit-button" disabled={bioAuditBusy || enabledAccountCount !== 1} onClick={() => void runBioAudit()}>{bioAuditBusy ? 'Đang audit…' : 'Audit live'}</button> : null}
+                {item.destructive ? <small className="change-info-sensitive">Nhạy cảm</small> : null}
+              </div>
             </div>
             {enabled ? renderSourceEditor(item.key) : null}
           </div>
@@ -336,6 +379,8 @@ export function ChangeInfoWorkspace({ workspace, availableAccounts, onWorkspaceS
       </div>
     </section>
   }
+
+  const bioAuditEvidence = bioAuditResult?.status === 'success' ? bioAuditResult.evidence : null
 
   return <section className="change-info-workspace" aria-label={workspace.label}>
     <header className="change-info-head">
@@ -348,6 +393,12 @@ export function ChangeInfoWorkspace({ workspace, availableAccounts, onWorkspaceS
 
     {saveError ? <div className="change-info-alert error">{saveError}</div> : null}
     {presetError ? <div className="change-info-alert error">{presetError}</div> : null}
+    {bioAuditResult ? <details className={`change-info-audit-result ${bioAuditResult.status}`} open={bioAuditResult.status !== 'success'}>
+      <summary>Audit Tiểu sử · {bioAuditResult.status === 'success' ? 'đã thu evidence' : bioAuditResult.status === 'needs_attention' ? 'cần xử lý' : 'lỗi'}</summary>
+      <p>{bioAuditResult.message}</p>
+      {bioAuditEvidence ? <p>{bioAuditEvidence.relevantControls.length} control · {bioAuditEvidence.relevantRegions.length} vùng liên quan{bioAuditEvidence.screenshotPath ? ` · ${bioAuditEvidence.screenshotPath}` : ''}</p> : null}
+      <pre>{JSON.stringify(bioAuditResult, null, 2)}</pre>
+    </details> : null}
 
     <div className="change-info-toolbar">
       <input className="change-info-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Tìm chức năng…" />
