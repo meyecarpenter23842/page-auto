@@ -766,3 +766,33 @@ Live bug liên quan checkpoint/2FA continuation chỉ được coi fixed sau liv
 - Trước mọi commit/push phải báo rõ phạm vi thay đổi nếu cuộc trao đổi hiện tại chưa cho phép thao tác đó.
 
 **Baseline này là quyết định hiện hành để code.**
+
+---
+
+## 16. Data root ổn định trước Installer/Updater — quyết định 2026-09-06
+
+Lô chuẩn bị installer đầu tiên thay đổi **ownership vị trí dữ liệu runtime**, nhưng chưa thay đổi packaging sang installer:
+
+- Windows artifact của lô này vẫn giữ portable folder/ZIP và `PageAuto.exe`; NSIS/Setup/R2 updater thuộc lô sau.
+- DB, browser profile do app quản lý, log, screenshot, backup và checkpoint asset không còn được coi là dữ liệu đi theo thư mục cài/chứa executable.
+- Data root mặc định trên Windows là `%LOCALAPPDATA%\PageAuto\data`.
+- `PAGE_AUTO_DATA_DIR` vẫn là override explicit dành cho vận hành/dev và khi có override app không tự adopt nguồn legacy khác.
+- Lần chạy đầu tiên mà data root mới chưa có `page-auto.sqlite`, Main được phép adopt dữ liệu legacy theo thứ tự: packaged `<PageAuto.exe>\..\data` trước, sau đó `app.getPath('userData')\data`.
+- Adopt luôn **copy**, không move/xóa nguồn cũ. Toàn bộ source được copy qua staging; chỉ đổi target sau khi copy hoàn tất.
+- Trước khi `initializeDatabase()` chạy migration schema trên bản đã adopt, phải có snapshot `page-auto.sqlite` và sidecar `-wal/-shm` (nếu tồn tại) dưới `backups/pre-stable-data-root-*`.
+- Nếu target mới đã có DB thì đó là canonical data và không được adopt/ghi đè lại từ nguồn legacy.
+- Nếu target mới đã tồn tại nhưng chưa có DB, phải bảo toàn target đó thành sibling `data-before-adoption-*` trước khi activate bản legacy đã copy.
+- Nếu copy/activate lỗi, không được âm thầm tạo DB trắng thay thế dữ liệu cũ; staging được dọn và target đã displaced phải rollback khi có thể.
+- Browser profile/account/session/cookie thật tiếp tục không commit Git và không được đóng gói vào release artifact.
+
+Regression tối thiểu cho data root:
+
+1. packaged và dev cùng resolve về stable LocalAppData khi có `LOCALAPPDATA`;
+2. override vẫn thắng;
+3. portable legacy -> stable root giữ nguyên source + copy đủ profile/DB;
+4. dev legacy `userData/data` -> stable root;
+5. restart lần hai không migrate/overwrite lại;
+6. target chưa có DB được bảo toàn trước adoption;
+7. không có legacy DB thì tạo layout mới bình thường.
+
+Việc test bằng **DB/profile thật đang dùng trên máy Windows** là acceptance riêng trước khi chuyển sang lô NSIS: đóng app cũ, backup data hiện tại, chạy build mới, kiểm tra account/Page/settings/content/session/profile còn nguyên, restart lần hai và xác nhận không adopt lại.
