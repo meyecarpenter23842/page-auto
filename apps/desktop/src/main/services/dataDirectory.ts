@@ -56,6 +56,7 @@ function databaseExists(dataDirectory: string): boolean {
 export function resolveDataDirectory(options: DataDirectoryOptions): string {
   const override = options.override?.trim()
   if (override) return override
+  if (!options.isPackaged) return join(options.userDataPath, 'data')
 
   const localAppDataPath = options.localAppDataPath?.trim()
   if (localAppDataPath) return join(localAppDataPath, 'PageAuto', 'data')
@@ -64,10 +65,9 @@ export function resolveDataDirectory(options: DataDirectoryOptions): string {
 }
 
 export function resolveLegacyDataDirectories(options: DataDirectoryOptions, targetDirectory: string): string[] {
-  const candidates = options.isPackaged
-    ? [join(dirname(options.execPath), 'data'), join(options.userDataPath, 'data')]
-    : [join(options.userDataPath, 'data')]
+  if (!options.isPackaged) return []
 
+  const candidates = [join(dirname(options.execPath), 'data'), join(options.userDataPath, 'data')]
   const seen = new Set<string>()
   return candidates.filter((candidate) => {
     const normalized = normalizePathForComparison(candidate)
