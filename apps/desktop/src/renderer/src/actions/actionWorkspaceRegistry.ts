@@ -14,6 +14,11 @@ export const ACTION_WORKSPACE_DEFINITIONS: ReadonlyArray<{
     id: 'group',
     label: 'Nhóm',
     description: 'Workspace Nhóm theo kiểu data-grid: chọn account, nguồn Group ID, bộ lọc, pacing và chạy action Facebook thật.'
+  },
+  {
+    id: 'change_info',
+    label: 'Sửa thông tin',
+    description: 'Composer sửa Account/Profile: catalog field, nguồn dữ liệu, preset và account binding; action Facebook chỉ mở sau live audit.'
   }
 ]
 
