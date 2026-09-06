@@ -4,6 +4,7 @@ import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { appSettings } from './schema'
 import { ACCOUNT_GROUP_SCHEMA_VERSION, applyAccountGroupMigration } from './accountGroupMigration'
+import { applyActionWorkspaceCompatibilityMigration } from './actionWorkspaceCompatibilityMigration'
 import { ACTION_WORKSPACE_SCHEMA_VERSION, applyActionWorkspaceMigration } from './actionWorkspaceMigration'
 import { ACTION_WORKSPACE_PRESET_SCHEMA_VERSION, applyActionWorkspacePresetMigration } from './actionWorkspacePresetMigration'
 import { CANONICAL_POST_SCHEMA_VERSION, applyCanonicalPostMigration } from './canonicalPostMigration'
@@ -77,6 +78,7 @@ export function initializeDatabase(databaseFile: string): DatabaseRuntime {
   applyActionWorkspaceMigration(client)
   applyActionWorkspacePresetMigration(client)
   applyPageBusinessBindingMigration(client)
+  applyActionWorkspaceCompatibilityMigration(client)
   applyPageJoinGroupOwnershipRepair(client)
   applyPageWallRecurringMigration(client)
   applyPageWallFinitePlanMigration(client)
