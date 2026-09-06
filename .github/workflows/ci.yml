@@ -80,6 +80,9 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Verify Windows installer configuration
+        run: npm run verify:installer-config
+
       - name: Package Windows portable
         run: npm run package:portable
 

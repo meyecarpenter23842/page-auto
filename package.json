@@ -13,7 +13,10 @@
     "rebuild:native": "electron-rebuild -m . -f -w better-sqlite3",
     "smoke": "npm run smoke -w @page-auto/desktop",
     "package:portable": "npm run package:portable -w @page-auto/desktop",
-    "verify:portable": "npm run verify:portable -w @page-auto/desktop"
+    "verify:portable": "npm run verify:portable -w @page-auto/desktop",
+    "package:installer": "npm run package:installer -w @page-auto/desktop",
+    "verify:installer-config": "npm run verify:installer-config -w @page-auto/desktop",
+    "verify:installer": "npm run verify:installer -w @page-auto/desktop"
   },
   "engines": {
     "node": ">=22.12.0"

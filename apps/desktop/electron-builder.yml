@@ -24,8 +24,17 @@ win:
   executableName: PageAuto
   icon: resources/app-icon.png
   target:
-    - target: zip
+    - target: nsis
       arch:
         - x64
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  perMachine: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: PageAuto
+  artifactName: PageAuto-Setup-${version}.${ext}
 
 artifactName: PageAuto-${version}-win-${arch}.${ext}

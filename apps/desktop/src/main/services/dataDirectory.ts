@@ -1,11 +1,4 @@
-import {
-  copyFileSync,
-  cpSync,
-  existsSync,
-  mkdirSync,
-  renameSync,
-  rmSync
-} from 'node:fs'
+import { existsSync, mkdirSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 
 export interface DataDirectoryOptions {
@@ -34,7 +27,6 @@ export interface PreparedDataDirectory {
 }
 
 const DATABASE_FILENAME = 'page-auto.sqlite'
-const DATABASE_SIDECAR_FILENAMES = [DATABASE_FILENAME, `${DATABASE_FILENAME}-wal`, `${DATABASE_FILENAME}-shm`]
 
 function normalizePathForComparison(path: string): string {
   const normalized = resolve(path)
@@ -43,10 +35,6 @@ function normalizePathForComparison(path: string): string {
 
 function pathsEqual(left: string, right: string): boolean {
   return normalizePathForComparison(left) === normalizePathForComparison(right)
-}
-
-function migrationSuffix(now: Date, processId: number): string {
-  return `${now.toISOString().replace(/[:.]/g, '-')}-${processId}`
 }
 
 function databaseExists(dataDirectory: string): boolean {
@@ -92,68 +80,23 @@ export function ensureDataDirectoryLayout(dataDirectory: string): void {
   }
 }
 
-function backupDatabaseFiles(dataDirectory: string, backupDirectory: string): void {
-  mkdirSync(backupDirectory, { recursive: true })
-  for (const filename of DATABASE_SIDECAR_FILENAMES) {
-    const sourceFile = join(dataDirectory, filename)
-    if (existsSync(sourceFile)) copyFileSync(sourceFile, join(backupDirectory, filename))
-  }
-}
-
 export function prepareDataDirectory(options: PrepareDataDirectoryOptions): PreparedDataDirectory {
-  const dataDirectory = resolveDataDirectory(options)
+  const preferredDataDirectory = resolveDataDirectory(options)
   const override = options.override?.trim()
-  if (override || databaseExists(dataDirectory)) {
-    ensureDataDirectoryLayout(dataDirectory)
-    return { dataDirectory, migration: null }
+
+  if (override || !options.isPackaged || databaseExists(preferredDataDirectory)) {
+    ensureDataDirectoryLayout(preferredDataDirectory)
+    return { dataDirectory: preferredDataDirectory, migration: null }
   }
 
-  const sourceDirectory = resolveLegacyDataDirectories(options, dataDirectory).find(databaseExists)
-  if (!sourceDirectory) {
-    ensureDataDirectoryLayout(dataDirectory)
-    return { dataDirectory, migration: null }
+  const legacyDataDirectory = resolveLegacyDataDirectories(options, preferredDataDirectory).find(databaseExists)
+  if (legacyDataDirectory) {
+    // Existing DB/profile data already lives outside the installed binaries. Reuse it
+    // in place instead of synchronously copying potentially huge browser profiles at startup.
+    ensureDataDirectoryLayout(legacyDataDirectory)
+    return { dataDirectory: legacyDataDirectory, migration: null }
   }
 
-  const now = options.now?.() ?? new Date()
-  const processId = options.processId ?? process.pid
-  const suffix = migrationSuffix(now, processId)
-  const parentDirectory = dirname(dataDirectory)
-  const stagingDirectory = join(parentDirectory, `.data-adoption-${suffix}`)
-  const databaseBackupDirectory = join(stagingDirectory, 'backups', `pre-stable-data-root-${suffix}`)
-  const displacedTargetDirectory = existsSync(dataDirectory)
-    ? join(parentDirectory, `data-before-adoption-${suffix}`)
-    : undefined
-
-  mkdirSync(parentDirectory, { recursive: true })
-  rmSync(stagingDirectory, { recursive: true, force: true })
-
-  let targetDisplaced = false
-  try {
-    cpSync(sourceDirectory, stagingDirectory, { recursive: true, preserveTimestamps: true })
-    ensureDataDirectoryLayout(stagingDirectory)
-    backupDatabaseFiles(stagingDirectory, databaseBackupDirectory)
-
-    if (displacedTargetDirectory) {
-      renameSync(dataDirectory, displacedTargetDirectory)
-      targetDisplaced = true
-    }
-
-    renameSync(stagingDirectory, dataDirectory)
-  } catch (error) {
-    rmSync(stagingDirectory, { recursive: true, force: true })
-    if (targetDisplaced && displacedTargetDirectory && !existsSync(dataDirectory)) {
-      renameSync(displacedTargetDirectory, dataDirectory)
-    }
-    throw error
-  }
-
-  return {
-    dataDirectory,
-    migration: {
-      sourceDirectory,
-      targetDirectory: dataDirectory,
-      databaseBackupDirectory: join(dataDirectory, 'backups', `pre-stable-data-root-${suffix}`),
-      ...(displacedTargetDirectory ? { displacedTargetDirectory } : {})
-    }
-  }
+  ensureDataDirectoryLayout(preferredDataDirectory)
+  return { dataDirectory: preferredDataDirectory, migration: null }
 }
