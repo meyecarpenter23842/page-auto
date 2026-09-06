@@ -15,7 +15,7 @@ import { registerPostLibraryIpcHandlers, type PostLibraryIpcRuntime } from './po
 import { registerScenarioIpcHandlers, type ScenarioIpcRuntime } from './scenarioIpc'
 import { registerScenarioRunnerIpcHandlers, type ScenarioRunnerIpcRuntime } from './scenarioRunnerIpc'
 import { registerStoryIpcHandlers, type StoryIpcRuntime } from './storyIpc'
-import { ensureDataDirectoryLayout, resolveDataDirectory } from './services/portablePaths'
+import { prepareDataDirectory, type PreparedDataDirectory } from './services/dataDirectory'
 
 let mainWindow: BrowserWindow | null = null
 let databaseRuntime: DatabaseRuntime | null = null
@@ -67,17 +67,34 @@ function createMainWindow(): BrowserWindow {
 }
 
 app.whenReady().then(() => {
-  const dataDirectory = resolveDataDirectory({
-    override: process.env.PAGE_AUTO_DATA_DIR,
-    isPackaged: app.isPackaged,
-    execPath: process.execPath,
-    userDataPath: app.getPath('userData')
-  })
-  ensureDataDirectoryLayout(dataDirectory)
+  let preparedDataDirectory: PreparedDataDirectory
+  try {
+    preparedDataDirectory = prepareDataDirectory({
+      override: process.env.PAGE_AUTO_DATA_DIR,
+      isPackaged: app.isPackaged,
+      execPath: process.execPath,
+      userDataPath: app.getPath('userData'),
+      localAppDataPath: process.env.LOCALAPPDATA
+    })
+  } catch (error) {
+    console.error('Application data preparation failed', error instanceof Error ? error.message : String(error))
+    app.exit(1)
+    return
+  }
 
+  const dataDirectory = preparedDataDirectory.dataDirectory
   const logFile = join(dataDirectory, 'logs', 'app.log')
   const databaseFile = join(dataDirectory, 'page-auto.sqlite')
   const logger = createLogger(logFile)
+
+  if (preparedDataDirectory.migration) {
+    logger.info('Legacy application data adopted', {
+      sourceDirectory: preparedDataDirectory.migration.sourceDirectory,
+      dataDirectory,
+      databaseBackupDirectory: preparedDataDirectory.migration.databaseBackupDirectory,
+      displacedTargetDirectory: preparedDataDirectory.migration.displacedTargetDirectory ?? null
+    })
+  }
 
   try {
     databaseRuntime = initializeDatabase(databaseFile)

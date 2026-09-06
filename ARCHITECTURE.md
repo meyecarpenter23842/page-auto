@@ -1136,3 +1136,66 @@ Batch 4 phải audit và bổ sung ownership tối thiểu nếu cần, với se
 5. **Batch 5 — Regression + CI:** concurrency `1` legacy, `>1` rolling, cross-workspace same-account lock, launch spacing, Pause/Resume/Stop/recovery, Group source cloning.
 
 Không merge PR tự động; chỉ merge khi có lệnh rõ ràng của chủ dự án.
+
+---
+
+## 27. Stable application data root — ownership trước Installer/Updater
+
+Quyết định 2026-09-06 tách **application data** khỏi vị trí executable để installer/update về sau không đụng DB/profile thật.
+
+Ownership hiện hành:
+
+```text
+PageAuto executable / packaging
+        |
+        | không sở hữu runtime data
+        v
+Electron Main — DataDirectory service
+        |
+        +--> %LOCALAPPDATA%\PageAuto\data     (Windows default)
+        |      page-auto.sqlite
+        |      browser-profiles/
+        |      logs/
+        |      screenshots/
+        |      backups/
+        |      checkpoint-assets/
+        |
+        +--> PAGE_AUTO_DATA_DIR               (explicit override)
+```
+
+`apps/desktop/src/main/services/dataDirectory.ts` là nguồn duy nhất cho default data root/adoption policy. `portablePaths.ts` chỉ còn compatibility re-export để source cũ chưa chuyển import không giữ semantics portable cũ.
+
+### 27.1. Legacy adoption
+
+Khi stable target chưa có `page-auto.sqlite`:
+
+1. packaged runtime ưu tiên `<dirname(process.execPath)>\data`;
+2. fallback legacy `app.getPath('userData')\data`;
+3. development runtime chỉ xét legacy `userData/data`;
+4. chỉ source có `page-auto.sqlite` mới được coi là canonical legacy source.
+
+Adoption invariant:
+
+- copy cả source sang staging; **không move/xóa source**;
+- staging phải có layout chuẩn trước khi activate;
+- snapshot DB + `-wal/-shm` nếu có vào `backups/pre-stable-data-root-*` trước `initializeDatabase()` để schema migration chỉ chạy sau điểm rollback này;
+- stable target đã có DB thì luôn thắng, không adopt lại;
+- target tồn tại nhưng chưa có DB được rename thành `data-before-adoption-*` thay vì bị xóa;
+- activate bằng rename staging -> target sau khi copy/backup hoàn tất;
+- lỗi giữa chừng phải dọn staging và rollback target đã displaced khi có thể; không fallback sang DB trắng;
+- `PAGE_AUTO_DATA_DIR` là explicit operator choice nên không tự adopt legacy khi override được set.
+
+### 27.2. Process boundary
+
+Renderer và Playwright worker không tự quyết định data root. Electron Main resolve/prepare data directory trước khi mở SQLite và truyền `dataDirectory` xuống các IPC/service/worker contract hiện hữu. Business Facebook không chứa migration/path adoption logic.
+
+Hai startup registration hiện hữu (`legacyIndex` và Page Wall finite runtime) có thể cùng gọi prepare; service bắt buộc idempotent: callback đầu adopt nếu cần, callback sau thấy stable DB và dùng nguyên target.
+
+### 27.3. Installer/update boundary
+
+Lô này **chưa** bật NSIS hay updater. Packaging vẫn là portable ZIP cho tới batch riêng. Khi installer/update được thêm:
+
+- installer chỉ thay application binaries/resources;
+- DB/profile/runtime data ở stable root không được đưa vào installer artifact và không được uninstall/update như file ứng dụng;
+- update code phải mở đúng stable data root rồi chạy migration versioned hiện hữu;
+- live Windows acceptance phải dùng bản copy/backup của data thật trước khi coi migration sang installer an toàn.
