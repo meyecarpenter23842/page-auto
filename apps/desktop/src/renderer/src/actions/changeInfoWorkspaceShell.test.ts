@@ -32,4 +32,14 @@ describe('Change Info workspace shell', () => {
     expect(changeInfoSource).not.toContain('Live audit required')
     expect(changeInfoSource).not.toContain('ACCOUNT / PROFILE COMPOSER')
   })
+
+  it('exposes a single-account read-only Bio audit entry without unlocking mutation Start', () => {
+    expect(changeInfoSource).toContain("item.key === 'bio'")
+    expect(changeInfoSource).toContain("window.pageAutoChangeInfo.auditBio({ accountId: binding.accountId })")
+    expect(changeInfoSource).toContain("enabledBindings.length !== 1")
+    expect(changeInfoSource).toContain('Audit live')
+    expect(changeInfoSource).toContain('Audit Tiểu sử')
+    expect(changeInfoSource).toContain('JSON.stringify(bioAuditResult, null, 2)')
+    expect(changeInfoSource).toContain('className="change-info-start" disabled>Bắt đầu</button>')
+  })
 })
