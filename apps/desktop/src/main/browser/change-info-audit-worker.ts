@@ -105,22 +105,42 @@ async function collectBioEvidence(
       }
     }
 
-    const interactiveSelector = 'button,[role="button"],a,[role="link"],input,textarea,[contenteditable="true"]'
-    const auditPattern = /(bio|tiểu sử|edit|sửa|details|chi tiết|pencil|bút chì)/i
-    const targetPattern = /(bio|tiểu sử)/i
+    const interactiveSelector = 'button,[role="button"],a,[role="link"],input,textarea,[role="textbox"],[contenteditable="true"]'
+    const auditPattern = /(bio|tiểu sử|edit|sửa|details|chi tiết|pencil|bút chì|save|lưu|cancel|hủy|about yourself|yourself)/i
+    const targetPattern = /(bio|tiểu sử|details about you|about yourself|yourself)/i
 
     const relevantControls = Array.from(document.querySelectorAll(interactiveSelector))
       .filter(visible)
       .map(control)
-      .filter((item) => auditPattern.test(`${item.ariaLabel ?? ''} ${item.title ?? ''} ${item.text}`))
-      .slice(0, 80)
+      .filter((item) => {
+        const editorInput = item.tag === 'textarea' || item.role === 'textbox' || item.contentEditable
+        return editorInput || auditPattern.test(`${item.ariaLabel ?? ''} ${item.title ?? ''} ${item.text}`)
+      })
+      .slice(0, 100)
 
     const regions: ChangeInfoAuditRegionEvidence[] = []
     const seen = new Set<string>()
+    const addRegion = (region: Element): void => {
+      const text = normalize((region as HTMLElement).innerText || region.textContent).slice(0, 1600)
+      const controls = Array.from(region.querySelectorAll(interactiveSelector))
+        .filter(visible)
+        .map(control)
+        .slice(0, 40)
+      if (!text && !controls.length) return
+      const key = `${text}|${controls.map((item) => `${item.ariaLabel ?? ''}:${item.text}:${item.tag}:${item.role ?? ''}`).join('|')}`
+      if (seen.has(key)) return
+      seen.add(key)
+      regions.push({ text, controls })
+    }
+
+    for (const dialog of Array.from(document.querySelectorAll('[role="dialog"]')).filter(visible).slice(0, 8)) {
+      addRegion(dialog)
+    }
+
     const textCandidates = Array.from(document.querySelectorAll('div,span,p,h1,h2,h3,h4'))
       .filter(visible)
       .filter((element) => targetPattern.test(normalize((element as HTMLElement).innerText || element.textContent)))
-      .slice(0, 40)
+      .slice(0, 50)
 
     for (const candidate of textCandidates) {
       let region: Element | null = candidate
@@ -128,21 +148,14 @@ async function collectBioEvidence(
         const parentElement: HTMLElement = region.parentElement
         const text = normalize(parentElement.innerText || parentElement.textContent)
         const hasControl = parentElement.querySelector(interactiveSelector) !== null
-        if (hasControl && text.length > 0 && text.length <= 1200) region = parentElement
+        if (hasControl && text.length > 0 && text.length <= 1600) region = parentElement
         else break
       }
       if (!region) continue
-      const text = normalize((region as HTMLElement).innerText || region.textContent).slice(0, 1200)
+      const text = normalize((region as HTMLElement).innerText || region.textContent).slice(0, 1600)
       if (!targetPattern.test(text)) continue
-      const controls = Array.from(region.querySelectorAll(interactiveSelector))
-        .filter(visible)
-        .map(control)
-        .slice(0, 30)
-      const key = `${text}|${controls.map((item) => `${item.ariaLabel ?? ''}:${item.text}`).join('|')}`
-      if (seen.has(key)) continue
-      seen.add(key)
-      regions.push({ text, controls })
-      if (regions.length >= 12) break
+      addRegion(region)
+      if (regions.length >= 16) break
     }
 
     return {
@@ -159,11 +172,36 @@ async function collectBioEvidence(
   if (folder) {
     await mkdir(folder, { recursive: true })
     const safeUid = uid.replace(/[^a-zA-Z0-9._-]/g, '_') || 'account'
-    screenshotPath = join(folder, `${Date.now()}-${safeUid}-bio-audit.png`)
+    screenshotPath = join(folder, `${Date.now()}-${safeUid}-bio-editor-audit.png`)
     await page.screenshot({ path: screenshotPath, fullPage: false }).catch(() => { screenshotPath = null })
   }
 
   return { ...snapshot, screenshotPath }
+}
+
+async function openAuditedBioEditor(page: Page): Promise<{ ok: true } | { ok: false; code: string; message: string }> {
+  const detailsTab = page.getByRole('tab', { name: 'Details about you', exact: true })
+  const detailsTabCount = await detailsTab.count()
+  if (detailsTabCount !== 1 || !await detailsTab.isVisible().catch(() => false)) {
+    return {
+      ok: false,
+      code: 'bio_details_tab_unconfirmed',
+      message: `Không xác nhận được đúng tab “Details about you” từ live evidence (count=${detailsTabCount}).`
+    }
+  }
+
+  const trigger = page.getByRole('button', { name: 'Write some details about yourself', exact: true })
+  const triggerCount = await trigger.count()
+  if (triggerCount !== 1 || !await trigger.isVisible().catch(() => false)) {
+    return {
+      ok: false,
+      code: 'bio_editor_trigger_unconfirmed',
+      message: `Không xác nhận được đúng trigger Bio “Write some details about yourself” từ live evidence (count=${triggerCount}).`
+    }
+  }
+
+  await trigger.click()
+  return { ok: true }
 }
 
 async function runBioAudit(command: AuditBioCommand): Promise<ChangeInfoBioAuditResult> {
@@ -243,14 +281,29 @@ async function runBioAudit(command: AuditBioCommand): Promise<ChangeInfoBioAudit
       )
     }
 
+    const editor = await openAuditedBioEditor(runtime.page)
+    if (!editor.ok) return failed(job, editor.code, editor.message)
+    if (runtime.browser.pageSettleDelayMs > 0) {
+      await runtime.page.waitForTimeout(runtime.browser.pageSettleDelayMs)
+    }
+
+    const afterOpenAccess = await runtime.checkAccessBlock('sau khi mở editor Tiểu sử để audit')
+    if (afterOpenAccess.status !== 'success') {
+      return needsAttention(
+        job,
+        afterOpenAccess.code === 'verification_required' ? 'checkpoint_required' : 'session_needs_login',
+        afterOpenAccess.message
+      )
+    }
+
     const evidence = await collectBioEvidence(runtime.page, command.evidenceFolder, job.sessionAccount.uid)
     return {
       status: 'success',
       accountId: job.accountId,
       uid: job.sessionAccount.uid,
       message: evidence.relevantRegions.length || evidence.relevantControls.length
-        ? 'Đã thu evidence read-only cho surface Tiểu sử; chưa click Edit/Save và chưa thay đổi Facebook.'
-        : 'Đã mở About Details nhưng chưa tìm thấy semantic evidence liên quan Tiểu sử; cần xem screenshot/live surface.',
+        ? 'Đã mở đúng editor Tiểu sử bằng trigger đã audit và thu semantic evidence; chưa fill/Save và chưa thay đổi Facebook.'
+        : 'Đã click đúng trigger Tiểu sử nhưng chưa thu được semantic evidence của editor; cần xem screenshot/live surface.',
       evidence
     }
   } catch (error) {
