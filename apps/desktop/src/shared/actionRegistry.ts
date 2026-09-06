@@ -95,6 +95,10 @@ const VIEW_LINK_SCHEMA: ActionConfigSchema = {
   version: 1,
   fields: [{ key: 'url', label: 'Đường dẫn', kind: 'text', required: true, maxLength: 2000, placeholder: 'https://...' }]
 }
+const PROFILE_BIO_SCHEMA: ActionConfigSchema = {
+  version: 1,
+  fields: [{ key: 'bio', label: 'Tiểu sử', kind: 'text', required: true, placeholder: 'Nhập tiểu sử...' }]
+}
 
 function action(
   id: string,
@@ -106,6 +110,7 @@ function action(
     configSchema?: ActionConfigSchema
     requiresNavigation?: boolean
     supportsMedia?: boolean
+    runtimeStatus?: ActionRuntimeStatus
   } = {}
 ): ActionDefinition {
   return {
@@ -113,7 +118,7 @@ function action(
     category,
     label,
     description,
-    runtimeStatus: 'placeholder',
+    runtimeStatus: options.runtimeStatus ?? 'placeholder',
     capabilities: {
       actors: options.actors ?? BOTH_ACTORS,
       requiresNavigation: options.requiresNavigation ?? true,
@@ -168,6 +173,12 @@ export const ACTION_REGISTRY: readonly ActionDefinition[] = [
   action('post_story', 'publishing', 'Đăng story', 'Đăng story.', { supportsMedia: true }),
   action('copy_tiktok_douyin', 'publishing', 'Copy bài từ Tiktok/Douyin', 'Lấy nội dung từ Tiktok/Douyin để chuẩn bị đăng.', { supportsMedia: true }),
   action('copy_shopee', 'publishing', 'Copy bài từ Shopee', 'Lấy nội dung từ Shopee để chuẩn bị đăng.', { supportsMedia: true }),
+
+  action('profile.bio', 'profile', 'Đổi tiểu sử', 'Cập nhật Bio của Profile và chỉ báo thành công sau khi đọc lại đúng giá trị.', {
+    actors: PROFILE_ONLY,
+    configSchema: PROFILE_BIO_SCHEMA,
+    runtimeStatus: 'ready'
+  }),
 
   action('send_message', 'other', 'Gửi tin nhắn', 'Gửi tin nhắn Facebook.'),
   action('delete_post_comment', 'other', 'Xóa bài viết & comment', 'Xóa bài viết hoặc bình luận theo cấu hình.'),

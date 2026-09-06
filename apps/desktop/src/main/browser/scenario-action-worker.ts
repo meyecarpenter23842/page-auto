@@ -131,6 +131,9 @@ function actionDependencies(runtime: FacebookCommonRuntime, job: ScenarioActionW
     },
     groups: {
       joinGroup: common
+    },
+    profile: {
+      bio: common
     }
   }
 }

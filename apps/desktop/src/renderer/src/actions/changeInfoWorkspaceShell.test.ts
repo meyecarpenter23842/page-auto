@@ -20,26 +20,29 @@ describe('Change Info workspace shell', () => {
     expect(registrySource).toContain("id: 'change_info'")
   })
 
-  it('renders a dense desktop operation form with accounts, inline Data Source and presets while Facebook Start stays locked', () => {
+  it('renders dense account/data-source/preset controls and gates Start on saved audited config', () => {
     expect(changeInfoSource).toContain('Tài khoản chạy')
     expect(changeInfoSource).toContain('change-info-groups')
     expect(changeInfoSource).toContain('change-info-inline-editor')
     expect(changeInfoSource).toContain('aria-label={`Nguồn ${catalog.label}`}')
     expect(changeInfoSource).toContain('window.pageAutoChangeInfo.listPresets')
     expect(changeInfoSource).toContain('window.pageAutoChangeInfo.savePreset')
-    expect(changeInfoSource).toContain('Chế độ cấu hình · chưa chạy thay đổi trên Facebook')
-    expect(changeInfoSource).toContain('className="change-info-start" disabled>Bắt đầu</button>')
-    expect(changeInfoSource).not.toContain('Live audit required')
-    expect(changeInfoSource).not.toContain('ACCOUNT / PROFILE COMPOSER')
+    expect(changeInfoSource).toContain('const canStart = !runtimeBusy && !runtimeActive && !isDirty')
+    expect(changeInfoSource).toContain("runCommand('start')")
+    expect(changeInfoSource).toContain('Bắt đầu')
   })
 
-  it('exposes a single-account read-only Bio audit entry without unlocking mutation Start', () => {
+  it('keeps live Bio audit and exposes runtime pause/resume/stop plus typed result/log UI', () => {
     expect(changeInfoSource).toContain("item.key === 'bio'")
     expect(changeInfoSource).toContain("window.pageAutoChangeInfo.auditBio({ accountId: binding.accountId })")
     expect(changeInfoSource).toContain("enabledBindings.length !== 1")
     expect(changeInfoSource).toContain('Audit live')
     expect(changeInfoSource).toContain('Audit Tiểu sử')
     expect(changeInfoSource).toContain('JSON.stringify(bioAuditResult, null, 2)')
-    expect(changeInfoSource).toContain('className="change-info-start" disabled>Bắt đầu</button>')
+    expect(changeInfoSource).toContain("runCommand('pause')")
+    expect(changeInfoSource).toContain("runCommand('resume')")
+    expect(changeInfoSource).toContain("runCommand('stop')")
+    expect(changeInfoSource).toContain('runtime.accounts.map')
+    expect(changeInfoSource).toContain('runtime.logs.slice(-20)')
   })
 })

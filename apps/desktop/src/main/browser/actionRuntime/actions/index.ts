@@ -32,6 +32,7 @@ import { GroupInteractionActionExecutor } from './groupInteractionAction'
 import type { GroupInteractionActionDependencies } from './groupInteractionActionSupport'
 import { LeaveGroupActionExecutor, type LeaveGroupActionDependencies } from './leaveGroupAction'
 import { StoryPostActionExecutor } from './storyPostAction'
+import { ProfileBioActionExecutor, type ProfileBioActionDependencies } from './profileBioAction'
 
 export interface K41ViewActionDependencies {
   newsfeed: ViewNewsfeedDependencies
@@ -71,10 +72,15 @@ export interface K43GroupActionDependencies extends K431JoinGroupActionDependenc
   leaveGroup?: LeaveGroupActionDependencies
 }
 
+export interface ProfileActionDependencies {
+  bio: ProfileBioActionDependencies
+}
+
 export interface K4ActionDependencies {
   view: K41ViewActionDependencies
   friends: K42FriendActionDependencies
   groups: K43GroupActionDependencies
+  profile?: ProfileActionDependencies
 }
 
 export function registerCommonRuntimeActionExecutors(registry: ActionExecutorRegistry): void {
@@ -137,6 +143,13 @@ export function registerK434LeaveGroupActionExecutors(
   registry.register(new LeaveGroupActionExecutor(dependencies.leaveGroup))
 }
 
+export function registerProfileActionExecutors(
+  registry: ActionExecutorRegistry,
+  dependencies: ProfileActionDependencies
+): void {
+  registry.register(new ProfileBioActionExecutor(dependencies.bio))
+}
+
 export function createK41ActionExecutorRegistry(dependencies: K41ViewActionDependencies): ActionExecutorRegistry {
   const registry = new ActionExecutorRegistry()
   registerK41ViewActionExecutors(registry, dependencies)
@@ -196,6 +209,7 @@ export function createK4ActionExecutorRegistry(dependencies: K4ActionDependencie
   registerK434LeaveGroupActionExecutors(registry, {
     leaveGroup: dependencies.groups.leaveGroup ?? dependencies.groups.groupInteraction ?? dependencies.groups.joinGroup
   })
+  if (dependencies.profile) registerProfileActionExecutors(registry, dependencies.profile)
   applyK454StoryPostActionOverrides()
   registry.register(new StoryPostActionExecutor(dependencies.view.story))
   return registry
@@ -226,3 +240,4 @@ export * from './groupInteractionActionSupport'
 export * from './groupInteractionAction'
 export * from './leaveGroupAction'
 export * from './storyPostAction'
+export * from './profileBioAction'
