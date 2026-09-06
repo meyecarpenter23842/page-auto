@@ -1,0 +1,114 @@
+.update-section {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px;
+  align-content: start;
+}
+
+.update-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.update-card {
+  min-width: 0;
+  min-height: 88px;
+  display: grid;
+  align-content: center;
+  gap: 5px;
+  padding: 12px 14px;
+  border: 1px solid #dce4ee;
+  border-radius: 11px;
+  background: #f8fbff;
+}
+
+.update-card > span {
+  color: #718097;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.update-card strong { color: #193149; font-size: 15px; }
+.update-card small { color: #7b8798; font-size: 10px; }
+
+.update-main-card {
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 16px;
+  padding: 18px;
+  border: 1px solid #dfe6ef;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.update-main-card.has-error { border-color: #efc4c4; background: #fffafa; }
+.update-main-card.is-success { border-color: #b8dfca; background: #fbfffc; }
+.update-main-copy h3 { margin: 10px 0 7px; color: #1e2f46; font-size: 17px; }
+.update-main-copy p { max-width: 760px; margin: 0; color: #718096; font-size: 11px; line-height: 1.55; }
+
+.update-status-row { display: flex; align-items: center; gap: 8px; }
+.update-status-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 4px 8px;
+  color: #52637a;
+  border: 1px solid #d7e0ea;
+  border-radius: 999px;
+  background: #f5f8fb;
+  font-size: 9px;
+  font-weight: 850;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.update-status-pill.phase-checking,
+.update-status-pill.phase-available,
+.update-status-pill.phase-downloading,
+.update-status-pill.phase-ready,
+.update-status-pill.phase-installing { color: #175cd3; border-color: #b8d1f6; background: #eef5ff; }
+.update-status-pill.phase-up_to_date,
+.update-status-pill.phase-updated { color: #176c3c; border-color: #b8dfca; background: #effaf4; }
+.update-status-pill.phase-error { color: #9b3030; border-color: #f0c2c2; background: #fff4f4; }
+.update-version-hop { color: #5f6e82; font-size: 10px; font-weight: 750; }
+
+.update-progress-box {
+  display: grid;
+  gap: 8px;
+  padding: 12px 13px;
+  border: 1px solid #dce4ee;
+  border-radius: 10px;
+  background: #f8fbff;
+}
+.update-progress-line { display: flex; justify-content: space-between; gap: 16px; color: #63738a; font-size: 10px; }
+.update-progress-line strong { color: #334155; font-size: 11px; }
+.update-progress-track { height: 9px; overflow: hidden; border-radius: 999px; background: #e4ebf4; }
+.update-progress-bar { display: block; height: 100%; border-radius: inherit; background: #175cd3; transition: width 180ms ease; }
+
+.update-error {
+  padding: 9px 11px;
+  color: #9b3030;
+  border: 1px solid #f0c2c2;
+  border-radius: 8px;
+  background: #fff4f4;
+  font-size: 10px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.update-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-top: 2px;
+}
+.update-primary-button { min-width: 174px; }
+.update-actions > span { color: #7b8798; font-size: 10px; line-height: 1.4; }
+
+@media (max-width: 1200px) {
+  .update-summary-grid { grid-template-columns: 1fr; }
+  .update-card { min-height: 68px; }
+}

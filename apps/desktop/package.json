@@ -1,6 +1,6 @@
 {
   "name": "@page-auto/desktop",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "main": "./out/main/index.js",
   "scripts": {
@@ -15,11 +15,15 @@
     "verify:portable": "node ./scripts/verify-portable.mjs",
     "package:installer": "npm run build && electron-builder --win nsis --x64 --publish never",
     "verify:installer-config": "node ./scripts/verify-installer-config.mjs",
-    "verify:installer": "node ./scripts/verify-installer.mjs"
+    "verify:installer": "node ./scripts/verify-installer.mjs",
+    "package:update": "npm run build && electron-builder --win nsis --x64 --publish never",
+    "verify:updater-config": "node ./scripts/verify-updater-config.mjs",
+    "verify:update-artifacts": "node ./scripts/verify-update-artifacts.mjs"
   },
   "dependencies": {
     "better-sqlite3": "13.0.3",
     "drizzle-orm": "0.45.2",
+    "electron-updater": "6.8.9",
     "playwright-core": "1.55.0",
     "react": "19.2.8",
     "react-dom": "19.2.8"
