@@ -15,6 +15,7 @@ import {
   parseChangeInfoWorkspaceDraft,
   serializeChangeInfoWorkspaceDraft,
   validateChangeInfoWorkspaceDraft,
+  type ChangeInfoCategory,
   type ChangeInfoDataScalar,
   type ChangeInfoDataSourceConfig,
   type ChangeInfoDataSourceType,
@@ -45,8 +46,8 @@ function sourceTypeLabel(type: ChangeInfoDataSourceType): string {
     list: 'Danh sách',
     file: 'File',
     folder: 'Folder',
-    random_from_list: 'Random từ danh sách',
-    sequential_from_list: 'Tuần tự từ danh sách',
+    random_from_list: 'Random danh sách',
+    sequential_from_list: 'Tuần tự danh sách',
     random_generator: 'Random generator',
     source_profile: 'Profile nguồn'
   }
@@ -67,6 +68,19 @@ function parseListText(value: string): ChangeInfoDataScalar[] {
     .split(/\r?\n/)
     .map((entry) => entry.trim())
     .filter(Boolean)
+}
+
+function accountStatusLabel(status: AccountRecord['status']): string {
+  const labels: Partial<Record<AccountRecord['status'], string>> = {
+    valid: 'Hoạt động',
+    unknown: 'Chưa kiểm tra',
+    needs_login: 'Cần đăng nhập',
+    two_factor_required: 'Cần 2FA',
+    locked: 'Bị khóa',
+    disabled: 'Vô hiệu hóa',
+    needs_attention: 'Cần xử lý'
+  }
+  return labels[status] ?? status
 }
 
 export function ChangeInfoWorkspace({ workspace, availableAccounts, onWorkspaceSaved }: ChangeInfoWorkspaceProps) {
@@ -90,6 +104,7 @@ export function ChangeInfoWorkspace({ workspace, availableAccounts, onWorkspaceS
   const enabledAccountCount = accountBindings.filter((item) => item.enabled).length
   const enabledItems = useMemo(() => enabledChangeInfoCatalogItems(draft), [draft])
   const validationErrors = useMemo(() => validateChangeInfoWorkspaceDraft(draft), [draft])
+  const accountMap = useMemo(() => new Map(availableAccounts.map((account) => [account.id, account] as const)), [availableAccounts])
   const normalizedQuery = query.trim().toLocaleLowerCase('vi')
   const visibleCatalog = useMemo(() => normalizedQuery
     ? CHANGE_INFO_CATALOG.filter((item) => `${item.label} ${item.key} ${item.description}`.toLocaleLowerCase('vi').includes(normalizedQuery))
@@ -114,6 +129,16 @@ export function ChangeInfoWorkspace({ workspace, availableAccounts, onWorkspaceS
       return [...kept, ...added]
     })
     setShowAccountPicker(false)
+    markDirty()
+  }
+
+  const setAccountEnabled = (accountId: number, enabled: boolean) => {
+    setAccountBindings((current) => current.map((binding) => binding.accountId === accountId ? { ...binding, enabled } : binding))
+    markDirty()
+  }
+
+  const setAllAccountsEnabled = (enabled: boolean) => {
+    setAccountBindings((current) => current.map((binding) => ({ ...binding, enabled })))
     markDirty()
   }
 
@@ -269,67 +294,112 @@ export function ChangeInfoWorkspace({ workspace, availableAccounts, onWorkspaceS
     const action = draft.actions[key]
     if (!catalog || !action) return null
     if (catalog.allowedSources.length === 0) {
-      return <div className="change-info-source-note">Nguồn này sẽ dùng runtime secret/reference sau live audit; preset không lưu secret.</div>
+      return <div className="change-info-source-note">Dữ liệu nhạy cảm chỉ nhập lúc chạy, không lưu trong preset.</div>
     }
     const source = action.source
-    return <div className="change-info-source-editor">
-      <label><span>Nguồn dữ liệu</span><select value={source.type} onChange={(event) => setSourceType(key, event.target.value as ChangeInfoDataSourceType)}>{catalog.allowedSources.map((type) => <option key={type} value={type}>{sourceTypeLabel(type)}</option>)}</select></label>
-      {source.type === 'fixed' && catalog.valueKind === 'boolean' ? <label><span>Giá trị</span><select value={String(source.value ?? true)} onChange={(event) => patchSource(key, { value: event.target.value === 'true' })}><option value="true">Bật</option><option value="false">Tắt</option></select></label> : null}
-      {source.type === 'fixed' && catalog.valueKind !== 'boolean' ? <label className="grow"><span>Giá trị</span><input value={scalarText(source.value)} onChange={(event) => patchSource(key, { value: event.target.value })} placeholder="Nhập giá trị cố định…" /></label> : null}
-      {(source.type === 'list' || source.type === 'random_from_list' || source.type === 'sequential_from_list') ? <label className="stack"><span>Danh sách · mỗi dòng một giá trị</span><textarea rows={4} value={listText(source)} onChange={(event) => patchSource(key, { values: parseListText(event.target.value) })} placeholder={'Giá trị 1\nGiá trị 2\nGiá trị 3'} /></label> : null}
-      {source.type === 'file' ? <label className="grow"><span>File dữ liệu</span><div className="change-info-path-row"><input value={source.path ?? ''} readOnly placeholder="Chưa chọn file…" /><button type="button" onClick={() => void choosePath(key, 'file')}>Chọn file</button></div></label> : null}
-      {source.type === 'folder' ? <label className="grow"><span>Folder media</span><div className="change-info-path-row"><input value={source.path ?? ''} readOnly placeholder="Chưa chọn folder…" /><button type="button" onClick={() => void choosePath(key, 'folder')}>Chọn folder</button></div></label> : null}
-      {(source.type === 'file' || source.type === 'folder') ? <label><span>Phân bổ snapshot</span><select value={source.selectionMode ?? 'sequential'} onChange={(event) => patchSource(key, { selectionMode: event.target.value as 'sequential' | 'random' })}><option value="sequential">Tuần tự</option><option value="random">Random ổn định theo run</option></select></label> : null}
-      {source.type === 'random_generator' ? <label className="grow"><span>Generator ID</span><input value={source.generatorId ?? ''} onChange={(event) => patchSource(key, { generatorId: event.target.value })} placeholder="Chỉ dùng generator đã đăng ký/audit" /></label> : null}
-      {source.type === 'source_profile' ? <label className="grow"><span>UID Profile nguồn</span><input value={source.sourceProfileUid ?? ''} onChange={(event) => patchSource(key, { sourceProfileUid: event.target.value })} placeholder="UID nguồn" /></label> : null}
+    return <div className="change-info-inline-editor">
+      <select className="change-info-source-type" aria-label={`Nguồn ${catalog.label}`} value={source.type} onChange={(event) => setSourceType(key, event.target.value as ChangeInfoDataSourceType)}>{catalog.allowedSources.map((type) => <option key={type} value={type}>{sourceTypeLabel(type)}</option>)}</select>
+      {source.type === 'fixed' && catalog.valueKind === 'boolean' ? <select aria-label={`Giá trị ${catalog.label}`} value={String(source.value ?? true)} onChange={(event) => patchSource(key, { value: event.target.value === 'true' })}><option value="true">Bật</option><option value="false">Tắt</option></select> : null}
+      {source.type === 'fixed' && catalog.valueKind !== 'boolean' ? <input className="change-info-value-input" value={scalarText(source.value)} onChange={(event) => patchSource(key, { value: event.target.value })} placeholder="Nhập giá trị…" /> : null}
+      {(source.type === 'list' || source.type === 'random_from_list' || source.type === 'sequential_from_list') ? <textarea className="change-info-list-input" rows={3} value={listText(source)} onChange={(event) => patchSource(key, { values: parseListText(event.target.value) })} placeholder={'Mỗi dòng một giá trị\nGiá trị 1\nGiá trị 2'} /> : null}
+      {source.type === 'file' ? <div className="change-info-path-row"><input value={source.path ?? ''} readOnly placeholder="Chưa chọn file…" /><button type="button" onClick={() => void choosePath(key, 'file')}>Chọn file</button></div> : null}
+      {source.type === 'folder' ? <div className="change-info-path-row"><input value={source.path ?? ''} readOnly placeholder="Chưa chọn folder…" /><button type="button" onClick={() => void choosePath(key, 'folder')}>Chọn folder</button></div> : null}
+      {source.type === 'file' || source.type === 'folder' ? <select className="change-info-selection-mode" aria-label={`Phân bổ ${catalog.label}`} value={source.selectionMode ?? 'sequential'} onChange={(event) => patchSource(key, { selectionMode: event.target.value as 'sequential' | 'random' })}><option value="sequential">Tuần tự</option><option value="random">Random</option></select> : null}
+      {source.type === 'random_generator' ? <input className="change-info-value-input" value={source.generatorId ?? ''} onChange={(event) => patchSource(key, { generatorId: event.target.value })} placeholder="Generator ID" /> : null}
+      {source.type === 'source_profile' ? <input className="change-info-value-input" value={source.sourceProfileUid ?? ''} onChange={(event) => patchSource(key, { sourceProfileUid: event.target.value })} placeholder="UID Profile nguồn" /> : null}
     </div>
+  }
+
+  const renderCategoryPanel = (category: ChangeInfoCategory) => {
+    const rows = visibleCatalog.filter((item) => item.category === category)
+    if (!rows.length) return null
+    const enabledInCategory = rows.filter((item) => draft.actions[item.key]?.enabled).length
+    return <section key={category} className={`change-info-group change-info-group-${category}`}>
+      <header className="change-info-group-head">
+        <strong>{CHANGE_INFO_CATEGORY_LABELS[category]}</strong>
+        <span>{enabledInCategory}/{rows.length}</span>
+      </header>
+      <div className="change-info-group-body">
+        {rows.map((item) => {
+          const enabled = draft.actions[item.key]?.enabled ?? false
+          return <div key={item.key} className={enabled ? 'change-info-action-row enabled' : 'change-info-action-row'}>
+            <div className="change-info-action-line">
+              <label className="change-info-action-toggle" title={item.description}>
+                <input type="checkbox" checked={enabled} onChange={(event) => setActionEnabled(item.key, event.target.checked)} />
+                <span>{item.label}</span>
+              </label>
+              {item.destructive ? <small className="change-info-sensitive">Nhạy cảm</small> : null}
+            </div>
+            {enabled ? renderSourceEditor(item.key) : null}
+          </div>
+        })}
+      </div>
+    </section>
   }
 
   return <section className="change-info-workspace" aria-label={workspace.label}>
     <header className="change-info-head">
-      <div><p className="change-info-kicker">ACCOUNT / PROFILE COMPOSER</p><h2>{workspace.label}</h2><p>Batch 2 dựng workspace + Data Source + preset thật. Mutation Facebook vẫn bị khóa cho tới khi từng action live-audit và có verifier.</p></div>
-      <div className="change-info-head-actions"><span data-state={saveStatus}>{isDirty ? 'Chưa lưu' : saveStatus === 'saved' ? 'Đã lưu' : 'Đã đồng bộ'}</span><button type="button" disabled={!isDirty || saveStatus === 'saving'} onClick={() => void saveWorkspace()}>{saveStatus === 'saving' ? 'Đang lưu…' : 'Lưu cấu hình'}</button></div>
+      <div className="change-info-title"><p>SỬA THÔNG TIN TÀI KHOẢN</p><h2>{workspace.label}</h2></div>
+      <div className="change-info-head-actions">
+        <span data-state={saveStatus}>{isDirty ? 'Chưa lưu' : saveStatus === 'saved' ? 'Đã lưu' : 'Đã đồng bộ'}</span>
+        <button type="button" disabled={!isDirty || saveStatus === 'saving'} onClick={() => void saveWorkspace()}>{saveStatus === 'saving' ? 'Đang lưu…' : 'Lưu cấu hình'}</button>
+      </div>
     </header>
 
     {saveError ? <div className="change-info-alert error">{saveError}</div> : null}
     {presetError ? <div className="change-info-alert error">{presetError}</div> : null}
 
     <div className="change-info-toolbar">
-      <div className="change-info-account-summary"><strong>{accountBindings.length}</strong><span>tài khoản · bật {enabledAccountCount}</span><button type="button" onClick={() => setShowAccountPicker(true)}>Chọn lại</button></div>
-      <input className="change-info-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Tìm action / field…" />
-      <div className="change-info-preset"><select value={presetId ?? ''} onChange={(event) => applyPreset(event.target.value ? Number(event.target.value) : null)}><option value="">Preset…</option>{presets.map((preset) => <option key={preset.id} value={preset.id}>{preset.name}</option>)}</select><button type="button" disabled={presetBusy} onClick={() => void savePreset()}>Lưu preset</button><button type="button" disabled={!presetId || presetBusy} onClick={() => void deletePreset()}>Xóa</button></div>
+      <input className="change-info-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Tìm chức năng…" />
+      <div className="change-info-preset">
+        <select value={presetId ?? ''} onChange={(event) => applyPreset(event.target.value ? Number(event.target.value) : null)}><option value="">Thiết lập đã lưu…</option>{presets.map((preset) => <option key={preset.id} value={preset.id}>{preset.name}</option>)}</select>
+        <button type="button" disabled={presetBusy} onClick={() => void savePreset()}>Lưu preset</button>
+        <button type="button" disabled={!presetId || presetBusy} onClick={() => void deletePreset()}>Xóa</button>
+      </div>
+      <div className="change-info-mode-note"><span />Chế độ cấu hình · chưa chạy thay đổi trên Facebook</div>
     </div>
 
-    <div className="change-info-layout">
-      <aside className="change-info-catalog">
-        <div className="change-info-section-title"><div><small>CATALOG</small><strong>Chọn thay đổi</strong></div><span>{enabledItems.length} đã chọn</span></div>
-        {CHANGE_INFO_CATEGORIES.map((category) => {
-          const rows = visibleCatalog.filter((item) => item.category === category)
-          if (!rows.length) return null
-          return <section key={category} className="change-info-category"><h3>{CHANGE_INFO_CATEGORY_LABELS[category]}</h3>{rows.map((item) => {
-            const enabled = draft.actions[item.key]?.enabled ?? false
-            return <label key={item.key} className={enabled ? 'change-info-catalog-item selected' : 'change-info-catalog-item'}><input type="checkbox" checked={enabled} onChange={(event) => setActionEnabled(item.key, event.target.checked)} /><span><strong>{item.label}</strong><small>{item.description}</small></span><em data-status={item.supportStatus}>{item.supportStatus === 'ready' ? 'Ready' : 'Cần audit'}</em></label>
-          })}</section>
-        })}
+    <div className="change-info-body">
+      <aside className="change-info-account-panel">
+        <div className="change-info-panel-head">
+          <div><strong>Tài khoản chạy</strong><small>{accountBindings.length} tài khoản · bật {enabledAccountCount}</small></div>
+          <button type="button" onClick={() => setShowAccountPicker(true)}>Chọn lại</button>
+        </div>
+        <div className="change-info-account-tools">
+          <button type="button" onClick={() => setAllAccountsEnabled(true)}>Bật tất cả</button>
+          <button type="button" onClick={() => setAllAccountsEnabled(false)}>Tắt tất cả</button>
+        </div>
+        <div className="change-info-account-list">
+          {accountBindings.length === 0 ? <div className="change-info-empty-small">Chưa chọn tài khoản.</div> : accountBindings.map((binding, index) => {
+            const account = accountMap.get(binding.accountId)
+            return <label key={binding.accountId} className={binding.enabled ? 'change-info-account-row enabled' : 'change-info-account-row'}>
+              <input type="checkbox" checked={binding.enabled} onChange={(event) => setAccountEnabled(binding.accountId, event.target.checked)} />
+              <span className="change-info-account-index">{index + 1}</span>
+              <span className="change-info-account-text"><strong>{account?.name || account?.username || account?.uid || `ACC#${binding.accountId}`}</strong><small>{account?.uid ?? `ID ${binding.accountId}`}</small></span>
+              <em>{account ? accountStatusLabel(account.status) : 'Không tìm thấy'}</em>
+            </label>
+          })}
+        </div>
       </aside>
 
-      <main className="change-info-config">
-        <div className="change-info-section-title"><div><small>CONFIG</small><strong>Action đã chọn</strong></div><span>Profile actor</span></div>
-        {enabledItems.length === 0 ? <div className="change-info-empty">Chọn một hoặc nhiều thay đổi ở catalog để cấu hình.</div> : enabledItems.map((item, index) => <article className="change-info-action-card" key={item.key}>
-          <div className="change-info-action-card-head"><div><span>{index + 1}</span><div><strong>{item.label}</strong><small>{item.key}</small></div></div><div className="change-info-action-buttons"><button type="button" disabled={index === 0} onClick={() => moveAction(item.key, -1)}>↑</button><button type="button" disabled={index === enabledItems.length - 1} onClick={() => moveAction(item.key, 1)}>↓</button><button type="button" onClick={() => setActionEnabled(item.key, false)}>Bỏ</button></div></div>
-          <div className="change-info-support-row"><span className="change-info-status audit">Live audit required</span><span>Action Registry chưa có executor mutation cho field này.</span>{item.destructive ? <b>Thao tác nhạy cảm</b> : null}</div>
-          {renderSourceEditor(item.key)}
-        </article>)}
+      <main className="change-info-main">
+        <div className="change-info-groups">
+          {CHANGE_INFO_CATEGORIES.filter((category) => category !== 'workflow').map(renderCategoryPanel)}
+        </div>
 
-        <section className="change-info-runtime-card">
-          <div className="change-info-section-title"><div><small>WORKFLOW</small><strong>Runtime contract</strong></div><span>chưa chạy Facebook</span></div>
-          <div className="change-info-runtime-grid">
-            <label><span>Before Scenario ID</span><input type="number" min={1} value={draft.beforeScenarioId ?? ''} onChange={(event) => { setDraft((current) => ({ ...current, beforeScenarioId: event.target.value ? Number(event.target.value) : null })); markDirty() }} placeholder="Không" /></label>
-            <label><span>After Scenario ID</span><input type="number" min={1} value={draft.afterScenarioId ?? ''} onChange={(event) => { setDraft((current) => ({ ...current, afterScenarioId: event.target.value ? Number(event.target.value) : null })); markDirty() }} placeholder="Không" /></label>
+        <section className="change-info-workflow-panel">
+          <header className="change-info-group-head"><strong>Workflow & chạy</strong><span>{enabledItems.length} thay đổi</span></header>
+          <div className="change-info-workflow-grid">
+            <label><span>Kịch bản trước</span><input type="number" min={1} value={draft.beforeScenarioId ?? ''} onChange={(event) => { setDraft((current) => ({ ...current, beforeScenarioId: event.target.value ? Number(event.target.value) : null })); markDirty() }} placeholder="Không" /></label>
+            <label><span>Kịch bản sau</span><input type="number" min={1} value={draft.afterScenarioId ?? ''} onChange={(event) => { setDraft((current) => ({ ...current, afterScenarioId: event.target.value ? Number(event.target.value) : null })); markDirty() }} placeholder="Không" /></label>
             <label><span>TK song song</span><input type="number" min={1} max={20} value={draft.accountConcurrency} onChange={(event) => { setDraft((current) => ({ ...current, accountConcurrency: Math.min(20, Math.max(1, Number(event.target.value) || 1)) })); markDirty() }} /></label>
-            <label className="change-info-verify"><input type="checkbox" checked readOnly /><span>Verify sau thay đổi · bắt buộc</span></label>
+            <label className="change-info-verify"><input type="checkbox" checked readOnly /><span>Verify sau thay đổi</span></label>
           </div>
-          <div className="change-info-gate"><div><strong>Start đang khóa đúng contract</strong><p>{validationErrors[0] ?? (enabledAccountCount < 1 ? 'Chưa có account được bật.' : 'Batch 2 chưa có Change Info runner/executor mutation.')}</p></div><button type="button" disabled>Bắt đầu</button></div>
+          {enabledItems.length ? <div className="change-info-order-row"><strong>Thứ tự chạy</strong><div>{enabledItems.map((item, index) => <span key={item.key}><b>{index + 1}. {item.label}</b><button type="button" disabled={index === 0} onClick={() => moveAction(item.key, -1)}>↑</button><button type="button" disabled={index === enabledItems.length - 1} onClick={() => moveAction(item.key, 1)}>↓</button></span>)}</div></div> : null}
+          <div className="change-info-start-row">
+            <div><strong>Chưa sẵn sàng chạy</strong><p>{validationErrors[0] ?? (enabledAccountCount < 1 ? 'Chưa có tài khoản được bật.' : 'Các action đang chờ hoàn tất kiểm thử Facebook.')}</p></div>
+            <button type="button" className="change-info-start" disabled>Bắt đầu</button>
+          </div>
         </section>
       </main>
     </div>
