@@ -12,9 +12,17 @@ import type {
   HotmailSettingsView,
   SaveHotmailSettingsInput
 } from '../../../shared/hotmail'
-import { filterHotmailRows, previewClientId, type EmailQuickFilter } from './hotmailUiModel'
+import {
+  EMAIL_CATEGORY_ALL,
+  filterHotmailRows,
+  listHotmailCategoryOptions,
+  previewClientId,
+  type EmailCategoryFilter,
+  type EmailQuickFilter
+} from './hotmailUiModel'
 import { HotmailComboPanel } from './HotmailComboPanel'
 import './hotmailAuto.css'
+import './hotmailCanonicalGrid.css'
 
 interface SettingsDraft {
   profileRoot: string
@@ -141,6 +149,7 @@ export function HotmailAuto() {
   const [panel, setPanel] = useState<EmailPanel>(null)
   const [query, setQuery] = useState('')
   const [quickFilter, setQuickFilter] = useState<EmailQuickFilter>('all')
+  const [categoryFilter, setCategoryFilter] = useState<EmailCategoryFilter>(EMAIL_CATEGORY_ALL)
   const [recoveryEmail, setRecoveryEmail] = useState('')
   const [recoveryOperation, setRecoveryOperation] = useState<HotmailRecoveryOperation>('add')
   const [recoveryAwaitingConfirmation, setRecoveryAwaitingConfirmation] = useState(false)
@@ -148,7 +157,11 @@ export function HotmailAuto() {
   const [confirmNewPassword, setConfirmNewPassword] = useState('')
   const [passwordAwaitingConfirmation, setPasswordAwaitingConfirmation] = useState(false)
 
-  const visibleRows = useMemo(() => filterHotmailRows(rows, query, quickFilter), [rows, query, quickFilter])
+  const categoryOptions = useMemo(() => listHotmailCategoryOptions(rows), [rows])
+  const visibleRows = useMemo(
+    () => filterHotmailRows(rows, query, quickFilter, categoryFilter),
+    [rows, query, quickFilter, categoryFilter]
+  )
   const selectedIds = useMemo(() => [...selection], [selection])
   const selectedRows = useMemo(() => rows.filter((row) => selection.has(row.accountId)), [rows, selection])
   const rowsWithErrors = useMemo(() => rows.filter((row) => row.lastError), [rows])
@@ -171,6 +184,10 @@ export function HotmailAuto() {
   const refreshAll = async () => await Promise.all([refreshRows(), refreshSettings()])
 
   useEffect(() => { void refreshAll().catch((error) => setMessage(error instanceof Error ? error.message : String(error))) }, [])
+  useEffect(() => {
+    if (categoryFilter === EMAIL_CATEGORY_ALL) return
+    if (!categoryOptions.some((option) => option.value === categoryFilter)) setCategoryFilter(EMAIL_CATEGORY_ALL)
+  }, [categoryFilter, categoryOptions])
   useEffect(() => {
     if (!contextMenu) return
     const close = () => setContextMenu(null)
@@ -209,6 +226,17 @@ export function HotmailAuto() {
     visibleRows.forEach((row) => allVisibleSelected ? next.delete(row.accountId) : next.add(row.accountId))
     return next
   })
+
+  const selectAllVisible = () => {
+    setSelection(new Set(visibleRows.map((row) => row.accountId)))
+    setContextMenu(null)
+  }
+
+  const clearSelection = () => {
+    setSelection(new Set())
+    setLastSelectedId(null)
+    setContextMenu(null)
+  }
 
   const toggleOne = (accountId: number) => {
     setLastSelectedId(accountId)
@@ -372,6 +400,7 @@ export function HotmailAuto() {
   }
 
   const contextIds = contextMenu && selection.has(contextMenu.accountId) ? selectedIds : contextMenu ? [contextMenu.accountId] : []
+  const contextRow = contextMenu ? rows.find((row) => row.accountId === contextMenu.accountId) ?? null : null
   const panelRows = selectedRows.length > 0 ? selectedRows : rows
   const logRows = selectedRows.length > 0 ? selectedRows : rowsWithErrors
   const allVisibleSelected = visibleRows.length > 0 && visibleRows.every((row) => selection.has(row.accountId))
@@ -381,7 +410,7 @@ export function HotmailAuto() {
       <div className="email-command-primary">
         <button className="email-button primary" disabled={isBusy('open')} onClick={() => void openMail()}>{isBusy('open') && <Spinner />}Mở mail</button>
         <button className="email-button success" disabled={isBusy('codes')} onClick={() => void getCodes()}>{isBusy('codes') && <Spinner />}Lấy mã</button>
-        <button className="email-button primary" disabled={isBusy('check')} onClick={() => void checkMail()}>{isBusy('check') && <Spinner />}Check Live</button>
+        <button className="email-button primary" disabled={isBusy('check')} onClick={() => void checkMail()}>{isBusy('check') && <Spinner />}Check Live Mail</button>
         <button className="email-button secondary" disabled={isBusy('oauth') || selectedRows.length !== 1} onClick={() => void connectMailbox()}>{isBusy('oauth') && <Spinner />}Lấy / cập nhật OAuth</button>
         <button className="email-button secondary" disabled={isBusy('copy')} onClick={() => void copyEmails()}>{isBusy('copy') && <Spinner />}Copy Email</button>
       </div>
@@ -398,8 +427,12 @@ export function HotmailAuto() {
 
     <div className="email-grid-tools">
       <div className="email-search-box"><span>⌕</span><input value={query} onChange={(event: ChangeEvent<HTMLInputElement>) => setQuery(event.target.value)} placeholder="Tìm UID, Tên TK, Nhóm TK, Email, ghi chú, lỗi..." />{query ? <button onClick={() => setQuery('')}>×</button> : null}</div>
+      <select className="email-category-filter" value={categoryFilter} onChange={(event: ChangeEvent<HTMLSelectElement>) => setCategoryFilter(event.target.value)} aria-label="Lọc theo Nhóm TK">
+        <option value={EMAIL_CATEGORY_ALL}>Tất cả nhóm ({rows.length})</option>
+        {categoryOptions.map((option) => <option key={option.value} value={option.value}>{option.label} ({option.count})</option>)}
+      </select>
       <div className="email-filter-pills">{QUICK_FILTERS.map((filter) => <button key={filter.id} className={quickFilter === filter.id ? 'active' : ''} onClick={() => setQuickFilter(filter.id)}>{filter.label}</button>)}</div>
-      <div className="email-grid-meta"><strong>{selectedRows.length}</strong> đã chọn<span>{visibleRows.length}/{rows.length} đang hiện</span>{selectedRows.length ? <button onClick={() => setSelection(new Set())}>Bỏ chọn</button> : null}</div>
+      <div className="email-grid-meta"><strong>{selectedRows.length}</strong> đã chọn<span>{visibleRows.length}/{rows.length} đang hiện</span>{selectedRows.length ? <button onClick={clearSelection}>Bỏ chọn</button> : null}</div>
     </div>
 
     <div className="email-health-strip">
@@ -492,6 +525,21 @@ export function HotmailAuto() {
       </> : <div className="email-panel-empty">Đang tải cài đặt Email...</div>}</div> : null}
     </aside></div> : null}
 
-    {contextMenu ? <div className="email-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onMouseDown={(event) => event.stopPropagation()}><div className="email-context-title">{contextIds.length} tài khoản trong selection</div><button onClick={() => { setContextMenu(null); void openMail(contextIds) }}>Mở mail</button><button onClick={() => { setContextMenu(null); void getCodes(contextIds) }}>Lấy mã</button><button onClick={() => { setContextMenu(null); void checkMail(contextIds) }}>Check Live Hotmail</button><button disabled={contextIds.length !== 1} onClick={() => { setContextMenu(null); void connectMailbox(contextIds[0]) }}>Lấy / cập nhật OAuth</button><div className="email-context-separator" /><button onClick={() => { setContextMenu(null); void copyEmails(contextIds) }}>Copy Email</button><button onClick={() => { setContextMenu(null); setPanel('combo') }}>Combo Email</button><button onClick={() => { setContextMenu(null); setPanel('password') }}>Đổi Password Email</button><button onClick={() => { setContextMenu(null); setPanel('recovery') }}>Thao tác Mail khôi phục</button><button onClick={() => { setContextMenu(null); setPanel('logs') }}>Xem trạng thái / lỗi</button></div> : null}
+    {contextMenu ? <div className="email-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onMouseDown={(event) => event.stopPropagation()}>
+      <div className="email-context-title"><strong>{contextIds.length} tài khoản trong selection</strong><span className="email-context-identity">{contextRow?.accountName ?? contextRow?.uid ?? 'Tài khoản'} · {contextRow?.accountCategory?.trim() || 'Chưa gán nhóm'}</span></div>
+      <button onClick={() => { setContextMenu(null); void openMail(contextIds) }}>Mở mail</button>
+      <button onClick={() => { setContextMenu(null); void getCodes(contextIds) }}>Lấy mã</button>
+      <button onClick={() => { setContextMenu(null); void checkMail(contextIds) }}>Check Live Mail</button>
+      <button disabled={contextIds.length !== 1} onClick={() => { setContextMenu(null); void connectMailbox(contextIds[0]) }}>Lấy / cập nhật OAuth</button>
+      <div className="email-context-separator" />
+      <button onClick={() => { setContextMenu(null); void copyEmails(contextIds) }}>Copy Email</button>
+      <button onClick={() => { setContextMenu(null); setPanel('combo') }}>Combo Email</button>
+      <button onClick={() => { setContextMenu(null); setPanel('password') }}>Đổi Password Email</button>
+      <button onClick={() => { setContextMenu(null); setPanel('recovery') }}>Thao tác Mail khôi phục</button>
+      <button onClick={() => { setContextMenu(null); setPanel('logs') }}>Xem trạng thái / lỗi</button>
+      <div className="email-context-separator" />
+      <button disabled={visibleRows.length === 0} onClick={selectAllVisible}>Chọn tất cả đang lọc ({visibleRows.length})</button>
+      <button disabled={selection.size === 0} onClick={clearSelection}>Bỏ chọn tất cả</button>
+    </div> : null}
   </section>
 }
