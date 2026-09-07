@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { AccountGroupRepository } from './accountGroupRepository'
 import { parseAccountImport } from './accountImport'
 import { AccountRepository } from './accountRepository'
 import { initializeDatabase } from './index'
@@ -18,7 +19,11 @@ function createRepository() {
   const directory = mkdtempSync(join(tmpdir(), 'page-auto-account-update-'))
   tempDirectories.push(directory)
   const runtime = initializeDatabase(join(directory, 'page-auto.sqlite'))
-  return { runtime, repository: new AccountRepository(runtime.client) }
+  return {
+    runtime,
+    repository: new AccountRepository(runtime.client),
+    groupRepository: new AccountGroupRepository(runtime.client)
+  }
 }
 
 describe('account import delimiter semantics', () => {
@@ -81,6 +86,52 @@ describe('AccountRepository explicit import/update operations', () => {
     expect(result).toMatchObject({ imported: 1, updated: 0, skipped: 1 })
     expect(repository.getByUid('10001')?.note).toBe('old')
     expect(repository.getByUid('10002')?.note).toBe('fresh')
+    runtime.close()
+  })
+
+  it('assigns both new and existing UIDs to the selected import group without creating duplicates', () => {
+    const { runtime, repository, groupRepository } = createRepository()
+    groupRepository.create({ name: 'Old Team' })
+    groupRepository.create({ name: 'Import Team' })
+    repository.create({ uid: '10001', category: 'Old Team', note: 'keep-existing-data' })
+
+    const result = repository.import({
+      rawText: '10001|must-not-overwrite\n10002|fresh-note',
+      delimiter: '|',
+      mapping: ['uid', 'note'],
+      operation: 'insert',
+      targetGroupName: 'Import Team'
+    })
+
+    expect(result).toMatchObject({ imported: 1, updated: 1, skipped: 0, errors: [] })
+    expect(repository.getByUid('10001')).toMatchObject({
+      uid: '10001',
+      category: 'Import Team',
+      note: 'keep-existing-data'
+    })
+    expect(repository.getByUid('10002')).toMatchObject({
+      uid: '10002',
+      category: 'Import Team',
+      note: 'fresh-note'
+    })
+    expect(repository.list({}).filter((account) => account.uid === '10001')).toHaveLength(1)
+    expect(repository.list({}).filter((account) => account.uid === '10002')).toHaveLength(1)
+    expect(groupRepository.overview().groups.find((group) => group.name === 'Import Team')?.accountCount).toBe(2)
+    runtime.close()
+  })
+
+  it('rejects a selected import group that no longer exists', () => {
+    const { runtime, repository } = createRepository()
+
+    expect(() => repository.import({
+      rawText: '10001|fresh',
+      delimiter: '|',
+      mapping: ['uid', 'note'],
+      operation: 'insert',
+      targetGroupName: 'Deleted Team'
+    })).toThrow('Nhóm được chọn không còn tồn tại.')
+
+    expect(repository.getByUid('10001')).toBeNull()
     runtime.close()
   })
 

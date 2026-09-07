@@ -22,11 +22,20 @@ requireMatch(builderConfig, new RegExp(`^\\s*url:\\s*${publicFeed.replace(/[.*+?
 requireMatch(builderConfig, /^\s*channel:\s*latest\s*$/m, 'latest channel')
 requireMatch(builderConfig, /^\s*include:\s*resources\/installer\.nsh\s*$/m, 'NSIS data-preservation include')
 
-if (!installerInclude.includes('!macro customRemoveFiles')) {
+const customUnInit = installerInclude.match(/!macro customUnInit([\s\S]*?)!macroend/)?.[1] ?? ''
+if (!customUnInit.includes('${if} ${isUpdated}') || !customUnInit.includes('SetSilent silent')) {
+  throw new Error('Updater NSIS include must force the old assisted uninstaller silent only during update replacement')
+}
+if (installerInclude.includes('SilentUnInstall silent')) {
+  throw new Error('Updater fix must not make user-started manual uninstall globally silent')
+}
+
+const customRemoveFiles = installerInclude.match(/!macro customRemoveFiles([\s\S]*?)!macroend/)?.[1] ?? ''
+if (!customRemoveFiles) {
   throw new Error('Updater installer include must override customRemoveFiles')
 }
-const preserveDataIndex = installerInclude.indexOf('Rename "$INSTDIR\\data" "$R9"')
-const updateBranchIndex = installerInclude.indexOf('${if} ${isUpdated}')
+const preserveDataIndex = customRemoveFiles.indexOf('Rename "$INSTDIR\\data" "$R9"')
+const updateBranchIndex = customRemoveFiles.indexOf('${if} ${isUpdated}')
 if (preserveDataIndex < 0) {
   throw new Error('Updater installer include must move the portable data directory out before replacing app files')
 }
@@ -36,14 +45,14 @@ if (updateBranchIndex < 0) {
 if (preserveDataIndex > updateBranchIndex) {
   throw new Error('Portable data must be preserved before updater/manual replacement cleanup branches diverge')
 }
-if (!installerInclude.includes('Call un.atomicRMDir')) {
+if (!customRemoveFiles.includes('Call un.atomicRMDir')) {
   throw new Error('Updater installer include must retain electron-builder atomic old-install removal')
 }
-if (!installerInclude.includes('Rename "$R9" "$INSTDIR\\data"')) {
+if (!customRemoveFiles.includes('Rename "$R9" "$INSTDIR\\data"')) {
   throw new Error('Updater installer include must restore the portable data directory before new files are installed')
 }
 requireMatch(
-  installerInclude,
+  customRemoveFiles,
   /\$\{endif\}\s+CreateDirectory "\$INSTDIR"\s+\$\{if\} \$R8 == "1"/m,
   'common install-directory recreation before preserved data restore'
 )
@@ -85,6 +94,7 @@ console.log(JSON.stringify({
   publishFromBuild: false,
   privateR2CredentialsInApp: false,
   silentInstall: true,
+  silentOldUninstallerOnUpdate: true,
   preservesPortableDataOnUpdate: true,
   preservesPortableDataOnManualReplacement: true
 }, null, 2))

@@ -507,7 +507,16 @@ export function AccountManager({ onOpenChangeInfoWorkspace }: AccountManagerProp
       {checkpoint282Accounts ? <Checkpoint282Dialog accounts={checkpoint282Accounts} onClose={() => setCheckpoint282Accounts(null)} /> : null}
       {checkpoint956Accounts ? <Checkpoint956Dialog accounts={checkpoint956Accounts} onClose={() => setCheckpoint956Accounts(null)} /> : null}
       {editorAccount !== undefined ? <AccountEditor account={editorAccount} onClose={() => setEditorAccount(undefined)} onSaved={async () => { setEditorAccount(undefined); setNotice('Đã lưu tài khoản.'); await refreshAccountsAndGroups() }} /> : null}
-      {importOperation ? <ImportDialog operation={importOperation} presets={presets} onClose={() => setImportOperation(null)} onImported={(result, operation) => void onImportComplete(result, operation)} onPresetSaved={(preset) => setPresets((current) => [...current.filter((item) => item.id !== preset.id), preset].sort((a, b) => a.name.localeCompare(b.name)))} /> : null}
+      {importOperation ? (
+        <ImportDialog
+          operation={importOperation}
+          presets={presets}
+          {...(categoryFilter && categoryFilter !== UNGROUPED_CATEGORY_FILTER ? { initialGroupName: categoryFilter } : {})}
+          onClose={() => setImportOperation(null)}
+          onImported={(result, operation) => void onImportComplete(result, operation)}
+          onPresetSaved={(preset) => setPresets((current) => [...current.filter((item) => item.id !== preset.id), preset].sort((a, b) => a.name.localeCompare(b.name)))}
+        />
+      ) : null}
     </section>
   )
 }

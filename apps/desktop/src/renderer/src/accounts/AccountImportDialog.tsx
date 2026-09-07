@@ -21,12 +21,13 @@ import {
 export interface ImportDialogProps {
   operation: AccountImportOperation
   presets: ImportPreset[]
+  initialGroupName?: string
   onClose: () => void
   onImported: (result: AccountImportResult, operation: AccountImportOperation) => void
   onPresetSaved: (preset: ImportPreset) => void
 }
 
-export function ImportDialog({ operation, presets, onClose, onImported, onPresetSaved }: ImportDialogProps) {
+export function ImportDialog({ operation, presets, initialGroupName, onClose, onImported, onPresetSaved }: ImportDialogProps) {
   const [rawText, setRawText] = useState('')
   const [delimiter, setDelimiter] = useState('|')
   const [mapping, setMapping] = useState<AccountImportMapping>(() => [...DEFAULT_CUSTOM_MAPPING])
@@ -53,7 +54,12 @@ export function ImportDialog({ operation, presets, onClose, onImported, onPreset
     let active = true
     void window.pageAuto.getAccountGroupOverview()
       .then((overview) => {
-        if (active) setGroups(overview.groups)
+        if (!active) return
+        setGroups(overview.groups)
+        if (initialGroupName) {
+          const initialGroup = overview.groups.find((group) => group.name === initialGroupName)
+          setSelectedGroupId(initialGroup ? String(initialGroup.id) : '')
+        }
       })
       .catch(() => {
         if (active) setGroups([])
@@ -61,7 +67,7 @@ export function ImportDialog({ operation, presets, onClose, onImported, onPreset
     return () => {
       active = false
     }
-  }, [operation])
+  }, [operation, initialGroupName])
 
   const applyPreset = (nextDelimiter: string, nextMapping: AccountImportMapping) => {
     setDelimiter(nextDelimiter)
@@ -136,7 +142,7 @@ export function ImportDialog({ operation, presets, onClose, onImported, onPreset
 
         <div className="import-operation-note">
           {operation === 'insert'
-            ? 'UID đã tồn tại sẽ được bỏ qua. Dấu phân cách giữ nguyên vị trí cột trống.'
+            ? 'UID đã tồn tại sẽ không tạo trùng. Nếu chọn Nhóm, tài khoản mới và UID đã có đều được gán/chuyển vào Nhóm đó.'
             : 'UID là khóa tìm tài khoản. Bỏ qua = giữ dữ liệu cũ; ô có cột nhưng để trống = xóa dữ liệu cũ; cột không tồn tại trong dòng = giữ nguyên.'}
         </div>
 

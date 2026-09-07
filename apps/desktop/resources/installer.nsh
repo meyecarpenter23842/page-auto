@@ -1,3 +1,12 @@
+!macro customUnInit
+  ; electron-updater launches the old assisted uninstaller during an upgrade.
+  ; Keep that internal uninstall path silent even if /S propagation changes,
+  ; while leaving a user-started manual uninstall interactive.
+  ${if} ${isUpdated}
+    SetSilent silent
+  ${endif}
+!macroend
+
 !macro customRemoveFiles
   StrCpy $R9 "$INSTDIR.__pageauto_data_preserve"
   StrCpy $R8 "0"
