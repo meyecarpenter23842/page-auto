@@ -121,6 +121,61 @@ describe('Issue #263 Batch 5 regression matrix', () => {
     }
   })
 
+  it('keeps a parallel Page running when one checkpointed account leaves its slot and valid accounts continue', async () => {
+    const { tabs, runs, tab, accountIds } = setup(2, 3, 4)
+    const checkpointAccount = accountIds[0]
+    if (checkpointAccount === undefined) throw new Error('Expected checkpoint account.')
+    const attemptedAccounts: number[] = []
+    const releasedAccounts: number[] = []
+    const claimedGroups: string[] = []
+    const success = successfulPosting(runs, [], claimedGroups)
+    const posting: RotationPostingExecutor = {
+      executeSingle: async ({ runId, accountId }) => {
+        if (accountId === undefined) throw new Error('Expected accountId.')
+        attemptedAccounts.push(accountId)
+        if (accountId === checkpointAccount) {
+          const run = runs.get(runId)
+          if (!run) throw new Error('Expected active run.')
+          return {
+            accountId,
+            item: null,
+            result: {
+              status: 'needs_login' as const,
+              code: 'verification_required' as const,
+              message: 'Checkpoint 956 requires operator attention.',
+              sessionValidation: {
+                phase: 'before_run' as const,
+                state: 'verification_required' as const,
+                message: 'Checkpoint 956 requires operator attention.',
+                checkpointKind: '956' as const
+              }
+            },
+            run
+          }
+        }
+        return success.executeSingle({ runId, accountId })
+      },
+      releaseAccount: async (accountId) => { releasedAccounts.push(accountId) }
+    }
+    const rotation = new ParallelRotationService(runs, posting, new AccountExecutionCoordinator())
+
+    rotation.start({ pageTabId: tab.id })
+    await rotation.waitForSettled()
+    const status = rotation.status({ pageTabId: tab.id })
+
+    expect(new Set(attemptedAccounts)).toEqual(new Set(accountIds))
+    expect(new Set(releasedAccounts)).toEqual(new Set(accountIds))
+    expect(claimedGroups).toHaveLength(2)
+    expect(new Set(claimedGroups).size).toBe(2)
+    expect(status.status).toBe('waiting_window')
+    expect(status.run?.run.status).toBe('running')
+    expect(status.cycle).toBe(1)
+    expect(tabs.get(tab.id)?.groupUids).toEqual(['batch5-group-1', 'batch5-group-2', 'batch5-group-3', 'batch5-group-4'])
+
+    rotation.dispose()
+    expect(runs.get(status.runId!)?.run.status).toBe('running')
+  })
+
   it('pauses and settles when every parallel account becomes unavailable instead of closing the account cycle', async () => {
     const { runs, tab, accountIds } = setup(2, 2, 2)
     const coordinator = new AccountExecutionCoordinator()
@@ -208,11 +263,12 @@ describe('Issue #263 Batch 5 regression matrix', () => {
     if (!claimed) throw new Error('Expected claimed Group.')
     expect(claimed.claimedByAccountId).toBe(accountId)
 
-    expect(recovery.recoverInterruptedRuns()).toEqual({ pausedRuns: 1, reviewItems: 1 })
+    expect(recovery.recoverInterruptedRuns()).toEqual({ pausedRuns: 0, reviewItems: 1 })
     expect(runs.listItems(created.run.id).find((item) => item.id === claimed.id)).toMatchObject({
       status: 'failed',
       claimedByAccountId: null
     })
+    expect(runs.get(created.run.id)?.run.status).toBe('running')
     expect(tabs.get(tab.id)?.groupUids).toEqual(['batch5-group-1', 'batch5-group-2'])
   })
 

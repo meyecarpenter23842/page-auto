@@ -402,7 +402,7 @@ describe('RotationService', () => {
     service.dispose()
   })
 
-  it('pauses outside the configured window and resumes when the window opens', async () => {
+  it('waits outside the configured window without persisting Pause and resumes when the window opens', async () => {
     const store = new FakeRunStore()
     store.details = makeRun(1)
     store.details.run.snapshot.accounts = [{ accountId: 101, enabled: true, sortOrder: 0, postsPerTurn: 1 }]
@@ -432,7 +432,7 @@ describe('RotationService', () => {
     service.start({ pageTabId: 10 })
     await service.waitForSettled()
 
-    expect(store.pauseCalls).toBeGreaterThan(0)
+    expect(store.pauseCalls).toBe(0)
     expect(store.resumeCalls).toBe(1)
     expect(service.status({ pageTabId: 10 }).status).toBe('waiting_window')
     service.dispose()

@@ -178,6 +178,11 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
     ),
     () => appSettings.get().runtime.maxActivePageTabs
   )
+  const enabledPageTabIds = pageTabs.list().flatMap((tab) => {
+    const latest = runs.getLatestForPageTab(tab.id)
+    return latest && (latest.run.status === 'created' || latest.run.status === 'running') ? [tab.id] : []
+  })
+  rotation.rehydrate(enabledPageTabIds)
 
   ipcMain.handle(IPC_CHANNELS.appInfo, (): AppInfo => ({ name: app.getName(), version: app.getVersion(), isPackaged: app.isPackaged, dataDirectory: options.dataDirectory }))
   ipcMain.handle(IPC_CHANNELS.accountsList, (_event, filters?: AccountListFilters) => accounts.list(filters))

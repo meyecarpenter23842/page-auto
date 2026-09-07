@@ -151,6 +151,7 @@ export class ParallelRotationService {
 
     const accounts = sortedEnabledAccounts(run)
     if (!accounts.length) throw new Error('Page Tab không có tài khoản được bật để chạy.')
+    if (run.run.status !== 'running') run = this.runs.resume(run.run.id)
     const state = this.runs.getRotationState?.(run.run.id) ?? { activeDateKey: startedDateKey(run), completedWindowKey: null }
     const session: ParallelRotationSession = {
       pageTabId: payload.pageTabId,
@@ -233,6 +234,9 @@ export class ParallelRotationService {
     session.manualPaused = false
     session.stopRequested = false
     session.disposed = false
+    if (session.run.run.status === 'created' || session.run.run.status === 'paused') {
+      session.run = this.runs.resume(session.runId)
+    }
     session.message = restored
       ? 'Đã khôi phục snapshot sau khi khởi động lại ứng dụng; Common Session Policy sẽ xác minh lại account trước lượt tiếp theo.'
       : requeuedUnavailable > 0
@@ -266,9 +270,6 @@ export class ParallelRotationService {
     if (!session) return
     session.disposed = true
     this.settleCycle()
-    if (session.inFlightCount === 0 && (session.run.run.status === 'running' || session.run.run.status === 'created')) {
-      try { session.run = this.runs.pause(session.runId) } catch { /* shutdown */ }
-    }
   }
 
   private attach(session: ParallelRotationSession): void {
@@ -535,7 +536,6 @@ export class ParallelRotationService {
     session.slotsCompletedThisTurn = 0
     session.targetSlotsThisTurn = 0
     const next = nextScheduleWindowStart(this.schedulesFor(session), this.clock.now())
-    if (session.run.run.status === 'running' || session.run.run.status === 'created') session.run = this.runs.pause(session.runId)
     session.status = 'waiting_window'
     session.nextActionAt = next.getTime()
     session.message = `Khung giờ đã chạy đủ một vòng tài khoản song song; chờ khung tiếp theo ${next.toLocaleString()}.`
@@ -560,7 +560,6 @@ export class ParallelRotationService {
       const todayKey = localDateKey(now)
       const windowKey = scheduleWindowKey(schedules, now)
       if (!windowKey) {
-        if (session.inFlightCount === 0 && (session.run.run.status === 'running' || session.run.run.status === 'created')) session.run = this.runs.pause(session.runId)
         const next = nextScheduleStart(schedules, now)
         session.status = 'waiting_window'
         session.nextActionAt = next?.getTime() ?? null
