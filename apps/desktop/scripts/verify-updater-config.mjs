@@ -25,11 +25,16 @@ requireMatch(builderConfig, /^\s*include:\s*resources\/installer\.nsh\s*$/m, 'NS
 if (!installerInclude.includes('!macro customRemoveFiles')) {
   throw new Error('Updater installer include must override customRemoveFiles')
 }
-if (!installerInclude.includes('${isUpdated}')) {
-  throw new Error('Updater installer include must preserve data only for update flow')
-}
-if (!installerInclude.includes('Rename "$INSTDIR\\data" "$R9"')) {
+const preserveDataIndex = installerInclude.indexOf('Rename "$INSTDIR\\data" "$R9"')
+const updateBranchIndex = installerInclude.indexOf('${if} ${isUpdated}')
+if (preserveDataIndex < 0) {
   throw new Error('Updater installer include must move the portable data directory out before replacing app files')
+}
+if (updateBranchIndex < 0) {
+  throw new Error('Updater installer include must retain the updater-specific atomic cleanup branch')
+}
+if (preserveDataIndex > updateBranchIndex) {
+  throw new Error('Portable data must be preserved before updater/manual replacement cleanup branches diverge')
 }
 if (!installerInclude.includes('Call un.atomicRMDir')) {
   throw new Error('Updater installer include must retain electron-builder atomic old-install removal')
@@ -38,8 +43,8 @@ if (!installerInclude.includes('Rename "$R9" "$INSTDIR\\data"')) {
   throw new Error('Updater installer include must restore the portable data directory before new files are installed')
 }
 
-if (desktopPackage.version !== '1.0.1' || rootPackage.version !== desktopPackage.version) {
-  throw new Error('Updater live-test version must be 1.0.1 and match root package version')
+if (desktopPackage.version !== rootPackage.version || !/^\d+\.\d+\.\d+$/.test(desktopPackage.version)) {
+  throw new Error('Updater build version must be matching semver in root and desktop package.json')
 }
 if (desktopPackage.dependencies?.['electron-updater'] !== '6.8.9') {
   throw new Error('electron-updater must be pinned to stable 6.8.9')
@@ -75,5 +80,6 @@ console.log(JSON.stringify({
   publishFromBuild: false,
   privateR2CredentialsInApp: false,
   silentInstall: true,
-  preservesPortableDataOnUpdate: true
+  preservesPortableDataOnUpdate: true,
+  preservesPortableDataOnManualReplacement: true
 }, null, 2))

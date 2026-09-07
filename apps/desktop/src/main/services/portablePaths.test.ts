@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -87,6 +87,7 @@ describe('application data directory', () => {
     expect(prepared.migration?.sourceDirectory).toBe(legacyData)
     expect(prepared.migration?.targetDirectory).toBe(portableData)
     expect(prepared.migration?.displacedTargetDirectory).toBeUndefined()
+    expect(prepared.migration?.databaseBackupDirectory.startsWith(join(portableData, 'backups'))).toBe(true)
     expect(readFileSync(join(portableData, 'page-auto.sqlite'), 'utf8')).toBe('legacy-db')
     expect(readFileSync(join(portableData, 'page-auto.sqlite-wal'), 'utf8')).toBe('legacy-wal')
     expect(readFileSync(join(portableData, 'browser-profiles', '123', 'state.txt'), 'utf8')).toBe('profile-state')
@@ -94,6 +95,8 @@ describe('application data directory', () => {
     expect(readFileSync(join(legacyData, 'browser-profiles', '123', 'state.txt'), 'utf8')).toBe('profile-state')
     expect(readFileSync(join(prepared.migration!.databaseBackupDirectory, 'page-auto.sqlite'), 'utf8')).toBe('legacy-db')
     expect(readFileSync(join(prepared.migration!.databaseBackupDirectory, 'page-auto.sqlite-wal'), 'utf8')).toBe('legacy-wal')
+    expect(readdirSync(installRoot).some((name) => name.startsWith('data-migration-backup-'))).toBe(false)
+    expect(readdirSync(installRoot).some((name) => name.startsWith('data-before-migration-'))).toBe(false)
   })
 
   it('migrates the old LocalAppData database when it is the only legacy source', () => {
@@ -142,7 +145,7 @@ describe('application data directory', () => {
     expect(readFileSync(join(legacyData, 'page-auto.sqlite'), 'utf8')).toBe('legacy-db')
   })
 
-  it('preserves a pre-existing target layout without a database before migration', () => {
+  it('preserves a pre-existing target layout inside the portable backup tree before migration', () => {
     const root = createTempRoot()
     const installRoot = join(root, 'portable')
     const portableData = join(installRoot, 'data')
@@ -161,7 +164,30 @@ describe('application data directory', () => {
 
     expect(readFileSync(join(portableData, 'page-auto.sqlite'), 'utf8')).toBe('legacy-db')
     expect(prepared.migration?.displacedTargetDirectory).toBeTruthy()
+    expect(prepared.migration!.displacedTargetDirectory!.startsWith(join(portableData, 'backups'))).toBe(true)
     expect(readFileSync(join(prepared.migration!.displacedTargetDirectory!, 'keep.txt'), 'utf8')).toBe('keep-me')
+  })
+
+  it('cleans partial migration staging when a staged backup cannot be created', () => {
+    const root = createTempRoot()
+    const installRoot = join(root, 'portable')
+    const userDataPath = join(root, 'Roaming', '@page-auto', 'desktop')
+    const legacyData = join(userDataPath, 'data')
+
+    writeFixture(join(legacyData, 'page-auto.sqlite'), 'legacy-db')
+    writeFixture(join(legacyData, 'backups'), 'blocks-backup-directory')
+
+    expect(() => prepareDataDirectory({
+      isPackaged: true,
+      execPath: join(installRoot, 'PageAuto.exe'),
+      userDataPath,
+      localAppDataPath: join(root, 'LocalAppData'),
+      now: () => new Date('2026-09-07T15:31:00.000Z'),
+      processId: 88
+    })).toThrow()
+
+    expect(existsSync(join(installRoot, 'data'))).toBe(false)
+    expect(readdirSync(installRoot).some((name) => name.startsWith('.pageauto-data-migration-'))).toBe(false)
   })
 
   it('refuses to guess when multiple legacy databases exist and portable data is missing', () => {
