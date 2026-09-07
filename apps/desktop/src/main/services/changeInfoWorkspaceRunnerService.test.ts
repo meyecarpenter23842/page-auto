@@ -15,6 +15,15 @@ describe('Change Info workspace runtime orchestration', () => {
     expect(source).toContain('await this.workers.closeAccount(account.id)')
   })
 
+  it('injects the same shared browser placement contract before Change Info mutation workers launch', () => {
+    expect(ipcSource).toContain('class ChangeInfoLayoutAwareWorkerManager extends FacebookSessionPolicyWorkerManager')
+    expect(ipcSource).toContain('BrowserWindowLayoutManager')
+    expect(ipcSource).toContain("this.browserWindowLayout.claim(job.accountId, 'scenario')")
+    expect(ipcSource).toContain('this.browserWindowLayout.placementFor(')
+    expect(ipcSource).toContain('browserPlacement ? { ...job, browserPlacement } : job')
+    expect(ipcSource).toContain("this.browserWindowLayout.release(accountId, 'scenario')")
+  })
+
   it('snapshots Data Source and records typed per-account/per-action results', () => {
     expect(source).toContain('snapshotOperations')
     expect(source).toContain("readFile(path, 'utf8')")

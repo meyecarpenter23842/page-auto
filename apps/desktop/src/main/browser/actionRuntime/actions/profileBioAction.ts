@@ -9,6 +9,9 @@ const DETAILS_TAB_NAME = 'Details about you'
 const EMPTY_BIO_TRIGGER_NAME = 'Write some details about yourself'
 const SAVE_NAME = /^(?:Save|Lưu)$/i
 const CANCEL_NAME = /^(?:Cancel|Hủy)$/i
+const DEFAULT_READY_TIMEOUT_MS = 45_000
+const SAVE_SETTLE_TIMEOUT_MS = 10_000
+const VERIFY_POLL_INTERVAL_MS = 250
 
 export interface ProfileBioActionDependencies extends BaseViewActionDependencies {}
 
@@ -27,8 +30,20 @@ async function uniqueVisible(locator: Locator): Promise<Locator | null> {
   return await candidate.isVisible().catch(() => false) ? candidate : null
 }
 
-async function confirmDetailsTab(page: Page): Promise<boolean> {
-  return Boolean(await uniqueVisible(page.getByRole('tab', { name: DETAILS_TAB_NAME, exact: true })))
+async function waitForUniqueVisible(locator: Locator, timeoutMs: number): Promise<Locator | null> {
+  try {
+    await locator.first().waitFor({ state: 'visible', timeout: timeoutMs })
+  } catch {
+    return null
+  }
+  return uniqueVisible(locator)
+}
+
+async function confirmDetailsTab(page: Page, timeoutMs: number): Promise<boolean> {
+  return Boolean(await waitForUniqueVisible(
+    page.getByRole('tab', { name: DETAILS_TAB_NAME, exact: true }),
+    timeoutMs
+  ))
 }
 
 async function renderedBioInAuditedSection(page: Page, target: string): Promise<boolean> {
@@ -62,14 +77,24 @@ async function renderedBioInAuditedSection(page: Page, target: string): Promise<
   }, target).catch(() => false)
 }
 
+async function waitForRenderedBio(page: Page, target: string, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + Math.max(0, timeoutMs)
+  while (true) {
+    if (await renderedBioInAuditedSection(page, target)) return true
+    const remaining = deadline - Date.now()
+    if (remaining <= 0) return false
+    await page.waitForTimeout(Math.min(VERIFY_POLL_INTERVAL_MS, remaining)).catch(() => undefined)
+  }
+}
+
 interface BioEditorContract {
   textarea: Locator
   save: Locator
   cancel: Locator
 }
 
-async function findAuditedEditor(page: Page): Promise<BioEditorContract | null> {
-  const textarea = await uniqueVisible(page.locator('textarea:visible'))
+async function findAuditedEditor(page: Page, timeoutMs: number): Promise<BioEditorContract | null> {
+  const textarea = await waitForUniqueVisible(page.locator('textarea:visible'), timeoutMs)
   if (!textarea) return null
   let scope: Locator = textarea
   for (let depth = 0; depth < 7; depth += 1) {
@@ -97,21 +122,23 @@ export class ProfileBioActionExecutor implements ActionExecutor {
     if (!page) return browserUnavailable('Đổi Tiểu sử')
     const target = configString(config, 'bio')
     if (!target.trim()) return { status: 'failed', code: 'profile_bio_value_required', message: 'Tiểu sử không được để trống.' }
+    const readyTimeoutMs = Math.max(1_000, this.dependencies.navigationTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS)
     let saveAttempted = false
 
     try {
       let controlled = await waitForControl(context)
       if (controlled) return controlled
+      context.log('debug', 'Mở Details about you và chờ surface Bio render xong.')
       await page.goto(BIO_DETAILS_URL, {
         waitUntil: 'domcontentloaded',
-        timeout: this.dependencies.navigationTimeoutMs ?? 45_000
+        timeout: readyTimeoutMs
       })
 
-      if (!await confirmDetailsTab(page)) {
+      if (!await confirmDetailsTab(page, readyTimeoutMs)) {
         return {
           status: 'needs_attention',
           code: 'profile_bio_details_surface_unconfirmed',
-          message: 'Không xác nhận được đúng tab “Details about you”; dừng để tránh sửa nhầm surface.'
+          message: 'Không xác nhận được đúng tab “Details about you” sau thời gian chờ readiness; dừng để tránh sửa nhầm surface.'
         }
       }
 
@@ -124,7 +151,10 @@ export class ProfileBioActionExecutor implements ActionExecutor {
         }
       }
 
-      const trigger = await uniqueVisible(page.getByRole('button', { name: EMPTY_BIO_TRIGGER_NAME, exact: true }))
+      const trigger = await waitForUniqueVisible(
+        page.getByRole('button', { name: EMPTY_BIO_TRIGGER_NAME, exact: true }),
+        Math.min(readyTimeoutMs, 10_000)
+      )
       if (!trigger) {
         return {
           status: 'needs_attention',
@@ -136,8 +166,9 @@ export class ProfileBioActionExecutor implements ActionExecutor {
       controlled = await waitForControl(context)
       if (controlled) return controlled
       await trigger.click()
+      context.log('debug', 'Đã mở trigger Bio; đang chờ editor textarea + Save + Cancel theo live contract.')
 
-      const editor = await findAuditedEditor(page)
+      const editor = await findAuditedEditor(page, readyTimeoutMs)
       if (!editor) {
         return {
           status: 'needs_attention',
@@ -169,18 +200,23 @@ export class ProfileBioActionExecutor implements ActionExecutor {
       if (controlled) return controlled
       saveAttempted = true
       await editor.save.click()
+      context.log('info', 'Đã bấm Save Tiểu sử; chờ Facebook settle trước khi revisit để verify.')
+
+      // Let the audited surface show either the saved read-only Bio or another settled state
+      // before navigation. This avoids racing a consequential Save with an immediate goto.
+      await waitForRenderedBio(page, target, Math.min(readyTimeoutMs, SAVE_SETTLE_TIMEOUT_MS))
 
       // From this point a consequential Save may already have committed. Never obey Stop by
       // abandoning verification and never retry blindly; read the post-state first.
       try {
         await page.goto(BIO_DETAILS_URL, {
           waitUntil: 'domcontentloaded',
-          timeout: this.dependencies.navigationTimeoutMs ?? 45_000
+          timeout: readyTimeoutMs
         })
-        if (!await confirmDetailsTab(page)) {
+        if (!await confirmDetailsTab(page, readyTimeoutMs)) {
           return uncertain('Đã bấm Save nhưng không xác nhận lại được surface Tiểu sử; không retry tự động.')
         }
-        if (!await renderedBioInAuditedSection(page, target)) {
+        if (!await waitForRenderedBio(page, target, Math.min(readyTimeoutMs, SAVE_SETTLE_TIMEOUT_MS))) {
           return uncertain('Đã bấm Save nhưng chưa đọc lại đúng Tiểu sử trong “About you”; không retry tự động.')
         }
         return {
