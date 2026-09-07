@@ -1,0 +1,55 @@
+import { normalizeMailboxAddress, type MailProviderId } from './mailProvider'
+
+export const INBOXES_DOMAINS = [
+  'blondmail.com',
+  'chapsmail.com',
+  'clowmail.com',
+  'dropjar.com',
+  'fivermail.com',
+  'getairmail.com',
+  'getmule.com',
+  'getnada.com',
+  'gimpmail.com',
+  'givmail.com',
+  'guysmail.com',
+  'inboxbear.com',
+  'replyloop.com',
+  'robot-mail.com',
+  'tafmail.com',
+  'temptami.com',
+  'tupmail.com',
+  'vomoto.com'
+] as const
+
+export const MICROSOFT_MAIL_DOMAINS = [
+  'hotmail.com',
+  'outlook.com',
+  'live.com',
+  'msn.com'
+] as const
+
+const DOMAIN_PROVIDER = new Map<string, MailProviderId>([
+  ...MICROSOFT_MAIL_DOMAINS.map((domain) => [domain, 'microsoft'] as const),
+  ...INBOXES_DOMAINS.map((domain) => [domain, 'inboxes'] as const)
+])
+
+export function mailDomainFromAddress(value: string): string | null {
+  const mailbox = normalizeMailboxAddress(value)
+  if (!mailbox) return null
+  return mailbox.slice(mailbox.lastIndexOf('@') + 1)
+}
+
+export function resolveMailProviderId(value: string): MailProviderId | null {
+  const domain = mailDomainFromAddress(value)
+  return domain ? (DOMAIN_PROVIDER.get(domain) ?? null) : null
+}
+
+export function isKnownInboxesMailbox(value: string): boolean {
+  return resolveMailProviderId(value) === 'inboxes'
+}
+
+export function mailProviderDomains(providerId: MailProviderId): readonly string[] {
+  if (providerId === 'inboxes') return INBOXES_DOMAINS
+  if (providerId === 'microsoft') return MICROSOFT_MAIL_DOMAINS
+  return []
+}
