@@ -3,6 +3,7 @@ import type { Locator } from 'playwright-core'
 import {
   choosePageWallAdvanceCandidateStrategy,
   isPageWallOptionalCtaPromptOwned,
+  PAGE_WALL_OPTIONAL_CTA_TITLE_PATTERN,
   waitForPageWallFinalPublishStage,
   waitForPageWallPublishStage,
   type PageWallAdvanceCandidateResolution,
@@ -116,6 +117,12 @@ describe('Page Wall publish stage selection', () => {
 })
 
 describe('Page Wall optional CTA ownership', () => {
+  it('accepts both Facebook English title variants seen in live Page Wall flow', () => {
+    expect(PAGE_WALL_OPTIONAL_CTA_TITLE_PATTERN.test('Speak to People Directly')).toBe(true)
+    expect(PAGE_WALL_OPTIONAL_CTA_TITLE_PATTERN.test('Speak With People Directly')).toBe(true)
+    expect(PAGE_WALL_OPTIONAL_CTA_TITLE_PATTERN.test('Unrelated dialog')).toBe(false)
+  })
+
   it('requires the known title plus exactly one Add Button and one Not now action', () => {
     expect(isPageWallOptionalCtaPromptOwned(1, 1, 1)).toBe(true)
     expect(isPageWallOptionalCtaPromptOwned(0, 1, 1)).toBe(false)

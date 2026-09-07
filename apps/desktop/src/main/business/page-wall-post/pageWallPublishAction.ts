@@ -9,7 +9,7 @@ import {
 import type { PreparedPageWallRuntime } from './pageWallTask'
 
 const PAGE_WALL_ADVANCE_PATTERN = /^(next|tiếp|tiếp theo)$/i
-const PAGE_WALL_OPTIONAL_CTA_TITLE_PATTERN = /^(speak to people directly|nói chuyện trực tiếp với mọi người)$/i
+export const PAGE_WALL_OPTIONAL_CTA_TITLE_PATTERN = /^(speak (?:to|with) people directly|nói chuyện (?:trực tiếp với mọi người|với mọi người trực tiếp))$/i
 const PAGE_WALL_OPTIONAL_CTA_ADD_PATTERN = /^(add button|thêm nút)$/i
 const PAGE_WALL_OPTIONAL_CTA_DISMISS_PATTERN = /^(not now|để sau|lúc khác|không phải bây giờ)$/i
 
