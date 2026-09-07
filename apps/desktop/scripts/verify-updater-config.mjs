@@ -23,8 +23,18 @@ requireMatch(builderConfig, /^\s*channel:\s*latest\s*$/m, 'latest channel')
 requireMatch(builderConfig, /^\s*include:\s*resources\/installer\.nsh\s*$/m, 'NSIS data-preservation include')
 
 const customUnInit = installerInclude.match(/!macro customUnInit([\s\S]*?)!macroend/)?.[1] ?? ''
-if (!customUnInit.includes('${if} ${isUpdated}') || !customUnInit.includes('SetSilent silent')) {
-  throw new Error('Updater NSIS include must force the old assisted uninstaller silent only during update replacement')
+if (
+  !customUnInit.includes('${GetParameters} $R0') ||
+  !customUnInit.includes('${GetOptions} $R0 "/S" $R1') ||
+  !customUnInit.includes('${GetOptions} $R0 "--updated" $R1') ||
+  !customUnInit.includes('SetSilent silent')
+) {
+  throw new Error(
+    'Updater NSIS include must re-detect /S and --updated and force the old assisted uninstaller silent during replacement'
+  )
+}
+if (!customUnInit.includes('${if} ${isUpdated}')) {
+  throw new Error('Updater NSIS include must retain the framework isUpdated signal as a fallback')
 }
 if (installerInclude.includes('SilentUnInstall silent')) {
   throw new Error('Updater fix must not make user-started manual uninstall globally silent')
