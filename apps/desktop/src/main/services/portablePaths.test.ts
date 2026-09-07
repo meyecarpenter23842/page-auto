@@ -24,10 +24,10 @@ afterEach(() => {
 })
 
 describe('application data directory', () => {
-  it('uses stable LocalAppData when packaged and keeps development on Electron userData', () => {
+  it('uses data beside PageAuto.exe when packaged and keeps development on Electron userData', () => {
     const root = createTempRoot()
     const localAppDataPath = join(root, 'LocalAppData')
-    const userDataPath = join(root, 'Roaming', 'PageAuto')
+    const userDataPath = join(root, 'Roaming', '@page-auto', 'desktop')
 
     const packaged = resolveDataDirectory({
       isPackaged: true,
@@ -35,7 +35,7 @@ describe('application data directory', () => {
       userDataPath,
       localAppDataPath
     })
-    expect(packaged).toBe(join(localAppDataPath, 'PageAuto', 'data'))
+    expect(packaged).toBe(join(root, 'installed', 'data'))
 
     const development = resolveDataDirectory({
       isPackaged: false,
@@ -63,118 +63,156 @@ describe('application data directory', () => {
     }
   })
 
-  it('reuses packaged portable data in place instead of copying browser profiles at startup', () => {
+  it('migrates packaged userData into the portable data directory and preserves the source', () => {
     const root = createTempRoot()
-    const portableRoot = join(root, 'portable')
-    const legacyData = join(portableRoot, 'data')
-    const stableData = join(root, 'LocalAppData', 'PageAuto', 'data')
+    const installRoot = join(root, 'portable')
+    const userDataPath = join(root, 'Roaming', '@page-auto', 'desktop')
+    const legacyData = join(userDataPath, 'data')
+    const portableData = join(installRoot, 'data')
+
     writeFixture(join(legacyData, 'page-auto.sqlite'), 'legacy-db')
+    writeFixture(join(legacyData, 'page-auto.sqlite-wal'), 'legacy-wal')
     writeFixture(join(legacyData, 'browser-profiles', '123', 'state.txt'), 'profile-state')
 
     const prepared = prepareDataDirectory({
       isPackaged: true,
-      execPath: join(portableRoot, 'PageAuto.exe'),
-      userDataPath: join(root, 'Roaming', 'PageAuto'),
-      localAppDataPath: join(root, 'LocalAppData')
+      execPath: join(installRoot, 'PageAuto.exe'),
+      userDataPath,
+      localAppDataPath: join(root, 'LocalAppData'),
+      now: () => new Date('2026-09-07T15:30:00.000Z'),
+      processId: 77
     })
 
-    expect(prepared).toEqual({ dataDirectory: legacyData, migration: null })
+    expect(prepared.dataDirectory).toBe(portableData)
+    expect(prepared.migration?.sourceDirectory).toBe(legacyData)
+    expect(prepared.migration?.targetDirectory).toBe(portableData)
+    expect(prepared.migration?.displacedTargetDirectory).toBeUndefined()
+    expect(readFileSync(join(portableData, 'page-auto.sqlite'), 'utf8')).toBe('legacy-db')
+    expect(readFileSync(join(portableData, 'page-auto.sqlite-wal'), 'utf8')).toBe('legacy-wal')
+    expect(readFileSync(join(portableData, 'browser-profiles', '123', 'state.txt'), 'utf8')).toBe('profile-state')
     expect(readFileSync(join(legacyData, 'page-auto.sqlite'), 'utf8')).toBe('legacy-db')
     expect(readFileSync(join(legacyData, 'browser-profiles', '123', 'state.txt'), 'utf8')).toBe('profile-state')
-    expect(existsSync(stableData)).toBe(false)
+    expect(readFileSync(join(prepared.migration!.databaseBackupDirectory, 'page-auto.sqlite'), 'utf8')).toBe('legacy-db')
+    expect(readFileSync(join(prepared.migration!.databaseBackupDirectory, 'page-auto.sqlite-wal'), 'utf8')).toBe('legacy-wal')
   })
 
-  it('reuses existing packaged userData data in place for installer transition', () => {
+  it('migrates the old LocalAppData database when it is the only legacy source', () => {
     const root = createTempRoot()
-    const userDataPath = join(root, 'Roaming', 'PageAuto')
-    const legacyData = join(userDataPath, 'data')
-    const stableData = join(root, 'LocalAppData', 'PageAuto', 'data')
-    writeFixture(join(legacyData, 'page-auto.sqlite'), 'current-db')
-    writeFixture(join(legacyData, 'browser-profiles', '456', 'state.txt'), 'current-profile')
+    const installRoot = join(root, 'installed')
+    const localAppDataPath = join(root, 'LocalAppData')
+    const legacyData = join(localAppDataPath, 'PageAuto', 'data')
+    const portableData = join(installRoot, 'data')
+
+    writeFixture(join(legacyData, 'page-auto.sqlite'), 'localappdata-db')
+    writeFixture(join(legacyData, 'screenshots', 'proof.txt'), 'proof')
 
     const prepared = prepareDataDirectory({
       isPackaged: true,
-      execPath: join(root, 'installed', 'PageAuto.exe'),
+      execPath: join(installRoot, 'PageAuto.exe'),
+      userDataPath: join(root, 'Roaming', '@page-auto', 'desktop'),
+      localAppDataPath
+    })
+
+    expect(prepared.dataDirectory).toBe(portableData)
+    expect(prepared.migration?.sourceDirectory).toBe(legacyData)
+    expect(readFileSync(join(portableData, 'page-auto.sqlite'), 'utf8')).toBe('localappdata-db')
+    expect(readFileSync(join(portableData, 'screenshots', 'proof.txt'), 'utf8')).toBe('proof')
+    expect(readFileSync(join(legacyData, 'page-auto.sqlite'), 'utf8')).toBe('localappdata-db')
+  })
+
+  it('uses an existing portable database and never overwrites it from legacy data', () => {
+    const root = createTempRoot()
+    const installRoot = join(root, 'portable')
+    const portableData = join(installRoot, 'data')
+    const userDataPath = join(root, 'Roaming', '@page-auto', 'desktop')
+    const legacyData = join(userDataPath, 'data')
+
+    writeFixture(join(portableData, 'page-auto.sqlite'), 'portable-db')
+    writeFixture(join(legacyData, 'page-auto.sqlite'), 'legacy-db')
+
+    const prepared = prepareDataDirectory({
+      isPackaged: true,
+      execPath: join(installRoot, 'PageAuto.exe'),
       userDataPath,
       localAppDataPath: join(root, 'LocalAppData')
     })
 
-    expect(prepared).toEqual({ dataDirectory: legacyData, migration: null })
-    expect(readFileSync(join(legacyData, 'page-auto.sqlite'), 'utf8')).toBe('current-db')
-    expect(readFileSync(join(legacyData, 'browser-profiles', '456', 'state.txt'), 'utf8')).toBe('current-profile')
-    expect(existsSync(stableData)).toBe(false)
+    expect(prepared).toEqual({ dataDirectory: portableData, migration: null })
+    expect(readFileSync(join(portableData, 'page-auto.sqlite'), 'utf8')).toBe('portable-db')
+    expect(readFileSync(join(legacyData, 'page-auto.sqlite'), 'utf8')).toBe('legacy-db')
   })
 
-  it('keeps development data in place and never adopts it into LocalAppData', () => {
+  it('preserves a pre-existing target layout without a database before migration', () => {
     const root = createTempRoot()
-    const userDataPath = join(root, 'Roaming', 'PageAuto')
-    const developmentData = join(userDataPath, 'data')
+    const installRoot = join(root, 'portable')
+    const portableData = join(installRoot, 'data')
+    const userDataPath = join(root, 'Roaming', '@page-auto', 'desktop')
+    const legacyData = join(userDataPath, 'data')
+
+    writeFixture(join(portableData, 'keep.txt'), 'keep-me')
+    writeFixture(join(legacyData, 'page-auto.sqlite'), 'legacy-db')
+
+    const prepared = prepareDataDirectory({
+      isPackaged: true,
+      execPath: join(installRoot, 'PageAuto.exe'),
+      userDataPath,
+      localAppDataPath: join(root, 'LocalAppData')
+    })
+
+    expect(readFileSync(join(portableData, 'page-auto.sqlite'), 'utf8')).toBe('legacy-db')
+    expect(prepared.migration?.displacedTargetDirectory).toBeTruthy()
+    expect(readFileSync(join(prepared.migration!.displacedTargetDirectory!, 'keep.txt'), 'utf8')).toBe('keep-me')
+  })
+
+  it('refuses to guess when multiple legacy databases exist and portable data is missing', () => {
+    const root = createTempRoot()
+    const installRoot = join(root, 'portable')
+    const userDataPath = join(root, 'Roaming', '@page-auto', 'desktop')
     const localAppDataPath = join(root, 'LocalAppData')
+
+    writeFixture(join(userDataPath, 'data', 'page-auto.sqlite'), 'roaming-db')
+    writeFixture(join(localAppDataPath, 'PageAuto', 'data', 'page-auto.sqlite'), 'local-db')
+
+    expect(() => prepareDataDirectory({
+      isPackaged: true,
+      execPath: join(installRoot, 'PageAuto.exe'),
+      userDataPath,
+      localAppDataPath
+    })).toThrow(/Multiple legacy PageAuto databases found/)
+    expect(existsSync(join(installRoot, 'data', 'page-auto.sqlite'))).toBe(false)
+  })
+
+  it('keeps development data in Electron userData and never migrates it to the executable folder', () => {
+    const root = createTempRoot()
+    const userDataPath = join(root, 'Roaming', '@page-auto', 'desktop')
+    const developmentData = join(userDataPath, 'data')
+    const executableData = join(root, 'data')
+
     writeFixture(join(developmentData, 'page-auto.sqlite'), 'dev-db')
-    writeFixture(join(developmentData, 'browser-profiles', '123', 'state.txt'), 'profile-state')
 
     const prepared = prepareDataDirectory({
       isPackaged: false,
       execPath: join(root, 'PageAuto.exe'),
       userDataPath,
-      localAppDataPath
+      localAppDataPath: join(root, 'LocalAppData')
     })
 
     expect(prepared).toEqual({ dataDirectory: developmentData, migration: null })
     expect(readFileSync(join(developmentData, 'page-auto.sqlite'), 'utf8')).toBe('dev-db')
-    expect(readFileSync(join(developmentData, 'browser-profiles', '123', 'state.txt'), 'utf8')).toBe('profile-state')
-    expect(existsSync(join(localAppDataPath, 'PageAuto', 'data'))).toBe(false)
+    expect(existsSync(executableData)).toBe(false)
   })
 
-  it('prefers an existing stable database over any legacy data', () => {
+  it('creates an empty portable layout beside the executable when no legacy database exists', () => {
     const root = createTempRoot()
-    const portableRoot = join(root, 'portable')
-    const stableData = join(root, 'LocalAppData', 'PageAuto', 'data')
-    writeFixture(join(portableRoot, 'data', 'page-auto.sqlite'), 'legacy-db')
-    writeFixture(join(stableData, 'page-auto.sqlite'), 'stable-db')
-
-    const prepared = prepareDataDirectory({
-      isPackaged: true,
-      execPath: join(portableRoot, 'PageAuto.exe'),
-      userDataPath: join(root, 'Roaming', 'PageAuto'),
-      localAppDataPath: join(root, 'LocalAppData')
-    })
-
-    expect(prepared).toEqual({ dataDirectory: stableData, migration: null })
-    expect(readFileSync(join(stableData, 'page-auto.sqlite'), 'utf8')).toBe('stable-db')
-  })
-
-  it('preserves an empty stable target and reuses legacy data without overwriting either location', () => {
-    const root = createTempRoot()
-    const portableRoot = join(root, 'portable')
-    const legacyData = join(portableRoot, 'data')
-    const stableData = join(root, 'LocalAppData', 'PageAuto', 'data')
-    writeFixture(join(legacyData, 'page-auto.sqlite'), 'legacy-db')
-    writeFixture(join(stableData, 'keep.txt'), 'keep-me')
-
-    const prepared = prepareDataDirectory({
-      isPackaged: true,
-      execPath: join(portableRoot, 'PageAuto.exe'),
-      userDataPath: join(root, 'Roaming', 'PageAuto'),
-      localAppDataPath: join(root, 'LocalAppData')
-    })
-
-    expect(prepared).toEqual({ dataDirectory: legacyData, migration: null })
-    expect(readFileSync(join(stableData, 'keep.txt'), 'utf8')).toBe('keep-me')
-    expect(readFileSync(join(legacyData, 'page-auto.sqlite'), 'utf8')).toBe('legacy-db')
-  })
-
-  it('creates an empty stable layout when no legacy database exists', () => {
-    const root = createTempRoot()
-    const stableData = join(root, 'LocalAppData', 'PageAuto', 'data')
+    const portableData = join(root, 'installed', 'data')
     const prepared = prepareDataDirectory({
       isPackaged: true,
       execPath: join(root, 'installed', 'PageAuto.exe'),
-      userDataPath: join(root, 'Roaming', 'PageAuto'),
+      userDataPath: join(root, 'Roaming', '@page-auto', 'desktop'),
       localAppDataPath: join(root, 'LocalAppData')
     })
 
-    expect(prepared).toEqual({ dataDirectory: stableData, migration: null })
+    expect(prepared).toEqual({ dataDirectory: portableData, migration: null })
     ensureDataDirectoryLayout(prepared.dataDirectory)
     expect(existsSync(join(prepared.dataDirectory, 'checkpoint-assets', '282'))).toBe(true)
   })
