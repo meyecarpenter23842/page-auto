@@ -1,9 +1,26 @@
 !macro customUnInit
   ; electron-updater launches the old assisted uninstaller during an upgrade.
-  ; Keep that internal uninstall path silent even if /S propagation changes,
-  ; while leaving a user-started manual uninstall interactive.
-  ${if} ${isUpdated}
+  ; electron-builder normally passes both /S and --updated. The generated
+  ; uninstaller handles /S before this hook, but live regression showed that
+  ; relying only on ${isUpdated} can still leave the assisted uninstall UI visible.
+  ; Parse both explicit update signals again here as a defensive fallback.
+  ${GetParameters} $R0
+
+  ClearErrors
+  ${GetOptions} $R0 "/S" $R1
+  ${ifNot} ${Errors}
     SetSilent silent
+  ${else}
+    ClearErrors
+    ${GetOptions} $R0 "--updated" $R1
+    ${ifNot} ${Errors}
+      SetSilent silent
+    ${else}
+      ; Keep the framework-provided update state as a secondary signal.
+      ${if} ${isUpdated}
+        SetSilent silent
+      ${endif}
+    ${endif}
   ${endif}
 !macroend
 
