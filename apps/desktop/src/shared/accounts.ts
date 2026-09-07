@@ -92,7 +92,7 @@ export interface AccountImportRequest {
   rawText: string
   delimiter: string
   mapping: AccountImportMapping
-  /** Existing group selected in the Import UI. For new accounts this overrides mapped Category/Folder. */
+  /** Existing group selected in the Import UI. New UIDs are created there; existing UIDs are moved there without overwriting other fields. */
   targetGroupName?: string
   /** @deprecated Kept for backward-compatible callers/tests. Prefer operation. */
   duplicatePolicy?: DuplicatePolicy
