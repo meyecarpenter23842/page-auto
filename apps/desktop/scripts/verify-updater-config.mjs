@@ -42,6 +42,11 @@ if (!installerInclude.includes('Call un.atomicRMDir')) {
 if (!installerInclude.includes('Rename "$R9" "$INSTDIR\\data"')) {
   throw new Error('Updater installer include must restore the portable data directory before new files are installed')
 }
+requireMatch(
+  installerInclude,
+  /\$\{endif\}\s+CreateDirectory "\$INSTDIR"\s+\$\{if\} \$R8 == "1"/m,
+  'common install-directory recreation before preserved data restore'
+)
 
 if (desktopPackage.version !== rootPackage.version || !/^\d+\.\d+\.\d+$/.test(desktopPackage.version)) {
   throw new Error('Updater build version must be matching semver in root and desktop package.json')

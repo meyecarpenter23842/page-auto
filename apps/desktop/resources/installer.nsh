@@ -46,8 +46,9 @@ pageauto_busy_abort:
   ${else}
     SetOutPath $TEMP
     RMDir /r "$INSTDIR"
-    CreateDirectory "$INSTDIR"
   ${endif}
+
+  CreateDirectory "$INSTDIR"
 
   ${if} $R8 == "1"
     ClearErrors
