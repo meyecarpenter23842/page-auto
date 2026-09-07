@@ -1,5 +1,5 @@
-import { copyFileSync, cpSync, existsSync, mkdirSync, renameSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { copyFileSync, cpSync, existsSync, mkdirSync, renameSync, rmSync } from 'node:fs'
+import { dirname, join, relative, resolve } from 'node:path'
 
 export interface DataDirectoryOptions {
   override?: string | undefined
@@ -129,13 +129,13 @@ export function prepareDataDirectory(options: PrepareDataDirectoryOptions): Prep
 
   const suffix = migrationSuffix(options)
   const installDirectory = dirname(preferredDataDirectory)
-  const databaseBackupDirectory = uniquePath(join(installDirectory, `data-migration-backup-${suffix}`))
   const stagingDirectory = uniquePath(join(installDirectory, `.pageauto-data-migration-${suffix}`))
-  const displacedTargetDirectory = existsSync(preferredDataDirectory)
-    ? uniquePath(join(installDirectory, `data-before-migration-${suffix}`))
+  const displacedTargetStagingDirectory = existsSync(preferredDataDirectory)
+    ? uniquePath(join(installDirectory, `.pageauto-data-before-migration-${suffix}`))
     : undefined
 
-  backupDatabaseFiles(legacyDataDirectory, databaseBackupDirectory)
+  let databaseBackupDirectory = ''
+  let displacedTargetDirectory: string | undefined
 
   try {
     cpSync(legacyDataDirectory, stagingDirectory, {
@@ -147,17 +147,48 @@ export function prepareDataDirectory(options: PrepareDataDirectoryOptions): Prep
       throw new Error(`Portable data migration staging DB missing: ${join(stagingDirectory, DATABASE_FILENAME)}`)
     }
 
-    if (displacedTargetDirectory) renameSync(preferredDataDirectory, displacedTargetDirectory)
+    const stagedDatabaseBackupDirectory = uniquePath(
+      join(stagingDirectory, 'backups', `data-migration-${suffix}`)
+    )
+    backupDatabaseFiles(legacyDataDirectory, stagedDatabaseBackupDirectory)
+    const databaseBackupRelativePath = relative(stagingDirectory, stagedDatabaseBackupDirectory)
+
+    if (displacedTargetStagingDirectory) {
+      renameSync(preferredDataDirectory, displacedTargetStagingDirectory)
+    }
     renameSync(stagingDirectory, preferredDataDirectory)
+    databaseBackupDirectory = join(preferredDataDirectory, databaseBackupRelativePath)
+
+    if (displacedTargetStagingDirectory) {
+      const preservedTargetDirectory = uniquePath(
+        join(preferredDataDirectory, 'backups', `data-before-migration-${suffix}`)
+      )
+      mkdirSync(dirname(preservedTargetDirectory), { recursive: true })
+      renameSync(displacedTargetStagingDirectory, preservedTargetDirectory)
+      displacedTargetDirectory = preservedTargetDirectory
+    }
+
     ensureDataDirectoryLayout(preferredDataDirectory)
   } catch (error) {
-    if (
-      displacedTargetDirectory
-      && !existsSync(preferredDataDirectory)
-      && existsSync(displacedTargetDirectory)
-    ) {
-      renameSync(displacedTargetDirectory, preferredDataDirectory)
+    if (existsSync(stagingDirectory)) {
+      rmSync(stagingDirectory, { recursive: true, force: true })
     }
+
+    const rollbackSource = displacedTargetStagingDirectory && existsSync(displacedTargetStagingDirectory)
+      ? displacedTargetStagingDirectory
+      : displacedTargetDirectory && existsSync(displacedTargetDirectory)
+        ? displacedTargetDirectory
+        : undefined
+
+    if (rollbackSource) {
+      const rollbackDirectory = uniquePath(join(installDirectory, `.pageauto-data-rollback-${suffix}`))
+      renameSync(rollbackSource, rollbackDirectory)
+      if (existsSync(preferredDataDirectory)) {
+        rmSync(preferredDataDirectory, { recursive: true, force: true })
+      }
+      renameSync(rollbackDirectory, preferredDataDirectory)
+    }
+
     throw error
   }
 
