@@ -29,6 +29,10 @@ export function filterHotmailRows(
 
     return [
       row.uid,
+      row.accountName,
+      row.accountCategory,
+      row.facebookStatus,
+      row.accountNote,
       row.email,
       row.backupEmail,
       row.oauthClientId,

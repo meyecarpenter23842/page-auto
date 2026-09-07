@@ -7,6 +7,7 @@ import type {
   HotmailSettingsView,
   SaveHotmailSettingsInput
 } from '../../shared/hotmail'
+import type { AccountStatus } from '../../shared/accounts'
 import type { EmailProxySettingsRaw } from '../email/emailProxyPool'
 import { parseEmailProxyLine } from '../email/emailProxyPool'
 
@@ -58,6 +59,10 @@ export class HotmailRepository {
       SELECT
         a.id AS accountId,
         a.uid,
+        a.name AS accountName,
+        a.category AS accountCategory,
+        a.status AS facebookStatus,
+        a.note AS accountNote,
         a.email,
         a.email_password AS emailPassword,
         a.backup_email AS backupEmail,
@@ -79,6 +84,10 @@ export class HotmailRepository {
     return rows.map((row) => ({
       accountId: Number(row.accountId),
       uid: String(row.uid),
+      accountName: text(row.accountName),
+      accountCategory: text(row.accountCategory),
+      facebookStatus: String(row.facebookStatus) as AccountStatus,
+      accountNote: text(row.accountNote),
       email: text(row.email),
       emailPasswordMasked: maskPassword(row.emailPassword),
       backupEmail: text(row.backupEmail),

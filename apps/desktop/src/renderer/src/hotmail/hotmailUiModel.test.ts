@@ -6,6 +6,10 @@ function row(patch: Partial<HotmailDashboardRow>): HotmailDashboardRow {
   return {
     accountId: 1,
     uid: '10001',
+    accountName: 'Demo Account',
+    accountCategory: 'Nhóm A',
+    facebookStatus: 'valid',
+    accountNote: null,
     email: 'demo@outlook.com',
     emailPasswordMasked: '••••••',
     backupEmail: null,
@@ -28,18 +32,22 @@ function row(patch: Partial<HotmailDashboardRow>): HotmailDashboardRow {
 
 describe('filterHotmailRows', () => {
   const rows = [
-    row({ accountId: 1, uid: '10001', oauthStatus: 'valid', hasRefreshToken: true, mailStatus: 'ready' }),
-    row({ accountId: 2, uid: '10002', email: 'needs@outlook.com', oauthStatus: 'expired', hasRefreshToken: true, mailStatus: 'needs_login', lastError: 'OAuth expired' }),
-    row({ accountId: 3, uid: '10003', backupEmail: 'backup@example.com' })
+    row({ accountId: 1, uid: '10001', accountName: 'Nguyễn A', accountCategory: 'Ads', oauthStatus: 'valid', hasRefreshToken: true, mailStatus: 'ready' }),
+    row({ accountId: 2, uid: '10002', accountName: 'Nguyễn B', accountCategory: 'Seeding', email: 'needs@outlook.com', oauthStatus: 'expired', hasRefreshToken: true, mailStatus: 'needs_login', lastError: 'OAuth expired' }),
+    row({ accountId: 3, uid: '10003', accountName: 'Nguyễn C', accountNote: 'mail phụ', backupEmail: 'backup@example.com' })
   ]
 
-  it('keeps one canonical row list and filters it by operational state', () => {
+  it('keeps one canonical row list and filters it by operational Email state', () => {
     expect(filterHotmailRows(rows, '', 'ready').map((item) => item.accountId)).toEqual([1])
     expect(filterHotmailRows(rows, '', 'needs_attention').map((item) => item.accountId)).toEqual([2])
     expect(filterHotmailRows(rows, '', 'recovery').map((item) => item.accountId)).toEqual([3])
   })
 
-  it('searches UID, email, recovery, OAuth metadata, profile path and error text', () => {
+  it('searches canonical Account identity together with Email fields', () => {
+    expect(filterHotmailRows(rows, 'nguyễn b', 'all').map((item) => item.accountId)).toEqual([2])
+    expect(filterHotmailRows(rows, 'seeding', 'all').map((item) => item.accountId)).toEqual([2])
+    expect(filterHotmailRows(rows, 'mail phụ', 'all').map((item) => item.accountId)).toEqual([3])
+    expect(filterHotmailRows(rows, 'valid', 'all').map((item) => item.accountId)).toEqual([1, 2, 3])
     expect(filterHotmailRows(rows, 'needs@', 'all').map((item) => item.accountId)).toEqual([2])
     expect(filterHotmailRows(rows, 'backup@example', 'all').map((item) => item.accountId)).toEqual([3])
     expect(filterHotmailRows(rows, 'oauth expired', 'all').map((item) => item.accountId)).toEqual([2])
