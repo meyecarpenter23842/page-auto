@@ -17,12 +17,102 @@ function requireMatch(value, pattern, label) {
   if (!pattern.test(value)) throw new Error(`Updater contract missing ${label}`)
 }
 
+function extractMacro(name) {
+  return installerInclude.match(new RegExp(`!macro ${name}([\\s\\S]*?)!macroend`))?.[1] ?? ''
+}
+
 requireMatch(builderConfig, /^\s*provider:\s*generic\s*$/m, 'generic provider')
 requireMatch(builderConfig, new RegExp(`^\\s*url:\\s*${publicFeed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, 'm'), 'public R2 feed URL')
 requireMatch(builderConfig, /^\s*channel:\s*latest\s*$/m, 'latest channel')
 requireMatch(builderConfig, /^\s*include:\s*resources\/installer\.nsh\s*$/m, 'NSIS data-preservation include')
 
-const customUnInit = installerInclude.match(/!macro customUnInit([\s\S]*?)!macroend/)?.[1] ?? ''
+const customHeader = extractMacro('customHeader')
+for (const required of [
+  '!include "getProcessInfo.nsh"',
+  'Var pid',
+  'Var pageAutoUpdaterReplacement',
+  'Var pageAutoUpdateDataPreserved',
+  'Var pageAutoUpdateInstallDir',
+  'Var pageAutoUpdateGuardPath',
+  'Var pageAutoLegacyPreservePath',
+  'Var pageAutoUpdateConflictPath'
+]) {
+  if (!customHeader.includes(required)) {
+    throw new Error(`Updater NSIS customHeader missing custom CHECK_APP_RUNNING prerequisite/state: ${required}`)
+  }
+}
+
+const customInit = extractMacro('customInit')
+for (const required of [
+  '${GetParameters} $R0',
+  '${GetOptions} $R0 "--updated" $R1',
+  'StrCpy $pageAutoUpdaterReplacement "1"',
+  'StrCpy $pageAutoUpdateInstallDir "$INSTDIR"',
+  'StrCpy $pageAutoUpdateGuardPath "$INSTDIR.__pageauto_update_guard"',
+  'StrCpy $pageAutoLegacyPreservePath "$INSTDIR.__pageauto_data_preserve"',
+  'StrCpy $pageAutoUpdateConflictPath "$INSTDIR.__pageauto_update_conflict"'
+]) {
+  if (!customInit.includes(required)) {
+    throw new Error(`Updater NSIS customInit missing updater detection/path setup: ${required}`)
+  }
+}
+if (customInit.includes('Rename "$pageAutoUpdateInstallDir\\data"')) {
+  throw new Error('Updater customInit must not move runtime data before CHECK_APP_RUNNING succeeds')
+}
+
+const customCheckAppRunning = extractMacro('customCheckAppRunning')
+for (const required of [
+  '!insertmacro IS_POWERSHELL_AVAILABLE',
+  '!insertmacro _CHECK_APP_RUNNING',
+  '${if} $pageAutoUpdaterReplacement != "1"',
+  'Rename "$pageAutoLegacyPreservePath" "$pageAutoUpdateGuardPath"',
+  'Rename "$pageAutoUpdateInstallDir\\data" "$pageAutoUpdateGuardPath"',
+  'StrCpy $pageAutoUpdateDataPreserved "1"'
+]) {
+  if (!customCheckAppRunning.includes(required)) {
+    throw new Error(`Updater NSIS customCheckAppRunning missing post-close data guard step: ${required}`)
+  }
+}
+const stockCloseIndex = customCheckAppRunning.indexOf('!insertmacro _CHECK_APP_RUNNING')
+const preserveLiveDataIndex = customCheckAppRunning.indexOf('Rename "$pageAutoUpdateInstallDir\\data" "$pageAutoUpdateGuardPath"')
+if (stockCloseIndex < 0 || preserveLiveDataIndex < stockCloseIndex) {
+  throw new Error('Runtime data must be guarded only after electron-builder stock CHECK_APP_RUNNING succeeds')
+}
+
+const customUnInstallCheck = extractMacro('customUnInstallCheck')
+for (const required of [
+  '${if} $pageAutoUpdaterReplacement == "1"',
+  '${elseif} $R0 == 2',
+  'RMDir /r "$pageAutoUpdateInstallDir"',
+  'IfFileExists "$pageAutoUpdateInstallDir\\*.*"',
+  'Rename "$pageAutoUpdateGuardPath" "$pageAutoUpdateInstallDir\\data"',
+  'SetErrorLevel 2',
+  'Quit'
+]) {
+  if (!customUnInstallCheck.includes(required)) {
+    throw new Error(`Updater NSIS customUnInstallCheck missing guarded old-uninstaller recovery: ${required}`)
+  }
+}
+const exitCode2Index = customUnInstallCheck.indexOf('${elseif} $R0 == 2')
+const guardedCleanupIndex = customUnInstallCheck.indexOf('RMDir /r "$pageAutoUpdateInstallDir"')
+const normalizeResultIndex = customUnInstallCheck.indexOf('StrCpy $R0 "0"')
+if (exitCode2Index < 0 || guardedCleanupIndex < exitCode2Index || normalizeResultIndex < guardedCleanupIndex) {
+  throw new Error('Old-uninstaller exit code 2 must be normalized only after guarded application-file cleanup succeeds')
+}
+
+const customInstall = extractMacro('customInstall')
+for (const required of [
+  '${if} $pageAutoUpdaterReplacement == "1"',
+  '${if} $pageAutoUpdateDataPreserved == "1"',
+  'Rename "$pageAutoUpdateGuardPath" "$INSTDIR\\data"',
+  'StrCpy $pageAutoUpdateDataPreserved "0"'
+]) {
+  if (!customInstall.includes(required)) {
+    throw new Error(`Updater NSIS customInstall missing post-replacement data restore: ${required}`)
+  }
+}
+
+const customUnInit = extractMacro('customUnInit')
 if (
   !customUnInit.includes('${GetParameters} $R0') ||
   !customUnInit.includes('${GetOptions} $R0 "/S" $R1') ||
@@ -40,32 +130,27 @@ if (installerInclude.includes('SilentUnInstall silent')) {
   throw new Error('Updater fix must not make user-started manual uninstall globally silent')
 }
 
-const customRemoveFiles = installerInclude.match(/!macro customRemoveFiles([\s\S]*?)!macroend/)?.[1] ?? ''
+const customRemoveFiles = extractMacro('customRemoveFiles')
 if (!customRemoveFiles) {
   throw new Error('Updater installer include must override customRemoveFiles')
 }
 const preserveDataIndex = customRemoveFiles.indexOf('Rename "$INSTDIR\\data" "$R9"')
 const updateBranchIndex = customRemoveFiles.indexOf('${if} ${isUpdated}')
 if (preserveDataIndex < 0) {
-  throw new Error('Updater installer include must move the portable data directory out before replacing app files')
+  throw new Error('Updater installer include must retain direct-uninstaller data preservation')
 }
 if (updateBranchIndex < 0) {
   throw new Error('Updater installer include must retain the updater-specific atomic cleanup branch')
 }
 if (preserveDataIndex > updateBranchIndex) {
-  throw new Error('Portable data must be preserved before updater/manual replacement cleanup branches diverge')
+  throw new Error('Direct-uninstaller data must be preserved before updater/manual cleanup branches diverge')
 }
 if (!customRemoveFiles.includes('Call un.atomicRMDir')) {
   throw new Error('Updater installer include must retain electron-builder atomic old-install removal')
 }
 if (!customRemoveFiles.includes('Rename "$R9" "$INSTDIR\\data"')) {
-  throw new Error('Updater installer include must restore the portable data directory before new files are installed')
+  throw new Error('Updater installer include must retain direct-uninstaller rollback/restore')
 }
-requireMatch(
-  customRemoveFiles,
-  /\$\{endif\}\s+CreateDirectory "\$INSTDIR"\s+\$\{if\} \$R8 == "1"/m,
-  'common install-directory recreation before preserved data restore'
-)
 
 if (desktopPackage.version !== rootPackage.version || !/^\d+\.\d+\.\d+$/.test(desktopPackage.version)) {
   throw new Error('Updater build version must be matching semver in root and desktop package.json')
@@ -105,6 +190,11 @@ console.log(JSON.stringify({
   privateR2CredentialsInApp: false,
   silentInstall: true,
   silentOldUninstallerOnUpdate: true,
-  preservesPortableDataOnUpdate: true,
+  outerUpdateDataGuard: true,
+  dataGuardAfterAppCloseCheck: true,
+  recoversLegacyPreserveDirectory: true,
+  verifiesOldUninstallerExitCode2BeforeContinuing: true,
+  restoresGuardedDataAfterReplacement: true,
+  restoresGuardedDataOnOldUninstallFailure: true,
   preservesPortableDataOnManualReplacement: true
 }, null, 2))
