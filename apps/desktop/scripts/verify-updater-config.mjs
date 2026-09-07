@@ -4,6 +4,7 @@ import { resolve } from 'node:path'
 const appDirectory = resolve(import.meta.dirname, '..')
 const repositoryRoot = resolve(appDirectory, '../..')
 const builderConfig = readFileSync(resolve(appDirectory, 'electron-builder.yml'), 'utf8')
+const installerInclude = readFileSync(resolve(appDirectory, 'resources/installer.nsh'), 'utf8')
 const desktopPackage = JSON.parse(readFileSync(resolve(appDirectory, 'package.json'), 'utf8'))
 const rootPackage = JSON.parse(readFileSync(resolve(repositoryRoot, 'package.json'), 'utf8'))
 const updaterMain = readFileSync(resolve(appDirectory, 'src/main/appUpdaterIpc.ts'), 'utf8')
@@ -19,6 +20,23 @@ function requireMatch(value, pattern, label) {
 requireMatch(builderConfig, /^\s*provider:\s*generic\s*$/m, 'generic provider')
 requireMatch(builderConfig, new RegExp(`^\\s*url:\\s*${publicFeed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, 'm'), 'public R2 feed URL')
 requireMatch(builderConfig, /^\s*channel:\s*latest\s*$/m, 'latest channel')
+requireMatch(builderConfig, /^\s*include:\s*resources\/installer\.nsh\s*$/m, 'NSIS data-preservation include')
+
+if (!installerInclude.includes('!macro customRemoveFiles')) {
+  throw new Error('Updater installer include must override customRemoveFiles')
+}
+if (!installerInclude.includes('${isUpdated}')) {
+  throw new Error('Updater installer include must preserve data only for update flow')
+}
+if (!installerInclude.includes('Rename "$INSTDIR\\data" "$R9"')) {
+  throw new Error('Updater installer include must move the portable data directory out before replacing app files')
+}
+if (!installerInclude.includes('Call un.atomicRMDir')) {
+  throw new Error('Updater installer include must retain electron-builder atomic old-install removal')
+}
+if (!installerInclude.includes('Rename "$R9" "$INSTDIR\\data"')) {
+  throw new Error('Updater installer include must restore the portable data directory before new files are installed')
+}
 
 if (desktopPackage.version !== '1.0.1' || rootPackage.version !== desktopPackage.version) {
   throw new Error('Updater live-test version must be 1.0.1 and match root package version')
@@ -56,5 +74,6 @@ console.log(JSON.stringify({
   updater: desktopPackage.dependencies['electron-updater'],
   publishFromBuild: false,
   privateR2CredentialsInApp: false,
-  silentInstall: true
+  silentInstall: true,
+  preservesPortableDataOnUpdate: true
 }, null, 2))

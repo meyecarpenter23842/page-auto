@@ -29,6 +29,7 @@ win:
         - x64
 
 nsis:
+  include: resources/installer.nsh
   oneClick: false
   allowToChangeInstallationDirectory: true
   perMachine: false
