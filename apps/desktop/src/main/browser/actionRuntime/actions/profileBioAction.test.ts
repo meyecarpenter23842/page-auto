@@ -16,22 +16,31 @@ describe('Profile Bio atomic action', () => {
     expect(source).toContain('profile_bio_existing_edit_audit_required')
   })
 
-  it('fills, checks staged text, saves once, revisits and requires read-back verification', () => {
+  it('waits for the audited semantic surface/editor instead of checking immediately after domcontentloaded', () => {
+    expect(source).toContain("locator.first().waitFor({ state: 'visible', timeout: timeoutMs })")
+    expect(source).toContain('confirmDetailsTab(page, readyTimeoutMs)')
+    expect(source).toContain('findAuditedEditor(page, readyTimeoutMs)')
+    expect(source).toContain('sau thời gian chờ readiness')
+  })
+
+  it('fills, checks staged text, saves once, settles, revisits and requires read-back verification', () => {
     expect(source).toContain('await editor.textarea.fill(target)')
     expect(source).toContain('await editor.textarea.inputValue()')
     expect(source).toContain('await editor.save.click()')
     expect(source.match(/await editor\.save\.click\(\)/g)).toHaveLength(1)
-    expect(source).toContain('renderedBioInAuditedSection(page, target)')
+    expect(source).toContain('waitForRenderedBio(page, target')
     expect(source).toContain('ACTION_VERIFICATION_UNCERTAIN_CODE')
     expect(source).toContain('không retry tự động')
   })
 
-  it('honors pause/stop before Save but always verifies after a consequential Save', () => {
+  it('honors pause/stop before Save but always settles and verifies after a consequential Save', () => {
     expect(source).toContain('waitForControl(context)')
     expect(source).toContain('From this point a consequential Save may already have committed')
     const saveIndex = source.indexOf('await editor.save.click()')
-    const verifyIndex = source.indexOf('renderedBioInAuditedSection(page, target)', saveIndex)
+    const settleIndex = source.indexOf('await waitForRenderedBio(page, target', saveIndex)
+    const verifyIndex = source.indexOf('if (!await waitForRenderedBio(page, target', saveIndex)
     expect(saveIndex).toBeGreaterThan(0)
-    expect(verifyIndex).toBeGreaterThan(saveIndex)
+    expect(settleIndex).toBeGreaterThan(saveIndex)
+    expect(verifyIndex).toBeGreaterThan(settleIndex)
   })
 })

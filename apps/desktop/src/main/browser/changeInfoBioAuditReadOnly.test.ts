@@ -23,11 +23,17 @@ describe('Change Info Bio live audit harness', () => {
     expect(workerSource).not.toMatch(/getByRole\(['"]button['"][\s\S]{0,160}(?:Save|Lưu)[\s\S]{0,160}\.click\s*\(/i)
   })
 
-  it('uses canonical account hydration and the app-wide account lease', () => {
+  it('uses canonical account hydration, app-wide account lease and common browser placement', () => {
     expect(ipcSource).toContain('FacebookCommonSessionPolicy')
     expect(ipcSource).toContain('sessionPolicy.hydrateScenarioActionJob(baseJob)')
     expect(ipcSource).toContain('AccountExecutionCoordinator')
     expect(ipcSource).toContain('accountExecution.run(account.id')
+    expect(ipcSource).toContain('BrowserWindowLayoutManager')
+    expect(ipcSource).toContain("browserWindowLayout.claim(account.id, 'scenario')")
+    expect(ipcSource).toContain('browserWindowLayout.placementFor(')
+    expect(ipcSource).toContain('scenarioActionJobForCommonSessionPolicy(account, request, settings, browserPlacement)')
+    expect(ipcSource).toContain("browserWindowLayout.release(account.id, 'scenario')")
+    expect(workerSource).toContain('setManagedBrowserPlacement(job.browserPlacement ?? null)')
     expect(ipcSource).toContain("actionType: '__change_info_audit_bio__'")
   })
 })

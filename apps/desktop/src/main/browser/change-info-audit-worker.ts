@@ -14,7 +14,8 @@ import { validateFacebookSession } from './facebookSession'
 import {
   closeManagedPostingBrowser,
   installManagedBrowserReuse,
-  managedCdpEndpointFromArgs
+  managedCdpEndpointFromArgs,
+  setManagedBrowserPlacement
 } from './managedBrowserBridge'
 import { FacebookCommonRuntime } from '../facebook/facebookCommonRuntime'
 import { withoutFacebookInteractionPacing } from '../facebook/facebookInteractionPacing'
@@ -206,6 +207,7 @@ async function openAuditedBioEditor(page: Page): Promise<{ ok: true } | { ok: fa
 
 async function runBioAudit(command: AuditBioCommand): Promise<ChangeInfoBioAuditResult> {
   const job = command.job
+  setManagedBrowserPlacement(job.browserPlacement ?? null)
   const opened = await FacebookCommonRuntime.open({
     profileDirectory: job.profileDirectory,
     pageUid: '',
