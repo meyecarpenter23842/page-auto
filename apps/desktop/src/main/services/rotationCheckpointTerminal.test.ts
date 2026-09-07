@@ -145,8 +145,10 @@ describe('RotationService checkpoint account-turn terminal order', () => {
         'execute:202'
       ])
       expect(events.indexOf('release:101')).toBeLessThan(events.indexOf('execute:202'))
-      expect(service.status({ pageTabId: 10 }).status).not.toBe('paused')
+      expect(service.status({ pageTabId: 10 }).status).toBe('waiting_window')
+      expect(store.details.run.status).toBe('running')
       service.dispose()
+      expect(store.details.run.status).toBe('running')
     }
   )
 })

@@ -95,6 +95,29 @@ export class PageTabWorkerManager {
     }
   }
 
+  rehydrate(pageTabIds: number[]): RotationRuntimeSnapshot[] {
+    const restored: RotationRuntimeSnapshot[] = []
+    for (const pageTabId of pageTabIds) {
+      diagnostic(pageTabId, 'REHYDRATE requested')
+      try {
+        this.assertCapacity(pageTabId)
+        const controller = this.getOrCreate(pageTabId)
+        let snapshot: RotationRuntimeSnapshot
+        try {
+          snapshot = rotationRuntimeOverlay.decorate(controller.resume({ pageTabId }))
+        } catch (error) {
+          if (!isMissingRotationSession(error)) throw error
+          snapshot = rotationRuntimeOverlay.decorate(controller.start({ pageTabId }))
+        }
+        restored.push(snapshot)
+        diagnostic(pageTabId, `REHYDRATE accepted status=${snapshot.status} run=${snapshot.runId ?? 'none'}`)
+      } catch (error) {
+        diagnostic(pageTabId, `REHYDRATE skipped type=${error instanceof Error ? error.name : typeof error}`)
+      }
+    }
+    return restored
+  }
+
   stop(payload: RotationPageTabPayload): RotationRuntimeSnapshot {
     diagnostic(payload.pageTabId, 'STOP requested')
     const controller = this.getOrCreate(payload.pageTabId)

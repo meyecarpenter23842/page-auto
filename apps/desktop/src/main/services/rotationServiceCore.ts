@@ -169,6 +169,7 @@ export class RotationService {
 
     const accounts = sortedEnabledAccounts(run)
     if (accounts.length === 0) throw new Error('Page Tab không có tài khoản được bật để chạy.')
+    if (run.run.status !== 'running') run = this.runs.resume(run.run.id)
     const restoredRotationState = this.restoredRotationState(run)
 
     const session: RotationSession = {
@@ -253,6 +254,9 @@ export class RotationService {
     session.manualPaused = false
     session.stopRequested = false
     session.disposed = false
+    if (session.run.run.status === 'created' || session.run.run.status === 'paused') {
+      session.run = this.runs.resume(session.runId)
+    }
     session.message = restoredAfterRestart
       ? 'Đã khôi phục phiên chạy sau khi khởi động lại ứng dụng.'
       : 'Đang tiếp tục run hiện tại.'
@@ -284,9 +288,6 @@ export class RotationService {
         session.nextActionAt = null
       }
     } else {
-      if (!session.inFlight && (session.run.run.status === 'running' || session.run.run.status === 'created')) {
-        session.run = this.runs.pause(session.runId)
-      }
       session.status = 'waiting_window'
       session.nextActionAt = nextScheduleStart(schedules, now)?.getTime() ?? null
     }
@@ -320,13 +321,6 @@ export class RotationService {
     if (!this.session) return
     this.session.disposed = true
     this.settleCycle()
-    if (!this.session.inFlight && (this.session.run.run.status === 'running' || this.session.run.run.status === 'created')) {
-      try {
-        this.session.run = this.runs.pause(this.session.runId)
-      } catch {
-        // Shutdown should continue even when DB state already changed.
-      }
-    }
   }
 
   private beginCycleWait(): void {
@@ -720,9 +714,6 @@ export class RotationService {
         const now = this.clock.now()
         const schedules = this.schedulesFor(session)
         const next = nextScheduleWindowStart(schedules, now)
-        if (session.run.run.status === 'running' || session.run.run.status === 'created') {
-          session.run = this.runs.pause(session.runId)
-        }
         session.status = 'waiting_window'
         session.nextActionAt = next.getTime()
         session.message = `Khung giờ đã chạy đủ một vòng tài khoản; chờ khung tiếp theo ${next.toLocaleString()}.`
@@ -784,9 +775,6 @@ export class RotationService {
       const windowKey = scheduleWindowKey(schedules, now)
       if (!windowKey) {
         await this.releaseIdleCurrentAccount(session)
-        if (!session.inFlight && (session.run.run.status === 'running' || session.run.run.status === 'created')) {
-          session.run = this.runs.pause(session.runId)
-        }
         const next = nextScheduleStart(schedules, now)
         session.status = 'waiting_window'
         session.nextActionAt = next?.getTime() ?? null
@@ -807,9 +795,6 @@ export class RotationService {
 
       if (session.completedWindowKey === windowKey) {
         await this.releaseIdleCurrentAccount(session)
-        if (!session.inFlight && (session.run.run.status === 'running' || session.run.run.status === 'created')) {
-          session.run = this.runs.pause(session.runId)
-        }
         const next = nextScheduleWindowStart(schedules, now)
         session.status = 'waiting_window'
         session.nextActionAt = next.getTime()
