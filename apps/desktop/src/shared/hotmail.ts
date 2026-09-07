@@ -1,3 +1,5 @@
+import type { AccountStatus } from './accounts'
+
 export const HOTMAIL_OAUTH_STATUSES = ['missing', 'pending', 'valid', 'expired', 'error'] as const
 export type HotmailOAuthStatus = (typeof HOTMAIL_OAUTH_STATUSES)[number]
 
@@ -23,8 +25,13 @@ export type HotmailNeedsAttentionReason =
   | 'manual_completion_required'
 
 export interface HotmailDashboardRow {
+  /** Stable canonical Account identity used by every Email action. */
   accountId: number
   uid: string
+  accountName: string | null
+  accountCategory: string | null
+  facebookStatus: AccountStatus
+  accountNote: string | null
   email: string | null
   emailPasswordMasked: string | null
   backupEmail: string | null

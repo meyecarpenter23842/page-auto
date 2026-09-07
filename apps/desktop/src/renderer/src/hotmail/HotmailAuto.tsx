@@ -68,6 +68,20 @@ function mailStatusLabel(value: HotmailDashboardRow['mailStatus']): string {
   return 'Chưa kiểm tra'
 }
 
+function facebookStatusLabel(value: HotmailDashboardRow['facebookStatus']): string {
+  if (value === 'valid') return 'Hoạt động'
+  if (value === 'needs_login') return 'Cần đăng nhập'
+  if (value === 'login_failed') return 'Login lỗi'
+  if (value === 'two_factor_required' || value === 'two_factor_failed') return 'Cần 2FA'
+  if (value === 'email_code_required') return 'Cần mã Email'
+  if (value === 'locked') return 'Bị khóa'
+  if (value === 'disabled') return 'Vô hiệu hóa'
+  if (value === 'needs_attention') return 'Cần xử lý'
+  if (value.startsWith('checkpoint_')) return 'Checkpoint'
+  if (value === 'identity_verification_required' || value === 'security_review_required') return 'Cần xác minh'
+  return 'Chưa kiểm tra'
+}
+
 function runtimeStatusLabel(value: HotmailDashboardRow['runtimeStatus']): string {
   if (value === 'connecting') return 'Đang kết nối'
   if (value === 'reading') return 'Đang đọc mail'
@@ -120,7 +134,7 @@ export function HotmailAuto() {
   const [lastSelectedId, setLastSelectedId] = useState<number | null>(null)
   const [proxyDirty, setProxyDirty] = useState(false)
   const [busyActions, setBusyActions] = useState<Set<ActionKey>>(new Set())
-  const [message, setMessage] = useState('Email lấy dữ liệu trực tiếp từ Tài khoản theo UID.')
+  const [message, setMessage] = useState('Email dùng chung accountId, Tên TK và Nhóm TK với Account Manager; trạng thái Email tách riêng Facebook.')
   const [oauthPrompt, setOauthPrompt] = useState<HotmailOAuthStartResult | null>(null)
   const [proxyStatus, setProxyStatus] = useState<HotmailProxyStatus | null>(null)
   const [contextMenu, setContextMenu] = useState<ContextMenuState>(null)
@@ -383,7 +397,7 @@ export function HotmailAuto() {
     </header>
 
     <div className="email-grid-tools">
-      <div className="email-search-box"><span>⌕</span><input value={query} onChange={(event: ChangeEvent<HTMLInputElement>) => setQuery(event.target.value)} placeholder="Tìm UID, Email, mail khôi phục, Client ID, lỗi..." />{query ? <button onClick={() => setQuery('')}>×</button> : null}</div>
+      <div className="email-search-box"><span>⌕</span><input value={query} onChange={(event: ChangeEvent<HTMLInputElement>) => setQuery(event.target.value)} placeholder="Tìm UID, Tên TK, Nhóm TK, Email, ghi chú, lỗi..." />{query ? <button onClick={() => setQuery('')}>×</button> : null}</div>
       <div className="email-filter-pills">{QUICK_FILTERS.map((filter) => <button key={filter.id} className={quickFilter === filter.id ? 'active' : ''} onClick={() => setQuickFilter(filter.id)}>{filter.label}</button>)}</div>
       <div className="email-grid-meta"><strong>{selectedRows.length}</strong> đã chọn<span>{visibleRows.length}/{rows.length} đang hiện</span>{selectedRows.length ? <button onClick={() => setSelection(new Set())}>Bỏ chọn</button> : null}</div>
     </div>
@@ -401,22 +415,23 @@ export function HotmailAuto() {
 
     <div className="email-grid-wrap"><table className="email-grid"><thead><tr>
       <th className="check"><input type="checkbox" checked={allVisibleSelected} onChange={toggleVisible} /></th>
-      <th>STT</th><th>UID</th><th>Email</th><th>Pass Email</th><th>Mail khôi phục</th><th>OAuth</th><th>Client ID</th><th>Refresh Token</th><th>Tình trạng mail</th><th>Profile Email</th><th>Đường dẫn profile</th><th>Mã mới nhất</th><th>Lấy mã gần nhất</th><th>Check gần nhất</th><th>Đang làm gì</th><th>Lỗi gần nhất</th>
+      <th>STT</th><th>UID</th><th>Tên TK</th><th>Nhóm TK</th><th>Trạng thái FB</th><th>Email</th><th>Pass Email</th><th>Mail khôi phục</th><th>OAuth</th><th>Client ID</th><th>Refresh Token</th><th>Tình trạng mail</th><th>Profile Email</th><th>Đường dẫn profile</th><th>Mã mới nhất</th><th>Lấy mã gần nhất</th><th>Check gần nhất</th><th>Đang làm gì</th><th>Lỗi gần nhất</th><th>Ghi chú TK</th>
     </tr></thead><tbody>
       {visibleRows.map((row, index) => {
         const recovery = detectRecoveryMailProvider(row.backupEmail)
         return <tr key={row.accountId} className={selection.has(row.accountId) ? 'selected' : ''} onClick={(event) => selectRow(event, row.accountId)} onDoubleClick={() => void openMail([row.accountId])} onContextMenu={(event) => openContextMenu(event, row.accountId)}>
           <td className="check" onClick={(event) => event.stopPropagation()}><input type="checkbox" checked={selection.has(row.accountId)} onChange={() => toggleOne(row.accountId)} /></td>
-          <td>{index + 1}</td><td className="mono uid-cell">{row.uid}</td><td>{row.email ?? '—'}</td><td className="secret">{row.emailPasswordMasked ?? '—'}</td>
+          <td>{index + 1}</td><td className="mono uid-cell">{row.uid}</td><td title={row.accountName ?? ''}>{row.accountName ?? '—'}</td><td>{row.accountCategory ?? '—'}</td>
+          <td><span className={`email-chip ${row.facebookStatus}`}>{facebookStatusLabel(row.facebookStatus)}</span></td><td>{row.email ?? '—'}</td><td className="secret">{row.emailPasswordMasked ?? '—'}</td>
           <td className="recovery-cell"><span>{row.backupEmail ?? '—'}</span>{row.backupEmail ? <span className={`recovery-chip ${recovery.kind}`}>{recovery.label}</span> : null}</td>
           <td><span className={`email-chip ${row.oauthStatus}`}>{connectionStatusLabel(row.oauthStatus)}</span></td><td className="mono">{previewClientId(row.oauthClientId)}</td>
           <td><div className="token-cell"><span className={`email-chip ${row.hasRefreshToken ? 'valid' : 'missing'}`}>{row.hasRefreshToken ? 'Có token' : 'Chưa có'}</span><small>{formatTime(row.oauthUpdatedAt)}</small></div></td>
           <td><span className={`email-chip ${row.mailStatus}`}>{mailStatusLabel(row.mailStatus)}</span></td><td><span className={`email-chip ${row.profileStatus}`}>{profileStatusLabel(row.profileStatus)}</span></td>
           <td className="path-cell" title={row.profileDirectory ?? ''}>{row.profileDirectory ?? '—'}</td><td className="code-cell">{row.latestCode ?? '—'}</td><td>{formatTime(row.lastCodeAt)}</td><td>{formatTime(row.lastCheckAt)}</td>
-          <td><span className={`email-chip ${row.runtimeStatus}`}>{runtimeStatusLabel(row.runtimeStatus)}</span></td><td className="error-cell" title={row.lastError ?? ''}>{row.lastError ?? '—'}</td>
+          <td><span className={`email-chip ${row.runtimeStatus}`}>{runtimeStatusLabel(row.runtimeStatus)}</span></td><td className="error-cell" title={row.lastError ?? ''}>{row.lastError ?? '—'}</td><td title={row.accountNote ?? ''}>{row.accountNote ?? '—'}</td>
         </tr>
       })}
-      {visibleRows.length === 0 ? <tr><td className="empty" colSpan={17}>{rows.length === 0 ? 'Chưa có tài khoản. Thêm tài khoản ở mục Tài khoản trước.' : 'Không có tài khoản phù hợp bộ lọc hiện tại.'}</td></tr> : null}
+      {visibleRows.length === 0 ? <tr><td className="empty" colSpan={21}>{rows.length === 0 ? 'Chưa có tài khoản. Thêm tài khoản ở mục Tài khoản trước.' : 'Không có tài khoản phù hợp bộ lọc hiện tại.'}</td></tr> : null}
     </tbody></table></div>
 
     <footer className="email-selection-footer"><div><strong>{visibleSelected}</strong> dòng đang hiện được chọn · <strong>{selectedRows.length}</strong> tổng selection</div><span>Double-click: Mở mail · Ctrl/Shift: chọn nhiều · Chuột phải: thao tác trên selection</span></footer>
@@ -433,11 +448,11 @@ export function HotmailAuto() {
         <div className="email-info-card"><strong>Trạng thái</strong><p>{proxyStatus?.message ?? 'Chưa tải trạng thái mạng Email.'}</p></div>
       </div> : null}
 
-      {panel === 'logs' ? <div className="email-panel-content"><p className="email-panel-note">{selectedRows.length ? `Đang xem ${selectedRows.length} tài khoản đã chọn.` : 'Không có selection; ưu tiên các tài khoản có lỗi.'}</p><div className="email-log-list">{logRows.length ? logRows.map((row) => <article key={row.accountId}><div><strong>{row.uid}</strong><span className={`email-chip ${row.runtimeStatus}`}>{runtimeStatusLabel(row.runtimeStatus)}</span></div><p>{row.email ?? 'Chưa có Email'}</p><small>Check: {formatTime(row.lastCheckAt)} · Code: {formatTime(row.lastCodeAt)}</small><div className={row.lastError ? 'log-error' : 'log-ok'}>{row.lastError ?? 'Không có lỗi gần nhất.'}</div></article>) : <div className="email-panel-empty">Chưa có lỗi hoặc tài khoản được chọn.</div>}</div></div> : null}
+      {panel === 'logs' ? <div className="email-panel-content"><p className="email-panel-note">{selectedRows.length ? `Đang xem ${selectedRows.length} tài khoản đã chọn.` : 'Không có selection; ưu tiên các tài khoản có lỗi.'}</p><div className="email-log-list">{logRows.length ? logRows.map((row) => <article key={row.accountId}><div><strong>{row.accountName ?? row.uid}</strong><span className={`email-chip ${row.runtimeStatus}`}>{runtimeStatusLabel(row.runtimeStatus)}</span></div><p>{row.uid} · {row.email ?? 'Chưa có Email'} · {row.accountCategory ?? 'Chưa có nhóm'}</p><small>Check: {formatTime(row.lastCheckAt)} · Code: {formatTime(row.lastCodeAt)}</small><div className={row.lastError ? 'log-error' : 'log-ok'}>{row.lastError ?? 'Không có lỗi gần nhất.'}</div></article>) : <div className="email-panel-empty">Chưa có lỗi hoặc tài khoản được chọn.</div>}</div></div> : null}
 
       {panel === 'password' ? <div className="email-panel-content">
         <p className="email-panel-note">E5.2 dùng đúng Email Profile Root/UID và mạng Email riêng. PAGE-AUTO chỉ tự điền khi nhận đúng surface Change Password/Password expired của Microsoft; login, identity/security review hoặc surface lạ sẽ giữ phiên `needs_attention`, không bypass.</p>
-        <div className="email-recovery-selection">{panelRows.slice(0, 20).map((row) => <div key={row.accountId}><span className="mono">{row.uid}</span><strong>{row.email ?? 'Chưa có Email Microsoft'}</strong><span className={`email-chip ${row.profileStatus}`}>{profileStatusLabel(row.profileStatus)}</span></div>)}</div>
+        <div className="email-recovery-selection">{panelRows.slice(0, 20).map((row) => <div key={row.accountId}><span className="mono">{row.uid}</span><strong>{row.accountName ? `${row.accountName} · ${row.email ?? 'Chưa có Email Microsoft'}` : row.email ?? 'Chưa có Email Microsoft'}</strong><span className={`email-chip ${row.profileStatus}`}>{profileStatusLabel(row.profileStatus)}</span></div>)}</div>
         <section className="email-settings-card"><div className="email-settings-heading"><div><span>E5.2 PASSWORD HOTMAIL</span><h3>Đổi Password Email</h3></div><span className="email-settings-badge">Canonical theo accountId</span></div><div className="email-settings-grid">
           <label className="wide"><span>Password Email mới</span><input type="password" autoComplete="new-password" value={newPassword} disabled={passwordAwaitingConfirmation} onChange={(event: ChangeEvent<HTMLInputElement>) => setNewPassword(event.target.value)} placeholder="Tối thiểu 8 ký tự" /><small>Không trim/mutate password, không log plaintext. Batch sẽ áp dụng cùng password mới cho selection đã chốt.</small></label>
           <label className="wide"><span>Xác nhận Password mới</span><input type="password" autoComplete="new-password" value={confirmNewPassword} disabled={passwordAwaitingConfirmation} onChange={(event: ChangeEvent<HTMLInputElement>) => setConfirmNewPassword(event.target.value)} placeholder="Nhập lại Password mới" /></label>
@@ -450,7 +465,7 @@ export function HotmailAuto() {
 
       {panel === 'recovery' ? <div className="email-panel-content">
         <p className="email-panel-note">Recovery chạy trên đúng Email Profile Root/UID và mạng Email riêng. Microsoft yêu cầu login/xác minh bảo mật thì app giữ phiên và trả trạng thái cần xử lý; không bypass.</p>
-        <div className="email-recovery-selection">{panelRows.slice(0, 20).map((row) => { const recovery = detectRecoveryMailProvider(row.backupEmail); return <div key={row.accountId}><span className="mono">{row.uid}</span><strong>{row.backupEmail ?? 'Chưa có mail khôi phục'}</strong>{row.backupEmail ? <span className={`recovery-chip ${recovery.kind}`}>{recovery.label}</span> : null}</div> })}</div>
+        <div className="email-recovery-selection">{panelRows.slice(0, 20).map((row) => { const recovery = detectRecoveryMailProvider(row.backupEmail); return <div key={row.accountId}><span className="mono">{row.uid}</span><strong>{row.accountName ? `${row.accountName} · ${row.backupEmail ?? 'Chưa có mail khôi phục'}` : row.backupEmail ?? 'Chưa có mail khôi phục'}</strong>{row.backupEmail ? <span className={`recovery-chip ${recovery.kind}`}>{recovery.label}</span> : null}</div> })}</div>
         <section className="email-settings-card"><div className="email-settings-heading"><div><span>E5.1 RECOVERY MAIL</span><h3>Thêm / xóa / thay Mail khôi phục</h3></div><span className="email-settings-badge">Canonical theo accountId</span></div><div className="email-settings-grid">
           <label className="wide"><span>Email khôi phục mới</span><input value={recoveryEmail} onChange={(event: ChangeEvent<HTMLInputElement>) => setRecoveryEmail(event.target.value)} placeholder="recovery@example.com" /><small>Dùng cho Thêm/Thay. Xóa không dùng ô này.</small></label>
         </div><div className="email-panel-actions">
