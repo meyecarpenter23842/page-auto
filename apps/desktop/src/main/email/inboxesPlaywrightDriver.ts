@@ -9,6 +9,7 @@ import type {
 } from './inboxesProvider'
 
 const INBOXES_URL = 'https://inboxes.com/'
+const EMAIL_IN_TEXT = /[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9.-]+\.[a-z]{2,}/i
 
 export type InboxesSurface =
   | 'mailbox_ready'
@@ -21,6 +22,7 @@ export type InboxesSurface =
 export interface InboxesSurfaceSnapshot {
   bodyText: string
   expectedMailbox: string
+  activeMailbox: string | null
   usernameInputVisible: boolean
   domainControlVisible: boolean
   addInboxButtonVisible: boolean
@@ -29,6 +31,7 @@ export interface InboxesSurfaceSnapshot {
 export function classifyInboxesSurface(snapshot: InboxesSurfaceSnapshot): InboxesSurface {
   const text = snapshot.bodyText.replace(/\s+/g, ' ').trim().toLowerCase()
   const mailbox = snapshot.expectedMailbox.trim().toLowerCase()
+  const activeMailbox = snapshot.activeMailbox?.trim().toLowerCase() ?? null
   const hasInboxTable = /\bfrom\b/.test(text) && /subject\s*-?\s*preview/.test(text) && /\breceived\b/.test(text)
 
   if (/service unavailable|temporarily unavailable|bad gateway|gateway timeout|access denied/.test(text)) {
@@ -37,10 +40,34 @@ export function classifyInboxesSurface(snapshot: InboxesSurfaceSnapshot): Inboxe
   if (snapshot.usernameInputVisible && snapshot.domainControlVisible && snapshot.addInboxButtonVisible) {
     return 'add_inbox_dialog'
   }
-  if (hasInboxTable && mailbox && text.includes(mailbox)) return 'mailbox_ready'
+  if (hasInboxTable && mailbox && activeMailbox === mailbox) return 'mailbox_ready'
   if (hasInboxTable) return 'mailbox_other'
   if (/security code|verification code|mã bảo mật|mã xác minh/.test(text)) return 'message_detail'
   return 'home'
+}
+
+export function parseInboxesReceivedAtLabel(labelInput: string, now = Date.now()): number | null {
+  const label = labelInput.replace(/\s+/g, ' ').trim().toLowerCase()
+  if (!label) return null
+  if (/^(just now|now)$/.test(label)) return now
+  if (/^(a|few|a few) seconds? ago$/.test(label)) return now - 5_000
+
+  const relative = label.match(/^(\d+)\s*(sec|secs|second|seconds|min|mins|minute|minutes|hour|hours|day|days)\s+ago$/)
+  if (relative) {
+    const amount = Number(relative[1])
+    const unit = relative[2] ?? ''
+    const multiplier = unit.startsWith('sec')
+      ? 1_000
+      : unit.startsWith('min')
+        ? 60_000
+        : unit.startsWith('hour')
+          ? 60 * 60_000
+          : 24 * 60 * 60_000
+    return now - amount * multiplier
+  }
+
+  const absolute = Date.parse(labelInput)
+  return Number.isFinite(absolute) ? absolute : null
 }
 
 async function visible(locator: Locator): Promise<boolean> {
@@ -56,6 +83,11 @@ function splitMailbox(mailbox: string): { local: string; domain: string } | null
 
 function normalizeRowKey(value: string): string {
   return value.replace(/\s+/g, ' ').trim().toLowerCase()
+}
+
+function mailboxFromText(value: string): string | null {
+  const match = value.match(EMAIL_IN_TEXT)?.[0]
+  return match ? normalizeMailboxAddress(match) : null
 }
 
 /**
@@ -133,7 +165,7 @@ export class InboxesPlaywrightDriver implements InboxesMailboxDriver {
     return { status: 'mailbox_not_found', message: 'Không xác minh được mailbox Inboxes sau nhiều lần đọc lại trạng thái.' }
   }
 
-  async listMessages(): Promise<InboxesMessageSummary[]> {
+  async listMessages(now = Date.now()): Promise<InboxesMessageSummary[]> {
     const rows = this.page.locator('tr')
     const count = await rows.count()
     const messages: InboxesMessageSummary[] = []
@@ -160,7 +192,14 @@ export class InboxesPlaywrightDriver implements InboxesMailboxDriver {
             ? `id:${id}`
             : `row:${normalizeRowKey(`${sender}|${subject}|${receivedLabel}`)}`
 
-      messages.push({ key, sender, subject, preview: subject, receivedLabel })
+      messages.push({
+        key,
+        sender,
+        subject,
+        preview: subject,
+        receivedLabel,
+        receivedAt: parseInboxesReceivedAtLabel(receivedLabel, now)
+      })
     }
 
     return messages
@@ -183,7 +222,7 @@ export class InboxesPlaywrightDriver implements InboxesMailboxDriver {
 
     const snapshot: MailMessageSnapshot = {
       id: message.key,
-      receivedAt: Date.now(),
+      receivedAt: message.receivedAt ?? 0,
       sender: message.sender,
       subject: message.subject,
       bodyPreview: message.preview,
@@ -215,9 +254,17 @@ export class InboxesPlaywrightDriver implements InboxesMailboxDriver {
     const username = this.page.getByPlaceholder(/enter username/i)
     const domain = this.page.getByRole('combobox')
     const add = this.page.getByRole('button', { name: /^add inbox$/i })
+    const headings = await this.page.locator('h1, h2, h3').allInnerTexts().catch(() => [] as string[])
+    const activeHeading = headings.find((text) => /don't give them your private email/i.test(text) && EMAIL_IN_TEXT.test(text))
+    const emptyInboxText = activeHeading
+      ? null
+      : await this.page.getByText(/waiting for incoming messages for/i).first().innerText().catch(() => '')
+    const activeMailbox = mailboxFromText(activeHeading ?? emptyInboxText ?? '')
+
     return classifyInboxesSurface({
       bodyText,
       expectedMailbox,
+      activeMailbox,
       usernameInputVisible: await visible(username),
       domainControlVisible: await visible(domain),
       addInboxButtonVisible: await visible(add)

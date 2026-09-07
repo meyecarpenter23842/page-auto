@@ -21,6 +21,8 @@ export interface MailProviderCodeRequest {
   mailbox: string
   role: MailboxRole
   purpose: MailCodePurpose
+  /** Earliest acceptable provider message timestamp for this verification request. */
+  notBefore?: number
   timeoutMs?: number
   pollIntervalMs?: number
 }

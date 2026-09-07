@@ -13,6 +13,7 @@ const MAX_TIMEOUT_MS = 60_000
 const DEFAULT_POLL_MS = 1_500
 const MIN_POLL_MS = 250
 const MAX_POLL_MS = 5_000
+const DEFAULT_FRESHNESS_GRACE_MS = 5_000
 
 export interface InboxesMessageSummary {
   key: string
@@ -20,6 +21,7 @@ export interface InboxesMessageSummary {
   subject: string
   preview: string
   receivedLabel: string
+  receivedAt: number | null
 }
 
 export type InboxesEnsureMailboxResult =
@@ -28,7 +30,7 @@ export type InboxesEnsureMailboxResult =
 
 export interface InboxesMailboxDriver {
   ensureMailbox(mailbox: string): Promise<InboxesEnsureMailboxResult>
-  listMessages(): Promise<InboxesMessageSummary[]>
+  listMessages(now?: number): Promise<InboxesMessageSummary[]>
   readMessage(message: InboxesMessageSummary): Promise<MailMessageSnapshot | null>
   refreshMailbox(): Promise<void>
 }
@@ -72,13 +74,17 @@ function result(
   }
 }
 
+function validNotBefore(value: number | undefined): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null
+}
+
 /**
  * One provider for every domain served by Inboxes.com.
  *
  * The provider is deliberately role-agnostic: PRIMARY and RECOVERY callers use
- * the same mailbox implementation. It also remembers message keys already used
- * during this runtime so repeated security-code challenges cannot reuse a stale
- * message by accident.
+ * the same mailbox implementation. It remembers messages already consumed and
+ * also requires a fresh received timestamp, so a restarted runtime cannot reuse
+ * an old verification email just because the consumed-key set is empty.
  */
 export class InboxesProvider implements MailProvider {
   readonly id = 'inboxes' as const
@@ -113,21 +119,30 @@ export class InboxesProvider implements MailProvider {
       return result(mailbox, 'mailbox_not_found', 'Inboxes đang mở mailbox khác với mailbox được yêu cầu.')
     }
 
+    const requestStartedAt = this.now()
+    const explicitNotBefore = validNotBefore(request.notBefore)
+    const freshnessCutoff = explicitNotBefore ?? Math.max(1, requestStartedAt - DEFAULT_FRESHNESS_GRACE_MS)
     const timeoutMs = clampTimeout(request.timeoutMs)
     const pollMs = clampPoll(request.pollIntervalMs)
-    const deadline = this.now() + timeoutMs
+    const deadline = requestStartedAt + timeoutMs
     const consumed = this.consumedMessageKeys.get(mailbox) ?? new Set<string>()
     this.consumedMessageKeys.set(mailbox, consumed)
 
     while (true) {
+      const now = this.now()
       let summaries: InboxesMessageSummary[]
       try {
-        summaries = await this.driver.listMessages()
+        summaries = await this.driver.listMessages(now)
       } catch {
         return result(mailbox, 'provider_unavailable', 'Không đọc được danh sách mail từ Inboxes.com.')
       }
 
-      const candidates = summaries.filter((message) => !consumed.has(message.key) && messageLooksRelevant(request, message))
+      const candidates = summaries.filter((message) => {
+        if (consumed.has(message.key) || !messageLooksRelevant(request, message)) return false
+        if (message.receivedAt === null || !Number.isFinite(message.receivedAt)) return false
+        return message.receivedAt >= freshnessCutoff && message.receivedAt <= now + 5_000
+      })
+
       for (const candidate of candidates) {
         let snapshot: MailMessageSnapshot | null
         try {
@@ -136,6 +151,7 @@ export class InboxesProvider implements MailProvider {
           return result(mailbox, 'provider_unavailable', 'Không mở được nội dung mail trên Inboxes.com.')
         }
         if (!snapshot) continue
+        if (snapshot.receivedAt < freshnessCutoff || snapshot.receivedAt > this.now() + 5_000) continue
         const match = parseVerificationCode([snapshot], this.now())
         if (!match) continue
 
@@ -153,7 +169,7 @@ export class InboxesProvider implements MailProvider {
           mailbox,
           timeoutMs === 0 ? 'message_not_found' : 'timeout',
           timeoutMs === 0
-            ? 'Chưa có mail verification phù hợp trong mailbox Inboxes hiện tại.'
+            ? 'Chưa có mail verification mới phù hợp trong mailbox Inboxes hiện tại.'
             : 'Hết thời gian chờ mail verification mới từ Inboxes.com.'
         )
       }
