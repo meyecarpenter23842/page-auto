@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { AccountRecord } from '../../../shared/accounts'
 import type { ChangeInfoBioAuditResult } from '../../../shared/changeInfoAudit'
+import {
+  isActiveChangeInfoRunState,
+  type ChangeInfoRunSnapshot,
+  type ChangeInfoRunState
+} from '../../../shared/changeInfoRunner'
 import type {
   ActionWorkspaceAccountInput,
   ActionWorkspacePresetRecord,
@@ -56,8 +61,7 @@ function sourceTypeLabel(type: ChangeInfoDataSourceType): string {
 }
 
 function scalarText(value: ChangeInfoDataScalar | undefined): string {
-  if (value === undefined) return ''
-  return String(value)
+  return value === undefined ? '' : String(value)
 }
 
 function listText(source: ChangeInfoDataSourceConfig): string {
@@ -65,10 +69,7 @@ function listText(source: ChangeInfoDataSourceConfig): string {
 }
 
 function parseListText(value: string): ChangeInfoDataScalar[] {
-  return value
-    .split(/\r?\n/)
-    .map((entry) => entry.trim())
-    .filter(Boolean)
+  return value.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean)
 }
 
 function accountStatusLabel(status: AccountRecord['status']): string {
@@ -84,12 +85,26 @@ function accountStatusLabel(status: AccountRecord['status']): string {
   return labels[status] ?? status
 }
 
+function runStateLabel(state: ChangeInfoRunState): string {
+  const labels: Record<ChangeInfoRunState, string> = {
+    running: 'Đang chạy',
+    paused: 'Tạm dừng',
+    stopping: 'Đang dừng',
+    success: 'Thành công',
+    partial_success: 'Thành công một phần',
+    needs_attention: 'Cần xử lý',
+    failed: 'Thất bại',
+    stopped: 'Đã dừng'
+  }
+  return labels[state]
+}
+
 export function ChangeInfoWorkspace({ workspace, availableAccounts, onWorkspaceSaved }: ChangeInfoWorkspaceProps) {
-  const initialDraft = useMemo(() => parseChangeInfoWorkspaceDraft(workspace.configJson), [workspace.id])
-  const initialBindings = useMemo(() => bindingInputs(workspace), [workspace.id])
-  const [draft, setDraft] = useState<ChangeInfoWorkspaceDraft>(initialDraft)
-  const [accountBindings, setAccountBindings] = useState<ActionWorkspaceAccountInput[]>(initialBindings)
-  const [savedSignature, setSavedSignature] = useState(() => signature(initialDraft, initialBindings))
+  const freshDraft = useMemo(() => parseChangeInfoWorkspaceDraft(workspace.configJson), [workspace.id, workspace.configJson])
+  const freshBindings = useMemo(() => bindingInputs(workspace), [workspace.id, workspace.accounts])
+  const [draft, setDraft] = useState<ChangeInfoWorkspaceDraft>(freshDraft)
+  const [accountBindings, setAccountBindings] = useState<ActionWorkspaceAccountInput[]>(freshBindings)
+  const [savedSignature, setSavedSignature] = useState(() => signature(freshDraft, freshBindings))
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [saveError, setSaveError] = useState<string | null>(null)
   const [showAccountPicker, setShowAccountPicker] = useState(false)
@@ -100,6 +115,20 @@ export function ChangeInfoWorkspace({ workspace, availableAccounts, onWorkspaceS
   const [presetError, setPresetError] = useState<string | null>(null)
   const [bioAuditBusy, setBioAuditBusy] = useState(false)
   const [bioAuditResult, setBioAuditResult] = useState<ChangeInfoBioAuditResult | null>(null)
+  const [runtime, setRuntime] = useState<ChangeInfoRunSnapshot | null>(null)
+  const [runtimeBusy, setRuntimeBusy] = useState(false)
+  const [runtimeError, setRuntimeError] = useState<string | null>(null)
+
+  useEffect(() => {
+    setDraft(freshDraft)
+    setAccountBindings(freshBindings)
+    setSavedSignature(signature(freshDraft, freshBindings))
+    setSaveStatus('idle')
+    setSaveError(null)
+    setBioAuditResult(null)
+    setRuntime(null)
+    setRuntimeError(null)
+  }, [workspace.id])
 
   const currentSignature = useMemo(() => signature(draft, accountBindings), [draft, accountBindings])
   const isDirty = currentSignature !== savedSignature
@@ -109,6 +138,7 @@ export function ChangeInfoWorkspace({ workspace, availableAccounts, onWorkspaceS
   const enabledItems = useMemo(() => enabledChangeInfoCatalogItems(draft), [draft])
   const validationErrors = useMemo(() => validateChangeInfoWorkspaceDraft(draft), [draft])
   const accountMap = useMemo(() => new Map(availableAccounts.map((account) => [account.id, account] as const)), [availableAccounts])
+  const runtimeActive = isActiveChangeInfoRunState(runtime?.state)
   const normalizedQuery = query.trim().toLocaleLowerCase('vi')
   const visibleCatalog = useMemo(() => normalizedQuery
     ? CHANGE_INFO_CATALOG.filter((item) => `${item.label} ${item.key} ${item.description}`.toLocaleLowerCase('vi').includes(normalizedQuery))
@@ -121,6 +151,18 @@ export function ChangeInfoWorkspace({ workspace, availableAccounts, onWorkspaceS
       .catch((error) => { if (!disposed) setPresetError(error instanceof Error ? error.message : String(error)) })
     return () => { disposed = true }
   }, [])
+
+  useEffect(() => {
+    let disposed = false
+    const refresh = () => {
+      void window.pageAutoChangeInfo.status({ workspaceId: workspace.id })
+        .then((snapshot) => { if (!disposed) setRuntime(snapshot) })
+        .catch((error) => { if (!disposed) setRuntimeError(error instanceof Error ? error.message : String(error)) })
+    }
+    refresh()
+    const timer = window.setInterval(refresh, 1000)
+    return () => { disposed = true; window.clearInterval(timer) }
+  }, [workspace.id])
 
   const markDirty = () => setSaveStatus('idle')
 
@@ -153,13 +195,7 @@ export function ChangeInfoWorkspace({ workspace, availableAccounts, onWorkspaceS
     setDraft((current) => {
       const currentAction = current.actions[key]
       if (!currentAction) return current
-      return {
-        ...current,
-        actions: {
-          ...current.actions,
-          [key]: { ...currentAction, enabled }
-        }
-      }
+      return { ...current, actions: { ...current.actions, [key]: { ...currentAction, enabled } } }
     })
     markDirty()
   }
@@ -172,13 +208,7 @@ export function ChangeInfoWorkspace({ workspace, availableAccounts, onWorkspaceS
       if (!currentAction) return current
       return {
         ...current,
-        actions: {
-          ...current.actions,
-          [key]: {
-            ...currentAction,
-            source: createChangeInfoDataSourceConfig(catalog, type)
-          }
-        }
+        actions: { ...current.actions, [key]: { ...currentAction, source: createChangeInfoDataSourceConfig(catalog, type) } }
       }
     })
     markDirty()
@@ -190,13 +220,7 @@ export function ChangeInfoWorkspace({ workspace, availableAccounts, onWorkspaceS
       if (!currentAction) return current
       return {
         ...current,
-        actions: {
-          ...current.actions,
-          [key]: {
-            ...currentAction,
-            source: { ...currentAction.source, ...patch }
-          }
-        }
+        actions: { ...current.actions, [key]: { ...currentAction, source: { ...currentAction.source, ...patch } } }
       }
     })
     markDirty()
@@ -219,16 +243,13 @@ export function ChangeInfoWorkspace({ workspace, availableAccounts, onWorkspaceS
   }
 
   const saveWorkspace = async () => {
-    if (saveStatus === 'saving') return
+    if (saveStatus === 'saving' || runtimeActive) return
     setSaveStatus('saving')
     setSaveError(null)
     try {
       const saved = await window.pageAuto.updateActionWorkspace({
         id: workspace.id,
-        patch: {
-          configJson: serializeChangeInfoWorkspaceDraft(draft),
-          accounts: accountBindings
-        }
+        patch: { configJson: serializeChangeInfoWorkspaceDraft(draft), accounts: accountBindings }
       })
       const savedDraft = parseChangeInfoWorkspaceDraft(saved.configJson)
       const savedAccounts = bindingInputs(saved)
@@ -249,11 +270,7 @@ export function ChangeInfoWorkspace({ workspace, availableAccounts, onWorkspaceS
     setPresetBusy(true)
     setPresetError(null)
     try {
-      const saved = await window.pageAutoChangeInfo.savePreset({
-        type: 'change_info',
-        name,
-        configJson: serializeChangeInfoWorkspaceDraft(draft)
-      })
+      const saved = await window.pageAutoChangeInfo.savePreset({ type: 'change_info', name, configJson: serializeChangeInfoWorkspaceDraft(draft) })
       setPresets((current) => [...current.filter((item) => item.id !== saved.id), saved].sort((a, b) => a.name.localeCompare(b.name, 'vi')))
       setPresetId(saved.id)
     } catch (error) {
@@ -290,14 +307,12 @@ export function ChangeInfoWorkspace({ workspace, availableAccounts, onWorkspaceS
   }
 
   const choosePath = async (key: string, type: 'file' | 'folder') => {
-    const path = type === 'file'
-      ? await window.pageAutoChangeInfo.pickTextFile()
-      : await window.pageAutoChangeInfo.pickFolder()
+    const path = type === 'file' ? await window.pageAutoChangeInfo.pickTextFile() : await window.pageAutoChangeInfo.pickFolder()
     if (path) patchSource(key, { path })
   }
 
   const runBioAudit = async () => {
-    if (bioAuditBusy) return
+    if (bioAuditBusy || runtimeActive) return
     const binding = enabledBindings[0]
     if (enabledBindings.length !== 1 || !binding) {
       setBioAuditResult({
@@ -309,7 +324,6 @@ export function ChangeInfoWorkspace({ workspace, availableAccounts, onWorkspaceS
       })
       return
     }
-
     setBioAuditBusy(true)
     setBioAuditResult(null)
     try {
@@ -326,6 +340,20 @@ export function ChangeInfoWorkspace({ workspace, availableAccounts, onWorkspaceS
       })
     } finally {
       setBioAuditBusy(false)
+    }
+  }
+
+  const runCommand = async (command: 'start' | 'pause' | 'resume' | 'stop') => {
+    if (runtimeBusy) return
+    setRuntimeBusy(true)
+    setRuntimeError(null)
+    try {
+      const next = await window.pageAutoChangeInfo[command]({ workspaceId: workspace.id })
+      if (next) setRuntime(next)
+    } catch (error) {
+      setRuntimeError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setRuntimeBusy(false)
     }
   }
 
@@ -350,111 +378,94 @@ export function ChangeInfoWorkspace({ workspace, availableAccounts, onWorkspaceS
     </div>
   }
 
-  const renderCategoryPanel = (category: ChangeInfoCategory) => {
-    const rows = visibleCatalog.filter((item) => item.category === category)
-    if (!rows.length) return null
-    const enabledInCategory = rows.filter((item) => draft.actions[item.key]?.enabled).length
-    return <section key={category} className={`change-info-group change-info-group-${category}`}>
-      <header className="change-info-group-head">
-        <strong>{CHANGE_INFO_CATEGORY_LABELS[category]}</strong>
-        <span>{enabledInCategory}/{rows.length}</span>
-      </header>
-      <div className="change-info-group-body">
-        {rows.map((item) => {
-          const enabled = draft.actions[item.key]?.enabled ?? false
-          return <div key={item.key} className={enabled ? 'change-info-action-row enabled' : 'change-info-action-row'}>
-            <div className="change-info-action-line">
-              <label className="change-info-action-toggle" title={item.description}>
-                <input type="checkbox" checked={enabled} onChange={(event) => setActionEnabled(item.key, event.target.checked)} />
-                <span>{item.label}</span>
-              </label>
-              <div className="change-info-action-meta">
-                {item.key === 'bio' ? <button type="button" className="change-info-audit-button" disabled={bioAuditBusy || enabledAccountCount !== 1} onClick={() => void runBioAudit()}>{bioAuditBusy ? 'Đang audit…' : 'Audit live'}</button> : null}
-                {item.destructive ? <small className="change-info-sensitive">Nhạy cảm</small> : null}
-              </div>
+  const renderGroup = (category: ChangeInfoCategory) => {
+    const items = visibleCatalog.filter((item) => item.category === category)
+    if (!items.length) return null
+    return <section key={category} className="change-info-group">
+      <div className="change-info-group-head"><strong>{CHANGE_INFO_CATEGORY_LABELS[category]}</strong><span>{items.length} mục</span></div>
+      <div className="change-info-group-body">{items.map((item) => {
+        const action = draft.actions[item.key]
+        if (!action) return null
+        const ready = item.supportStatus === 'ready' && Boolean(item.actionType)
+        return <div key={item.key} className={`change-info-action-row ${action.enabled ? 'enabled' : ''}`}>
+          <div className="change-info-action-line">
+            <label className="change-info-action-toggle"><input type="checkbox" checked={action.enabled} onChange={(event) => setActionEnabled(item.key, event.target.checked)} /><span title={item.description}>{item.label}</span></label>
+            <div className="change-info-action-meta">
+              {ready ? <span className="change-info-sensitive">READY</span> : <span className="change-info-sensitive">AUDIT</span>}
+              {item.key === 'bio' ? <button type="button" className="change-info-audit-button" disabled={bioAuditBusy || runtimeActive} onClick={() => void runBioAudit()}>{bioAuditBusy ? 'Đang audit…' : 'Audit live'}</button> : null}
+              {item.destructive ? <span className="change-info-sensitive">Xác nhận</span> : null}
             </div>
-            {enabled ? renderSourceEditor(item.key) : null}
           </div>
-        })}
-      </div>
+          {action.enabled ? renderSourceEditor(item.key) : null}
+        </div>
+      })}</div>
     </section>
   }
 
-  const bioAuditEvidence = bioAuditResult?.status === 'success' ? bioAuditResult.evidence : null
+  const canStart = !runtimeBusy && !runtimeActive && !isDirty && enabledAccountCount > 0 && validationErrors.length === 0
+  const startMessage = runtimeActive
+    ? `${runStateLabel(runtime!.state)} · snapshot đang chạy độc lập với cấu hình UI.`
+    : isDirty
+      ? 'Lưu cấu hình trước khi chạy.'
+      : enabledAccountCount < 1
+        ? 'Cần bật ít nhất một tài khoản.'
+        : validationErrors[0] ?? `Sẵn sàng: ${enabledAccountCount} tài khoản · ${enabledItems.length} thay đổi đã audit.`
 
-  return <section className="change-info-workspace" aria-label={workspace.label}>
+  return <div className="change-info-workspace">
     <header className="change-info-head">
-      <div className="change-info-title"><p>SỬA THÔNG TIN TÀI KHOẢN</p><h2>{workspace.label}</h2></div>
-      <div className="change-info-head-actions">
-        <span data-state={saveStatus}>{isDirty ? 'Chưa lưu' : saveStatus === 'saved' ? 'Đã lưu' : 'Đã đồng bộ'}</span>
-        <button type="button" disabled={!isDirty || saveStatus === 'saving'} onClick={() => void saveWorkspace()}>{saveStatus === 'saving' ? 'Đang lưu…' : 'Lưu cấu hình'}</button>
-      </div>
+      <div className="change-info-title"><p>ACCOUNT / PROFILE</p><h2>{workspace.label}</h2></div>
+      <div className="change-info-head-actions"><span>{isDirty ? 'Có thay đổi chưa lưu' : saveStatus === 'saved' ? 'Đã lưu' : 'Đã đồng bộ'}</span><button type="button" disabled={!isDirty || saveStatus === 'saving' || runtimeActive} onClick={() => void saveWorkspace()}>{saveStatus === 'saving' ? 'Đang lưu…' : 'Lưu cấu hình'}</button></div>
     </header>
 
     {saveError ? <div className="change-info-alert error">{saveError}</div> : null}
     {presetError ? <div className="change-info-alert error">{presetError}</div> : null}
-    {bioAuditResult ? <details className={`change-info-audit-result ${bioAuditResult.status}`} open={bioAuditResult.status !== 'success'}>
-      <summary>Audit Tiểu sử · {bioAuditResult.status === 'success' ? 'đã thu evidence' : bioAuditResult.status === 'needs_attention' ? 'cần xử lý' : 'lỗi'}</summary>
-      <p>{bioAuditResult.message}</p>
-      {bioAuditEvidence ? <p>{bioAuditEvidence.relevantControls.length} control · {bioAuditEvidence.relevantRegions.length} vùng liên quan{bioAuditEvidence.screenshotPath ? ` · ${bioAuditEvidence.screenshotPath}` : ''}</p> : null}
-      <pre>{JSON.stringify(bioAuditResult, null, 2)}</pre>
-    </details> : null}
+    {runtimeError ? <div className="change-info-alert error">{runtimeError}</div> : null}
+    {bioAuditResult ? <details className={`change-info-audit-result ${bioAuditResult.status}`} open><summary>Audit Tiểu sử · {bioAuditResult.status}</summary><p>{bioAuditResult.message}</p><pre>{JSON.stringify(bioAuditResult, null, 2)}</pre></details> : null}
 
     <div className="change-info-toolbar">
-      <input className="change-info-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Tìm chức năng…" />
-      <div className="change-info-preset">
-        <select value={presetId ?? ''} onChange={(event) => applyPreset(event.target.value ? Number(event.target.value) : null)}><option value="">Thiết lập đã lưu…</option>{presets.map((preset) => <option key={preset.id} value={preset.id}>{preset.name}</option>)}</select>
-        <button type="button" disabled={presetBusy} onClick={() => void savePreset()}>Lưu preset</button>
-        <button type="button" disabled={!presetId || presetBusy} onClick={() => void deletePreset()}>Xóa</button>
-      </div>
-      <div className="change-info-mode-note"><span />Chế độ cấu hình · chưa chạy thay đổi trên Facebook</div>
+      <input className="change-info-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Tìm thao tác…" />
+      <div className="change-info-preset"><select value={presetId ?? ''} onChange={(event) => applyPreset(event.target.value ? Number(event.target.value) : null)}><option value="">Preset…</option>{presets.map((preset) => <option key={preset.id} value={preset.id}>{preset.name}</option>)}</select><button type="button" disabled={presetBusy || runtimeActive} onClick={() => void savePreset()}>Lưu preset</button><button type="button" disabled={!presetId || presetBusy || runtimeActive} onClick={() => void deletePreset()}>Xóa</button></div>
+      <div className="change-info-mode-note"><span />{runtime ? `Runtime · ${runStateLabel(runtime.state)}` : 'Chỉ action đã live audit mới được phép chạy'}</div>
     </div>
 
     <div className="change-info-body">
       <aside className="change-info-account-panel">
-        <div className="change-info-panel-head">
-          <div><strong>Tài khoản chạy</strong><small>{accountBindings.length} tài khoản · bật {enabledAccountCount}</small></div>
-          <button type="button" onClick={() => setShowAccountPicker(true)}>Chọn lại</button>
-        </div>
-        <div className="change-info-account-tools">
-          <button type="button" onClick={() => setAllAccountsEnabled(true)}>Bật tất cả</button>
-          <button type="button" onClick={() => setAllAccountsEnabled(false)}>Tắt tất cả</button>
-        </div>
-        <div className="change-info-account-list">
-          {accountBindings.length === 0 ? <div className="change-info-empty-small">Chưa chọn tài khoản.</div> : accountBindings.map((binding, index) => {
-            const account = accountMap.get(binding.accountId)
-            return <label key={binding.accountId} className={binding.enabled ? 'change-info-account-row enabled' : 'change-info-account-row'}>
-              <input type="checkbox" checked={binding.enabled} onChange={(event) => setAccountEnabled(binding.accountId, event.target.checked)} />
-              <span className="change-info-account-index">{index + 1}</span>
-              <span className="change-info-account-text"><strong>{account?.name || account?.username || account?.uid || `ACC#${binding.accountId}`}</strong><small>{account?.uid ?? `ID ${binding.accountId}`}</small></span>
-              <em>{account ? accountStatusLabel(account.status) : 'Không tìm thấy'}</em>
-            </label>
-          })}
-        </div>
+        <div className="change-info-panel-head"><div><strong>Tài khoản chạy</strong><small>{enabledAccountCount}/{accountBindings.length} đang bật</small></div><button type="button" disabled={runtimeActive} onClick={() => setShowAccountPicker(true)}>Chọn TK</button></div>
+        <div className="change-info-account-tools"><button type="button" disabled={runtimeActive} onClick={() => setAllAccountsEnabled(true)}>Chọn tất cả</button><button type="button" disabled={runtimeActive} onClick={() => setAllAccountsEnabled(false)}>Bỏ chọn</button></div>
+        <div className="change-info-account-list">{accountBindings.map((binding, index) => {
+          const account = accountMap.get(binding.accountId)
+          return <label key={binding.accountId} className={`change-info-account-row ${binding.enabled ? 'enabled' : ''}`}><input type="checkbox" disabled={runtimeActive} checked={binding.enabled} onChange={(event) => setAccountEnabled(binding.accountId, event.target.checked)} /><span className="change-info-account-index">{index + 1}</span><span className="change-info-account-text"><strong>{account?.uid ?? `#${binding.accountId}`}</strong><small>{account?.name ?? account?.username ?? 'Không có tên'}</small></span><em>{account ? accountStatusLabel(account.status) : 'Thiếu TK'}</em></label>
+        })}{accountBindings.length === 0 ? <div className="change-info-empty-small">Chưa có tài khoản.</div> : null}</div>
       </aside>
 
       <main className="change-info-main">
-        <div className="change-info-groups">
-          {CHANGE_INFO_CATEGORIES.filter((category) => category !== 'workflow').map(renderCategoryPanel)}
-        </div>
-
+        <div className="change-info-groups">{CHANGE_INFO_CATEGORIES.filter((category) => category !== 'workflow').map(renderGroup)}</div>
         <section className="change-info-workflow-panel">
-          <header className="change-info-group-head"><strong>Workflow & chạy</strong><span>{enabledItems.length} thay đổi</span></header>
+          <div className="change-info-group-head"><strong>Workflow & runtime</strong><span>Common orchestration</span></div>
           <div className="change-info-workflow-grid">
-            <label><span>Kịch bản trước</span><input type="number" min={1} value={draft.beforeScenarioId ?? ''} onChange={(event) => { setDraft((current) => ({ ...current, beforeScenarioId: event.target.value ? Number(event.target.value) : null })); markDirty() }} placeholder="Không" /></label>
-            <label><span>Kịch bản sau</span><input type="number" min={1} value={draft.afterScenarioId ?? ''} onChange={(event) => { setDraft((current) => ({ ...current, afterScenarioId: event.target.value ? Number(event.target.value) : null })); markDirty() }} placeholder="Không" /></label>
-            <label><span>TK song song</span><input type="number" min={1} max={20} value={draft.accountConcurrency} onChange={(event) => { setDraft((current) => ({ ...current, accountConcurrency: Math.min(20, Math.max(1, Number(event.target.value) || 1)) })); markDirty() }} /></label>
+            <label><span>TK chạy song song</span><input type="number" min={1} max={20} value={draft.accountConcurrency} onChange={(event) => { setDraft((current) => ({ ...current, accountConcurrency: Math.min(20, Math.max(1, Number(event.target.value) || 1)) })); markDirty() }} /></label>
+            <label><span>Kịch bản trước</span><input type="number" min={1} value={draft.beforeScenarioId ?? ''} placeholder="Chưa nối runtime" onChange={(event) => { setDraft((current) => ({ ...current, beforeScenarioId: event.target.value ? Number(event.target.value) : null })); markDirty() }} /></label>
+            <label><span>Kịch bản sau</span><input type="number" min={1} value={draft.afterScenarioId ?? ''} placeholder="Chưa nối runtime" onChange={(event) => { setDraft((current) => ({ ...current, afterScenarioId: event.target.value ? Number(event.target.value) : null })); markDirty() }} /></label>
             <label className="change-info-verify"><input type="checkbox" checked readOnly /><span>Verify sau thay đổi</span></label>
           </div>
-          {enabledItems.length ? <div className="change-info-order-row"><strong>Thứ tự chạy</strong><div>{enabledItems.map((item, index) => <span key={item.key}><b>{index + 1}. {item.label}</b><button type="button" disabled={index === 0} onClick={() => moveAction(item.key, -1)}>↑</button><button type="button" disabled={index === enabledItems.length - 1} onClick={() => moveAction(item.key, 1)}>↓</button></span>)}</div></div> : null}
-          <div className="change-info-start-row">
-            <div><strong>Chưa sẵn sàng chạy</strong><p>{validationErrors[0] ?? (enabledAccountCount < 1 ? 'Chưa có tài khoản được bật.' : 'Các action đang chờ hoàn tất kiểm thử Facebook.')}</p></div>
-            <button type="button" className="change-info-start" disabled>Bắt đầu</button>
-          </div>
+          <div className="change-info-order-row"><strong>Thứ tự chạy</strong><div>{enabledItems.map((item, index) => <span key={item.key}><b>{index + 1}. {item.label}</b><button type="button" disabled={runtimeActive || index === 0} onClick={() => moveAction(item.key, -1)}>↑</button><button type="button" disabled={runtimeActive || index === enabledItems.length - 1} onClick={() => moveAction(item.key, 1)}>↓</button></span>)}</div></div>
+          <div className="change-info-start-row"><div><strong>{runtime ? runStateLabel(runtime.state) : canStart ? 'Sẵn sàng chạy' : 'Chưa thể chạy'}</strong><p>{runtime?.message ?? startMessage}</p></div><div className="change-info-head-actions">
+            {!runtimeActive ? <button type="button" className="change-info-start" disabled={!canStart} onClick={() => void runCommand('start')}>Bắt đầu</button> : null}
+            {runtime?.state === 'running' ? <button type="button" onClick={() => void runCommand('pause')} disabled={runtimeBusy}>Pause</button> : null}
+            {runtime?.state === 'paused' ? <button type="button" onClick={() => void runCommand('resume')} disabled={runtimeBusy}>Resume</button> : null}
+            {runtimeActive ? <button type="button" onClick={() => void runCommand('stop')} disabled={runtimeBusy || runtime?.state === 'stopping'}>Stop</button> : null}
+          </div></div>
         </section>
+
+        {runtime ? <details className={`change-info-audit-result ${runtime.state === 'success' ? 'success' : runtime.state === 'needs_attention' ? 'needs_attention' : runtime.state === 'failed' ? 'failed' : ''}`} open>
+          <summary>Runtime · {runStateLabel(runtime.state)} · {runtime.runId}</summary>
+          <p>{runtime.message ?? 'Đang cập nhật trạng thái…'}</p>
+          <div>{runtime.accounts.map((account) => <div key={account.accountId} className="change-info-action-row"><strong>{account.uid} · {account.state}</strong>{account.message ? <p>{account.message}</p> : null}{account.results.map((result) => <p key={`${result.key}-${result.startedAt}`}>{result.label}: <b>{result.status}</b>{result.code ? ` · ${result.code}` : ''}{result.message ? ` · ${result.message}` : ''}</p>)}</div>)}</div>
+          <pre>{runtime.logs.slice(-20).map((entry) => `[${new Date(entry.at).toLocaleTimeString('vi-VN')}]${entry.accountId ? ` ACC#${entry.accountId}` : ''}${entry.actionType ? ` ${entry.actionType}` : ''} ${entry.message}`).join('\n')}</pre>
+        </details> : null}
       </main>
     </div>
 
     {showAccountPicker ? <AccountBindingPickerModal accounts={availableAccounts} selectedIds={selectedIds} onApply={applyAccountSelection} onClose={() => setShowAccountPicker(false)} contextLabel="Sửa thông tin" /> : null}
-  </section>
+  </div>
 }

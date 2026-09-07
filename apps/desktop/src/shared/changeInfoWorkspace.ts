@@ -89,10 +89,13 @@ export const CHANGE_INFO_CATEGORY_LABELS: Record<ChangeInfoCategory, string> = {
 }
 
 const TEXT_SOURCES = ['fixed', 'list', 'file', 'random_from_list', 'sequential_from_list', 'random_generator'] as const
+const BIO_TEXT_SOURCES = ['fixed', 'list', 'file', 'random_from_list', 'sequential_from_list'] as const
 const LOCATION_SOURCES = ['fixed', 'list', 'file', 'random_from_list', 'sequential_from_list'] as const
 const BOOLEAN_SOURCES = ['fixed', 'list', 'random_from_list', 'sequential_from_list'] as const
 const MEDIA_SOURCES = ['folder'] as const
 const NO_PERSISTED_SOURCE: readonly ChangeInfoDataSourceType[] = []
+
+type ItemOptions = Pick<ChangeInfoCatalogItem, 'destructive' | 'canonicalAccountField' | 'supportStatus' | 'actionType'>
 
 function item(
   key: string,
@@ -101,7 +104,7 @@ function item(
   description: string,
   valueKind: ChangeInfoValueKind,
   allowedSources: readonly ChangeInfoDataSourceType[],
-  options: Pick<ChangeInfoCatalogItem, 'destructive' | 'canonicalAccountField'> = {}
+  options: Partial<ItemOptions> = {}
 ): ChangeInfoCatalogItem {
   return {
     key,
@@ -110,9 +113,10 @@ function item(
     description,
     valueKind,
     allowedSources,
-    supportStatus: 'audit_required',
-    actionType: null,
-    ...options
+    supportStatus: options.supportStatus ?? 'audit_required',
+    actionType: options.actionType ?? null,
+    ...(options.destructive === undefined ? {} : { destructive: options.destructive }),
+    ...(options.canonicalAccountField === undefined ? {} : { canonicalAccountField: options.canonicalAccountField })
   }
 }
 
@@ -120,7 +124,7 @@ export const CHANGE_INFO_CATALOG: readonly ChangeInfoCatalogItem[] = [
   item('display_name', 'personal', 'Đổi tên', 'Display name của Profile.', 'text', TEXT_SOURCES, { canonicalAccountField: 'name' }),
   item('birthday', 'personal', 'Ngày sinh', 'Ngày sinh Profile.', 'date', LOCATION_SOURCES),
   item('gender', 'personal', 'Giới tính', 'Chỉ mở khi surface Facebook hiện hành audit được.', 'text', LOCATION_SOURCES),
-  item('bio', 'personal', 'Tiểu sử', 'Bio / intro text.', 'text', TEXT_SOURCES),
+  item('bio', 'personal', 'Tiểu sử', 'Bio / intro text.', 'text', BIO_TEXT_SOURCES, { supportStatus: 'ready', actionType: 'profile.bio' }),
   item('nickname', 'personal', 'Tên khác / nickname', 'Other name khi surface còn hỗ trợ.', 'text', TEXT_SOURCES),
   item('language', 'personal', 'Ngôn ngữ', 'Ngôn ngữ Profile/Facebook khi semantics được audit.', 'text', LOCATION_SOURCES),
   item('website', 'personal', 'Website', 'Website trong About nếu surface hiện hành hỗ trợ.', 'text', LOCATION_SOURCES),
@@ -275,6 +279,9 @@ export function validateChangeInfoWorkspaceDraft(draft: ChangeInfoWorkspaceDraft
   const normalized = parseChangeInfoWorkspaceDraft(draft)
   const errors: string[] = []
   if (normalized.accountConcurrency < 1 || normalized.accountConcurrency > 20) errors.push('TK song song phải từ 1 đến 20.')
+  if (normalized.beforeScenarioId !== null || normalized.afterScenarioId !== null) {
+    errors.push('Kịch bản trước/sau chưa nối vào runtime Change Info; bỏ chọn để chạy các action đã audit.')
+  }
   const enabled = enabledChangeInfoCatalogItems(normalized)
   if (!enabled.length) errors.push('Cần chọn ít nhất một thay đổi.')
   for (const catalog of enabled) {

@@ -7,14 +7,20 @@ import {
   type ChangeInfoBioAuditPayload,
   type ChangeInfoBioAuditResult
 } from '../shared/changeInfoAudit'
+import {
+  CHANGE_INFO_RUNNER_IPC,
+  type ChangeInfoWorkspaceRunPayload
+} from '../shared/changeInfoRunner'
 import { ChangeInfoAuditWorkerManager } from './browser/changeInfoAuditWorkerManager'
 import { AccountRepository } from './database/accountRepository'
 import { AppSettingsRepository } from './database/appSettingsRepository'
 import {
   FacebookCommonSessionPolicy,
+  FacebookSessionPolicyWorkerManager,
   scenarioActionJobForCommonSessionPolicy
 } from './facebook/facebookSessionPolicy'
 import { AccountExecutionCoordinator } from './services/accountExecutionCoordinator'
+import { ChangeInfoWorkspaceRunnerService } from './services/changeInfoWorkspaceRunnerService'
 
 export interface ChangeInfoAuditIpcRuntime { dispose: () => void }
 
@@ -32,7 +38,18 @@ export function registerChangeInfoAuditIpcHandlers(options: ChangeInfoAuditIpcOp
   const appSettings = new AppSettingsRepository(options.database)
   const sessionPolicy = new FacebookCommonSessionPolicy(options.database, options.dataDirectory)
   const accountExecution = new AccountExecutionCoordinator()
-  const worker = new ChangeInfoAuditWorkerManager(() => appSettings.get().runtime)
+  const auditWorker = new ChangeInfoAuditWorkerManager(() => appSettings.get().runtime)
+  const mutationWorkers = new FacebookSessionPolicyWorkerManager(
+    options.database,
+    options.dataDirectory,
+    () => appSettings.get().runtime
+  )
+  const runner = new ChangeInfoWorkspaceRunnerService(
+    options.database,
+    mutationWorkers,
+    accountExecution,
+    () => appSettings.get()
+  )
   const evidenceFolder = join(options.dataDirectory, 'screenshots', 'change-info-audit')
 
   ipcMain.handle(CHANGE_INFO_AUDIT_IPC.bio, async (_event, payload: ChangeInfoBioAuditPayload) => {
@@ -52,21 +69,24 @@ export function registerChangeInfoAuditIpcHandlers(options: ChangeInfoAuditIpcOp
         }
         const baseJob = scenarioActionJobForCommonSessionPolicy(account, request, settings)
         const hydrated = sessionPolicy.hydrateScenarioActionJob(baseJob)
-        return await worker.run(hydrated, evidenceFolder)
+        return await auditWorker.run(hydrated, evidenceFolder)
       } catch (error) {
-        return failed(
-          account.id,
-          account.uid,
-          'audit_prepare_failed',
-          error instanceof Error ? error.message : String(error)
-        )
+        return failed(account.id, account.uid, 'audit_prepare_failed', error instanceof Error ? error.message : String(error))
       }
     })
   })
 
+  ipcMain.handle(CHANGE_INFO_RUNNER_IPC.start, (_event, payload: ChangeInfoWorkspaceRunPayload) => runner.start(payload.workspaceId))
+  ipcMain.handle(CHANGE_INFO_RUNNER_IPC.status, (_event, payload: ChangeInfoWorkspaceRunPayload) => runner.status(payload.workspaceId))
+  ipcMain.handle(CHANGE_INFO_RUNNER_IPC.pause, (_event, payload: ChangeInfoWorkspaceRunPayload) => runner.pause(payload.workspaceId))
+  ipcMain.handle(CHANGE_INFO_RUNNER_IPC.resume, (_event, payload: ChangeInfoWorkspaceRunPayload) => runner.resume(payload.workspaceId))
+  ipcMain.handle(CHANGE_INFO_RUNNER_IPC.stop, (_event, payload: ChangeInfoWorkspaceRunPayload) => runner.stop(payload.workspaceId))
+
   return {
     dispose: () => {
+      runner.dispose()
       ipcMain.removeHandler(CHANGE_INFO_AUDIT_IPC.bio)
+      for (const channel of Object.values(CHANGE_INFO_RUNNER_IPC)) ipcMain.removeHandler(channel)
     }
   }
 }
