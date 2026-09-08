@@ -12,6 +12,28 @@ describe('parseVerificationCode', () => {
     expect(match?.messageId).toBe('new')
   })
 
+  it('ignores numeric runs inside mailbox identifiers and prefers the labelled Microsoft security code', () => {
+    const now = Date.UTC(2026, 8, 8, 8, 50, 0)
+    const match = parseVerificationCode([
+      {
+        id: 'live-microsoft',
+        receivedAt: now - 2 * 60_000,
+        sender: 'account-security-noreply@accountprotection.microsoft.com',
+        subject: 'Personal Microsoft account security code',
+        bodyPreview: 'Microsoft account Security code',
+        bodyText: [
+          'Please use the following security code for your personal Microsoft account is**3@hotmail.com.',
+          'Recovery mailbox islaopalischr37063b2401@fivermail.com',
+          'Security code: 142679'
+        ].join('\n')
+      }
+    ], now)
+
+    expect(match?.code).toBe('142679')
+    expect(match?.code).not.toBe('37063')
+    expect(match?.code).not.toBe('2401')
+  })
+
   it('does not treat a recent order/reference number as a verification code', () => {
     const now = Date.UTC(2026, 7, 24, 8, 0, 0)
     expect(parseVerificationCode([
