@@ -122,14 +122,24 @@ export function classifyMicrosoftLoginSurface(snapshot: MicrosoftLoginSnapshot):
   const hasMaskedRecoveryEmail = /[a-z0-9.!#$%&'*+/=?^_`{|}~-]{2,}\*+@[a-z0-9.-]+\.[a-z]{2,}/i.test(text)
   const helpProtectRecovery = /help us protect your account/.test(text)
   const completeHiddenPart = /complete\s+the\s+hidden\s+part/.test(text)
-  const auditedRecoveryCode = /enter\s+your\s+security\s+code/.test(text) && /email/.test(text)
   const recoveryEmailProofCopy = /verify your email|we(?:'|’)ll send a code|we will send a code|send code|already received a code|xác minh email|gửi mã/.test(text)
   const fullEmailConfirmationCopy = /verify\s+your\s+email/.test(text)
     && /to\s+verify\s+(?:that\s+)?this\s+is\s+your\s+email(?:\s+address)?\s*[,.:;-]?\s*enter\s+it\s+here/.test(text)
+  const recoveryCodeHeading = /enter\s+your\s+(?:security\s+)?code/.test(text)
+  const recoveryCodeEmailEvidence = /matches\s+the\s+email\s+address\s+on\s+your\s+account|we(?:'|’)ll\s+send\s+you\s+a\s+code|we\s+will\s+send\s+you\s+a\s+code|we\s+sent[^.\n]*code[^.\n]*email|sent[^.\n]*to\s+your\s+email|email\s+address/.test(text)
+  const auditedRecoveryCode = recoveryCodeHeading && recoveryCodeEmailEvidence
+  const hasRecoveryProofEvidence = proofEmailInputCount > 0 || sendCodeControlCount > 0 || recoveryEmailProofCopy
 
-  // Only the audited email-code copy enters the recovery provider module.
-  // The module still requires one safe input before typing anything.
+  // A code page is already past method selection. Keep it in the recovery-code
+  // branch even when Microsoft also renders a "Use your password" fallback link.
   if (auditedRecoveryCode) return 'recovery_code'
+
+  // On the pre-code Verify-email surface, password is the canonical credential
+  // path whenever Microsoft explicitly offers it. This prevents a fresh login
+  // from needlessly starting recovery-mail verification before PassEmail is tried.
+  if (usePasswordControlCount > 0 && hasRecoveryProofEvidence) {
+    return 'password_method_choice'
+  }
 
   // Some Microsoft consumer/OAuth variants ask for the *full* recovery email,
   // while the older account.live variant asks only for the hidden local part.
@@ -157,13 +167,6 @@ export function classifyMicrosoftLoginSurface(snapshot: MicrosoftLoginSnapshot):
   // Microsoft can render “Send a code to …” next to the normal password form.
   if (snapshot.passwordInputCount > 0) return 'password'
   if (usernameInputCount > 0) return 'username'
-
-  // A recovery proof without the one safe full-email field can still offer a
-  // password fallback. Keep that existing fallback instead of guessing a field.
-  const hasRecoveryProofEvidence = proofEmailInputCount > 0 || sendCodeControlCount > 0 || recoveryEmailProofCopy
-  if (usePasswordControlCount > 0 && hasRecoveryProofEvidence) {
-    return 'password_method_choice'
-  }
 
   const structuredSecurityProof = proofEmailInputCount > 0 && sendCodeControlCount > 0
   const knownSecurityCopy = /enter.*code|security code|verification code|two[- ]step|two[- ]factor|approve.*sign.?in|authenticator|help us protect|xác minh bảo mật|mã bảo mật|trình xác thực|phê duyệt.*đăng nhập/.test(text)

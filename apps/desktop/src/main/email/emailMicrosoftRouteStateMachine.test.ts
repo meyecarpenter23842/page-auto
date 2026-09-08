@@ -66,7 +66,7 @@ describe('Microsoft route-first state machine regression', () => {
     })).toBe('password')
   })
 
-  it('routes the observed full-email Verify your email form before the password fallback', () => {
+  it('prefers the password path on the observed full-email Verify your email form when Microsoft offers it', () => {
     expect(classifyMicrosoftLoginSurface({
       url: consumerAuthorizeUrl,
       text: "Verify your email We'll send a code to sa*****@recovery.example. To verify this is your email, enter it here. Send code Already received a code? Use your password",
@@ -78,7 +78,7 @@ describe('Microsoft route-first state machine regression', () => {
       useAnotherAccountControlCount: 0,
       sendCodeControlCount: 1,
       usePasswordControlCount: 1
-    })).toBe('recovery_email_confirmation')
+    })).toBe('password_method_choice')
   })
 
   it('keeps the password fallback when the recovery proof has no safe structured input', () => {
