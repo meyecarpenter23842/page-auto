@@ -17,10 +17,12 @@ import { registerScenarioIpcHandlers, type ScenarioIpcRuntime } from './scenario
 import { registerScenarioRunnerIpcHandlers, type ScenarioRunnerIpcRuntime } from './scenarioRunnerIpc'
 import { registerStoryIpcHandlers, type StoryIpcRuntime } from './storyIpc'
 import { prepareDataDirectory, type PreparedDataDirectory } from './services/dataDirectory'
+import { PwaRelayClient } from './services/pwaRelayClient'
 
 let mainWindow: BrowserWindow | null = null
 let databaseRuntime: DatabaseRuntime | null = null
 let ipcRuntime: IpcRuntime | null = null
+let pwaRelayRuntime: PwaRelayClient | null = null
 let accountGroupIpcRuntime: AccountGroupIpcRuntime | null = null
 let actionWorkspaceIpcRuntime: ActionWorkspaceIpcRuntime | null = null
 let interactionWorkspaceRunnerIpcRuntime: InteractionWorkspaceRunnerIpcRuntime | null = null
@@ -101,6 +103,17 @@ app.whenReady().then(() => {
   try {
     databaseRuntime = initializeDatabase(databaseFile)
     ipcRuntime = registerIpcHandlers({ database: databaseRuntime.client, dataDirectory })
+    const bridgeRuntime = ipcRuntime
+    if (process.env.PAGE_AUTO_SMOKE_TEST !== '1' && process.env.PAGE_AUTO_PWA_RELAY_DISABLED !== '1') {
+      pwaRelayRuntime = new PwaRelayClient({
+        dataDirectory,
+        getSnapshot: () => bridgeRuntime.getPwaBridgeSnapshot(),
+        ...(process.env.PAGE_AUTO_PWA_RELAY_URL ? { relayBaseUrl: process.env.PAGE_AUTO_PWA_RELAY_URL } : {}),
+        onError: (message) => logger.warn('PWA relay push failed', { message })
+      })
+      pwaRelayRuntime.start()
+      logger.info('PWA relay transport started', { pairingFile: pwaRelayRuntime.getPairingFilePath() })
+    }
     accountGroupIpcRuntime = registerAccountGroupIpcHandlers(databaseRuntime.client)
     actionWorkspaceIpcRuntime = registerActionWorkspaceIpcHandlers(databaseRuntime.client)
     interactionWorkspaceRunnerIpcRuntime = registerInteractionWorkspaceRunnerIpcHandlers({
@@ -127,6 +140,8 @@ app.whenReady().then(() => {
     mainWindow = createMainWindow()
   } catch (error) {
     logger.error('Application initialization failed', { error: error instanceof Error ? error.message : String(error) })
+    pwaRelayRuntime?.dispose()
+    pwaRelayRuntime = null
     scenarioRunnerIpcRuntime?.dispose()
     scenarioRunnerIpcRuntime = null
     scenarioIpcRuntime?.dispose()
@@ -166,6 +181,8 @@ app.whenReady().then(() => {
 })
 
 app.on('before-quit', () => {
+  pwaRelayRuntime?.dispose()
+  pwaRelayRuntime = null
   scenarioRunnerIpcRuntime?.dispose()
   scenarioRunnerIpcRuntime = null
   scenarioIpcRuntime?.dispose()
