@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { chromium, type Browser, type BrowserContext, type Locator, type Page } from 'playwright-core'
 import type { HotmailNeedsAttentionReason, HotmailRecoveryOperation } from '../../shared/hotmail'
 import { friendlyEmailBrowserError, isEmailProfileInUseError } from './emailBrowserLifecycle'
+import { emailCredentialValueMatches, traceEmailCredential } from './emailCredentialBinding'
 import {
   classifyMicrosoftLoginSurface,
   microsoftAccountPickerEntryMatchesCanonicalEmail,
@@ -644,7 +645,28 @@ async function autoLoginMicrosoft(
         await waitForMicrosoftStep(page)
         continue
       }
+      traceEmailCredential('worker-before-fill', {
+        accountId: command.accountId,
+        email: command.loginEmail,
+        secret: loginPassword,
+        profileDirectory: command.profileDirectory
+      })
       await password.fill(loginPassword)
+      const filledPassword = await password.inputValue().catch(() => '')
+      traceEmailCredential('worker-after-fill', {
+        accountId: command.accountId,
+        email: command.loginEmail,
+        secret: filledPassword,
+        profileDirectory: command.profileDirectory
+      })
+      if (!emailCredentialValueMatches(loginPassword, filledPassword)) {
+        await closeMicrosoftOwnedOpenerChain(page)
+        return loginNeedsAttention(
+          'needs_login',
+          attempted,
+          'PAGE-AUTO phát hiện Password trong DOM khác PassEmail của command hiện tại nên không bấm Sign in. Bật credential trace để đối chiếu fingerprint.'
+        )
+      }
       if (!await clickMicrosoftLoginSubmit(page)) {
         await waitForMicrosoftStep(page)
         continue
