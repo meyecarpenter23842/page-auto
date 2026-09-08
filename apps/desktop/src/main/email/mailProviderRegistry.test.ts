@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   FVIA_INBOXES_DOMAINS,
   INBOXES_DOMAINS,
+  MAILTO_PLUS_DOMAINS,
   isKnownFviaInboxesMailbox,
   isKnownInboxesMailbox,
   mailDomainFromAddress,
@@ -31,11 +32,18 @@ describe('mailProviderRegistry', () => {
     expect(mailProviderDomains('fvia_inboxes')).toEqual(FVIA_INBOXES_DOMAINS)
   })
 
-  it('keeps Microsoft, Inboxes and Fvia providers separate and does not guess unknown domains', () => {
+  it('maps only the audited MailtoPlus production domain in this batch', () => {
+    expect(resolveMailProviderId('Owner@MAILTO.PLUS')).toBe('mailto_plus')
+    expect(mailProviderDomains('mailto_plus')).toEqual(MAILTO_PLUS_DOMAINS)
+    expect(resolveMailProviderId('owner@fexpost.com')).toBeNull()
+  })
+
+  it('keeps Microsoft and browser-mail providers separate and does not guess unknown domains', () => {
     expect(resolveMailProviderId('owner@hotmail.com')).toBe('microsoft')
     expect(resolveMailProviderId('owner@outlook.com')).toBe('microsoft')
     expect(resolveMailProviderId('owner@fivermail.com')).toBe('inboxes')
     expect(resolveMailProviderId('owner@fviainboxes.com')).toBe('fvia_inboxes')
+    expect(resolveMailProviderId('owner@mailto.plus')).toBe('mailto_plus')
     expect(resolveMailProviderId('owner@custom.example')).toBeNull()
     expect(resolveMailProviderId('not-an-email')).toBeNull()
     expect(mailDomainFromAddress(' Owner@GetNada.Com ')).toBe('getnada.com')
