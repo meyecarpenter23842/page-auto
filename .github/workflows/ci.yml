@@ -86,6 +86,12 @@ jobs:
       - name: Verify R2 updater configuration
         run: npm run verify:updater-config
 
+      - name: Package Windows updater
+        run: npm run package:update
+
+      - name: Verify Windows updater artifacts
+        run: npm run verify:update-artifacts
+
       - name: Package Windows portable
         run: npm run package:portable
 
