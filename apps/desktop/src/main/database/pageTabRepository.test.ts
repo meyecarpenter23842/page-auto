@@ -158,7 +158,7 @@ describe('PageTabRepository', () => {
     }
 
     expect(() => tabs.update(tab.id, { ...base, avatarDataUrl: 'https://example.com/avatar.jpg' }))
-      .toThrow('Avatar Page không hợp lệ')
+      .toThrow('Ảnh đại diện Page không hợp lệ')
     expect(tabs.update(tab.id, { ...base, avatarDataUrl: null }).avatarDataUrl).toBeNull()
 
     runtime.close()
