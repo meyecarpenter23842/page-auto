@@ -20,52 +20,53 @@ function requireMatch(value, pattern, label) {
 requireMatch(builderConfig, /^\s*provider:\s*generic\s*$/m, 'generic provider')
 requireMatch(builderConfig, new RegExp(`^\\s*url:\\s*${publicFeed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, 'm'), 'public R2 feed URL')
 requireMatch(builderConfig, /^\s*channel:\s*latest\s*$/m, 'latest channel')
-requireMatch(builderConfig, /^\s*include:\s*resources\/installer\.nsh\s*$/m, 'NSIS data-preservation include')
+requireMatch(builderConfig, /^\s*include:\s*resources\/installer\.nsh\s*$/m, 'NSIS updater include')
 
 const customUnInit = installerInclude.match(/!macro customUnInit([\s\S]*?)!macroend/)?.[1] ?? ''
 if (
   !customUnInit.includes('${GetParameters} $R0') ||
   !customUnInit.includes('${GetOptions} $R0 "/S" $R1') ||
   !customUnInit.includes('${GetOptions} $R0 "--updated" $R1') ||
-  !customUnInit.includes('SetSilent silent')
+  !customUnInit.includes('${GetOptions} $R0 "/KEEP_APP_DATA" $R1') ||
+  !customUnInit.includes('SetSilent silent') ||
+  !customUnInit.includes('SetSilent normal')
 ) {
   throw new Error(
-    'Updater NSIS include must re-detect /S and --updated and force the old assisted uninstaller silent during replacement'
+    'Updater NSIS include must keep update invocations silent while restoring assisted UI for manual uninstall'
   )
 }
 if (!customUnInit.includes('${if} ${isUpdated}')) {
   throw new Error('Updater NSIS include must retain the framework isUpdated signal as a fallback')
 }
-if (installerInclude.includes('SilentUnInstall silent')) {
-  throw new Error('Updater fix must not make user-started manual uninstall globally silent')
-}
+requireMatch(
+  installerInclude,
+  /!ifdef BUILD_UNINSTALLER\s+SilentUnInstall silent\s+!endif/m,
+  'early silent-uninstaller default for updater startup'
+)
 
 const customRemoveFiles = installerInclude.match(/!macro customRemoveFiles([\s\S]*?)!macroend/)?.[1] ?? ''
 if (!customRemoveFiles) {
   throw new Error('Updater installer include must override customRemoveFiles')
 }
-const preserveDataIndex = customRemoveFiles.indexOf('Rename "$INSTDIR\\data" "$R9"')
-const updateBranchIndex = customRemoveFiles.indexOf('${if} ${isUpdated}')
-if (preserveDataIndex < 0) {
-  throw new Error('Updater installer include must move the portable data directory out before replacing app files')
+requireMatch(installerInclude, /Function un\.pageAutoAtomicRMDir/, 'PageAuto program-only atomic removal helper')
+requireMatch(installerInclude, /StrCmp \$R2 "data" pageauto_continue/, 'portable data root skip guard')
+requireMatch(installerInclude, /StrCmp \$R4 "data_" pageauto_continue/, 'portable data recovery snapshot skip guard')
+if (!customRemoveFiles.includes('Call un.pageAutoAtomicRMDir')) {
+  throw new Error('Updater installer include must remove only program-owned files through the PageAuto atomic helper')
 }
-if (updateBranchIndex < 0) {
-  throw new Error('Updater installer include must retain the updater-specific atomic cleanup branch')
+if (!customRemoveFiles.includes('Call un.restoreFiles')) {
+  throw new Error('Updater installer include must retain rollback when a program file is busy')
 }
-if (preserveDataIndex > updateBranchIndex) {
-  throw new Error('Portable data must be preserved before updater/manual replacement cleanup branches diverge')
+for (const forbidden of [
+  'Rename "$INSTDIR\\data"',
+  'Rename "$R9" "$INSTDIR\\data"',
+  '.__pageauto_data_preserve',
+  'RMDir /r "$INSTDIR"'
+]) {
+  if (installerInclude.includes(forbidden)) {
+    throw new Error(`Updater/uninstaller must never move or recursively delete portable runtime data: ${forbidden}`)
+  }
 }
-if (!customRemoveFiles.includes('Call un.atomicRMDir')) {
-  throw new Error('Updater installer include must retain electron-builder atomic old-install removal')
-}
-if (!customRemoveFiles.includes('Rename "$R9" "$INSTDIR\\data"')) {
-  throw new Error('Updater installer include must restore the portable data directory before new files are installed')
-}
-requireMatch(
-  customRemoveFiles,
-  /\$\{endif\}\s+CreateDirectory "\$INSTDIR"\s+\$\{if\} \$R8 == "1"/m,
-  'common install-directory recreation before preserved data restore'
-)
 
 if (desktopPackage.version !== rootPackage.version || !/^\d+\.\d+\.\d+$/.test(desktopPackage.version)) {
   throw new Error('Updater build version must be matching semver in root and desktop package.json')
@@ -105,6 +106,7 @@ console.log(JSON.stringify({
   privateR2CredentialsInApp: false,
   silentInstall: true,
   silentOldUninstallerOnUpdate: true,
-  preservesPortableDataOnUpdate: true,
-  preservesPortableDataOnManualReplacement: true
+  manualUninstallRemainsInteractive: true,
+  portableDataNeverMovedDuringReplacement: true,
+  portableDataRecoverySnapshotsNeverMovedDuringReplacement: true
 }, null, 2))
