@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { classifyMicrosoftLoginSurface, classifyMicrosoftRoute } from './emailLoginPolicy'
+import {
+  classifyMicrosoftLoginSurface,
+  classifyMicrosoftRoute,
+  shouldResumeMicrosoftAuthSurface
+} from './emailLoginPolicy'
 
 const consumerAuthorizeUrl = 'https://login.live.com/oauth20_authorize.srf?client_id=9199bf20-a13f-4107-85dc-02114787ef48&state=dynamic-state&nonce=dynamic-nonce&code_challenge=dynamic-challenge&username=canonical%40hotmail.com&login_hint=canonical%40hotmail.com'
 
@@ -9,6 +13,16 @@ describe('Microsoft route-first state machine regression', () => {
     expect(classifyMicrosoftRoute('https://login.live.com/oauth20_authorize.srf?state=another&epct=rotating')).toBe('login_oauth')
     expect(classifyMicrosoftRoute('https://login.microsoftonline.com/common/oauth2/v2.0/authorize?state=dynamic&nonce=dynamic')).toBe('login_oauth')
     expect(classifyMicrosoftRoute('https://outlook.live.com/mail/0/inbox')).toBe('outlook_mail')
+  })
+
+  it('marks every Microsoft-owned non-authenticated surface resumable before a new target navigation', () => {
+    expect(shouldResumeMicrosoftAuthSurface('username')).toBe(true)
+    expect(shouldResumeMicrosoftAuthSurface('password')).toBe(true)
+    expect(shouldResumeMicrosoftAuthSurface('recovery_email_confirmation')).toBe(true)
+    expect(shouldResumeMicrosoftAuthSurface('recovery_code')).toBe(true)
+    expect(shouldResumeMicrosoftAuthSurface('identity_review')).toBe(true)
+    expect(shouldResumeMicrosoftAuthSurface('manual_login')).toBe(true)
+    expect(shouldResumeMicrosoftAuthSurface('authenticated')).toBe(false)
   })
 
   it('distinguishes account picker, username and password on the same OAuth route', () => {
@@ -52,7 +66,7 @@ describe('Microsoft route-first state machine regression', () => {
     })).toBe('password')
   })
 
-  it('treats recovery-email proof with Use your password as a supported method choice', () => {
+  it('routes the observed full-email Verify your email form before the password fallback', () => {
     expect(classifyMicrosoftLoginSurface({
       url: consumerAuthorizeUrl,
       text: "Verify your email We'll send a code to sa*****@recovery.example. To verify this is your email, enter it here. Send code Already received a code? Use your password",
@@ -64,10 +78,10 @@ describe('Microsoft route-first state machine regression', () => {
       useAnotherAccountControlCount: 0,
       sendCodeControlCount: 1,
       usePasswordControlCount: 1
-    })).toBe('password_method_choice')
+    })).toBe('recovery_email_confirmation')
   })
 
-  it('matches the live Verify your email method choice even when the recovery field is not type=email', () => {
+  it('keeps the password fallback when the recovery proof has no safe structured input', () => {
     expect(classifyMicrosoftLoginSurface({
       url: consumerAuthorizeUrl,
       text: 'Verify your email\nWe’ll send a code to sa*****@recovery.example.\nSend code\nAlready received a code?\nUse your password',
@@ -82,10 +96,25 @@ describe('Microsoft route-first state machine regression', () => {
     })).toBe('password_method_choice')
   })
 
-  it('keeps recovery-email proof terminal when password fallback is not available', () => {
+  it('routes the full-email recovery proof even without a password fallback', () => {
     expect(classifyMicrosoftLoginSurface({
       url: consumerAuthorizeUrl,
       text: "Verify your email We'll send a code to sa*****@recovery.example. To verify this is your email, enter it here. Send code Already received a code?",
+      emailInputCount: 1,
+      usernameInputCount: 0,
+      proofEmailInputCount: 1,
+      verificationCodeInputCount: 0,
+      passwordInputCount: 0,
+      useAnotherAccountControlCount: 0,
+      sendCodeControlCount: 1,
+      usePasswordControlCount: 0
+    })).toBe('recovery_email_confirmation')
+  })
+
+  it('keeps a vague recovery proof manual when the exact full-email copy is absent', () => {
+    expect(classifyMicrosoftLoginSurface({
+      url: consumerAuthorizeUrl,
+      text: 'Verify your email Send code to sa*****@recovery.example',
       emailInputCount: 1,
       usernameInputCount: 0,
       proofEmailInputCount: 1,
