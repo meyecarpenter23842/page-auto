@@ -29,6 +29,7 @@ import type { PageWallRunNowPayload } from '../shared/pageWall'
 import type { PageWallJobIdPayload, PageWallSchedulePayload } from '../shared/pageWallJobs'
 import type { PageWallRecurringPagePayload, SavePageWallRecurringPlanInput } from '../shared/pageWallRecurring'
 import type { ExecuteSinglePostingJobPayload } from '../shared/posting'
+import type { PwaBridgeSnapshot } from '../shared/pwaBridge'
 import type { RotationPageTabPayload } from '../shared/rotation'
 import type { CreateRunPayload, RunIdPayload } from '../shared/runs'
 import { AccountBrowserDockManager } from './browser/accountBrowserDockManager'
@@ -56,6 +57,7 @@ import { PageWallRecurringService } from './services/pageWallRecurringService'
 import { PageWallRunNowService } from './services/pageWallRunNowService'
 import { PageWallSchedulerService } from './services/pageWallSchedulerService'
 import { PostingService } from './services/postingService'
+import { PwaBridgeService } from './services/pwaBridgeService'
 import { ResilientPostingService } from './services/resilientPostingService'
 import { RotationService, type RotationPostingExecutor } from './services/rotationService'
 import { RuntimeRecoveryService } from './services/runtimeRecovery'
@@ -65,7 +67,10 @@ interface RegisterIpcOptions {
   dataDirectory: string
 }
 
-export interface IpcRuntime { dispose: () => void }
+export interface IpcRuntime {
+  dispose: () => void
+  getPwaBridgeSnapshot: () => PwaBridgeSnapshot
+}
 
 const supportedImageExtensions = new Set(['.jpg', '.jpeg', '.png', '.webp'])
 const MAX_BACKUP_FILE_BYTES = 20 * 1024 * 1024
@@ -178,6 +183,7 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
     ),
     () => appSettings.get().runtime.maxActivePageTabs
   )
+  const pwaBridge = new PwaBridgeService(pageTabs, rotation, executionLogs)
   const enabledPageTabIds = pageTabs.list().flatMap((tab) => {
     const latest = runs.getLatestForPageTab(tab.id)
     return latest && (latest.run.status === 'created' || latest.run.status === 'running') ? [tab.id] : []
@@ -354,6 +360,7 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
   })
 
   return {
+    getPwaBridgeSnapshot: () => pwaBridge.getSnapshot(),
     dispose: () => {
       pageWallRecurring.dispose()
       pageWallScheduler.dispose()
