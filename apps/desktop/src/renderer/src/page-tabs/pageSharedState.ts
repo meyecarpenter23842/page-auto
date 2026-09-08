@@ -7,6 +7,7 @@ import type {
 export interface SharedPagePatch {
   name?: string
   pageUid?: string
+  avatarDataUrl?: string | null
   accounts?: PageTabAccountInput[]
 }
 
@@ -15,6 +16,7 @@ export function buildSharedPageSaveInput(config: PageTabConfig, patch: SharedPag
   return {
     name: patch.name ?? config.name,
     pageUid: patch.pageUid ?? config.pageUid,
+    avatarDataUrl: patch.avatarDataUrl === undefined ? (config.avatarDataUrl ?? null) : patch.avatarDataUrl,
     rotation: { ...config.rotation },
     accounts: sourceAccounts.map((item, index) => ({
       accountId: item.accountId,

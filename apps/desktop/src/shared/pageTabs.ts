@@ -20,6 +20,7 @@ export const GROUP_ORDER_MODES = ['sequential', 'random'] as const
 export type GroupOrderMode = (typeof GROUP_ORDER_MODES)[number]
 
 export const MAX_PAGE_TAB_ACCOUNT_CONCURRENCY = 20
+export const MAX_PAGE_AVATAR_DATA_URL_LENGTH = 220_000
 
 export function parsePostVariantText(value: string): string[] {
   const variants: string[] = []
@@ -163,6 +164,8 @@ export interface SavePageTabPostLibraryInput {
 export interface PageTabSaveInput {
   name: string
   pageUid: string
+  /** Compact Page avatar. `undefined` preserves the current avatar on partial-compatible callers. */
+  avatarDataUrl?: string | null | undefined
   rotation: PageTabRotationConfig
   accounts: PageTabAccountInput[]
   schedules: PageTabScheduleInput[]

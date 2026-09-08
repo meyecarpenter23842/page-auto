@@ -63,6 +63,8 @@ export interface PwaBridgePageSnapshot {
   pageTabId: number
   name: string
   pageUid: string
+  /** Compact Page avatar data URL. Additive in schema v1 so older PWA clients can ignore it. */
+  avatarDataUrl: string | null
   configuredStatus: PageTabStatus
   runtimeStatus: RotationRuntimeStatus
   runId: number | null
