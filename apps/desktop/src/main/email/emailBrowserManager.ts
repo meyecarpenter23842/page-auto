@@ -98,7 +98,8 @@ function proxyPayload(proxy: EmailProxyCandidate | null) {
 function loginPayload(account: AccountRecord) {
   return {
     ...(account.email?.trim() ? { loginEmail: account.email.trim() } : {}),
-    ...(account.emailPassword ? { loginPassword: account.emailPassword } : {})
+    ...(account.emailPassword ? { loginPassword: account.emailPassword } : {}),
+    ...(account.backupEmail?.trim() ? { backupEmail: account.backupEmail.trim() } : {})
   }
 }
 
@@ -410,7 +411,10 @@ export class EmailBrowserManager {
     }
 
     return await new Promise<WorkerResponse>((resolve) => {
-      const timeoutMs = kind === 'open-result' ? 90_000 : 45_000
+      // A Microsoft recovery-email login can legitimately request fresh mailbox
+      // codes more than once. Keep the Main-side RPC bounded but long enough for
+      // three provider polling rounds without killing the live Email session.
+      const timeoutMs = kind === 'open-result' ? 150_000 : 120_000
       const timer = setBrowserLaunchAwareTimeout(entry.process, () => {
         if (!entry.pending) return
         entry.pending = null
