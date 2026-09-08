@@ -1,4 +1,4 @@
-export const MAIL_PROVIDER_IDS = ['microsoft', 'inboxes', 'mailto_plus', 'gmail', 'yahoo'] as const
+export const MAIL_PROVIDER_IDS = ['microsoft', 'inboxes', 'fvia_inboxes', 'mailto_plus', 'gmail', 'yahoo'] as const
 export type MailProviderId = (typeof MAIL_PROVIDER_IDS)[number]
 
 export const MAILBOX_ROLES = ['primary', 'recovery'] as const

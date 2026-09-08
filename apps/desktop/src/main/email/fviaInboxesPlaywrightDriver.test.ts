@@ -1,0 +1,71 @@
+import { describe, expect, it } from 'vitest'
+import { classifyFviaInboxesSurface, parseFviaReceivedAtLabel } from './fviaInboxesPlaywrightDriver'
+
+describe('classifyFviaInboxesSurface', () => {
+  it('recognizes the audited username/domain/Get Email form before a mailbox is activated', () => {
+    expect(classifyFviaInboxesSurface({
+      bodyText: 'FREE Temporary Email Inbox No emails yet',
+      expectedMailbox: 'owner@fviainboxes.com',
+      activatedMailbox: null,
+      usernameValue: '',
+      selectedDomain: 'fviainboxes.com',
+      usernameInputVisible: true,
+      domainControlVisible: true,
+      getEmailButtonVisible: true,
+      inboxVisible: true
+    })).toBe('mailbox_form')
+  })
+
+  it('requires the exact activated local part and domain before treating the inbox as ready', () => {
+    expect(classifyFviaInboxesSurface({
+      bodyText: 'Inbox Emails will appear here automatically',
+      expectedMailbox: 'owner@fviadropinbox.com',
+      activatedMailbox: 'owner@fviadropinbox.com',
+      usernameValue: 'owner',
+      selectedDomain: 'fviadropinbox.com',
+      usernameInputVisible: true,
+      domainControlVisible: true,
+      getEmailButtonVisible: true,
+      inboxVisible: true
+    })).toBe('mailbox_ready')
+
+    expect(classifyFviaInboxesSurface({
+      bodyText: 'Inbox Emails will appear here automatically',
+      expectedMailbox: 'owner@fviadropinbox.com',
+      activatedMailbox: 'other@fviadropinbox.com',
+      usernameValue: 'other',
+      selectedDomain: 'fviadropinbox.com',
+      usernameInputVisible: true,
+      domainControlVisible: true,
+      getEmailButtonVisible: true,
+      inboxVisible: true
+    })).toBe('mailbox_form')
+  })
+
+  it('fails closed when the expected form/inbox surface disappears', () => {
+    expect(classifyFviaInboxesSurface({
+      bodyText: 'Service unavailable',
+      expectedMailbox: 'owner@dropinboxes.com',
+      activatedMailbox: null,
+      usernameValue: '',
+      selectedDomain: null,
+      usernameInputVisible: false,
+      domainControlVisible: false,
+      getEmailButtonVisible: false,
+      inboxVisible: false
+    })).toBe('provider_unavailable')
+  })
+})
+
+describe('parseFviaReceivedAtLabel', () => {
+  it('uses a visible relative time when Fvia exposes one', () => {
+    const now = 10_000_000
+    expect(parseFviaReceivedAtLabel('2 minutes ago', now)).toBe(now - 120_000)
+    expect(parseFviaReceivedAtLabel('just now', now)).toBe(now)
+  })
+
+  it('returns null when the Fvia list has no trustworthy time label', () => {
+    expect(parseFviaReceivedAtLabel('', 10_000_000)).toBeNull()
+    expect(parseFviaReceivedAtLabel('Microsoft account security code', 10_000_000)).toBeNull()
+  })
+})

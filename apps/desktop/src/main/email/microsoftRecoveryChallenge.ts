@@ -1,8 +1,7 @@
 import type { BrowserContext, Locator, Page } from 'playwright-core'
+import { createBrowserMailProvider, isBrowserMailProviderId } from './browserMailProviderFactory'
 import type { MicrosoftLoginSurface } from './emailLoginPolicy'
-import { InboxesPlaywrightDriver } from './inboxesPlaywrightDriver'
-import { InboxesProvider } from './inboxesProvider'
-import { normalizeMailboxAddress } from './mailProvider'
+import { normalizeMailboxAddress, type MailProvider, type MailProviderId } from './mailProvider'
 import { resolveMailProviderId } from './mailProviderRegistry'
 
 const MASKED_RECOVERY_EMAIL = /([a-z0-9.!#$%&'+/=?^_`{|}~-]{2,})\*+@([a-z0-9.-]+\.[a-z]{2,})/gi
@@ -26,8 +25,9 @@ interface MicrosoftRecoverySession {
   mailbox: string
   requestedAt: number | null
   methodChoiceAttempts: number
-  inboxPage: Page | null
-  provider: InboxesProvider | null
+  providerPage: Page | null
+  providerId: MailProviderId | null
+  provider: MailProvider | null
 }
 
 const sessions = new WeakMap<BrowserContext, MicrosoftRecoverySession>()
@@ -102,37 +102,69 @@ async function readBody(page: Page): Promise<string> {
 function sessionFor(context: BrowserContext, mailbox: string): MicrosoftRecoverySession {
   const existing = sessions.get(context)
   if (existing?.mailbox === mailbox) return existing
-  if (existing?.inboxPage && !existing.inboxPage.isClosed()) {
-    void existing.inboxPage.close({ runBeforeUnload: false }).catch(() => undefined)
+  if (existing?.providerPage && !existing.providerPage.isClosed()) {
+    void existing.providerPage.close({ runBeforeUnload: false }).catch(() => undefined)
   }
   const created: MicrosoftRecoverySession = {
     mailbox,
     requestedAt: null,
     methodChoiceAttempts: 0,
-    inboxPage: null,
+    providerPage: null,
+    providerId: null,
     provider: null
   }
   sessions.set(context, created)
   return created
 }
 
-async function ensureInboxesProvider(context: BrowserContext, state: MicrosoftRecoverySession): Promise<InboxesProvider | null> {
-  if (state.provider && state.inboxPage && !state.inboxPage.isClosed()) return state.provider
+export function microsoftRecoveryBrowserProviderId(mailbox: string): MailProviderId | null {
+  const providerId = resolveMailProviderId(mailbox)
+  return isBrowserMailProviderId(providerId) ? providerId : null
+}
+
+async function ensureBrowserProvider(
+  context: BrowserContext,
+  state: MicrosoftRecoverySession
+): Promise<MailProvider | null> {
+  const providerId = microsoftRecoveryBrowserProviderId(state.mailbox)
+  if (!providerId) return null
+
+  if (
+    state.provider
+    && state.providerId === providerId
+    && state.providerPage
+    && !state.providerPage.isClosed()
+  ) {
+    return state.provider
+  }
+
+  if (state.providerPage && !state.providerPage.isClosed()) {
+    await state.providerPage.close({ runBeforeUnload: false }).catch(() => undefined)
+  }
+
   try {
     const page = await context.newPage()
-    state.inboxPage = page
-    state.provider = new InboxesProvider(new InboxesPlaywrightDriver(page))
-    return state.provider
+    const provider = createBrowserMailProvider(providerId, page)
+    if (!provider) {
+      await page.close({ runBeforeUnload: false }).catch(() => undefined)
+      return null
+    }
+    state.providerPage = page
+    state.providerId = providerId
+    state.provider = provider
+    return provider
   } catch {
-    state.inboxPage = null
+    state.providerPage = null
+    state.providerId = null
     state.provider = null
     return null
   }
 }
 
 async function endProviderRound(state: MicrosoftRecoverySession): Promise<void> {
-  const page = state.inboxPage
-  state.inboxPage = null
+  const page = state.providerPage
+  state.providerPage = null
+  state.providerId = null
   state.provider = null
   if (page && !page.isClosed()) await page.close({ runBeforeUnload: false }).catch(() => undefined)
 }
@@ -141,23 +173,24 @@ async function warmMailboxBeforeSend(
   microsoftPage: Page,
   state: MicrosoftRecoverySession
 ): Promise<MicrosoftRecoveryChallengeResult> {
-  if (resolveMailProviderId(state.mailbox) !== 'inboxes') {
+  const providerId = microsoftRecoveryBrowserProviderId(state.mailbox)
+  if (!providerId) {
     return {
       status: 'needs_attention',
-      message: 'Mail KP canonical chưa có provider tự động được hỗ trợ trong P2; PAGE-AUTO không bấm Send code.'
+      message: 'Mail KP canonical chưa có browser provider tự động được hỗ trợ; PAGE-AUTO không bấm Send code.'
     }
   }
 
-  const provider = await ensureInboxesProvider(microsoftPage.context(), state)
-  if (!provider || !state.inboxPage) {
-    return { status: 'needs_attention', message: 'Không mở được Inboxes provider trong Email browser hiện tại.' }
+  const provider = await ensureBrowserProvider(microsoftPage.context(), state)
+  if (!provider || !state.providerPage) {
+    return { status: 'needs_attention', message: `Không mở được provider ${providerId} trong Email browser hiện tại.` }
   }
 
-  await state.inboxPage.bringToFront().catch(() => undefined)
+  await state.providerPage.bringToFront().catch(() => undefined)
 
-  // Consume already-existing very recent verification messages before asking
-  // Microsoft for a fresh code. The same provider instance is retained through
-  // this challenge round, therefore a just-consumed code cannot be returned after Send code.
+  // Consume existing verification messages before asking Microsoft for a fresh
+  // code. Providers that lack trustworthy timestamps baseline first-seen keys
+  // in this same retained provider instance.
   for (let index = 0; index < 10; index += 1) {
     const existing = await provider.getVerificationCode({
       mailbox: state.mailbox,
@@ -316,23 +349,25 @@ async function readAndSubmitRecoveryCode(
       message: 'Microsoft đang hỏi security code nhưng phiên này chưa xác nhận PAGE-AUTO đã bấm Send code cho Mail KP canonical.'
     }
   }
-  if (resolveMailProviderId(state.mailbox) !== 'inboxes') {
+
+  const providerId = microsoftRecoveryBrowserProviderId(state.mailbox)
+  if (!providerId) {
     await endProviderRound(state)
-    return { status: 'needs_attention', message: 'Mail KP canonical chưa có provider đọc code tự động được hỗ trợ trong P2.' }
+    return { status: 'needs_attention', message: 'Mail KP canonical chưa có browser provider đọc code tự động được hỗ trợ.' }
   }
 
-  const provider = await ensureInboxesProvider(page.context(), state)
-  if (!provider || !state.inboxPage) {
-    return { status: 'needs_attention', message: 'Không mở được Inboxes provider để lấy security code Microsoft.' }
+  const provider = await ensureBrowserProvider(page.context(), state)
+  if (!provider || !state.providerPage) {
+    return { status: 'needs_attention', message: `Không mở được provider ${providerId} để lấy security code Microsoft.` }
   }
 
-  await state.inboxPage.bringToFront().catch(() => undefined)
+  await state.providerPage.bringToFront().catch(() => undefined)
   const codeResult = await provider.getVerificationCode({
     mailbox: state.mailbox,
     role: 'recovery',
     purpose: 'microsoft_security',
-    // Inboxes relative time labels are coarse. Pre-Send messages were consumed
-    // in this same provider round, so a small grace window is safe and avoids missing a just-arrived mail.
+    // Browser providers may expose coarse relative times or first-seen keys.
+    // The pre-Send warm-up in this retained provider round rejects stale mail.
     notBefore: Math.max(1, state.requestedAt - 5_000),
     timeoutMs: 25_000,
     pollIntervalMs: 1_500
@@ -344,7 +379,7 @@ async function readAndSubmitRecoveryCode(
     return { status: 'needs_attention', message: codeResult.message }
   }
 
-  // Fail closed if Microsoft changed from the audited email-code challenge while Inboxes was polling.
+  // Fail closed if Microsoft changed from the audited email-code challenge while the provider was polling.
   const body = await readBody(page)
   if (!isAuditedRecoveryCodeCopy(body)) {
     await endProviderRound(state)

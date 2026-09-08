@@ -21,6 +21,13 @@ export const INBOXES_DOMAINS = [
   'vomoto.com'
 ] as const
 
+export const FVIA_INBOXES_DOMAINS = [
+  'fviainboxes.com',
+  'fviadropinbox.com',
+  'fviamail.work',
+  'dropinboxes.com'
+] as const
+
 export const MICROSOFT_MAIL_DOMAINS = [
   'hotmail.com',
   'outlook.com',
@@ -30,7 +37,8 @@ export const MICROSOFT_MAIL_DOMAINS = [
 
 const DOMAIN_PROVIDER = new Map<string, MailProviderId>([
   ...MICROSOFT_MAIL_DOMAINS.map((domain) => [domain, 'microsoft'] as const),
-  ...INBOXES_DOMAINS.map((domain) => [domain, 'inboxes'] as const)
+  ...INBOXES_DOMAINS.map((domain) => [domain, 'inboxes'] as const),
+  ...FVIA_INBOXES_DOMAINS.map((domain) => [domain, 'fvia_inboxes'] as const)
 ])
 
 export function mailDomainFromAddress(value: string): string | null {
@@ -48,8 +56,13 @@ export function isKnownInboxesMailbox(value: string): boolean {
   return resolveMailProviderId(value) === 'inboxes'
 }
 
+export function isKnownFviaInboxesMailbox(value: string): boolean {
+  return resolveMailProviderId(value) === 'fvia_inboxes'
+}
+
 export function mailProviderDomains(providerId: MailProviderId): readonly string[] {
   if (providerId === 'inboxes') return INBOXES_DOMAINS
+  if (providerId === 'fvia_inboxes') return FVIA_INBOXES_DOMAINS
   if (providerId === 'microsoft') return MICROSOFT_MAIL_DOMAINS
   return []
 }
