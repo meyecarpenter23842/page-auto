@@ -39,6 +39,26 @@ describe('runMicrosoftAuthDispatchLoop', () => {
     expect(detectCalls).toBe(4)
   })
 
+  it('requires detector proof before accepting authenticated from a non-authenticated handler', async () => {
+    let detectCalls = 0
+    const surfaces: EmailAuthV2Surface[] = ['password', 'authenticated']
+
+    const result = await runMicrosoftAuthDispatchLoop({
+      detect: async () => {
+        const surface = surfaces[detectCalls]
+        detectCalls += 1
+        return surface ? { surface, detection: surface } : null
+      },
+      handlers: {
+        password: async () => ({ kind: 'authenticated' }),
+        authenticated: async () => ({ kind: 'authenticated' })
+      }
+    })
+
+    expect(result).toEqual({ kind: 'authenticated' })
+    expect(detectCalls).toBe(2)
+  })
+
   it('re-detects after retryable outcomes', async () => {
     let detectCalls = 0
     const result = await runMicrosoftAuthDispatchLoop({
