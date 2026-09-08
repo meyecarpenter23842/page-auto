@@ -58,6 +58,8 @@ import { PageWallRunNowService } from './services/pageWallRunNowService'
 import { PageWallSchedulerService } from './services/pageWallSchedulerService'
 import { PostingService } from './services/postingService'
 import { PwaBridgeService } from './services/pwaBridgeService'
+import { PwaRemoteCommandClient } from './services/pwaRemoteCommandClient'
+import { PwaRemoteControlService } from './services/pwaRemoteControlService'
 import { ResilientPostingService } from './services/resilientPostingService'
 import { RotationService, type RotationPostingExecutor } from './services/rotationService'
 import { RuntimeRecoveryService } from './services/runtimeRecovery'
@@ -184,6 +186,15 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
     () => appSettings.get().runtime.maxActivePageTabs
   )
   const pwaBridge = new PwaBridgeService(pageTabs, rotation, executionLogs)
+  const pwaRemoteControl = new PwaRemoteControlService(rotation, (pageTabId) => pageTabs.get(pageTabId) !== null)
+  const pwaRemoteCommands = new PwaRemoteCommandClient({
+    dataDirectory: options.dataDirectory,
+    executeCommand: (command) => pwaRemoteControl.execute(command),
+    getSnapshot: () => pwaBridge.getSnapshot(),
+    ...(process.env.PAGE_AUTO_PWA_RELAY_URL ? { relayBaseUrl: process.env.PAGE_AUTO_PWA_RELAY_URL } : {})
+  })
+  if (process.env.PAGE_AUTO_SMOKE_TEST !== '1' && process.env.PAGE_AUTO_PWA_RELAY_DISABLED !== '1') pwaRemoteCommands.start()
+
   const enabledPageTabIds = pageTabs.list().flatMap((tab) => {
     const latest = runs.getLatestForPageTab(tab.id)
     return latest && (latest.run.status === 'created' || latest.run.status === 'running') ? [tab.id] : []
@@ -362,6 +373,7 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
   return {
     getPwaBridgeSnapshot: () => pwaBridge.getSnapshot(),
     dispose: () => {
+      pwaRemoteCommands.dispose()
       pageWallRecurring.dispose()
       pageWallScheduler.dispose()
       rotation.dispose()
