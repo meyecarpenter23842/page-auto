@@ -48,6 +48,12 @@
 ; This variant keeps the same atomic rollback for program files while skipping
 ; runtime data roots at the top level. `data_*` is also protected because those
 ; are operator-created recovery snapshots seen in real installations.
+;
+; Keep this un.* Function out of the final installer compile. electron-builder
+; compiles it only while generating the standalone uninstaller; defining an
+; uninstaller Function during the installer-only pass triggers NSIS warning
+; 6020 (no WriteUninstaller), which electron-builder treats as an error.
+!ifdef BUILD_UNINSTALLER
 Function un.pageAutoAtomicRMDir
   Exch $R0
   Push $R1
@@ -115,6 +121,7 @@ Function un.pageAutoAtomicRMDir
     Pop $R1
     Exch $R0
 FunctionEnd
+!endif
 
 !macro customRemoveFiles
   ; Keep runtime data in place. Only program-owned files are moved to the

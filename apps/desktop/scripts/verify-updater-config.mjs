@@ -48,7 +48,15 @@ const customRemoveFiles = installerInclude.match(/!macro customRemoveFiles([\s\S
 if (!customRemoveFiles) {
   throw new Error('Updater installer include must override customRemoveFiles')
 }
-const atomicRemoveFunction = installerInclude.match(/Function un\.pageAutoAtomicRMDir([\s\S]*?)FunctionEnd/)?.[1] ?? ''
+const guardedAtomicFunction = installerInclude.match(
+  /!ifdef BUILD_UNINSTALLER\s*(Function un\.pageAutoAtomicRMDir[\s\S]*?FunctionEnd)\s*!endif/
+)?.[1] ?? ''
+if (!guardedAtomicFunction) {
+  throw new Error(
+    'PageAuto atomic uninstaller helper must be directly guarded by BUILD_UNINSTALLER so the final installer compile cannot trigger NSIS warning 6020'
+  )
+}
+const atomicRemoveFunction = guardedAtomicFunction.match(/Function un\.pageAutoAtomicRMDir([\s\S]*?)FunctionEnd/)?.[1] ?? ''
 if (!atomicRemoveFunction) {
   throw new Error('Updater installer include must define the PageAuto program-only atomic removal helper')
 }
@@ -122,5 +130,6 @@ console.log(JSON.stringify({
   manualUninstallRemainsInteractive: true,
   portableDataNeverMovedDuringReplacement: true,
   portableDataRecoverySnapshotsNeverMovedDuringReplacement: true,
-  earlyNsisHelperCompileGuarded: true
+  earlyNsisHelperCompileGuarded: true,
+  uninstallerOnlyAtomicHelper: true
 }, null, 2))
