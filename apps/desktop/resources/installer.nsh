@@ -48,6 +48,12 @@
 ; This variant keeps the same atomic rollback for program files while skipping
 ; runtime data roots at the top level. `data_*` is also protected because those
 ; are operator-created recovery snapshots seen in real installations.
+;
+; Keep this un.* Function out of the final installer compile. electron-builder
+; compiles it only while generating the standalone uninstaller; defining an
+; uninstaller Function during the installer-only pass triggers NSIS warning
+; 6020 (no WriteUninstaller), which electron-builder treats as an error.
+!ifdef BUILD_UNINSTALLER
 Function un.pageAutoAtomicRMDir
   Exch $R0
   Push $R1
@@ -80,18 +86,18 @@ Function un.pageAutoAtomicRMDir
     Call un.pageAutoAtomicRMDir
     Pop $R3
 
-    ${if} $R3 != 0
-      Goto pageauto_done
-    ${endif}
+    ; This Function is parsed before electron-builder's LogicLib helpers are
+    ; available, so use native NSIS branching here.
+    StrCmp $R3 "0" 0 pageauto_done
     Goto pageauto_continue
 
   pageauto_is_file:
     ClearErrors
     Rename "$INSTDIR$R0\$R2" "$PLUGINSDIR\old-install$R0\$R2"
 
-    ; Ignore an inability to rename the uninstaller itself, matching
-    ; electron-builder's stock rollback helper.
-    StrCmp "$R0\$R2" "${UNINSTALL_FILENAME}" 0 +2
+    ; UNINSTALL_FILENAME is defined later by electron-builder's common.nsh.
+    ; PRODUCT_FILENAME is already supplied on the makensis command line here.
+    StrCmp "$R0\$R2" "Uninstall ${PRODUCT_FILENAME}.exe" 0 +2
     ClearErrors
 
     IfErrors 0 +3
@@ -115,6 +121,7 @@ Function un.pageAutoAtomicRMDir
     Pop $R1
     Exch $R0
 FunctionEnd
+!endif
 
 !macro customRemoveFiles
   ; Keep runtime data in place. Only program-owned files are moved to the
