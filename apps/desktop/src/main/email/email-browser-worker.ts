@@ -15,6 +15,10 @@ import {
   microsoftRouteLogLabel,
   waitForMicrosoftOwnedPage
 } from './emailMicrosoftPageOwnership'
+import {
+  handleMicrosoftRecoveryChallenge,
+  isMicrosoftRecoverySurface
+} from './microsoftRecoveryChallenge'
 
 interface ProxyConfig {
   server: string
@@ -29,6 +33,7 @@ interface BrowserCommandBase {
   proxy?: ProxyConfig
   loginEmail?: string
   loginPassword?: string
+  backupEmail?: string
 }
 
 interface OpenCommand extends BrowserCommandBase {
@@ -109,6 +114,7 @@ function parseCommand(event: unknown): WorkerCommand | null {
   if (typeof candidate.accountId !== 'number' || typeof candidate.profileDirectory !== 'string') return null
   if (candidate.loginEmail !== undefined && typeof candidate.loginEmail !== 'string') return null
   if (candidate.loginPassword !== undefined && typeof candidate.loginPassword !== 'string') return null
+  if (candidate.backupEmail !== undefined && typeof candidate.backupEmail !== 'string') return null
   if (candidate.type === 'open-mail') return candidate as OpenCommand
   if (candidate.type === 'recovery-action' && (candidate.operation === 'add' || candidate.operation === 'remove' || candidate.operation === 'replace')) {
     return candidate as RecoveryCommand
@@ -450,7 +456,7 @@ async function autoLoginMicrosoft(
   let attempted = false
   let unreadableSteps = 0
   let usernameSubmitAttempts = 0
-  for (let step = 0; step < 16; step += 1) {
+  for (let step = 0; step < 32; step += 1) {
     const previousPage = page
     const previousRoute = microsoftRouteLogLabel(previousPage.url())
     page = await adoptNewestMicrosoftFlowPage(page, pagesAtFlowStart)
@@ -497,6 +503,16 @@ async function autoLoginMicrosoft(
     if (surface === 'identity_review') {
       await closeMicrosoftOwnedOpenerChain(page)
       return loginNeedsAttention('identity_review', attempted)
+    }
+    if (isMicrosoftRecoverySurface(surface)) {
+      const recovery = await handleMicrosoftRecoveryChallenge(page, surface, command.backupEmail)
+      if (recovery.status === 'needs_attention') {
+        await closeMicrosoftOwnedOpenerChain(page)
+        return loginNeedsAttention('security_review', attempted, recovery.message)
+      }
+      attempted = true
+      await waitForMicrosoftStep(page)
+      continue
     }
     if (surface === 'security_review') {
       await closeMicrosoftOwnedOpenerChain(page)
@@ -667,7 +683,7 @@ async function detectAttention(page: Page): Promise<HotmailNeedsAttentionReason 
   if (!snapshot) return 'security_review'
   const surface = classifyMicrosoftLoginSurface(snapshot)
   if (surface === 'identity_review') return 'identity_review'
-  if (surface === 'security_review') return 'security_review'
+  if (surface === 'security_review' || isMicrosoftRecoverySurface(surface)) return 'security_review'
   if (surface === 'username' || surface === 'password_method_choice' || surface === 'password' || surface === 'password_change' || surface === 'credential_error' || surface === 'manual_login' || surface === 'stay_signed_in' || surface === 'outlook_landing' || surface === 'outlook_transition' || surface === 'login_transition' || surface === 'oauth_authorize' || surface === 'account_picker') {
     return 'needs_login'
   }

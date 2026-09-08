@@ -12,6 +12,9 @@ export type MicrosoftLoginSurface =
   | 'password_method_choice'
   | 'password'
   | 'password_change'
+  | 'recovery_method_choice'
+  | 'recovery_email_confirmation'
+  | 'recovery_code'
   | 'credential_error'
   | 'identity_review'
   | 'security_review'
@@ -106,7 +109,28 @@ export function classifyMicrosoftLoginSurface(snapshot: MicrosoftLoginSnapshot):
     return 'password_change'
   }
 
-  // An actual code/OTP input is always a security challenge. Do not auto-bypass it.
+  const hasMaskedRecoveryEmail = /[a-z0-9.!#$%&'*+/=?^_`{|}~-]{2,}\*+@[a-z0-9.-]+\.[a-z]{2,}/i.test(text)
+  const helpProtectRecovery = /help us protect your account/.test(text)
+  const completeHiddenPart = /complete\s+the\s+hidden\s+part/.test(text)
+  const auditedRecoveryCode = /enter\s+your\s+security\s+code/.test(text) && /email/.test(text)
+
+  // Only the audited email-code copy enters the recovery provider module.
+  // The module still requires one safe input before typing anything.
+  if (auditedRecoveryCode) return 'recovery_code'
+
+  // The observed Microsoft consumer-account flow first shows a masked recovery
+  // method, then reveals a local-part input while rendering @domain separately.
+  // Keep these as separate re-entrant states so the worker re-reads the page after
+  // every click instead of assuming a linear sequence.
+  if (helpProtectRecovery && hasMaskedRecoveryEmail) {
+    if (completeHiddenPart && (proofEmailInputCount > 0 || sendCodeControlCount > 0)) {
+      return 'recovery_email_confirmation'
+    }
+    return 'recovery_method_choice'
+  }
+
+  // Any other actual code/OTP input remains a security challenge. Authenticator,
+  // phone/SMS and unknown challenge variants are intentionally not automated.
   if (verificationCodeInputCount > 0) return 'security_review'
 
   // Structured credential fields take priority over nearby fallback/security links.
