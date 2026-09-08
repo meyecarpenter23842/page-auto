@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3'
 
-export const PAGE_AVATAR_SCHEMA_VERSION = 24
+export const PAGE_AVATAR_SCHEMA_VERSION = 25
 export const PAGE_AVATAR_MIGRATION_NAME = 'page_avatar_preview'
 
 export function applyPageAvatarMigration(client: Database.Database): void {
