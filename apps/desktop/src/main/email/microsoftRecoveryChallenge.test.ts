@@ -30,6 +30,7 @@ describe('Microsoft recovery email challenge policy', () => {
   it('routes recovery mail through the central browser-provider registry instead of hard-coding Inboxes', () => {
     expect(microsoftRecoveryBrowserProviderId('owner@getnada.com')).toBe('inboxes')
     expect(microsoftRecoveryBrowserProviderId('owner@fviainboxes.com')).toBe('fvia_inboxes')
+    expect(microsoftRecoveryBrowserProviderId('owner@mailto.plus')).toBe('mailto_plus')
     expect(microsoftRecoveryBrowserProviderId('owner@hotmail.com')).toBeNull()
     expect(microsoftRecoveryBrowserProviderId('owner@unknown.example')).toBeNull()
   })

@@ -28,6 +28,14 @@ export const FVIA_INBOXES_DOMAINS = [
   'dropinboxes.com'
 ] as const
 
+/**
+ * P3 starts with the production target explicitly audited for TempMail.Plus.
+ * Add sibling TempMail.Plus domains only after they are verified for the same provider contract.
+ */
+export const MAILTO_PLUS_DOMAINS = [
+  'mailto.plus'
+] as const
+
 export const MICROSOFT_MAIL_DOMAINS = [
   'hotmail.com',
   'outlook.com',
@@ -38,7 +46,8 @@ export const MICROSOFT_MAIL_DOMAINS = [
 const DOMAIN_PROVIDER = new Map<string, MailProviderId>([
   ...MICROSOFT_MAIL_DOMAINS.map((domain) => [domain, 'microsoft'] as const),
   ...INBOXES_DOMAINS.map((domain) => [domain, 'inboxes'] as const),
-  ...FVIA_INBOXES_DOMAINS.map((domain) => [domain, 'fvia_inboxes'] as const)
+  ...FVIA_INBOXES_DOMAINS.map((domain) => [domain, 'fvia_inboxes'] as const),
+  ...MAILTO_PLUS_DOMAINS.map((domain) => [domain, 'mailto_plus'] as const)
 ])
 
 export function mailDomainFromAddress(value: string): string | null {
@@ -63,6 +72,7 @@ export function isKnownFviaInboxesMailbox(value: string): boolean {
 export function mailProviderDomains(providerId: MailProviderId): readonly string[] {
   if (providerId === 'inboxes') return INBOXES_DOMAINS
   if (providerId === 'fvia_inboxes') return FVIA_INBOXES_DOMAINS
+  if (providerId === 'mailto_plus') return MAILTO_PLUS_DOMAINS
   if (providerId === 'microsoft') return MICROSOFT_MAIL_DOMAINS
   return []
 }
