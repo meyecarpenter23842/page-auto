@@ -21,6 +21,10 @@ export type MicrosoftRecoveryChallengeResult =
   | { status: 'handled' }
   | { status: 'needs_attention'; message: string }
 
+export type MicrosoftRecoveryConfirmationValue =
+  | { mode: 'local_part'; value: string }
+  | { mode: 'full_email'; value: string }
+
 interface MicrosoftRecoverySession {
   mailbox: string
   requestedAt: number | null
@@ -82,6 +86,29 @@ export function microsoftRecoveryHintMatchesBackupEmail(text: string, backupEmai
 
 export function microsoftRecoveryLocalPart(backupEmail: string): string | null {
   return splitMailbox(backupEmail)?.local ?? null
+}
+
+/**
+ * Resolve only the two recovery-confirmation forms observed in live Microsoft flows.
+ * The masked hint must still match canonical BackupEmail before any value is typed.
+ */
+export function microsoftRecoveryConfirmationValue(
+  text: string,
+  backupEmail: string
+): MicrosoftRecoveryConfirmationValue | null {
+  const mailbox = normalizeMailboxAddress(backupEmail)
+  const parts = splitMailbox(backupEmail)
+  if (!mailbox || !parts || !firstMatchingHint(text, backupEmail)) return null
+
+  if (/complete\s+the\s+hidden\s+part/i.test(text) && text.toLowerCase().includes(`@${parts.domain}`)) {
+    return { mode: 'local_part', value: parts.local }
+  }
+
+  const fullEmailConfirmation = /verify\s+your\s+email/i.test(text)
+    && /to\s+verify\s+(?:that\s+)?this\s+is\s+your\s+email(?:\s+address)?\s*[,.:;-]?\s*enter\s+it\s+here/i.test(text)
+  if (fullEmailConfirmation) return { mode: 'full_email', value: mailbox }
+
+  return null
 }
 
 export function isMicrosoftRecoverySurface(surface: MicrosoftLoginSurface): boolean {
@@ -269,34 +296,27 @@ async function confirmRecoveryEmailAndSend(
   state: MicrosoftRecoverySession
 ): Promise<MicrosoftRecoveryChallengeResult> {
   const body = await readBody(page)
-  const hint = firstMatchingHint(body, backupEmail)
-  const mailbox = splitMailbox(backupEmail)
-  if (!hint || !mailbox) {
-    return { status: 'needs_attention', message: 'Mail KP Microsoft đang yêu cầu xác nhận không khớp BackupEmail canonical.' }
-  }
-
-  // Observed live surface renders @domain outside the field and asks to complete the hidden part.
-  // Only that proven form is automated; other Microsoft variants remain manual.
-  if (!/complete\s+the\s+hidden\s+part/i.test(body) || !body.toLowerCase().includes(`@${mailbox.domain}`)) {
+  const confirmation = microsoftRecoveryConfirmationValue(body, backupEmail)
+  if (!confirmation) {
     return {
       status: 'needs_attention',
-      message: 'Microsoft đang dùng form xác nhận Mail KP khác surface đã audit; PAGE-AUTO không đoán giá trị cần nhập.'
+      message: 'Microsoft đang dùng form xác nhận Mail KP khác surface đã audit hoặc Mail KP masked không khớp BackupEmail canonical.'
     }
   }
 
   const input = await recoveryConfirmationInput(page)
   if (!input) {
-    return { status: 'needs_attention', message: 'Không xác định duy nhất ô nhập phần ẩn của Mail KP trên màn Microsoft hiện tại.' }
+    return { status: 'needs_attention', message: 'Không xác định duy nhất ô nhập Mail KP trên màn Microsoft hiện tại.' }
   }
 
   const warmed = await warmMailboxBeforeSend(page, state)
   if (warmed.status === 'needs_attention') return warmed
 
-  await input.fill(mailbox.local)
+  await input.fill(confirmation.value)
   const filled = (await input.inputValue().catch(() => '')).trim().toLowerCase()
-  if (filled !== mailbox.local) {
+  if (filled !== confirmation.value.toLowerCase()) {
     await endProviderRound(state)
-    return { status: 'needs_attention', message: 'Không xác nhận được Microsoft đã nhận đúng phần local của BackupEmail nên không bấm Send code.' }
+    return { status: 'needs_attention', message: 'Không xác nhận được Microsoft đã nhận đúng giá trị BackupEmail nên không bấm Send code.' }
   }
 
   const send = await firstVisible([

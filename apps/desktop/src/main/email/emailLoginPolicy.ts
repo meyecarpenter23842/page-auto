@@ -48,6 +48,16 @@ export interface MicrosoftLoginSnapshot {
 
 export type EmailAuthResumeKind = 'recovery-result' | 'password-result'
 
+/**
+ * A live Email profile can already be halfway through Microsoft auth when a new
+ * action starts. Every Microsoft-owned non-authenticated state must be inspected
+ * before fresh navigation. Unknown/manual surfaces are resumed only so the
+ * worker can fail closed without destroying the page the operator is seeing.
+ */
+export function shouldResumeMicrosoftAuthSurface(surface: MicrosoftLoginSurface): boolean {
+  return surface !== 'authenticated'
+}
+
 export function microsoftAccountPickerEntryMatchesCanonicalEmail(entryText: string, canonicalEmail: string): boolean {
   const email = canonicalEmail.trim().toLowerCase()
   if (!email) return false
@@ -113,10 +123,20 @@ export function classifyMicrosoftLoginSurface(snapshot: MicrosoftLoginSnapshot):
   const helpProtectRecovery = /help us protect your account/.test(text)
   const completeHiddenPart = /complete\s+the\s+hidden\s+part/.test(text)
   const auditedRecoveryCode = /enter\s+your\s+security\s+code/.test(text) && /email/.test(text)
+  const recoveryEmailProofCopy = /verify your email|we(?:'|’)ll send a code|we will send a code|send code|already received a code|xác minh email|gửi mã/.test(text)
+  const fullEmailConfirmationCopy = /verify\s+your\s+email/.test(text)
+    && /to\s+verify\s+(?:that\s+)?this\s+is\s+your\s+email(?:\s+address)?\s*[,.:;-]?\s*enter\s+it\s+here/.test(text)
 
   // Only the audited email-code copy enters the recovery provider module.
   // The module still requires one safe input before typing anything.
   if (auditedRecoveryCode) return 'recovery_code'
+
+  // Some Microsoft consumer/OAuth variants ask for the *full* recovery email,
+  // while the older account.live variant asks only for the hidden local part.
+  // Both are safe only with a masked recovery hint plus a structured proof field.
+  if (hasMaskedRecoveryEmail && proofEmailInputCount > 0 && sendCodeControlCount > 0 && fullEmailConfirmationCopy) {
+    return 'recovery_email_confirmation'
+  }
 
   // The observed Microsoft consumer-account flow first shows a masked recovery
   // method, then reveals a local-part input while rendering @domain separately.
@@ -138,11 +158,8 @@ export function classifyMicrosoftLoginSurface(snapshot: MicrosoftLoginSnapshot):
   if (snapshot.passwordInputCount > 0) return 'password'
   if (usernameInputCount > 0) return 'username'
 
-  const recoveryEmailProofCopy = /verify your email|we(?:'|’)ll send a code|we will send a code|send code|already received a code|xác minh email|gửi mã/.test(text)
-
-  // The live consumer OAuth flow can ask for recovery proof while offering “Use your password”.
-  // The recovery input is not guaranteed to stay input[type=email], so the method-choice decision
-  // uses the structured password control plus any independent proof evidence instead of one tag shape.
+  // A recovery proof without the one safe full-email field can still offer a
+  // password fallback. Keep that existing fallback instead of guessing a field.
   const hasRecoveryProofEvidence = proofEmailInputCount > 0 || sendCodeControlCount > 0 || recoveryEmailProofCopy
   if (usePasswordControlCount > 0 && hasRecoveryProofEvidence) {
     return 'password_method_choice'

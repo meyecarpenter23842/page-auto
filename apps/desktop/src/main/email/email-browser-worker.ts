@@ -7,6 +7,7 @@ import { friendlyEmailBrowserError, isEmailProfileInUseError } from './emailBrow
 import {
   classifyMicrosoftLoginSurface,
   microsoftAccountPickerEntryMatchesCanonicalEmail,
+  shouldResumeMicrosoftAuthSurface,
   type MicrosoftLoginSnapshot
 } from './emailLoginPolicy'
 import {
@@ -257,6 +258,22 @@ async function readMicrosoftLoginSnapshot(page: Page): Promise<MicrosoftLoginSna
   } catch {
     return null
   }
+}
+
+async function findResumableMicrosoftAuthPage(context: BrowserContext): Promise<Page | null> {
+  const pages = [...context.pages()].reverse()
+  for (const candidate of pages) {
+    if (candidate.isClosed() || !isMicrosoftOwnedNavigationUrl(candidate.url())) continue
+    const snapshot = await readMicrosoftLoginSnapshot(candidate)
+    if (!snapshot) continue
+    const surface = classifyMicrosoftLoginSurface(snapshot)
+    if (!shouldResumeMicrosoftAuthSurface(surface)) continue
+    console.info(
+      `[PAGE-AUTO email auth] resume-existing route=${microsoftRouteLogLabel(snapshot.url)} state=${surface} pages=${context.pages().length}`
+    )
+    return candidate
+  }
+  return null
 }
 
 async function waitForMicrosoftStep(page: Page): Promise<void> {
@@ -659,13 +676,28 @@ async function prepareAuthenticatedPage(
   allowPasswordChangeSurface = false,
   reopenTargetAfterLogin = true
 ): Promise<PreparedMicrosoftPage> {
+  let autoLoginAttempted = false
+
+  // A persisted Email profile can be left halfway through Microsoft auth/recovery.
+  // Resume that exact live state before any fresh target navigation; otherwise a
+  // goto would destroy the proof/code surface and force the flow back to step one.
+  const resumablePage = await findResumableMicrosoftAuthPage(context)
+  if (resumablePage) {
+    await resumablePage.bringToFront().catch(() => undefined)
+    const resumed = await autoLoginMicrosoft(resumablePage, command, allowPasswordChangeSurface)
+    autoLoginAttempted = autoLoginAttempted || resumed.attempted
+    if (resumed.status === 'needs_attention') {
+      return { status: 'needs_attention', reason: resumed.reason!, message: resumed.message! }
+    }
+  }
+
   let page = await openTarget(context)
   let login = await autoLoginMicrosoft(page, command, allowPasswordChangeSurface)
+  autoLoginAttempted = autoLoginAttempted || login.attempted
   if (login.status === 'needs_attention') {
     return { status: 'needs_attention', reason: login.reason!, message: login.message! }
   }
 
-  let autoLoginAttempted = login.attempted
   if (login.attempted && reopenTargetAfterLogin) {
     page = await openTarget(context)
     login = await autoLoginMicrosoft(page, command, allowPasswordChangeSurface)

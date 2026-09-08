@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { classifyMicrosoftLoginSurface } from './emailLoginPolicy'
 import {
   microsoftRecoveryBrowserProviderId,
+  microsoftRecoveryConfirmationValue,
   microsoftRecoveryHintMatchesBackupEmail,
   microsoftRecoveryLocalPart,
   parseMicrosoftRecoveryEmailHints
@@ -25,6 +26,29 @@ describe('Microsoft recovery email challenge policy', () => {
   it('returns only the local part for the audited complete-hidden-part Microsoft input', () => {
     expect(microsoftRecoveryLocalPart('alimaisivayj57cb2401@fivermail.com')).toBe('alimaisivayj57cb2401')
     expect(microsoftRecoveryLocalPart('invalid')).toBeNull()
+
+    expect(microsoftRecoveryConfirmationValue(
+      'Help us protect your account Email al*****@fivermail.com To verify that this is your email address, complete the hidden part and click Send code. @fivermail.com',
+      'alimaisivayj57cb2401@fivermail.com'
+    )).toEqual({ mode: 'local_part', value: 'alimaisivayj57cb2401' })
+  })
+
+  it('returns the full canonical BackupEmail for the observed Verify your email form', () => {
+    expect(microsoftRecoveryConfirmationValue(
+      "Verify your email We'll send a code to ra*****@fviainboxes.com. To verify this is your email, enter it here. Send code",
+      'random-owner@fviainboxes.com'
+    )).toEqual({ mode: 'full_email', value: 'random-owner@fviainboxes.com' })
+  })
+
+  it('does not guess the full email when the masked hint or exact form copy does not match', () => {
+    expect(microsoftRecoveryConfirmationValue(
+      'Verify your email Send code to ra*****@fviainboxes.com',
+      'random-owner@fviainboxes.com'
+    )).toBeNull()
+    expect(microsoftRecoveryConfirmationValue(
+      'Verify your email To verify this is your email, enter it here. Send code to xx*****@fviainboxes.com',
+      'random-owner@fviainboxes.com'
+    )).toBeNull()
   })
 
   it('routes recovery mail through the central browser-provider registry instead of hard-coding Inboxes', () => {
@@ -60,6 +84,20 @@ describe('Microsoft recovery email challenge policy', () => {
       passwordInputCount: 0,
       sendCodeControlCount: 1,
       usePasswordControlCount: 0
+    })).toBe('recovery_email_confirmation')
+  })
+
+  it('classifies the full-email Verify your email surface as recovery email confirmation', () => {
+    expect(classifyMicrosoftLoginSurface({
+      url: 'https://login.live.com/oauth20_authorize.srf',
+      text: "Verify your email We'll send a code to ra*****@fviainboxes.com. To verify this is your email, enter it here. Send code Already received a code? Use your password",
+      emailInputCount: 1,
+      usernameInputCount: 0,
+      proofEmailInputCount: 1,
+      verificationCodeInputCount: 0,
+      passwordInputCount: 0,
+      sendCodeControlCount: 1,
+      usePasswordControlCount: 1
     })).toBe('recovery_email_confirmation')
   })
 
