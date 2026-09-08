@@ -48,7 +48,20 @@ const customRemoveFiles = installerInclude.match(/!macro customRemoveFiles([\s\S
 if (!customRemoveFiles) {
   throw new Error('Updater installer include must override customRemoveFiles')
 }
-requireMatch(installerInclude, /Function un\.pageAutoAtomicRMDir/, 'PageAuto program-only atomic removal helper')
+const atomicRemoveFunction = installerInclude.match(/Function un\.pageAutoAtomicRMDir([\s\S]*?)FunctionEnd/)?.[1] ?? ''
+if (!atomicRemoveFunction) {
+  throw new Error('Updater installer include must define the PageAuto program-only atomic removal helper')
+}
+for (const forbiddenEarlyToken of ['${if}', '${ifNot}', '${endif}', '${UNINSTALL_FILENAME}']) {
+  if (atomicRemoveFunction.includes(forbiddenEarlyToken)) {
+    throw new Error(
+      `Early NSIS atomic helper must use only symbols available before electron-builder common/LogicLib includes: ${forbiddenEarlyToken}`
+    )
+  }
+}
+if (!atomicRemoveFunction.includes('StrCmp "$R0\\$R2" "Uninstall ${PRODUCT_FILENAME}.exe" 0 +2')) {
+  throw new Error('Early NSIS atomic helper must identify the running uninstaller from command-line PRODUCT_FILENAME')
+}
 requireMatch(installerInclude, /StrCmp \$R2 "data" pageauto_continue/, 'portable data root skip guard')
 requireMatch(installerInclude, /StrCmp \$R4 "data_" pageauto_continue/, 'portable data recovery snapshot skip guard')
 if (!customRemoveFiles.includes('Call un.pageAutoAtomicRMDir')) {
@@ -108,5 +121,6 @@ console.log(JSON.stringify({
   silentOldUninstallerOnUpdate: true,
   manualUninstallRemainsInteractive: true,
   portableDataNeverMovedDuringReplacement: true,
-  portableDataRecoverySnapshotsNeverMovedDuringReplacement: true
+  portableDataRecoverySnapshotsNeverMovedDuringReplacement: true,
+  earlyNsisHelperCompileGuarded: true
 }, null, 2))

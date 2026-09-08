@@ -81,7 +81,7 @@ Function un.pageAutoAtomicRMDir
     Pop $R3
 
     ; This Function is parsed before electron-builder's LogicLib helpers are
-    ; available, so use native NSIS branching here instead of ${if}/${endif}.
+    ; available, so use native NSIS branching here.
     StrCmp $R3 "0" 0 pageauto_done
     Goto pageauto_continue
 
@@ -89,9 +89,9 @@ Function un.pageAutoAtomicRMDir
     ClearErrors
     Rename "$INSTDIR$R0\$R2" "$PLUGINSDIR\old-install$R0\$R2"
 
-    ; Ignore an inability to rename the uninstaller itself, matching
-    ; electron-builder's stock rollback helper.
-    StrCmp "$R0\$R2" "${UNINSTALL_FILENAME}" 0 +2
+    ; UNINSTALL_FILENAME is defined later by electron-builder's common.nsh.
+    ; PRODUCT_FILENAME is already supplied on the makensis command line here.
+    StrCmp "$R0\$R2" "Uninstall ${PRODUCT_FILENAME}.exe" 0 +2
     ClearErrors
 
     IfErrors 0 +3
