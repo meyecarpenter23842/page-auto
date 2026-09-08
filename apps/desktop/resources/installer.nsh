@@ -80,9 +80,9 @@ Function un.pageAutoAtomicRMDir
     Call un.pageAutoAtomicRMDir
     Pop $R3
 
-    ${if} $R3 != 0
-      Goto pageauto_done
-    ${endif}
+    ; This Function is parsed before electron-builder's LogicLib helpers are
+    ; available, so use native NSIS branching here instead of ${if}/${endif}.
+    StrCmp $R3 "0" 0 pageauto_done
     Goto pageauto_continue
 
   pageauto_is_file:
