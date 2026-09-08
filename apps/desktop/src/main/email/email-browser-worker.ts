@@ -11,6 +11,7 @@ import {
   shouldResumeMicrosoftAuthSurface,
   type MicrosoftLoginSnapshot
 } from './emailLoginPolicy'
+import { EmailPageRegistry } from './emailPageRegistry'
 import {
   adoptNewestMicrosoftFlowPage,
   closeMicrosoftOwnedOpenerChain,
@@ -190,7 +191,7 @@ function isExpectedMicrosoftNavigationInterruption(error: unknown, currentUrl: s
 }
 
 async function openOutlook(context: BrowserContext): Promise<Page> {
-  const page = context.pages()[0] ?? await context.newPage()
+  const page = await new EmailPageRegistry(context).resolveOrCreate('outlook_mail')
   try {
     await page.goto('https://outlook.live.com/mail/0/', {
       waitUntil: 'domcontentloaded',
@@ -750,8 +751,18 @@ function recoveryInstruction(operation: HotmailRecoveryOperation): string {
   return 'thay Email khôi phục'
 }
 
+function isRecoverySecurityTarget(page: Page): boolean {
+  try {
+    const url = new URL(page.url())
+    return url.hostname.toLowerCase() === 'account.live.com'
+      && url.pathname.toLowerCase().includes('/proofs/manage')
+  } catch {
+    return false
+  }
+}
+
 async function openRecoverySecurityPage(context: BrowserContext): Promise<Page> {
-  const page = context.pages()[0] ?? await context.newPage()
+  const page = await new EmailPageRegistry(context).resolveOrCreate('microsoft_auth', isRecoverySecurityTarget)
   await page.goto('https://account.live.com/proofs/manage/additional', {
     waitUntil: 'domcontentloaded',
     timeout: 30_000
@@ -763,7 +774,7 @@ async function openRecoverySecurityPage(context: BrowserContext): Promise<Page> 
 async function runRecoveryAction(context: BrowserContext, command: RecoveryCommand, proxyManagedExternally: boolean): Promise<RecoveryResult> {
   let page: Page
   if (command.confirmCompleted) {
-    page = context.pages()[0] ?? await context.newPage()
+    page = await new EmailPageRegistry(context).resolveMicrosoftActionPage(isRecoverySecurityTarget)
   } else {
     const prepared = await prepareAuthenticatedPage(context, command, openRecoverySecurityPage)
     if (prepared.status === 'needs_attention') {
@@ -923,8 +934,18 @@ async function fillPasswordForm(page: Page, command: PasswordCommand): Promise<'
   return 'submitted'
 }
 
+function isPasswordActionTarget(page: Page): boolean {
+  try {
+    const url = new URL(page.url())
+    return url.hostname.toLowerCase() === 'account.live.com'
+      && /\/(client\/)?password\/change/i.test(url.pathname)
+  } catch {
+    return false
+  }
+}
+
 async function openPasswordPage(context: BrowserContext): Promise<Page> {
-  const page = context.pages()[0] ?? await context.newPage()
+  const page = await new EmailPageRegistry(context).resolveOrCreate('microsoft_auth', isPasswordActionTarget)
   await page.goto('https://account.live.com/password/Change', {
     waitUntil: 'domcontentloaded',
     timeout: 30_000
@@ -947,7 +968,7 @@ function passwordNeedsAttention(command: PasswordCommand, reason: HotmailNeedsAt
 async function runPasswordAction(context: BrowserContext, command: PasswordCommand, proxyManagedExternally: boolean): Promise<PasswordResult> {
   let page: Page
   if (command.confirmCompleted) {
-    page = context.pages()[0] ?? await context.newPage()
+    page = await new EmailPageRegistry(context).resolveMicrosoftActionPage(isPasswordActionTarget)
   } else {
     const prepared = await prepareAuthenticatedPage(context, command, openPasswordPage, true)
     if (prepared.status === 'needs_attention') {
