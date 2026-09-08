@@ -5,6 +5,9 @@ import { normalizeMailboxAddress, type MailProvider, type MailProviderId } from 
 import { resolveMailProviderId } from './mailProviderRegistry'
 
 const MASKED_RECOVERY_EMAIL = /([a-z0-9.!#$%&'+/=?^_`{|}~-]{2,})\*+@([a-z0-9.-]+\.[a-z]{2,})/gi
+const UNMASKED_RECOVERY_EMAIL = /[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9.-]+\.[a-z]{2,}/gi
+const RESUME_CODE_LOOKBACK_MS = 10 * 60_000
+const RESUME_FIRST_SEEN_BASELINE_PROVIDER_IDS = new Set<MailProviderId>(['fvia_inboxes', 'mailto_plus'])
 const MICROSOFT_RECOVERY_SURFACES = new Set<MicrosoftLoginSurface>([
   'recovery_method_choice',
   'recovery_email_confirmation',
@@ -60,8 +63,16 @@ function firstMatchingHint(text: string, backupEmail: string): MicrosoftRecovery
   }) ?? null
 }
 
+function textContainsExactMailbox(text: string, mailbox: string): boolean {
+  const matches = text.match(UNMASKED_RECOVERY_EMAIL) ?? []
+  return matches.some((candidate) => normalizeMailboxAddress(candidate) === mailbox)
+}
+
 function isAuditedRecoveryCodeCopy(text: string): boolean {
-  return /enter\s+your\s+security\s+code/i.test(text) && /email/i.test(text)
+  const normalized = text.replace(/\s+/g, ' ')
+  const heading = /enter\s+your\s+(?:security\s+)?code/i.test(normalized)
+  const emailEvidence = /matches\s+the\s+email\s+address\s+on\s+your\s+account|we(?:'|’)ll\s+send\s+you\s+a\s+code|we\s+will\s+send\s+you\s+a\s+code|we\s+sent[^.]*code[^.]*email|sent[^.]*to\s+your\s+email|email\s+address/i.test(normalized)
+  return heading && emailEvidence
 }
 
 export function parseMicrosoftRecoveryEmailHints(text: string): MicrosoftRecoveryEmailHint[] {
@@ -108,6 +119,31 @@ export function microsoftRecoveryConfirmationValue(
     && /to\s+verify\s+(?:that\s+)?this\s+is\s+your\s+email(?:\s+address)?\s*[,.:;-]?\s*enter\s+it\s+here/i.test(text)
   if (fullEmailConfirmation) return { mode: 'full_email', value: mailbox }
 
+  return null
+}
+
+/**
+ * A resumed code screen is safe to automate only when the live Microsoft copy
+ * still points at the canonical BackupEmail (full address or the audited mask).
+ */
+export function microsoftRecoveryCodeChallengeMatchesBackupEmail(text: string, backupEmail: string): boolean {
+  const mailbox = normalizeMailboxAddress(backupEmail)
+  if (!mailbox || !isAuditedRecoveryCodeCopy(text)) return false
+  if (textContainsExactMailbox(text, mailbox)) return true
+  return firstMatchingHint(text, mailbox) !== null
+}
+
+/** Timestamp-less providers must baseline existing message keys when resuming mid-code. */
+export function microsoftRecoveryRequiresResumeMailboxBaseline(providerId: MailProviderId): boolean {
+  return RESUME_FIRST_SEEN_BASELINE_PROVIDER_IDS.has(providerId)
+}
+
+/** Resolve the value written to one OTP input or to each box in a split-code UI. */
+export function microsoftRecoveryCodeInputParts(codeInput: string, inputCount: number): string[] | null {
+  const code = codeInput.trim()
+  if (!/^[a-z0-9]{4,8}$/i.test(code) || !Number.isInteger(inputCount) || inputCount < 1) return null
+  if (inputCount === 1) return [code]
+  if (inputCount === code.length) return [...code]
   return null
 }
 
@@ -196,6 +232,37 @@ async function endProviderRound(state: MicrosoftRecoverySession): Promise<void> 
   if (page && !page.isClosed()) await page.close({ runBeforeUnload: false }).catch(() => undefined)
 }
 
+async function consumeExistingVerificationMessages(
+  microsoftPage: Page,
+  state: MicrosoftRecoverySession,
+  provider: MailProvider
+): Promise<MicrosoftRecoveryChallengeResult> {
+  await state.providerPage?.bringToFront().catch(() => undefined)
+
+  // Retain the same provider instance so first-seen message keys remain baselined.
+  // A hard cap fails closed rather than leaving an older code unconsumed.
+  for (let index = 0; index < 50; index += 1) {
+    const existing = await provider.getVerificationCode({
+      mailbox: state.mailbox,
+      role: 'recovery',
+      purpose: 'microsoft_security',
+      timeoutMs: 0
+    })
+    if (existing.status === 'success') continue
+    await microsoftPage.bringToFront().catch(() => undefined)
+    if (existing.status === 'message_not_found') return { status: 'handled' }
+    await endProviderRound(state)
+    return { status: 'needs_attention', message: existing.message }
+  }
+
+  await microsoftPage.bringToFront().catch(() => undefined)
+  await endProviderRound(state)
+  return {
+    status: 'needs_attention',
+    message: 'Mailbox có quá nhiều mail verification cũ để baseline an toàn; PAGE-AUTO không đoán security code.'
+  }
+}
+
 async function warmMailboxBeforeSend(
   microsoftPage: Page,
   state: MicrosoftRecoverySession
@@ -213,27 +280,10 @@ async function warmMailboxBeforeSend(
     return { status: 'needs_attention', message: `Không mở được provider ${providerId} trong Email browser hiện tại.` }
   }
 
-  await state.providerPage.bringToFront().catch(() => undefined)
-
   // Consume existing verification messages before asking Microsoft for a fresh
   // code. Providers that lack trustworthy timestamps baseline first-seen keys
   // in this same retained provider instance.
-  for (let index = 0; index < 10; index += 1) {
-    const existing = await provider.getVerificationCode({
-      mailbox: state.mailbox,
-      role: 'recovery',
-      purpose: 'microsoft_security',
-      timeoutMs: 0
-    })
-    if (existing.status === 'success') continue
-    if (existing.status === 'message_not_found') break
-    await microsoftPage.bringToFront().catch(() => undefined)
-    await endProviderRound(state)
-    return { status: 'needs_attention', message: existing.message }
-  }
-
-  await microsoftPage.bringToFront().catch(() => undefined)
-  return { status: 'handled' }
+  return await consumeExistingVerificationMessages(microsoftPage, state, provider)
 }
 
 async function chooseRecoveryMethod(
@@ -342,31 +392,54 @@ async function confirmRecoveryEmailAndSend(
   return { status: 'handled' }
 }
 
-async function securityCodeInput(page: Page): Promise<Locator | null> {
-  const structured = await firstVisible([
-    page.locator('input[autocomplete="one-time-code"]:visible').first(),
-    page.locator('input[name*="otc" i]:visible').first(),
-    page.locator('input[name*="code" i]:visible').first()
-  ])
-  if (structured) return structured
-
+async function fillSecurityCode(page: Page, code: string): Promise<boolean> {
   const body = await readBody(page)
-  if (!isAuditedRecoveryCodeCopy(body)) return null
-  const fallback = page.locator(
-    'input:visible:not([type="radio"]):not([type="checkbox"]):not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="password"]):not([name="loginfmt"]):not([autocomplete="username"])'
+  if (!isAuditedRecoveryCodeCopy(body)) return false
+
+  let inputs = page.locator(
+    'input:visible:not([type="radio"]):not([type="checkbox"]):not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="password"]):not([type="email"]):not([name="loginfmt"]):not([autocomplete="username"])'
   )
-  return await fallback.count() === 1 ? fallback.first() : null
+  let parts = microsoftRecoveryCodeInputParts(code, await inputs.count())
+
+  if (!parts) {
+    inputs = page.locator(
+      'input[autocomplete="one-time-code"]:visible, input[name*="otc" i]:visible, input[name*="code" i]:visible'
+    )
+    parts = microsoftRecoveryCodeInputParts(code, await inputs.count())
+  }
+  if (!parts) return false
+
+  for (let index = 0; index < parts.length; index += 1) {
+    const input = inputs.nth(index)
+    await input.fill(parts[index] ?? '')
+  }
+
+  const values: string[] = []
+  for (let index = 0; index < parts.length; index += 1) {
+    values.push((await inputs.nth(index).inputValue().catch(() => '')).trim())
+  }
+  return values.join('') === code
 }
 
 async function readAndSubmitRecoveryCode(
   page: Page,
   state: MicrosoftRecoverySession
 ): Promise<MicrosoftRecoveryChallengeResult> {
-  if (!state.requestedAt) {
+  const initialBody = await readBody(page)
+  if (!isAuditedRecoveryCodeCopy(initialBody)) {
     await endProviderRound(state)
     return {
       status: 'needs_attention',
-      message: 'Microsoft đang hỏi security code nhưng phiên này chưa xác nhận PAGE-AUTO đã bấm Send code cho Mail KP canonical.'
+      message: 'Microsoft không còn ở màn code Email đã audit; PAGE-AUTO không đọc hoặc submit mã vào challenge khác.'
+    }
+  }
+
+  const resumedWithoutRoundState = state.requestedAt === null
+  if (resumedWithoutRoundState && !microsoftRecoveryCodeChallengeMatchesBackupEmail(initialBody, state.mailbox)) {
+    await endProviderRound(state)
+    return {
+      status: 'needs_attention',
+      message: 'Màn code Microsoft hiện tại không xác nhận đang nhắm đúng BackupEmail canonical; PAGE-AUTO không đoán code khi resume giữa chừng.'
     }
   }
 
@@ -381,14 +454,34 @@ async function readAndSubmitRecoveryCode(
     return { status: 'needs_attention', message: `Không mở được provider ${providerId} để lấy security code Microsoft.` }
   }
 
+  let notBefore: number
+  if (state.requestedAt !== null) {
+    notBefore = Math.max(1, state.requestedAt - 5_000)
+  } else if (microsoftRecoveryRequiresResumeMailboxBaseline(providerId)) {
+    // Fvia/Mailto.Plus do not expose a trustworthy received timestamp. A fresh
+    // provider would otherwise label every old message as newly seen and could
+    // submit a stale code. Baseline/consume all existing verification messages
+    // first, retain that provider instance, then accept only newly observed mail.
+    const baselined = await consumeExistingVerificationMessages(page, state, provider)
+    if (baselined.status === 'needs_attention') return baselined
+    notBefore = Math.max(1, Date.now())
+  } else {
+    notBefore = Math.max(1, Date.now() - RESUME_CODE_LOOKBACK_MS)
+  }
+
+  if (!state.providerPage) {
+    return { status: 'needs_attention', message: `Provider ${providerId} đã đóng trước khi PAGE-AUTO bắt đầu chờ security code Microsoft.` }
+  }
+
   await state.providerPage.bringToFront().catch(() => undefined)
   const codeResult = await provider.getVerificationCode({
     mailbox: state.mailbox,
     role: 'recovery',
     purpose: 'microsoft_security',
-    // Browser providers may expose coarse relative times or first-seen keys.
-    // The pre-Send warm-up in this retained provider round rejects stale mail.
-    notBefore: Math.max(1, state.requestedAt - 5_000),
+    // Same-worker rounds use the exact Send-code timestamp. Resumed timestamped
+    // providers use a bounded lookback; timestamp-less providers are baselined
+    // above and only newly observed messages can pass from this point forward.
+    notBefore,
     timeoutMs: 25_000,
     pollIntervalMs: 1_500
   })
@@ -401,7 +494,8 @@ async function readAndSubmitRecoveryCode(
 
   // Fail closed if Microsoft changed from the audited email-code challenge while the provider was polling.
   const body = await readBody(page)
-  if (!isAuditedRecoveryCodeCopy(body)) {
+  if (!isAuditedRecoveryCodeCopy(body)
+    || (resumedWithoutRoundState && !microsoftRecoveryCodeChallengeMatchesBackupEmail(body, state.mailbox))) {
     await endProviderRound(state)
     return {
       status: 'needs_attention',
@@ -409,16 +503,9 @@ async function readAndSubmitRecoveryCode(
     }
   }
 
-  const input = await securityCodeInput(page)
-  if (!input) {
+  if (!await fillSecurityCode(page, codeResult.code)) {
     await endProviderRound(state)
-    return { status: 'needs_attention', message: 'Không xác định duy nhất ô security code Microsoft trên màn hiện tại.' }
-  }
-  await input.fill(codeResult.code)
-  const filled = (await input.inputValue().catch(() => '')).trim()
-  if (filled !== codeResult.code) {
-    await endProviderRound(state)
-    return { status: 'needs_attention', message: 'Không xác nhận được security code đã được nhập đúng vào Microsoft.' }
+    return { status: 'needs_attention', message: 'Không xác nhận được security code đã được nhập đúng vào các ô Microsoft hiện tại.' }
   }
 
   const next = await firstVisible([

@@ -2,9 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { classifyMicrosoftLoginSurface } from './emailLoginPolicy'
 import {
   microsoftRecoveryBrowserProviderId,
+  microsoftRecoveryCodeChallengeMatchesBackupEmail,
+  microsoftRecoveryCodeInputParts,
   microsoftRecoveryConfirmationValue,
   microsoftRecoveryHintMatchesBackupEmail,
   microsoftRecoveryLocalPart,
+  microsoftRecoveryRequiresResumeMailboxBaseline,
   parseMicrosoftRecoveryEmailHints
 } from './microsoftRecoveryChallenge'
 
@@ -59,6 +62,12 @@ describe('Microsoft recovery email challenge policy', () => {
     expect(microsoftRecoveryBrowserProviderId('owner@unknown.example')).toBeNull()
   })
 
+  it('baselines timestamp-less providers before accepting mail on a resumed code screen', () => {
+    expect(microsoftRecoveryRequiresResumeMailboxBaseline('fvia_inboxes')).toBe(true)
+    expect(microsoftRecoveryRequiresResumeMailboxBaseline('mailto_plus')).toBe(true)
+    expect(microsoftRecoveryRequiresResumeMailboxBaseline('inboxes')).toBe(false)
+  })
+
   it('classifies the unselected Help us protect surface as recovery method choice', () => {
     expect(classifyMicrosoftLoginSurface({
       url: accountLiveUrl,
@@ -87,7 +96,7 @@ describe('Microsoft recovery email challenge policy', () => {
     })).toBe('recovery_email_confirmation')
   })
 
-  it('classifies the full-email Verify your email surface as recovery email confirmation', () => {
+  it('prefers PassEmail when the pre-code Verify your email surface offers Use your password', () => {
     expect(classifyMicrosoftLoginSurface({
       url: 'https://login.live.com/oauth20_authorize.srf',
       text: "Verify your email We'll send a code to ra*****@fviainboxes.com. To verify this is your email, enter it here. Send code Already received a code? Use your password",
@@ -98,10 +107,24 @@ describe('Microsoft recovery email challenge policy', () => {
       passwordInputCount: 0,
       sendCodeControlCount: 1,
       usePasswordControlCount: 1
+    })).toBe('password_method_choice')
+  })
+
+  it('keeps Verify your email in recovery when Microsoft does not offer the password path', () => {
+    expect(classifyMicrosoftLoginSurface({
+      url: 'https://login.live.com/oauth20_authorize.srf',
+      text: "Verify your email We'll send a code to ra*****@fviainboxes.com. To verify this is your email, enter it here. Send code",
+      emailInputCount: 1,
+      usernameInputCount: 0,
+      proofEmailInputCount: 1,
+      verificationCodeInputCount: 0,
+      passwordInputCount: 0,
+      sendCodeControlCount: 1,
+      usePasswordControlCount: 0
     })).toBe('recovery_email_confirmation')
   })
 
-  it('classifies the audited email-code copy as recovery code even if Microsoft changes the input attributes', () => {
+  it('classifies both audited email-code wordings as recovery code before password fallback', () => {
     expect(classifyMicrosoftLoginSurface({
       url: accountLiveUrl,
       text: 'Enter your security code We sent a security code to your email address.',
@@ -113,6 +136,41 @@ describe('Microsoft recovery email challenge policy', () => {
       sendCodeControlCount: 0,
       usePasswordControlCount: 0
     })).toBe('recovery_code')
+
+    expect(classifyMicrosoftLoginSurface({
+      url: 'https://login.live.com/oauth20_authorize.srf',
+      text: "Enter your code If uzprwtnyd973b2401@fivermail.com matches the email address on your account, we'll send you a code. Use your password",
+      emailInputCount: 0,
+      usernameInputCount: 0,
+      proofEmailInputCount: 0,
+      verificationCodeInputCount: 6,
+      passwordInputCount: 0,
+      sendCodeControlCount: 0,
+      usePasswordControlCount: 1
+    })).toBe('recovery_code')
+  })
+
+  it('validates a resumed code screen against canonical BackupEmail before reading mail', () => {
+    const liveText = "Enter your code If uzprwtnyd973b2401@fivermail.com matches the email address on your account, we'll send you a code."
+    expect(microsoftRecoveryCodeChallengeMatchesBackupEmail(
+      liveText,
+      'uzprwtnyd973b2401@fivermail.com'
+    )).toBe(true)
+    expect(microsoftRecoveryCodeChallengeMatchesBackupEmail(
+      liveText,
+      'another-owner@fivermail.com'
+    )).toBe(false)
+
+    const suffixCollision = "Enter your code If otherowner@example.com matches the email address on your account, we'll send you a code."
+    expect(microsoftRecoveryCodeChallengeMatchesBackupEmail(suffixCollision, 'owner@example.com')).toBe(false)
+    expect(microsoftRecoveryCodeChallengeMatchesBackupEmail(suffixCollision, 'otherowner@example.com')).toBe(true)
+  })
+
+  it('supports both a single OTP field and the six-box code UI from the live flow', () => {
+    expect(microsoftRecoveryCodeInputParts('112974', 1)).toEqual(['112974'])
+    expect(microsoftRecoveryCodeInputParts('112974', 6)).toEqual(['1', '1', '2', '9', '7', '4'])
+    expect(microsoftRecoveryCodeInputParts('112974', 5)).toBeNull()
+    expect(microsoftRecoveryCodeInputParts('123', 3)).toBeNull()
   })
 
   it('keeps authenticator and non-email security-code surfaces manual', () => {
