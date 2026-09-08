@@ -25,6 +25,39 @@ function statusLabel(status: string): string {
   return (accountStatusLabels as Record<string, string>)[status] ?? status
 }
 
+async function compactPageAvatar(file: File): Promise<string> {
+  if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+    throw new Error('Avatar chỉ hỗ trợ JPG, PNG hoặc WEBP.')
+  }
+
+  const sourceUrl = URL.createObjectURL(file)
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const next = new Image()
+      next.onload = () => resolve(next)
+      next.onerror = () => reject(new Error('Không đọc được ảnh đại diện.'))
+      next.src = sourceUrl
+    })
+    const sourceWidth = image.naturalWidth
+    const sourceHeight = image.naturalHeight
+    if (sourceWidth < 1 || sourceHeight < 1) throw new Error('Kích thước ảnh đại diện không hợp lệ.')
+
+    const size = 96
+    const cropSize = Math.min(sourceWidth, sourceHeight)
+    const sourceX = Math.max(0, (sourceWidth - cropSize) / 2)
+    const sourceY = Math.max(0, (sourceHeight - cropSize) / 2)
+    const canvas = document.createElement('canvas')
+    canvas.width = size
+    canvas.height = size
+    const context = canvas.getContext('2d')
+    if (!context) throw new Error('Không thể xử lý ảnh đại diện.')
+    context.drawImage(image, sourceX, sourceY, cropSize, cropSize, 0, 0, size, size)
+    return canvas.toDataURL('image/jpeg', 0.82)
+  } finally {
+    URL.revokeObjectURL(sourceUrl)
+  }
+}
+
 export function PageManagerModal({ onClose, onChanged }: PageManagerModalProps) {
   const [tabs, setTabs] = useState<PageTabSummary[]>([])
   const [accounts, setAccounts] = useState<AccountRecord[]>([])
@@ -32,6 +65,7 @@ export function PageManagerModal({ onClose, onChanged }: PageManagerModalProps) 
   const [config, setConfig] = useState<PageTabConfig | null>(null)
   const [name, setName] = useState('')
   const [pageUid, setPageUid] = useState('')
+  const [avatarDataUrl, setAvatarDataUrl] = useState<string | null>(null)
   const [createName, setCreateName] = useState('')
   const [createUid, setCreateUid] = useState('')
   const [saving, setSaving] = useState(false)
@@ -82,6 +116,7 @@ export function PageManagerModal({ onClose, onChanged }: PageManagerModalProps) 
       setConfig(null)
       setName('')
       setPageUid('')
+      setAvatarDataUrl(null)
       return
     }
     let cancelled = false
@@ -93,6 +128,7 @@ export function PageManagerModal({ onClose, onChanged }: PageManagerModalProps) 
         setConfig(next)
         setName(next.name)
         setPageUid(next.pageUid)
+        setAvatarDataUrl(next.avatarDataUrl ?? null)
         setError(null)
       })
       .catch((cause) => { if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause)) })
@@ -126,6 +162,7 @@ export function PageManagerModal({ onClose, onChanged }: PageManagerModalProps) 
     setConfig(next)
     setName(next.name)
     setPageUid(next.pageUid)
+    setAvatarDataUrl(next.avatarDataUrl ?? null)
   }
 
   const saveIdentity = async () => {
@@ -143,11 +180,16 @@ export function PageManagerModal({ onClose, onChanged }: PageManagerModalProps) 
       if (!latest) throw new Error('Page không còn tồn tại.')
       const saved = await window.pageAuto.updatePageTab({
         id: latest.id,
-        config: buildSharedPageSaveInput(latest, { name: nextName, pageUid: nextUid })
+        config: buildSharedPageSaveInput(latest, {
+          name: nextName,
+          pageUid: nextUid,
+          avatarDataUrl
+        })
       })
       setConfig(saved)
       setName(saved.name)
       setPageUid(saved.pageUid)
+      setAvatarDataUrl(saved.avatarDataUrl ?? null)
       await refreshCatalog()
       setNotice('Đã cập nhật Page.')
       onChanged()
@@ -276,6 +318,18 @@ export function PageManagerModal({ onClose, onChanged }: PageManagerModalProps) 
     }
   }
 
+  const chooseAvatar = async (file: File | undefined) => {
+    if (!file) return
+    try {
+      setError(null)
+      const dataUrl = await compactPageAvatar(file)
+      setAvatarDataUrl(dataUrl)
+      setNotice('Đã chọn avatar mới. Bấm Lưu Page để áp dụng.')
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    }
+  }
+
   return (
     <div className="page-manager-backdrop" role="presentation" onMouseDown={onClose}>
       <section className="page-manager-modal" role="dialog" aria-modal="true" aria-label="Quản lý Page" onMouseDown={(event) => event.stopPropagation()}>
@@ -310,7 +364,67 @@ export function PageManagerModal({ onClose, onChanged }: PageManagerModalProps) 
               <>
                 <section className="page-manager-identity">
                   <div className="page-manager-section-head">
-                    <div><span>Nhận diện dùng chung</span><strong>{config.name}</strong></div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                      <div style={{ position: 'relative', width: 40, height: 40, flex: '0 0 40px' }}>
+                        <label
+                          title="Chọn avatar Page"
+                          style={{
+                            width: 40,
+                            height: 40,
+                            display: 'grid',
+                            placeItems: 'center',
+                            overflow: 'hidden',
+                            borderRadius: 10,
+                            border: '1px solid currentColor',
+                            cursor: saving ? 'default' : 'pointer',
+                            opacity: saving ? 0.6 : 1,
+                            fontWeight: 800,
+                            fontSize: 14
+                          }}
+                        >
+                          {avatarDataUrl
+                            ? <img src={avatarDataUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                            : <span>{config.name.trim().charAt(0).toUpperCase() || 'P'}</span>}
+                          <input
+                            type="file"
+                            accept="image/jpeg,image/png,image/webp"
+                            disabled={saving}
+                            style={{ display: 'none' }}
+                            onChange={(event) => {
+                              void chooseAvatar(event.target.files?.[0])
+                              event.currentTarget.value = ''
+                            }}
+                          />
+                        </label>
+                        {avatarDataUrl ? (
+                          <button
+                            type="button"
+                            aria-label="Xóa avatar"
+                            title="Xóa avatar"
+                            disabled={saving}
+                            onClick={() => {
+                              setAvatarDataUrl(null)
+                              setNotice('Đã bỏ avatar. Bấm Lưu Page để áp dụng.')
+                            }}
+                            style={{
+                              position: 'absolute',
+                              right: -5,
+                              top: -5,
+                              width: 16,
+                              height: 16,
+                              padding: 0,
+                              display: 'grid',
+                              placeItems: 'center',
+                              borderRadius: 999,
+                              fontSize: 11,
+                              lineHeight: 1,
+                              cursor: 'pointer'
+                            }}
+                          >×</button>
+                        ) : null}
+                      </div>
+                      <div><span>Nhận diện dùng chung</span><strong>{config.name}</strong></div>
+                    </div>
                     <div className="page-manager-identity-actions">
                       <em className={`page-state state-${summary?.status ?? config.status}`}>{pageStatusLabels[summary?.status ?? config.status] ?? summary?.status ?? config.status}</em>
                       <button type="button" className="danger" disabled={saving} onClick={() => void deletePage()}>Xóa Page</button>

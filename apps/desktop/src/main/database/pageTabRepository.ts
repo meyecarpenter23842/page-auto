@@ -6,6 +6,7 @@ import {
   DEFAULT_PAGE_TAB_ROTATION,
   GROUP_ORDER_MODES,
   IMAGE_MODES,
+  MAX_PAGE_AVATAR_DATA_URL_LENGTH,
   MAX_PAGE_TAB_ACCOUNT_CONCURRENCY,
   MISSING_IMAGE_POLICIES,
   type AccountOrderMode,
@@ -27,6 +28,7 @@ interface PageTabRow {
   id: number
   name: string
   pageUid: string
+  avatarDataUrl: string | null
   status: string
   postsPerAccount: number
   postDelayMinSeconds: number
@@ -64,6 +66,18 @@ function positiveInteger(value: number, label: string): number {
     throw new Error(`${label} phải lớn hơn 0.`)
   }
   return value
+}
+
+function normalizeAvatarDataUrl(value: string | null | undefined): string | null {
+  if (value === null || value === undefined || value.trim() === '') return null
+  const normalized = value.trim()
+  if (normalized.length > MAX_PAGE_AVATAR_DATA_URL_LENGTH) {
+    throw new Error('Ảnh đại diện Page quá lớn.')
+  }
+  if (!/^data:image\/(?:jpeg|png|webp);base64,[a-z0-9+/=]+$/i.test(normalized)) {
+    throw new Error('Ảnh đại diện Page không hợp lệ.')
+  }
+  return normalized
 }
 
 function normalizeGroupUids(values: string[]): string[] {
@@ -175,6 +189,7 @@ function normalizeConfig(input: PageTabSaveInput): PageTabSaveInput {
   return {
     name,
     pageUid,
+    avatarDataUrl: normalizeAvatarDataUrl(input.avatarDataUrl),
     rotation: {
       postsPerAccount,
       postDelayMinSeconds,
@@ -204,6 +219,7 @@ function toPageTabRow(row: Record<string, unknown>): PageTabRow {
     id: Number(row.id),
     name: String(row.name),
     pageUid: String(row.pageUid),
+    avatarDataUrl: row.avatarDataUrl === null || row.avatarDataUrl === undefined ? null : String(row.avatarDataUrl),
     status: String(row.status),
     postsPerAccount: Number(row.postsPerAccount),
     postDelayMinSeconds: Number(row.postDelayMinSeconds),
@@ -262,6 +278,7 @@ export class PageTabRepository {
         id,
         name,
         page_uid AS pageUid,
+        avatar_data_url AS avatarDataUrl,
         status,
         posts_per_account AS postsPerAccount,
         post_delay_min_seconds AS postDelayMinSeconds,
@@ -355,6 +372,7 @@ export class PageTabRepository {
       id: tab.id,
       name: tab.name,
       pageUid: tab.pageUid,
+      avatarDataUrl: tab.avatarDataUrl,
       status: tab.status as PageTabStatus,
       rotation: {
         postsPerAccount: tab.postsPerAccount,
@@ -447,11 +465,15 @@ export class PageTabRepository {
   }
 
   update(id: number, input: PageTabSaveInput): PageTabConfig {
-    if (!this.get(id)) {
+    const current = this.get(id)
+    if (!current) {
       throw new Error(`Không tìm thấy Page Tab #${id}.`)
     }
 
-    const config = normalizeConfig(input)
+    const config = normalizeConfig({
+      ...input,
+      avatarDataUrl: input.avatarDataUrl === undefined ? current.avatarDataUrl : input.avatarDataUrl
+    })
     this.validateAccountsExist(config.accounts.map((item) => item.accountId))
     const now = Date.now()
 
@@ -460,6 +482,7 @@ export class PageTabRepository {
         UPDATE page_tabs SET
           name = ?,
           page_uid = ?,
+          avatar_data_url = ?,
           posts_per_account = ?,
           post_delay_min_seconds = ?,
           post_delay_max_seconds = ?,
@@ -473,6 +496,7 @@ export class PageTabRepository {
       `).run(
         config.name,
         config.pageUid,
+        config.avatarDataUrl ?? null,
         config.rotation.postsPerAccount,
         config.rotation.postDelayMinSeconds,
         config.rotation.postDelayMaxSeconds,
@@ -563,6 +587,7 @@ export class PageTabRepository {
     return this.update(copy.id, {
       name: copy.name,
       pageUid: source.pageUid,
+      avatarDataUrl: source.avatarDataUrl ?? null,
       rotation: { ...source.rotation },
       accounts: source.accounts.map((item) => ({
         accountId: item.accountId,

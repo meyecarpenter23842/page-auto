@@ -159,6 +159,7 @@ export class PwaBridgeService {
         pageTabId: summary.id,
         name: summary.name,
         pageUid: summary.pageUid,
+        avatarDataUrl: config?.avatarDataUrl ?? null,
         configuredStatus: summary.status,
         runtimeStatus: runtime.status,
         runId: runtime.runId,

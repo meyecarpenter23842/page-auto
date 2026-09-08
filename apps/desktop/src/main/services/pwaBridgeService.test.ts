@@ -17,10 +17,13 @@ const pageSummary: PageTabSummary = {
   updatedAt: 1
 }
 
+const avatarDataUrl = 'data:image/jpeg;base64,/9j/4AAQSkZJRg=='
+
 const pageConfig = {
   id: 7,
   name: pageSummary.name,
   pageUid: pageSummary.pageUid,
+  avatarDataUrl,
   status: 'running',
   createdAt: 1,
   updatedAt: 1,
@@ -114,7 +117,7 @@ function log(overrides: Partial<ExecutionLogRecord>): ExecutionLogRecord {
 }
 
 describe('PwaBridgeService', () => {
-  it('projects safe live Group runtime data for the mobile dashboard', () => {
+  it('projects safe live Group runtime data and the compact Page avatar for the mobile dashboard', () => {
     const logs = [
       log({ id: 2, errorMessage: 'token=super-secret', errorCode: 'unexpected_error', result: 'failed' }),
       log({ id: 1 })
@@ -132,6 +135,7 @@ describe('PwaBridgeService', () => {
     expect(snapshot.summary).toMatchObject({ totalPages: 1, activePages: 1, successToday: 1, failedToday: 1 })
     expect(snapshot.pages[0]).toMatchObject({
       pageTabId: 7,
+      avatarDataUrl,
       runtimeStatus: 'running',
       currentAccountId: 10,
       currentGroupUid: 'group-current',
@@ -158,5 +162,6 @@ describe('PwaBridgeService', () => {
     const page = service.getSnapshot().pages[0]
     expect(page?.runtimeStatus).toBe('error')
     expect(page?.message).toBe('password=[REDACTED]')
+    expect(page?.avatarDataUrl).toBe(avatarDataUrl)
   })
 })
