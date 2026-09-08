@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { classifyInboxesSurface, parseInboxesReceivedAtLabel } from './inboxesPlaywrightDriver'
+import {
+  classifyInboxesSurface,
+  parseInboxesMessageRowCells,
+  parseInboxesReceivedAtLabel
+} from './inboxesPlaywrightDriver'
 
 describe('classifyInboxesSurface', () => {
   it('recognizes the Add Inbox dialog observed in the live flow', () => {
@@ -57,5 +61,49 @@ describe('parseInboxesReceivedAtLabel', () => {
 
   it('fails closed when the Received label cannot be parsed', () => {
     expect(parseInboxesReceivedAtLabel('sometime earlier', 10_000_000)).toBeNull()
+  })
+})
+
+describe('parseInboxesMessageRowCells', () => {
+  it('parses the live Inboxes row with checkbox and star columns before From', () => {
+    const now = 10_000_000
+    expect(parseInboxesMessageRowCells([
+      '',
+      '',
+      'Microsoft account team',
+      'Your single-use code',
+      '0 secs ago'
+    ], now)).toEqual({
+      sender: 'Microsoft account team',
+      subject: 'Your single-use code',
+      receivedLabel: '0 secs ago',
+      receivedAt: now
+    })
+  })
+
+  it('ignores extra leading control text and anchors fields from the Received column', () => {
+    const now = 10_000_000
+    expect(parseInboxesMessageRowCells([
+      'Select',
+      'Star',
+      'Microsoft account team',
+      'Your single-use code',
+      '1 secs ago'
+    ], now)).toEqual({
+      sender: 'Microsoft account team',
+      subject: 'Your single-use code',
+      receivedLabel: '1 secs ago',
+      receivedAt: now - 1_000
+    })
+  })
+
+  it('fails closed when no Received cell can be identified', () => {
+    expect(parseInboxesMessageRowCells([
+      '',
+      '',
+      'Microsoft account team',
+      'Your single-use code',
+      'unknown age'
+    ], 10_000_000)).toBeNull()
   })
 })
