@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { classifyMicrosoftLoginSurface } from './emailLoginPolicy'
 import {
+  microsoftRecoveryBrowserProviderId,
   microsoftRecoveryHintMatchesBackupEmail,
   microsoftRecoveryLocalPart,
   parseMicrosoftRecoveryEmailHints
@@ -24,6 +25,13 @@ describe('Microsoft recovery email challenge policy', () => {
   it('returns only the local part for the audited complete-hidden-part Microsoft input', () => {
     expect(microsoftRecoveryLocalPart('alimaisivayj57cb2401@fivermail.com')).toBe('alimaisivayj57cb2401')
     expect(microsoftRecoveryLocalPart('invalid')).toBeNull()
+  })
+
+  it('routes recovery mail through the central browser-provider registry instead of hard-coding Inboxes', () => {
+    expect(microsoftRecoveryBrowserProviderId('owner@getnada.com')).toBe('inboxes')
+    expect(microsoftRecoveryBrowserProviderId('owner@fviainboxes.com')).toBe('fvia_inboxes')
+    expect(microsoftRecoveryBrowserProviderId('owner@hotmail.com')).toBeNull()
+    expect(microsoftRecoveryBrowserProviderId('owner@unknown.example')).toBeNull()
   })
 
   it('classifies the unselected Help us protect surface as recovery method choice', () => {

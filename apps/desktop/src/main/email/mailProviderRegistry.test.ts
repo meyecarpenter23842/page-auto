@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  FVIA_INBOXES_DOMAINS,
   INBOXES_DOMAINS,
+  isKnownFviaInboxesMailbox,
   isKnownInboxesMailbox,
   mailDomainFromAddress,
   mailProviderDomains,
@@ -15,15 +17,25 @@ describe('mailProviderRegistry', () => {
     expect(mailProviderDomains('inboxes')).toEqual(INBOXES_DOMAINS)
   })
 
-  it('prioritizes the two live target domains without giving them separate modules', () => {
+  it('prioritizes the two live Inboxes target domains without giving them separate modules', () => {
     expect(isKnownInboxesMailbox('A@FIVERMAIL.COM')).toBe(true)
     expect(isKnownInboxesMailbox('b@getnada.com')).toBe(true)
     expect(resolveMailProviderId('A@FIVERMAIL.COM')).toBe(resolveMailProviderId('b@getnada.com'))
   })
 
-  it('keeps Microsoft domains separate from Inboxes and does not guess unknown domains', () => {
+  it('maps the audited Fvia domain family to one fvia_inboxes provider', () => {
+    for (const domain of FVIA_INBOXES_DOMAINS) {
+      expect(resolveMailProviderId(`owner@${domain}`)).toBe('fvia_inboxes')
+      expect(isKnownFviaInboxesMailbox(`owner@${domain}`)).toBe(true)
+    }
+    expect(mailProviderDomains('fvia_inboxes')).toEqual(FVIA_INBOXES_DOMAINS)
+  })
+
+  it('keeps Microsoft, Inboxes and Fvia providers separate and does not guess unknown domains', () => {
     expect(resolveMailProviderId('owner@hotmail.com')).toBe('microsoft')
     expect(resolveMailProviderId('owner@outlook.com')).toBe('microsoft')
+    expect(resolveMailProviderId('owner@fivermail.com')).toBe('inboxes')
+    expect(resolveMailProviderId('owner@fviainboxes.com')).toBe('fvia_inboxes')
     expect(resolveMailProviderId('owner@custom.example')).toBeNull()
     expect(resolveMailProviderId('not-an-email')).toBeNull()
     expect(mailDomainFromAddress(' Owner@GetNada.Com ')).toBe('getnada.com')
