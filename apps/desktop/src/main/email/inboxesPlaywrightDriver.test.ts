@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   classifyInboxesSurface,
   parseInboxesMessageRowCells,
-  parseInboxesReceivedAtLabel
+  parseInboxesReceivedAtLabel,
+  retryInboxesClickAfterOverlay
 } from './inboxesPlaywrightDriver'
 
 describe('classifyInboxesSurface', () => {
@@ -47,6 +48,34 @@ describe('classifyInboxesSurface', () => {
       domainControlVisible: false,
       addInboxButtonVisible: false
     })).toBe('message_detail')
+  })
+})
+
+describe('retryInboxesClickAfterOverlay', () => {
+  it('dismisses a blocking popup and retries the same click once', async () => {
+    let attempts = 0
+    const dismiss = vi.fn(async () => true)
+    const clicked = await retryInboxesClickAfterOverlay(async () => {
+      attempts += 1
+      if (attempts === 1) throw new Error('overlay intercepts pointer events')
+    }, dismiss)
+
+    expect(clicked).toBe(true)
+    expect(attempts).toBe(2)
+    expect(dismiss).toHaveBeenCalledTimes(1)
+  })
+
+  it('fails closed without an unbounded retry when no popup can be dismissed', async () => {
+    let attempts = 0
+    const dismiss = vi.fn(async () => false)
+    const clicked = await retryInboxesClickAfterOverlay(async () => {
+      attempts += 1
+      throw new Error('still blocked')
+    }, dismiss)
+
+    expect(clicked).toBe(false)
+    expect(attempts).toBe(1)
+    expect(dismiss).toHaveBeenCalledTimes(1)
   })
 })
 

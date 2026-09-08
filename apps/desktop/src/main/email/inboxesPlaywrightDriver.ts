@@ -9,6 +9,7 @@ import type {
 } from './inboxesProvider'
 
 const INBOXES_URL = 'https://inboxes.com/'
+const INBOXES_CLICK_TIMEOUT_MS = 2_500
 const EMAIL_IN_TEXT = /[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9.-]+\.[a-z]{2,}/i
 
 export type InboxesSurface =
@@ -33,6 +34,34 @@ export interface InboxesParsedMessageRow {
   subject: string
   receivedLabel: string
   receivedAt: number
+}
+
+export async function retryInboxesClickAfterOverlay(
+  click: () => Promise<void>,
+  dismissOverlay: () => Promise<boolean>
+): Promise<boolean> {
+  try {
+    await click()
+    return true
+  } catch {
+    // A provider promo/modal can intercept pointer events. Dismiss only a known
+    // visible Close control, then retry the same action once with a bounded wait.
+  }
+
+  let dismissed = false
+  try {
+    dismissed = await dismissOverlay()
+  } catch {
+    return false
+  }
+  if (!dismissed) return false
+
+  try {
+    await click()
+    return true
+  } catch {
+    return false
+  }
 }
 
 export function classifyInboxesSurface(snapshot: InboxesSurfaceSnapshot): InboxesSurface {
@@ -147,6 +176,7 @@ export class InboxesPlaywrightDriver implements InboxesMailboxDriver {
     }
 
     for (let step = 0; step < 12; step += 1) {
+      await this.dismissBlockingOverlay()
       const surface = await this.readSurface(mailbox)
       if (surface === 'provider_unavailable') {
         return { status: 'provider_unavailable', message: 'Inboxes.com đang không khả dụng.' }
@@ -156,7 +186,9 @@ export class InboxesPlaywrightDriver implements InboxesMailboxDriver {
       if (surface === 'mailbox_other') {
         const exactMailbox = this.page.getByText(mailbox, { exact: true }).first()
         if (await visible(exactMailbox)) {
-          await exactMailbox.click()
+          if (!await this.clickWithOverlayRecovery(exactMailbox)) {
+            return { status: 'provider_unavailable', message: 'Không click được mailbox yêu cầu trên Inboxes sau khi xử lý popup.' }
+          }
           await this.waitForUiChange()
           continue
         }
@@ -193,6 +225,7 @@ export class InboxesPlaywrightDriver implements InboxesMailboxDriver {
   }
 
   async listMessages(now = Date.now()): Promise<InboxesMessageSummary[]> {
+    await this.dismissBlockingOverlay()
     const rows = this.page.locator('tr')
     const count = await rows.count()
     const messages: InboxesMessageSummary[] = []
@@ -237,15 +270,12 @@ export class InboxesPlaywrightDriver implements InboxesMailboxDriver {
   }
 
   async readMessage(message: InboxesMessageSummary): Promise<MailMessageSnapshot | null> {
+    await this.dismissBlockingOverlay()
     const row = await this.findMessageRow(message)
     if (!row) return null
 
     const beforeUrl = this.page.url()
-    try {
-      await row.click()
-    } catch {
-      return null
-    }
+    if (!await this.clickWithOverlayRecovery(row)) return null
     await this.waitForUiChange()
 
     const bodyText = (await this.page.locator('body').innerText({ timeout: 5_000 }).catch(() => '')).trim()
@@ -271,9 +301,9 @@ export class InboxesPlaywrightDriver implements InboxesMailboxDriver {
   }
 
   async refreshMailbox(): Promise<void> {
+    await this.dismissBlockingOverlay()
     const refreshButton = this.page.getByRole('button', { name: /refresh|reload|làm mới/i }).first()
-    if (await visible(refreshButton)) {
-      await refreshButton.click()
+    if (await visible(refreshButton) && await this.clickWithOverlayRecovery(refreshButton)) {
       await this.waitForUiChange()
       return
     }
@@ -311,8 +341,7 @@ export class InboxesPlaywrightDriver implements InboxesMailboxDriver {
     ]
     for (const control of controls) {
       if (!await visible(control)) continue
-      await control.click()
-      return true
+      if (await this.clickWithOverlayRecovery(control)) return true
     }
     return false
   }
@@ -331,21 +360,50 @@ export class InboxesPlaywrightDriver implements InboxesMailboxDriver {
       }
     } else {
       const combobox = this.page.getByRole('combobox').last()
-      if (!await visible(combobox)) return false
-      await combobox.click()
+      if (!await visible(combobox) || !await this.clickWithOverlayRecovery(combobox)) return false
       const option = this.page.getByRole('option', { name: domain, exact: true }).first()
-      if (await visible(option)) await option.click()
-      else {
+      if (await visible(option)) {
+        if (!await this.clickWithOverlayRecovery(option)) return false
+      } else {
         const domainText = this.page.getByText(domain, { exact: true }).last()
-        if (!await visible(domainText)) return false
-        await domainText.click()
+        if (!await visible(domainText) || !await this.clickWithOverlayRecovery(domainText)) return false
       }
     }
 
     const add = this.page.getByRole('button', { name: /^add inbox$/i }).last()
     if (!await visible(add)) return false
-    await add.click()
-    return true
+    return await this.clickWithOverlayRecovery(add)
+  }
+
+  private async clickWithOverlayRecovery(target: Locator): Promise<boolean> {
+    return await retryInboxesClickAfterOverlay(
+      async () => { await target.click({ timeout: INBOXES_CLICK_TIMEOUT_MS }) },
+      async () => await this.dismissBlockingOverlay()
+    )
+  }
+
+  private async dismissBlockingOverlay(): Promise<boolean> {
+    const overlay = this.page.locator('[role="dialog"]:visible, [aria-modal="true"]:visible').last()
+    const controls = [
+      overlay.getByRole('button', { name: /^close$/i }).last(),
+      overlay.getByRole('link', { name: /^close$/i }).last(),
+      overlay.getByText(/^close$/i).last(),
+      this.page.locator('button[aria-label*="close" i]:visible, [role="button"][aria-label*="close" i]:visible').last(),
+      this.page.locator('button:visible, a:visible, [role="button"]:visible, [role="link"]:visible').filter({ hasText: /^\s*close\s*$/i }).last(),
+      this.page.getByText(/^close$/i).last()
+    ]
+
+    for (const control of controls) {
+      if (!await visible(control)) continue
+      try {
+        await control.click({ timeout: 1_500 })
+        await this.page.waitForTimeout(150)
+        return true
+      } catch {
+        // Try the next explicit Close control; never force-click content behind it.
+      }
+    }
+    return false
   }
 
   private async findMessageRow(message: InboxesMessageSummary): Promise<Locator | null> {

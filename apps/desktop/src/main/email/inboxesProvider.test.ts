@@ -56,6 +56,32 @@ describe('InboxesProvider', () => {
     expect(result.code).toBe('123456')
   })
 
+  it('warms a timestamped recovery mailbox without opening historical Microsoft mail', async () => {
+    const oldMail = summary('old-mail', undefined, 900_000)
+    const ensureMailbox = vi.fn(async (mailbox: string) => ({ status: 'ready' as const, activeMailbox: mailbox }))
+    const listMessages = vi.fn(async () => [oldMail])
+    const readMessage = vi.fn(async (message: InboxesMessageSummary) => snapshot(message, '111111'))
+    const driver: InboxesMailboxDriver = {
+      ensureMailbox,
+      listMessages,
+      readMessage,
+      refreshMailbox: vi.fn(async () => undefined)
+    }
+    const provider = new InboxesProvider(driver, { now: () => 1_000_000 })
+
+    const result = await provider.getVerificationCode({
+      mailbox: 'owner@fivermail.com',
+      role: 'recovery',
+      purpose: 'microsoft_security',
+      timeoutMs: 0
+    })
+
+    expect(result.status).toBe('message_not_found')
+    expect(ensureMailbox).toHaveBeenCalledTimes(1)
+    expect(listMessages).toHaveBeenCalledTimes(1)
+    expect(readMessage).not.toHaveBeenCalled()
+  })
+
   it('does not reuse the previous message when the caller is challenged two or three times', async () => {
     let now = 1_000_000
     let messages = [summary('mail-1', undefined, now)]
