@@ -28,6 +28,13 @@ export interface InboxesSurfaceSnapshot {
   addInboxButtonVisible: boolean
 }
 
+export interface InboxesParsedMessageRow {
+  sender: string
+  subject: string
+  receivedLabel: string
+  receivedAt: number
+}
+
 export function classifyInboxesSurface(snapshot: InboxesSurfaceSnapshot): InboxesSurface {
   const text = snapshot.bodyText.replace(/\s+/g, ' ').trim().toLowerCase()
   const mailbox = snapshot.expectedMailbox.trim().toLowerCase()
@@ -68,6 +75,26 @@ export function parseInboxesReceivedAtLabel(labelInput: string, now = Date.now()
 
   const absolute = Date.parse(labelInput)
   return Number.isFinite(absolute) ? absolute : null
+}
+
+export function parseInboxesMessageRowCells(cellTexts: string[], now = Date.now()): InboxesParsedMessageRow | null {
+  const cells = cellTexts
+    .map((value) => value.replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+
+  for (let index = cells.length - 1; index >= 2; index -= 1) {
+    const receivedLabel = cells[index] ?? ''
+    const receivedAt = parseInboxesReceivedAtLabel(receivedLabel, now)
+    if (receivedAt === null) continue
+
+    const sender = cells[index - 2] ?? ''
+    const subject = cells[index - 1] ?? ''
+    if (!sender || !subject) return null
+
+    return { sender, subject, receivedLabel, receivedAt }
+  }
+
+  return null
 }
 
 async function visible(locator: Locator): Promise<boolean> {
@@ -174,13 +201,17 @@ export class InboxesPlaywrightDriver implements InboxesMailboxDriver {
       const row = rows.nth(index)
       if (!await row.isVisible().catch(() => false)) continue
       const cells = row.locator('td')
-      if (await cells.count() < 2) continue
+      const cellCount = await cells.count()
+      if (cellCount < 3) continue
 
-      const sender = (await cells.nth(0).innerText().catch(() => '')).trim()
-      const subject = (await cells.nth(1).innerText().catch(() => '')).replace(/\s+/g, ' ').trim()
-      const receivedLabel = (await cells.nth(2).innerText().catch(() => '')).replace(/\s+/g, ' ').trim()
-      if (!sender || !subject) continue
+      const cellTexts: string[] = []
+      for (let cellIndex = 0; cellIndex < cellCount; cellIndex += 1) {
+        cellTexts.push(await cells.nth(cellIndex).innerText().catch(() => ''))
+      }
+      const parsed = parseInboxesMessageRowCells(cellTexts, now)
+      if (!parsed) continue
 
+      const { sender, subject, receivedLabel, receivedAt } = parsed
       const href = await row.locator('a[href]').first().getAttribute('href').catch(() => null)
       const dataId = await row.getAttribute('data-id').catch(() => null)
       const id = await row.getAttribute('id').catch(() => null)
@@ -198,7 +229,7 @@ export class InboxesPlaywrightDriver implements InboxesMailboxDriver {
         subject,
         preview: subject,
         receivedLabel,
-        receivedAt: parseInboxesReceivedAtLabel(receivedLabel, now)
+        receivedAt
       })
     }
 
