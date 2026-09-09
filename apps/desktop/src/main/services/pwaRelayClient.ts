@@ -1,10 +1,11 @@
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { PwaBridgeSnapshot } from '../../shared/pwaBridge'
 
 export const PWA_RELAY_DEFAULT_BASE_URL = 'https://page-auto-pwa.vercel.app'
 export const PWA_RELAY_DEFAULT_INTERVAL_MS = 5_000
+export const PWA_RELAY_FULL_REFRESH_MS = 5 * 60_000
 const RELAY_CONFIG_VERSION = 1 as const
 const DEVICE_ID_PATTERN = /^[a-f0-9]{32}$/
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]{40,96}$/
@@ -55,6 +56,11 @@ function pairingCode(credentials: RelayCredentials): string {
   }), 'utf8').toString('base64url')
 }
 
+function snapshotFingerprint(snapshot: PwaBridgeSnapshot): string {
+  const stableSnapshot = { ...snapshot, generatedAt: 0 }
+  return createHash('sha256').update(JSON.stringify(stableSnapshot), 'utf8').digest('hex')
+}
+
 export class PwaRelayClient {
   private readonly relayBaseUrl: string
   private readonly intervalMs: number
@@ -66,6 +72,8 @@ export class PwaRelayClient {
   private credentialsPromise: Promise<RelayCredentials> | null = null
   private timer: ReturnType<typeof setInterval> | null = null
   private lastErrorMessage: string | null = null
+  private lastSnapshotFingerprint: string | null = null
+  private lastFullPushAt = 0
 
   constructor(private readonly options: PwaRelayClientOptions) {
     this.relayBaseUrl = normalizeRelayBaseUrl(options.relayBaseUrl)
@@ -101,6 +109,11 @@ export class PwaRelayClient {
   }
 
   async pushNow(): Promise<void> {
+    const snapshot = this.options.getSnapshot()
+    const fingerprint = snapshotFingerprint(snapshot)
+    const now = Date.now()
+    if (fingerprint === this.lastSnapshotFingerprint && now - this.lastFullPushAt < PWA_RELAY_FULL_REFRESH_MS) return
+
     const credentials = await this.ensureCredentials()
     const response = await this.fetchImpl(`${this.relayBaseUrl}/api/relay/push`, {
       method: 'POST',
@@ -111,9 +124,11 @@ export class PwaRelayClient {
         'Content-Type': 'application/json',
         'X-Page-Auto-Device-Id': credentials.deviceId
       },
-      body: JSON.stringify({ snapshot: this.options.getSnapshot() })
+      body: JSON.stringify({ snapshot })
     })
     if (!response.ok) throw new Error(`PWA relay HTTP ${response.status}`)
+    this.lastSnapshotFingerprint = fingerprint
+    this.lastFullPushAt = now
     this.lastErrorMessage = null
   }
 

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import type { PwaBridgeSnapshot, PwaGroupPostCommandResult } from '../../shared/pwaBridge'
-import { PwaRemoteCommandClient } from './pwaRemoteCommandClient'
+import { PWA_REMOTE_COMMAND_DEFAULT_INTERVAL_MS, PwaRemoteCommandClient } from './pwaRemoteCommandClient'
 
 const snapshot: PwaBridgeSnapshot = {
   schemaVersion: 1,
@@ -30,6 +30,10 @@ const result: PwaGroupPostCommandResult = {
 }
 
 describe('PwaRemoteCommandClient', () => {
+  it('uses a 15-second default poll interval so idle command polling can double as a lightweight heartbeat', () => {
+    expect(PWA_REMOTE_COMMAND_DEFAULT_INTERVAL_MS).toBe(15_000)
+  })
+
   it('polls a signed command and posts ACK with the authoritative snapshot', async () => {
     const dataDirectory = await mkdtemp(join(tmpdir(), 'page-auto-pwa-command-'))
     const relayDirectory = join(dataDirectory, 'pwa-relay')

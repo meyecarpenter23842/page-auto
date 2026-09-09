@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { PwaBridgeSnapshot, PwaGroupPostCommandResult } from '../../shared/pwaBridge'
 
-export const PWA_REMOTE_COMMAND_DEFAULT_INTERVAL_MS = 1_000
+export const PWA_REMOTE_COMMAND_DEFAULT_INTERVAL_MS = 15_000
 const RELAY_CONFIG_VERSION = 1 as const
 const DEVICE_ID_PATTERN = /^[a-f0-9]{32}$/
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]{40,96}$/

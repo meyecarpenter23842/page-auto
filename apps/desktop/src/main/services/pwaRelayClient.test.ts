@@ -52,4 +52,33 @@ describe('PwaRelayClient', () => {
     })
     expect(await second.getPairingCode()).toBe(code)
   })
+
+  it('skips network pushes when only generatedAt changes and pushes again for meaningful snapshot changes', async () => {
+    const dataDirectory = await mkdtemp(join(tmpdir(), 'page-auto-pwa-relay-dedupe-'))
+    const requests: Array<{ url: string; init: RequestInit | undefined }> = []
+    const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+      requests.push({ url: String(input), init })
+      return new Response(JSON.stringify({ ok: true }), { status: 200 })
+    }) as typeof fetch
+    let currentSnapshot: PwaBridgeSnapshot = { ...snapshot, summary: { ...snapshot.summary } }
+    const client = new PwaRelayClient({
+      dataDirectory,
+      getSnapshot: () => currentSnapshot,
+      relayBaseUrl: 'https://relay.example.test',
+      fetchImpl
+    })
+
+    await client.pushNow()
+    currentSnapshot = { ...currentSnapshot, generatedAt: currentSnapshot.generatedAt + 5_000 }
+    await client.pushNow()
+    expect(requests).toHaveLength(1)
+
+    currentSnapshot = {
+      ...currentSnapshot,
+      generatedAt: currentSnapshot.generatedAt + 5_000,
+      summary: { ...currentSnapshot.summary, totalPages: 1 }
+    }
+    await client.pushNow()
+    expect(requests).toHaveLength(2)
+  })
 })
