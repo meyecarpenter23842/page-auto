@@ -90,8 +90,26 @@ export function classifyMicrosoftRoute(value: string): MicrosoftRoute {
   }
 }
 
+function microsoftAccountPath(value: string): string | null {
+  try {
+    const url = new URL(value)
+    return url.hostname.toLowerCase() === 'account.live.com' ? url.pathname.toLowerCase() : null
+  } catch {
+    return null
+  }
+}
+
+function isIdentityConfirmPath(path: string | null): boolean {
+  return path !== null && /^\/identity\/confirm(?:\/|$)/.test(path)
+}
+
+function isKnownSafeAuthenticatedAccountPath(path: string | null): boolean {
+  return path !== null && /^\/proofs\/manage\/additional(?:\/|$)/.test(path)
+}
+
 export function classifyMicrosoftLoginSurface(snapshot: MicrosoftLoginSnapshot): MicrosoftLoginSurface {
   const route = classifyMicrosoftRoute(snapshot.url)
+  const accountPath = microsoftAccountPath(snapshot.url)
   const url = snapshot.url.toLowerCase()
   const text = snapshot.text.toLowerCase()
   const usernameInputCount = snapshot.usernameInputCount ?? snapshot.emailInputCount
@@ -193,7 +211,17 @@ export function classifyMicrosoftLoginSurface(snapshot: MicrosoftLoginSnapshot):
   if (/signin/.test(url) || /sign in|đăng nhập|enter your email|email, phone, or skype/.test(text)) {
     return 'manual_login'
   }
-  if (route === 'account_live') return 'authenticated'
+
+  // account.live.com is not authentication evidence by itself. In particular,
+  // /identity/confirm can initially render as a blank/loading shell and later
+  // hydrate into an identity/recovery/security challenge. Keep that shell
+  // non-terminal so Auth V2 waits boundedly and detects again.
+  if (route === 'account_live') {
+    if (isIdentityConfirmPath(accountPath)) return 'login_transition'
+    if (isKnownSafeAuthenticatedAccountPath(accountPath)) return 'authenticated'
+    return 'manual_login'
+  }
+
   return 'manual_login'
 }
 
