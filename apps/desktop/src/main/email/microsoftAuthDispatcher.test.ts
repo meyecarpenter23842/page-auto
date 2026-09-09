@@ -39,6 +39,45 @@ describe('runMicrosoftAuthDispatchLoop', () => {
     expect(detectCalls).toBe(4)
   })
 
+  it('supports a re-entrant recovery -> credentials -> recovery sequence without encoding a next step', async () => {
+    const states: EmailAuthV2Surface[] = [
+      'recovery_code',
+      'recovery_code',
+      'username',
+      'password',
+      'recovery_code',
+      'authenticated'
+    ]
+    let detectCalls = 0
+    const handled: EmailAuthV2Surface[] = []
+
+    const handleCurrent = async ({ surface }: { surface: EmailAuthV2Surface }) => {
+      handled.push(surface)
+      return { kind: 'handled' as const }
+    }
+
+    const result = await runMicrosoftAuthDispatchLoop({
+      detect: async () => {
+        const surface = states[detectCalls]
+        detectCalls += 1
+        return surface ? { surface, detection: surface } : null
+      },
+      handlers: {
+        recovery_code: handleCurrent,
+        username: handleCurrent,
+        password: handleCurrent,
+        authenticated: async ({ surface }) => {
+          handled.push(surface)
+          return { kind: 'authenticated' }
+        }
+      }
+    })
+
+    expect(result).toEqual({ kind: 'authenticated' })
+    expect(handled).toEqual(states)
+    expect(detectCalls).toBe(states.length)
+  })
+
   it('requires detector proof before accepting authenticated from a non-authenticated handler', async () => {
     let detectCalls = 0
     const surfaces: EmailAuthV2Surface[] = ['password', 'authenticated']

@@ -22,6 +22,7 @@ import {
   handleMicrosoftRecoveryChallenge,
   isMicrosoftRecoverySurface
 } from './microsoftRecoveryChallenge'
+import { runMicrosoftAuthV2WorkerController } from './microsoftAuthV2WorkerController'
 
 interface ProxyConfig {
   server: string
@@ -471,224 +472,21 @@ async function autoLoginMicrosoft(
   command: BrowserCommandBase,
   allowPasswordChangeSurface = false
 ): Promise<MicrosoftLoginAttempt> {
-  const pagesAtFlowStart = new Set(page.context().pages())
-  let attempted = false
-  let unreadableSteps = 0
-  let usernameSubmitAttempts = 0
-  for (let step = 0; step < 32; step += 1) {
-    const previousPage = page
-    const previousRoute = microsoftRouteLogLabel(previousPage.url())
-    page = await adoptNewestMicrosoftFlowPage(page, pagesAtFlowStart)
-    if (page !== previousPage) {
-      console.info(
-        `[PAGE-AUTO email auth] adopt-page ${previousRoute} -> ${microsoftRouteLogLabel(page.url())}; pages=${page.context().pages().length}`
-      )
-    }
+  const result = await runMicrosoftAuthV2WorkerController(page, command, {
+    allowPasswordChangeSurface
+  })
 
-    const snapshot = await readMicrosoftLoginSnapshot(page)
-    if (!snapshot) {
-      unreadableSteps += 1
-      if (unreadableSteps < 3) {
-        await waitForMicrosoftStep(page)
-        continue
-      }
-      await closeMicrosoftOwnedOpenerChain(page)
-      return loginNeedsAttention(
-        'security_review',
-        attempted,
-        'Không đọc được trạng thái đăng nhập Microsoft sau nhiều lần chờ; PAGE-AUTO dừng an toàn và giữ nguyên profile Email.'
-      )
+  if (result.status === 'authenticated' || result.status === 'target_ready') {
+    return {
+      status: 'authenticated',
+      attempted: result.attempted
     }
-    unreadableSteps = 0
-
-    const surface = classifyMicrosoftLoginSurface(snapshot)
-    console.info(
-      `[PAGE-AUTO email auth] step=${step} route=${microsoftRouteLogLabel(snapshot.url)} state=${surface} pages=${page.context().pages().length}`
-    )
-
-    if (surface === 'authenticated') {
-      await closeMicrosoftOwnedOpenerChain(page)
-      return { status: 'authenticated', attempted }
-    }
-    if (surface === 'password_change') {
-      if (allowPasswordChangeSurface) return { status: 'authenticated', attempted }
-      await closeMicrosoftOwnedOpenerChain(page)
-      return loginNeedsAttention(
-        'needs_login',
-        attempted,
-        'Microsoft yêu cầu đổi Password trước khi tiếp tục. PAGE-AUTO không tự xử lý bước đổi Password ngoài action Password được chọn.'
-      )
-    }
-    if (surface === 'identity_review') {
-      await closeMicrosoftOwnedOpenerChain(page)
-      return loginNeedsAttention('identity_review', attempted)
-    }
-    if (isMicrosoftRecoverySurface(surface)) {
-      const recovery = await handleMicrosoftRecoveryChallenge(page, surface, command.backupEmail)
-      if (recovery.status === 'needs_attention') {
-        await closeMicrosoftOwnedOpenerChain(page)
-        return loginNeedsAttention('security_review', attempted, recovery.message)
-      }
-      attempted = true
-      await waitForMicrosoftStep(page)
-      continue
-    }
-    if (surface === 'security_review') {
-      await closeMicrosoftOwnedOpenerChain(page)
-      return loginNeedsAttention('security_review', attempted)
-    }
-    if (surface === 'credential_error') {
-      await closeMicrosoftOwnedOpenerChain(page)
-      return loginNeedsAttention(
-        'needs_login',
-        attempted,
-        'Microsoft không chấp nhận Email/PassEmail canonical hiện tại. PAGE-AUTO không thử credential khác và giữ phiên để xử lý thủ công.'
-      )
-    }
-
-    if (surface === 'outlook_landing') {
-      const nextPage = await continueFromOutlookLanding(page)
-      if (!nextPage) {
-        await waitForMicrosoftStep(page)
-        continue
-      }
-      page = nextPage
-      attempted = true
-      continue
-    }
-
-    if (surface === 'outlook_transition' || surface === 'login_transition') {
-      await waitForMicrosoftStep(page)
-      continue
-    }
-
-    if (surface === 'oauth_authorize' || surface === 'account_picker') {
-      if (!await continueFromMicrosoftOAuthAuthorize(page, command.loginEmail?.trim() ?? '')) {
-        await waitForMicrosoftStep(page)
-        continue
-      }
-      attempted = true
-      continue
-    }
-
-    if (surface === 'password_method_choice') {
-      if (!await clickUseYourPassword(page)) {
-        await waitForMicrosoftStep(page)
-        continue
-      }
-      attempted = true
-      continue
-    }
-
-    if (surface === 'stay_signed_in') {
-      if (!await clickStaySignedIn(page)) {
-        await waitForMicrosoftStep(page)
-        continue
-      }
-      attempted = true
-      continue
-    }
-
-    const loginEmail = command.loginEmail?.trim() ?? ''
-    const loginPassword = command.loginPassword ?? ''
-    if (!loginEmail || !loginPassword) {
-      await closeMicrosoftOwnedOpenerChain(page)
-      return loginNeedsAttention(
-        'needs_login',
-        attempted,
-        'Account thiếu Email hoặc PassEmail canonical để auto login Microsoft. PAGE-AUTO giữ profile mở để đăng nhập thủ công.'
-      )
-    }
-
-    if (surface === 'username') {
-      if (usernameSubmitAttempts >= 2) {
-        await closeMicrosoftOwnedOpenerChain(page)
-        return loginNeedsAttention(
-          'needs_login',
-          attempted,
-          'Microsoft vẫn từ chối Email canonical sau khi PAGE-AUTO đã xác nhận field chứa đúng giá trị và thử lại có giới hạn. PAGE-AUTO giữ phiên để kiểm tra dữ liệu Email.'
-        )
-      }
-      const username = await firstVisible([
-        page.locator('input[name="loginfmt"]:visible').first(),
-        page.locator('input[autocomplete="username"]:visible').first()
-      ])
-      if (!username) {
-        await waitForMicrosoftStep(page)
-        continue
-      }
-      await username.fill(loginEmail)
-      const filledEmail = (await username.inputValue().catch(() => '')).trim()
-      if (filledEmail !== loginEmail) {
-        await closeMicrosoftOwnedOpenerChain(page)
-        return loginNeedsAttention(
-          'needs_login',
-          attempted,
-          'PAGE-AUTO không xác nhận được field Microsoft đã nhận đúng Email canonical nên không bấm Next.'
-        )
-      }
-      usernameSubmitAttempts += 1
-      if (!await clickMicrosoftLoginSubmit(page)) {
-        await waitForMicrosoftStep(page)
-        continue
-      }
-      attempted = true
-      continue
-    }
-
-    if (surface === 'password') {
-      const password = await firstVisible([
-        page.locator('input[name="passwd"][type="password"]:visible').first(),
-        page.locator('input[type="password"]:visible').first(),
-        page.getByLabel(/password|mật khẩu/i).first()
-      ])
-      if (!password) {
-        await waitForMicrosoftStep(page)
-        continue
-      }
-      traceEmailCredential('worker-before-fill', {
-        accountId: command.accountId,
-        email: command.loginEmail,
-        secret: loginPassword,
-        profileDirectory: command.profileDirectory
-      })
-      await password.fill(loginPassword)
-      const filledPassword = await password.inputValue().catch(() => '')
-      traceEmailCredential('worker-after-fill', {
-        accountId: command.accountId,
-        email: command.loginEmail,
-        secret: filledPassword,
-        profileDirectory: command.profileDirectory
-      })
-      if (!emailCredentialValueMatches(loginPassword, filledPassword)) {
-        await closeMicrosoftOwnedOpenerChain(page)
-        return loginNeedsAttention(
-          'needs_login',
-          attempted,
-          'PAGE-AUTO phát hiện Password trong DOM khác PassEmail của command hiện tại nên không bấm Sign in. Bật credential trace để đối chiếu fingerprint.'
-        )
-      }
-      if (!await clickMicrosoftLoginSubmit(page)) {
-        await waitForMicrosoftStep(page)
-        continue
-      }
-      attempted = true
-      continue
-    }
-
-    await closeMicrosoftOwnedOpenerChain(page)
-    return loginNeedsAttention(
-      'needs_login',
-      attempted,
-      'Microsoft đang dùng một bước đăng nhập khác flow Email + PassEmail được hỗ trợ. PAGE-AUTO dừng để xử lý thủ công.'
-    )
   }
 
-  await closeMicrosoftOwnedOpenerChain(page)
   return loginNeedsAttention(
-    'needs_login',
-    attempted,
-    'Auto login Microsoft chưa đi tới trạng thái xác nhận an toàn sau các bước được hỗ trợ. PAGE-AUTO không tiếp tục tự động.'
+    result.reason ?? 'needs_login',
+    result.attempted,
+    result.message
   )
 }
 
