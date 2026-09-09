@@ -198,6 +198,7 @@ export async function runMicrosoftAuthV2WorkerController(
     const outcome = await commonHandlers.handle(surface, ui)
     if (!outcome) return { kind: 'needs_attention', reason: `unsupported_common_surface:${surface}` }
     attempted = attempted || outcome.attempted
+    if (outcome.result.kind === 'retryable') await waitForMicrosoftAuthStep(page)
     if (outcome.result.kind === 'needs_attention') {
       attentionReason = outcome.needsAttentionReason ?? 'needs_login'
       attentionMessage = outcome.message
@@ -257,12 +258,18 @@ export async function runMicrosoftAuthV2WorkerController(
         expectedMicrosoftNavigationInterruption
       )
       const choice = await ui.chooseAccount(loginEmail)
-      if (choice === 'unavailable') return { kind: 'retryable', reason: 'oauth_authorize_not_ready' }
+      if (choice === 'unavailable') {
+        await waitForMicrosoftAuthStep(page)
+        return { kind: 'retryable', reason: 'oauth_authorize_not_ready' }
+      }
       attempted = true
       return { kind: 'handled' }
     },
     password_method_choice: async () => {
-      if (!await clickUseYourPassword(page)) return { kind: 'retryable', reason: 'password_method_choice_not_ready' }
+      if (!await clickUseYourPassword(page)) {
+        await waitForMicrosoftAuthStep(page)
+        return { kind: 'retryable', reason: 'password_method_choice_not_ready' }
+      }
       attempted = true
       return { kind: 'handled' }
     },
