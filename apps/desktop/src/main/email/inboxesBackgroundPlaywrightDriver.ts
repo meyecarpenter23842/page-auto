@@ -1,5 +1,5 @@
 import type { Locator, Page } from 'playwright-core'
-import type { MailMessageSnapshot } from './verificationCodeParser'
+import { parseVerificationCode, type MailMessageSnapshot } from './verificationCodeParser'
 import type { MailboxCodeSurface } from './emailAuthV2Contracts'
 import { mailDomainFromAddress } from './mailProviderRegistry'
 import { normalizeMailboxAddress } from './mailProvider'
@@ -17,6 +17,8 @@ const INBOXES_URL = 'https://inboxes.com/'
 const INBOXES_CLICK_TIMEOUT_MS = 1_500
 const INBOXES_NAV_TIMEOUT_MS = 12_000
 const INBOXES_VIGNETTE_RELOAD_TIMEOUT_MS = 8_000
+const INBOXES_FORM_ACTION_TIMEOUT_MS = 1_000
+const INBOXES_TEXT_PROBE_TIMEOUT_MS = 250
 const EMAIL_IN_TEXT = /[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9.-]+\.[a-z]{2,}/i
 const INBOXES_HOST = /(^|\.)inboxes\.com$/i
 const GOOGLE_VIGNETTE_HASH = /(?:^|[#&])google_vignette(?:=|&|$)/i
@@ -32,6 +34,14 @@ export interface InboxesBackgroundSurfaceSnapshot {
   lastKnownMailbox: string | null
   overlayVisible: boolean
   googleVignetteVisible: boolean
+  usernameInputVisible: boolean
+  domainControlVisible: boolean
+  addInboxButtonVisible: boolean
+}
+
+export interface InboxesAddInboxFastPathSnapshot {
+  url: string
+  vignetteReloads: number
   usernameInputVisible: boolean
   domainControlVisible: boolean
   addInboxButtonVisible: boolean
@@ -54,6 +64,19 @@ function isInboxesGoogleVignetteUrl(value: string): boolean {
   }
 }
 
+/**
+ * The Add Inbox form is already actionable business state. Do not run absent-text
+ * mailbox probes before returning it to the state machine. A fresh vignette hash
+ * still wins once; after the operator-proven F5 recovery the same hash may be stale.
+ */
+export function shouldUseInboxesAddInboxFastPath(snapshot: InboxesAddInboxFastPathSnapshot): boolean {
+  const formVisible = snapshot.usernameInputVisible
+    && snapshot.domainControlVisible
+    && snapshot.addInboxButtonVisible
+  if (!formVisible) return false
+  return !isInboxesGoogleVignetteUrl(snapshot.url) || snapshot.vignetteReloads > 0
+}
+
 /** Strong enough for detail verification without treating a list-row subject as opened mail. */
 export function inboxesBodyHasMessageDetail(value: string): boolean {
   const text = value.replace(/\s+/g, ' ').trim().toLowerCase()
@@ -61,6 +84,30 @@ export function inboxesBodyHasMessageDetail(value: string): boolean {
   if (!mentionsCode) return false
   return /\b\d{4,8}\b/.test(text)
     || /use this code|your code is|code to continue|enter this code|here is your code/.test(text)
+}
+
+/**
+ * Inboxes often renders the Microsoft code directly in the Subject/Preview row.
+ * Reuse the canonical verification parser; only short-circuit the click when that
+ * parser can already prove a verification code from the fresh row snapshot.
+ */
+export function inboxesPreviewSnapshot(
+  message: InboxesMessageSummary,
+  now = Date.now()
+): MailMessageSnapshot | null {
+  const receivedAt = message.receivedAt ?? 0
+  const preview = message.preview.replace(/\s+/g, ' ').trim()
+  if (!preview || !Number.isFinite(receivedAt) || receivedAt <= 0) return null
+
+  const snapshot: MailMessageSnapshot = {
+    id: message.key,
+    receivedAt,
+    sender: message.sender,
+    subject: message.subject,
+    bodyPreview: preview,
+    bodyText: preview
+  }
+  return parseVerificationCode([snapshot], now) ? snapshot : null
 }
 
 export function classifyInboxesBackgroundSurface(snapshot: InboxesBackgroundSurfaceSnapshot): MailboxCodeSurface {
@@ -255,6 +302,7 @@ export class InboxesBackgroundPlaywrightDriver implements InboxesMailboxDriver {
       const href = await row.locator('a[href]').first().getAttribute('href').catch(() => null)
       const dataId = await row.getAttribute('data-id').catch(() => null)
       const id = await row.getAttribute('id').catch(() => null)
+      const rowPreview = (await row.innerText().catch(() => cellTexts.join(' '))).replace(/\s+/g, ' ').trim()
       const key = href
         ? `href:${href}`
         : dataId
@@ -267,7 +315,7 @@ export class InboxesBackgroundPlaywrightDriver implements InboxesMailboxDriver {
         key,
         sender,
         subject,
-        preview: subject,
+        preview: rowPreview || subject,
         receivedLabel,
         receivedAt
       })
@@ -278,6 +326,13 @@ export class InboxesBackgroundPlaywrightDriver implements InboxesMailboxDriver {
 
   async readMessage(message: InboxesMessageSummary): Promise<MailMessageSnapshot | null> {
     if (this.page.isClosed()) return null
+
+    // Live Inboxes can already expose the full Microsoft code in the list row.
+    // Avoid a fragile extra click/detail round-trip when the canonical parser can
+    // prove the code from that fresh row; otherwise fall through to detail safely.
+    const previewSnapshot = inboxesPreviewSnapshot(message)
+    if (previewSnapshot) return previewSnapshot
+
     await this.dismissBlockingOverlay()
     const row = await this.findMessageRow(message)
     if (!row) return null
@@ -349,7 +404,6 @@ export class InboxesBackgroundPlaywrightDriver implements InboxesMailboxDriver {
       })
     }
 
-    const bodyText = await this.readBodyText(1_500)
     const username = this.page.getByPlaceholder(/enter username/i)
     const domain = this.page.getByRole('combobox')
     const add = this.page.getByRole('button', { name: /^add inbox$/i })
@@ -358,12 +412,43 @@ export class InboxesBackgroundPlaywrightDriver implements InboxesMailboxDriver {
     const domainVisible = await visible(domain)
     const addVisible = await visible(add)
     const overlayVisible = await visible(overlay)
+
+    // This is the hot-path bug from the live recording: the Add Inbox controls
+    // were visible immediately but readSurface() then waited on a locator for
+    // "Waiting for incoming messages" that was absent. Return the form before
+    // any optional text lookup so filling starts immediately.
+    if (shouldUseInboxesAddInboxFastPath({
+      url: this.page.url(),
+      vignetteReloads: this.vignetteReloads,
+      usernameInputVisible: usernameVisible,
+      domainControlVisible: domainVisible,
+      addInboxButtonVisible: addVisible
+    })) {
+      return classifyInboxesBackgroundSurface({
+        pageClosed: false,
+        bodyText: '',
+        expectedMailbox,
+        activeMailbox: null,
+        lastKnownMailbox: this.lastKnownMailbox,
+        overlayVisible,
+        googleVignetteVisible: false,
+        usernameInputVisible: usernameVisible,
+        domainControlVisible: domainVisible,
+        addInboxButtonVisible: addVisible
+      })
+    }
+
+    const bodyText = await this.readBodyText(800)
     const headings = await this.page.locator('h1, h2, h3').allInnerTexts().catch(() => [] as string[])
     const activeHeading = headings.find((text) => /don't give them your private email/i.test(text) && EMAIL_IN_TEXT.test(text))
-    const emptyInboxText = activeHeading
-      ? null
-      : await this.page.getByText(/waiting for incoming messages for/i).first().innerText().catch(() => '')
-    const activeMailbox = mailboxFromText(activeHeading ?? emptyInboxText ?? '')
+    let emptyInboxText = ''
+    if (!activeHeading && /waiting for incoming messages for/i.test(bodyText)) {
+      const emptyInbox = this.page.getByText(/waiting for incoming messages for/i).first()
+      if (await visible(emptyInbox)) {
+        emptyInboxText = await emptyInbox.innerText({ timeout: INBOXES_TEXT_PROBE_TIMEOUT_MS }).catch(() => '')
+      }
+    }
+    const activeMailbox = mailboxFromText(activeHeading ?? emptyInboxText)
 
     const hasBusinessUi = usernameVisible && domainVisible && addVisible
       || /\bfrom\b/i.test(bodyText) && /subject\s*-?\s*preview/i.test(bodyText) && /\breceived\b/i.test(bodyText)
@@ -446,7 +531,13 @@ export class InboxesBackgroundPlaywrightDriver implements InboxesMailboxDriver {
   private async submitAddInbox(local: string, domain: string): Promise<AddInboxSubmitResult> {
     const username = this.page.getByPlaceholder(/enter username/i).first()
     if (!await visible(username)) return 'failed'
-    await username.fill(local)
+    try {
+      await username.fill(local, { timeout: INBOXES_FORM_ACTION_TIMEOUT_MS })
+    } catch {
+      return 'failed'
+    }
+    const filledUsername = await username.inputValue({ timeout: INBOXES_TEXT_PROBE_TIMEOUT_MS }).catch(() => '')
+    if (filledUsername.trim() !== local) return 'failed'
 
     let vignetteRecovery = await this.reloadGoogleVignetteIfNeeded()
     if (vignetteRecovery === 'reloaded') return 'retry_after_reload'
@@ -454,12 +545,22 @@ export class InboxesBackgroundPlaywrightDriver implements InboxesMailboxDriver {
 
     const nativeSelect = this.page.locator('select:visible').last()
     if (await visible(nativeSelect)) {
+      let selected = false
       try {
-        await nativeSelect.selectOption({ label: domain })
+        await nativeSelect.selectOption({ label: domain }, { timeout: INBOXES_FORM_ACTION_TIMEOUT_MS })
+        selected = true
       } catch {
-        await nativeSelect.selectOption(domain).catch(() => undefined)
+        try {
+          await nativeSelect.selectOption(domain, { timeout: INBOXES_FORM_ACTION_TIMEOUT_MS })
+          selected = true
+        } catch {
+          selected = false
+        }
       }
-      const selectedText = (await nativeSelect.locator('option:checked').first().innerText().catch(() => '')).trim().toLowerCase()
+      if (!selected) return 'failed'
+      const selectedText = (await nativeSelect.locator('option:checked').first().innerText({
+        timeout: INBOXES_TEXT_PROBE_TIMEOUT_MS
+      }).catch(() => '')).trim().toLowerCase()
       if (selectedText && selectedText !== domain.toLowerCase()) return 'failed'
     } else {
       const combobox = this.page.getByRole('combobox').last()
