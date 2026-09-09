@@ -94,7 +94,7 @@ export function classifyMicrosoftMailboxMessage(message: BrowserMailboxMessageSu
   const unusualSignIn = /unusual\s+sign[ -]?in(?:\s+activity)?|suspicious\s+sign[ -]?in|unrecognized\s+sign[ -]?in/.test(`${subject}\n${preview}`)
   if (unusualSignIn) return 'microsoft_unusual_signin_notification'
 
-  const codeEvidence = /\bsecurity\s+code\b|\bverification\s+code\b|\bone[ -]?time\s+code\b|\buse\s+(?:this\s+)?code\b|\bcode\s+to\s+verify\b|mã\s+(?:bảo\s+mật|xác\s+minh)/i.test(`${subject}\n${preview}`)
+  const codeEvidence = /\bsecurity\s+code\b|\bverification\s+code\b|\bone[ -]?time\s+code\b|\bsingle[ -]?use\s+code\b|\buse\s+(?:this\s+)?code\b|\bcode\s+to\s+verify\b|mã\s+(?:bảo\s+mật|xác\s+minh)/i.test(`${subject}\n${preview}`)
   if (codeEvidence) return 'microsoft_security_code'
 
   return 'microsoft_other_notification'

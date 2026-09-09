@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import type { Locator, Page } from 'playwright-core'
 import { inboxesBodyHasMessageDetail, isInboxesProviderPageUrl } from './inboxesBackgroundPlaywrightDriver'
 import { emailDiagnostic } from './emailRuntimeDiagnostic'
@@ -56,6 +57,24 @@ function normalizeText(value: string): string {
 
 function normalizeKey(value: string): string {
   return normalizeText(value).toLowerCase()
+}
+
+/**
+ * Build a fallback message identity without the relative Received label.
+ * The row content is hashed so OTP text is never persisted in the message key.
+ */
+export function createInboxesStableFallbackMessageKey(
+  sender: string,
+  subject: string,
+  rowText: string,
+  receivedLabel: string
+): string {
+  const stableRowText = normalizeKey(receivedLabel ? rowText.replace(receivedLabel, ' ') : rowText)
+  const digest = createHash('sha256')
+    .update(`${normalizeKey(sender)}\n${normalizeKey(subject)}\n${stableRowText}`)
+    .digest('hex')
+    .slice(0, 24)
+  return `fast:${digest}`
 }
 
 async function visible(locator: Locator): Promise<boolean> {
@@ -274,8 +293,7 @@ export class InboxesVisibleCodeFallbackDriver implements InboxesMailboxDriver {
     const visibleSnapshot = this.visibleSnapshots.get(message.key)
     if (visibleSnapshot) {
       emailDiagnostic('inboxes-dom', 'read-visible-row', {
-        receivedLabel: message.receivedLabel,
-        preview: message.preview
+        receivedLabel: message.receivedLabel
       })
       return visibleSnapshot
     }
@@ -288,8 +306,7 @@ export class InboxesVisibleCodeFallbackDriver implements InboxesMailboxDriver {
     await this.recoverPollingVignette('before-read')
     const pagesBeforeRead = snapshotInboxesContextPages(this.page)
     emailDiagnostic('inboxes-dom', 'read-base-message', {
-      receivedLabel: message.receivedLabel,
-      preview: message.preview
+      receivedLabel: message.receivedLabel
     })
     let snapshot = await this.base.readMessage(message)
     const popupCount = await closeUnexpectedInboxesPopupPages(this.page, pagesBeforeRead)
@@ -298,8 +315,7 @@ export class InboxesVisibleCodeFallbackDriver implements InboxesMailboxDriver {
       snapshot = await this.base.readMessage(message)
     }
     emailDiagnostic('inboxes-dom', 'read-base-result', {
-      snapshot: snapshot !== null,
-      subject: snapshot?.subject ?? ''
+      snapshot: snapshot !== null
     })
     return snapshot
   }
@@ -409,8 +425,7 @@ export class InboxesVisibleCodeFallbackDriver implements InboxesMailboxDriver {
     }
 
     emailDiagnostic('inboxes-dom', 'fast-read-detail-ok', {
-      receivedLabel: message.receivedLabel,
-      subject: message.subject
+      receivedLabel: message.receivedLabel
     })
 
     if (this.activeMailbox) {
@@ -580,8 +595,7 @@ export class InboxesVisibleCodeFallbackDriver implements InboxesMailboxDriver {
         index,
         cells: cellCount,
         codeEvidence: visibleCode !== null,
-        parsedMessage: parsed !== null,
-        preview: rowText
+        parsedMessage: parsed !== null
       })
 
       if (!parsed && !visibleCode) continue
@@ -603,7 +617,7 @@ export class InboxesVisibleCodeFallbackDriver implements InboxesMailboxDriver {
           ? `data:${dataId}`
           : id
             ? `id:${id}`
-            : `fast:${normalizeKey(`${sender}|${subject}|${receivedLabel}`)}`
+            : createInboxesStableFallbackMessageKey(sender, subject, rowText, receivedLabel)
 
       const summary: InboxesMessageSummary = {
         key,

@@ -56,6 +56,15 @@ describe('Inboxes Microsoft message classification', () => {
     ))).toBe('microsoft_other_notification')
   })
 
+  it('recognizes the live Microsoft single-use-code subject before detail open', () => {
+    expect(classifyMicrosoftMailboxMessage(summary(
+      'single-use',
+      'Your single-use code',
+      'Your single-use code',
+      1_500_000
+    ))).toBe('microsoft_security_code')
+  })
+
   it('selects security-code B even when a newer unusual-sign-in notification is present', async () => {
     const now = 2_000_000
     const codeA = summary('code-a', 'Personal Microsoft account security code', 'Security code 111111', now - 25_000)

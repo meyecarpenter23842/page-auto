@@ -467,9 +467,6 @@ async function confirmRecoveryEmailAndSend(
     return { status: 'needs_attention', message: 'Không xác định duy nhất ô nhập Mail KP trên màn Microsoft hiện tại.' }
   }
 
-  const warmed = await warmMailboxBeforeSend(page, state)
-  if (warmed.status === 'needs_attention') return warmed
-
   await input.fill(confirmation.value)
   const filled = (await input.inputValue().catch(() => '')).trim().toLowerCase()
   if (filled !== confirmation.value.toLowerCase()) {
@@ -485,6 +482,21 @@ async function confirmRecoveryEmailAndSend(
   if (!send || !await send.isEnabled().catch(() => true)) {
     if (microsoftRecoveryBrowserProviderId(state.mailbox) !== 'inboxes') await endLegacyProviderRound(state)
     return { status: 'needs_attention', message: 'Nút Send code của Microsoft chưa ở trạng thái có thể thao tác.' }
+  }
+
+  // Take the mailbox identity baseline at the actual Send-code boundary, after
+  // the form is filled and the control is known to be actionable. This closes
+  // the gap where a delayed code from the preceding challenge could arrive
+  // between an early baseline and this click.
+  const warmed = await warmMailboxBeforeSend(page, state)
+  if (warmed.status === 'needs_attention') return warmed
+
+  const boundaryFilled = (await input.inputValue().catch(() => '')).trim().toLowerCase()
+  const sendReadyAtBoundary = await send.isVisible().catch(() => false)
+    && await send.isEnabled().catch(() => false)
+  if (boundaryFilled !== confirmation.value.toLowerCase() || !sendReadyAtBoundary) {
+    if (microsoftRecoveryBrowserProviderId(state.mailbox) !== 'inboxes') await endLegacyProviderRound(state)
+    return { status: 'needs_attention', message: 'Microsoft đổi trạng thái form trong lúc baseline Mail KP; PAGE-AUTO không bấm Send code trên surface cũ.' }
   }
 
   const requestedAt = Date.now()
