@@ -1,14 +1,15 @@
-import type { Page } from 'playwright-core'
+import type { Locator, Page } from 'playwright-core'
 import { isInboxesProviderPageUrl } from './inboxesBackgroundPlaywrightDriver'
 
 const GOOGLE_VIGNETTE_HASH = /(?:^|[#&])google_vignette(?:=|&|$)/i
-const POPUP_SETTLE_MS = 200
+const POPUP_SETTLE_MS = 120
 
 export type InboxesVignetteDismissResult = 'none' | 'dismissed' | 'blocked'
 
 type RuntimePageShape = {
   getByRole?: Page['getByRole']
   getByText?: Page['getByText']
+  getByPlaceholder?: Page['getByPlaceholder']
   locator?: Page['locator']
   waitForTimeout?: Page['waitForTimeout']
   context?: Page['context']
@@ -27,13 +28,29 @@ export function isInboxesGoogleVignetteUrl(value: string): boolean {
   }
 }
 
+/**
+ * A hash is routing evidence, not proof that the ad still covers the provider.
+ * Chrome/Inboxes can retain #google_vignette after F5 while the normal mailbox UI
+ * is already usable. In that case the state machine must continue instead of
+ * repeatedly declaring the provider blocked.
+ */
+export function shouldTreatInboxesVignetteAsBlocking(input: {
+  url: string
+  hasCloseControl: boolean
+  hasBusinessUi: boolean
+}): boolean {
+  if (!isInboxesGoogleVignetteUrl(input.url)) return false
+  if (input.hasCloseControl) return true
+  return !input.hasBusinessUi
+}
+
 export function hasInboxesProviderEscaped(page: Pick<Page, 'isClosed' | 'url'>): boolean {
   if (page.isClosed()) return false
   const url = page.url()
   return url !== 'about:blank' && !isInboxesProviderPageUrl(url)
 }
 
-async function visible(locator: ReturnType<Page['getByText']>): Promise<boolean> {
+async function visible(locator: Locator): Promise<boolean> {
   return (await locator.count()) > 0 && await locator.first().isVisible().catch(() => false)
 }
 
@@ -41,19 +58,28 @@ function hasVignetteUiCapabilities(page: Page): boolean {
   const candidate = runtimePageShape(page)
   return typeof candidate.getByRole === 'function'
     && typeof candidate.getByText === 'function'
+    && typeof candidate.getByPlaceholder === 'function'
     && typeof candidate.locator === 'function'
     && typeof candidate.waitForTimeout === 'function'
 }
 
+async function hasInboxesBusinessUi(page: Page): Promise<boolean> {
+  const username = page.getByPlaceholder(/enter username/i)
+  const domain = page.getByRole('combobox')
+  const addSubmit = page.getByRole('button', { name: /^add inbox$/i })
+  if (await visible(username) && await visible(domain) && await visible(addSubmit)) return true
+
+  const addEntry = page.getByRole('button', { name: /add inbox|get my first inbox/i }).first()
+  if (await visible(addEntry)) return true
+
+  const body = await page.locator('body').innerText({ timeout: 800 }).catch(() => '')
+  return /waiting for incoming messages for/i.test(body)
+    || /\bfrom\b/i.test(body) && /subject\s*-?\s*preview/i.test(body) && /\breceived\b/i.test(body)
+}
+
 /**
- * Dismiss only the operator-observed Inboxes Google vignette. We intentionally
- * do not click a generic page-level Close unless the provider URL proves that
- * the Google vignette surface is active.
- *
- * The capability guard keeps MailboxCodeService's pure unit-test Page doubles
- * isolated from browser-DOM concerns. A real Playwright Page always provides
- * these APIs; a partial test double simply leaves vignette handling to the
- * provider result path being exercised by that test.
+ * Dismiss only the operator-observed Inboxes Google vignette. A retained hash
+ * with proven provider UI is treated as stale route state, not as an active ad.
  */
 export async function dismissInboxesGoogleVignette(page: Page): Promise<InboxesVignetteDismissResult> {
   if (page.isClosed() || !isInboxesGoogleVignetteUrl(page.url())) return 'none'
@@ -66,11 +92,13 @@ export async function dismissInboxesGoogleVignette(page: Page): Promise<InboxesV
     page.getByText(/^close$/i).last()
   ]
 
+  let hasCloseControl = false
   for (const control of controls) {
     if (!await visible(control)) continue
+    hasCloseControl = true
     try {
-      await control.click({ timeout: 1_500 })
-      await page.waitForTimeout(120)
+      await control.click({ timeout: 1_200 })
+      await page.waitForTimeout(80)
       const closeStillVisible = await visible(page.getByText(/^close$/i).last())
       return closeStillVisible ? 'blocked' : 'dismissed'
     } catch {
@@ -78,7 +106,12 @@ export async function dismissInboxesGoogleVignette(page: Page): Promise<InboxesV
     }
   }
 
-  return 'blocked'
+  const hasBusinessUi = await hasInboxesBusinessUi(page)
+  return shouldTreatInboxesVignetteAsBlocking({
+    url: page.url(),
+    hasCloseControl,
+    hasBusinessUi
+  }) ? 'blocked' : 'none'
 }
 
 /** Return a real immutable snapshot only when this is a full Playwright Page. */
@@ -124,7 +157,7 @@ export async function closeUnexpectedInboxesPopupPages(
     const opener = await popup.opener().catch(() => null)
     if (opener !== providerPage) continue
 
-    await popup.waitForLoadState('domcontentloaded', { timeout: 750 }).catch(() => undefined)
+    await popup.waitForLoadState('domcontentloaded', { timeout: 600 }).catch(() => undefined)
     if (isInboxesProviderPageUrl(popup.url())) continue
 
     await popup.close({ runBeforeUnload: false }).catch(() => undefined)
