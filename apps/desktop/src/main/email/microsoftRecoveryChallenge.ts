@@ -1,6 +1,9 @@
+import { createHash } from 'node:crypto'
 import type { BrowserContext, Locator, Page } from 'playwright-core'
 import { createBrowserMailProvider, isBrowserMailProviderId } from './browserMailProviderFactory'
+import type { EmailRecoveryRoundContract } from './emailAuthV2Contracts'
 import type { MicrosoftLoginSurface } from './emailLoginPolicy'
+import { createMailboxCodeService, type MailboxCodeService } from './mailboxCodeService'
 import { normalizeMailboxAddress, type MailProvider, type MailProviderId } from './mailProvider'
 import { resolveMailProviderId } from './mailProviderRegistry'
 
@@ -13,6 +16,11 @@ const MICROSOFT_RECOVERY_SURFACES = new Set<MicrosoftLoginSurface>([
   'recovery_email_confirmation',
   'recovery_code'
 ])
+const INBOXES_CODE_TIMEOUT_MS = 12_000
+const INBOXES_REJECTED_CODE_TIMEOUT_MS = 4_000
+const INBOXES_CODE_POLL_MS = 500
+
+let recoveryChallengeSequence = 0
 
 export interface MicrosoftRecoveryEmailHint {
   prefix: string
@@ -35,6 +43,8 @@ interface MicrosoftRecoverySession {
   providerPage: Page | null
   providerId: MailProviderId | null
   provider: MailProvider | null
+  mailboxCodeService: MailboxCodeService | null
+  round: EmailRecoveryRoundContract | null
 }
 
 const sessions = new WeakMap<BrowserContext, MicrosoftRecoverySession>()
@@ -73,6 +83,11 @@ function isAuditedRecoveryCodeCopy(text: string): boolean {
   const heading = /enter\s+your\s+(?:security\s+)?code/i.test(normalized)
   const emailEvidence = /matches\s+the\s+email\s+address\s+on\s+your\s+account|we(?:'|’)ll\s+send\s+you\s+a\s+code|we\s+will\s+send\s+you\s+a\s+code|we\s+sent[^.]*code[^.]*email|sent[^.]*to\s+your\s+email|email\s+address/i.test(normalized)
   return heading && emailEvidence
+}
+
+export function microsoftRecoveryCodeWasRejected(text: string): boolean {
+  const normalized = text.replace(/\s+/g, ' ')
+  return /that\s+code\s+didn['’]?t\s+work|check\s+the\s+code\s+and\s+try\s+again|incorrect\s+code|invalid\s+code|code\s+is\s+incorrect/i.test(normalized)
 }
 
 export function parseMicrosoftRecoveryEmailHints(text: string): MicrosoftRecoveryEmailHint[] {
@@ -151,6 +166,44 @@ export function isMicrosoftRecoverySurface(surface: MicrosoftLoginSurface): bool
   return MICROSOFT_RECOVERY_SURFACES.has(surface)
 }
 
+function codeFingerprint(code: string): string {
+  return createHash('sha256').update(code).digest('hex').slice(0, 16)
+}
+
+function createRecoveryRound(
+  mailbox: string,
+  providerId: MailProviderId,
+  requestedAt: number | null
+): EmailRecoveryRoundContract {
+  recoveryChallengeSequence += 1
+  return {
+    challengeId: `microsoft-recovery-${Date.now()}-${recoveryChallengeSequence}`,
+    mailbox,
+    providerId,
+    requestedAt,
+    consumedMessageKeys: [],
+    lastSubmittedMessageKey: null,
+    lastSubmittedCodeFingerprint: null,
+    submitAttempts: 0
+  }
+}
+
+export function microsoftRecoveryRecordSubmittedCode(
+  round: EmailRecoveryRoundContract,
+  messageKey: string,
+  code: string
+): EmailRecoveryRoundContract {
+  const keys = new Set(round.consumedMessageKeys)
+  if (messageKey.trim()) keys.add(messageKey.trim())
+  return {
+    ...round,
+    consumedMessageKeys: [...keys],
+    lastSubmittedMessageKey: messageKey.trim() || null,
+    lastSubmittedCodeFingerprint: codeFingerprint(code),
+    submitAttempts: round.submitAttempts + 1
+  }
+}
+
 async function firstVisible(candidates: Locator[]): Promise<Locator | null> {
   for (const candidate of candidates) {
     if (await candidate.isVisible().catch(() => false)) return candidate
@@ -174,10 +227,33 @@ function sessionFor(context: BrowserContext, mailbox: string): MicrosoftRecovery
     methodChoiceAttempts: 0,
     providerPage: null,
     providerId: null,
-    provider: null
+    provider: null,
+    mailboxCodeService: null,
+    round: null
   }
   sessions.set(context, created)
   return created
+}
+
+/**
+ * Clear only durable recovery metadata after the Microsoft detector has proven
+ * the auth flow is authenticated. The Inboxes tab itself stays open/background;
+ * only the cached provider adapter is dropped so a later command cannot inherit
+ * an old requestedAt/consumed-message challenge.
+ */
+export function completeMicrosoftRecoveryAfterAuthenticated(context: BrowserContext): boolean {
+  const state = sessions.get(context)
+  if (!state) return false
+
+  const hadRecoveryState = state.requestedAt !== null || state.round !== null || state.mailboxCodeService !== null
+  state.requestedAt = null
+  state.methodChoiceAttempts = 0
+  state.round = null
+  if (state.mailboxCodeService) {
+    state.mailboxCodeService.invalidateProvider('inboxes')
+    state.mailboxCodeService = null
+  }
+  return hadRecoveryState
 }
 
 export function microsoftRecoveryBrowserProviderId(mailbox: string): MailProviderId | null {
@@ -185,12 +261,12 @@ export function microsoftRecoveryBrowserProviderId(mailbox: string): MailProvide
   return isBrowserMailProviderId(providerId) ? providerId : null
 }
 
-async function ensureBrowserProvider(
+async function ensureLegacyBrowserProvider(
   context: BrowserContext,
   state: MicrosoftRecoverySession
 ): Promise<MailProvider | null> {
   const providerId = microsoftRecoveryBrowserProviderId(state.mailbox)
-  if (!providerId) return null
+  if (!providerId || providerId === 'inboxes') return null
 
   if (
     state.provider
@@ -224,7 +300,7 @@ async function ensureBrowserProvider(
   }
 }
 
-async function endProviderRound(state: MicrosoftRecoverySession): Promise<void> {
+async function endLegacyProviderRound(state: MicrosoftRecoverySession): Promise<void> {
   const page = state.providerPage
   state.providerPage = null
   state.providerId = null
@@ -239,8 +315,6 @@ async function consumeExistingVerificationMessages(
 ): Promise<MicrosoftRecoveryChallengeResult> {
   await state.providerPage?.bringToFront().catch(() => undefined)
 
-  // Retain the same provider instance so first-seen message keys remain baselined.
-  // A hard cap fails closed rather than leaving an older code unconsumed.
   for (let index = 0; index < 50; index += 1) {
     const existing = await provider.getVerificationCode({
       mailbox: state.mailbox,
@@ -251,12 +325,12 @@ async function consumeExistingVerificationMessages(
     if (existing.status === 'success') continue
     await microsoftPage.bringToFront().catch(() => undefined)
     if (existing.status === 'message_not_found') return { status: 'handled' }
-    await endProviderRound(state)
+    await endLegacyProviderRound(state)
     return { status: 'needs_attention', message: existing.message }
   }
 
   await microsoftPage.bringToFront().catch(() => undefined)
-  await endProviderRound(state)
+  await endLegacyProviderRound(state)
   return {
     status: 'needs_attention',
     message: 'Mailbox có quá nhiều mail verification cũ để baseline an toàn; PAGE-AUTO không đoán security code.'
@@ -275,14 +349,19 @@ async function warmMailboxBeforeSend(
     }
   }
 
-  const provider = await ensureBrowserProvider(microsoftPage.context(), state)
+  // Inboxes has trustworthy received timestamps and Batch 4 owns a durable
+  // consumed-message set. Do not waste time opening/baselining old mail before
+  // Send code; initialize the background service and let notBefore=requestedAt
+  // select the fresh message after Microsoft actually sends it.
+  if (providerId === 'inboxes') {
+    state.mailboxCodeService ??= createMailboxCodeService(microsoftPage.context())
+    return { status: 'handled' }
+  }
+
+  const provider = await ensureLegacyBrowserProvider(microsoftPage.context(), state)
   if (!provider || !state.providerPage) {
     return { status: 'needs_attention', message: `Không mở được provider ${providerId} trong Email browser hiện tại.` }
   }
-
-  // Consume existing verification messages before asking Microsoft for a fresh
-  // code. Providers that lack trustworthy timestamps baseline first-seen keys
-  // in this same retained provider instance.
   return await consumeExistingVerificationMessages(microsoftPage, state, provider)
 }
 
@@ -327,7 +406,7 @@ async function chooseRecoveryMethod(
   } catch {
     return { status: 'needs_attention', message: 'Không click được đúng lựa chọn Mail KP đã xác minh trên Microsoft.' }
   }
-  await page.waitForTimeout(500)
+  await page.waitForTimeout(350)
   return { status: 'handled' }
 }
 
@@ -365,7 +444,7 @@ async function confirmRecoveryEmailAndSend(
   await input.fill(confirmation.value)
   const filled = (await input.inputValue().catch(() => '')).trim().toLowerCase()
   if (filled !== confirmation.value.toLowerCase()) {
-    await endProviderRound(state)
+    if (microsoftRecoveryBrowserProviderId(state.mailbox) !== 'inboxes') await endLegacyProviderRound(state)
     return { status: 'needs_attention', message: 'Không xác nhận được Microsoft đã nhận đúng giá trị BackupEmail nên không bấm Send code.' }
   }
 
@@ -375,7 +454,7 @@ async function confirmRecoveryEmailAndSend(
     page.locator('button:visible').filter({ hasText: /^\s*send\s+code\s*$/i }).first()
   ])
   if (!send || !await send.isEnabled().catch(() => true)) {
-    await endProviderRound(state)
+    if (microsoftRecoveryBrowserProviderId(state.mailbox) !== 'inboxes') await endLegacyProviderRound(state)
     return { status: 'needs_attention', message: 'Nút Send code của Microsoft chưa ở trạng thái có thể thao tác.' }
   }
 
@@ -383,12 +462,20 @@ async function confirmRecoveryEmailAndSend(
   try {
     await send.click({ timeout: 8_000 })
   } catch {
-    await endProviderRound(state)
+    if (microsoftRecoveryBrowserProviderId(state.mailbox) !== 'inboxes') await endLegacyProviderRound(state)
     return { status: 'needs_attention', message: 'Không click được đúng nút Send code của Microsoft.' }
   }
+
+  const providerId = microsoftRecoveryBrowserProviderId(state.mailbox)
   state.requestedAt = requestedAt
   state.methodChoiceAttempts = 0
-  await page.waitForTimeout(700)
+  if (providerId === 'inboxes') {
+    // A successful Send creates a new logical code challenge. Old message keys
+    // from a previous challenge must not leak into this round, while a reject
+    // within this same round keeps the set and therefore cannot reuse that mail.
+    state.round = createRecoveryRound(state.mailbox, providerId, requestedAt)
+  }
+  await page.waitForTimeout(350)
   return { status: 'handled' }
 }
 
@@ -421,35 +508,86 @@ async function fillSecurityCode(page: Page, code: string): Promise<boolean> {
   return values.join('') === code
 }
 
-async function readAndSubmitRecoveryCode(
+async function submitSecurityCode(page: Page, code: string): Promise<MicrosoftRecoveryChallengeResult> {
+  if (!await fillSecurityCode(page, code)) {
+    return { status: 'needs_attention', message: 'Không xác nhận được security code đã được nhập đúng vào các ô Microsoft hiện tại.' }
+  }
+
+  const next = await firstVisible([
+    page.getByRole('button', { name: /^next$/i }).first(),
+    page.getByRole('button', { name: /^(continue|tiếp theo|tiếp tục)$/i }).first(),
+    page.locator('input[type="submit"][value="Next" i]:visible, input[type="submit"][value="Continue" i]:visible').first()
+  ])
+  if (!next) {
+    return { status: 'needs_attention', message: 'Không tìm thấy nút Next/Continue trên màn security code Microsoft.' }
+  }
+
+  try {
+    await next.click({ timeout: 8_000 })
+  } catch {
+    return { status: 'needs_attention', message: 'Không click được đúng nút Next/Continue sau khi nhập security code Microsoft.' }
+  }
+
+  // Do not infer success from this click. The worker's Microsoft detector must
+  // classify the next surface. Batch 4 deliberately keeps the Inboxes round
+  // alive until that re-detection proves the flow left/rejected this code.
+  await page.waitForTimeout(250)
+  return { status: 'handled' }
+}
+
+async function readAndSubmitInboxesRecoveryCode(
   page: Page,
-  state: MicrosoftRecoverySession
+  state: MicrosoftRecoverySession,
+  initialBody: string,
+  resumedWithoutRoundState: boolean
 ): Promise<MicrosoftRecoveryChallengeResult> {
-  const initialBody = await readBody(page)
-  if (!isAuditedRecoveryCodeCopy(initialBody)) {
-    await endProviderRound(state)
+  state.mailboxCodeService ??= createMailboxCodeService(page.context())
+  state.round ??= createRecoveryRound(state.mailbox, 'inboxes', state.requestedAt)
+
+  const notBefore = state.requestedAt !== null
+    ? Math.max(1, state.requestedAt - 5_000)
+    : Math.max(1, Date.now() - RESUME_CODE_LOOKBACK_MS)
+  const rejectedPreviousCode = microsoftRecoveryCodeWasRejected(initialBody)
+  const codeResult = await state.mailboxCodeService.getFreshCode({
+    mailbox: state.mailbox,
+    providerId: 'inboxes',
+    challengeId: state.round.challengeId,
+    notBefore,
+    consumedMessageKeys: state.round.consumedMessageKeys,
+    timeoutMs: rejectedPreviousCode ? INBOXES_REJECTED_CODE_TIMEOUT_MS : INBOXES_CODE_TIMEOUT_MS,
+    pollIntervalMs: INBOXES_CODE_POLL_MS
+  })
+
+  state.round = {
+    ...state.round,
+    consumedMessageKeys: [...codeResult.consumedMessageKeys]
+  }
+
+  if (codeResult.status !== 'success' || !codeResult.code || !codeResult.messageKey) {
+    return { status: 'needs_attention', message: codeResult.message }
+  }
+
+  // Microsoft can change surface while the background provider is polling. Re-read
+  // before typing, and never push an old code into another challenge.
+  const body = await readBody(page)
+  if (!isAuditedRecoveryCodeCopy(body)
+    || (resumedWithoutRoundState && !microsoftRecoveryCodeChallengeMatchesBackupEmail(body, state.mailbox))) {
     return {
-      status: 'needs_attention',
-      message: 'Microsoft không còn ở màn code Email đã audit; PAGE-AUTO không đọc hoặc submit mã vào challenge khác.'
+      status: 'handled'
     }
   }
 
-  const resumedWithoutRoundState = state.requestedAt === null
-  if (resumedWithoutRoundState && !microsoftRecoveryCodeChallengeMatchesBackupEmail(initialBody, state.mailbox)) {
-    await endProviderRound(state)
-    return {
-      status: 'needs_attention',
-      message: 'Màn code Microsoft hiện tại không xác nhận đang nhắm đúng BackupEmail canonical; PAGE-AUTO không đoán code khi resume giữa chừng.'
-    }
-  }
+  state.round = microsoftRecoveryRecordSubmittedCode(state.round, codeResult.messageKey, codeResult.code)
+  return await submitSecurityCode(page, codeResult.code)
+}
 
-  const providerId = microsoftRecoveryBrowserProviderId(state.mailbox)
-  if (!providerId) {
-    await endProviderRound(state)
-    return { status: 'needs_attention', message: 'Mail KP canonical chưa có browser provider đọc code tự động được hỗ trợ.' }
-  }
-
-  const provider = await ensureBrowserProvider(page.context(), state)
+async function readAndSubmitLegacyRecoveryCode(
+  page: Page,
+  state: MicrosoftRecoverySession,
+  providerId: MailProviderId,
+  resumedWithoutRoundState: boolean
+): Promise<MicrosoftRecoveryChallengeResult> {
+  const provider = await ensureLegacyBrowserProvider(page.context(), state)
   if (!provider || !state.providerPage) {
     return { status: 'needs_attention', message: `Không mở được provider ${providerId} để lấy security code Microsoft.` }
   }
@@ -458,10 +596,6 @@ async function readAndSubmitRecoveryCode(
   if (state.requestedAt !== null) {
     notBefore = Math.max(1, state.requestedAt - 5_000)
   } else if (microsoftRecoveryRequiresResumeMailboxBaseline(providerId)) {
-    // Fvia/Mailto.Plus do not expose a trustworthy received timestamp. A fresh
-    // provider would otherwise label every old message as newly seen and could
-    // submit a stale code. Baseline/consume all existing verification messages
-    // first, retain that provider instance, then accept only newly observed mail.
     const baselined = await consumeExistingVerificationMessages(page, state, provider)
     if (baselined.status === 'needs_attention') return baselined
     notBefore = Math.max(1, Date.now())
@@ -478,56 +612,68 @@ async function readAndSubmitRecoveryCode(
     mailbox: state.mailbox,
     role: 'recovery',
     purpose: 'microsoft_security',
-    // Same-worker rounds use the exact Send-code timestamp. Resumed timestamped
-    // providers use a bounded lookback; timestamp-less providers are baselined
-    // above and only newly observed messages can pass from this point forward.
     notBefore,
     timeoutMs: 25_000,
     pollIntervalMs: 1_500
   })
-
   await page.bringToFront().catch(() => undefined)
+
   if (codeResult.status !== 'success' || !codeResult.code) {
-    await endProviderRound(state)
+    await endLegacyProviderRound(state)
     return { status: 'needs_attention', message: codeResult.message }
   }
 
-  // Fail closed if Microsoft changed from the audited email-code challenge while the provider was polling.
   const body = await readBody(page)
   if (!isAuditedRecoveryCodeCopy(body)
     || (resumedWithoutRoundState && !microsoftRecoveryCodeChallengeMatchesBackupEmail(body, state.mailbox))) {
-    await endProviderRound(state)
+    await endLegacyProviderRound(state)
     return {
       status: 'needs_attention',
       message: 'Microsoft đã đổi challenge trong lúc chờ Mail KP; PAGE-AUTO không submit code cũ vào màn khác.'
     }
   }
 
-  if (!await fillSecurityCode(page, codeResult.code)) {
-    await endProviderRound(state)
-    return { status: 'needs_attention', message: 'Không xác nhận được security code đã được nhập đúng vào các ô Microsoft hiện tại.' }
-  }
-
-  const next = await firstVisible([
-    page.getByRole('button', { name: /^next$/i }).first(),
-    page.getByRole('button', { name: /^(continue|tiếp theo|tiếp tục)$/i }).first(),
-    page.locator('input[type="submit"][value="Next" i]:visible, input[type="submit"][value="Continue" i]:visible').first()
-  ])
-  if (!next) {
-    await endProviderRound(state)
-    return { status: 'needs_attention', message: 'Không tìm thấy nút Next/Continue trên màn security code Microsoft.' }
-  }
-
-  try {
-    await next.click({ timeout: 8_000 })
-  } catch {
-    await endProviderRound(state)
-    return { status: 'needs_attention', message: 'Không click được đúng nút Next/Continue sau khi nhập security code Microsoft.' }
+  const submitted = await submitSecurityCode(page, codeResult.code)
+  if (submitted.status === 'needs_attention') {
+    await endLegacyProviderRound(state)
+    return submitted
   }
   state.requestedAt = null
-  await page.waitForTimeout(700)
-  await endProviderRound(state)
-  return { status: 'handled' }
+  await endLegacyProviderRound(state)
+  return submitted
+}
+
+async function readAndSubmitRecoveryCode(
+  page: Page,
+  state: MicrosoftRecoverySession
+): Promise<MicrosoftRecoveryChallengeResult> {
+  const initialBody = await readBody(page)
+  if (!isAuditedRecoveryCodeCopy(initialBody)) {
+    if (microsoftRecoveryBrowserProviderId(state.mailbox) !== 'inboxes') await endLegacyProviderRound(state)
+    return {
+      status: 'needs_attention',
+      message: 'Microsoft không còn ở màn code Email đã audit; PAGE-AUTO không đọc hoặc submit mã vào challenge khác.'
+    }
+  }
+
+  const resumedWithoutRoundState = state.requestedAt === null && state.round === null
+  if (resumedWithoutRoundState && !microsoftRecoveryCodeChallengeMatchesBackupEmail(initialBody, state.mailbox)) {
+    if (microsoftRecoveryBrowserProviderId(state.mailbox) !== 'inboxes') await endLegacyProviderRound(state)
+    return {
+      status: 'needs_attention',
+      message: 'Màn code Microsoft hiện tại không xác nhận đang nhắm đúng BackupEmail canonical; PAGE-AUTO không đoán code khi resume giữa chừng.'
+    }
+  }
+
+  const providerId = microsoftRecoveryBrowserProviderId(state.mailbox)
+  if (!providerId) {
+    return { status: 'needs_attention', message: 'Mail KP canonical chưa có browser provider đọc code tự động được hỗ trợ.' }
+  }
+
+  if (providerId === 'inboxes') {
+    return await readAndSubmitInboxesRecoveryCode(page, state, initialBody, resumedWithoutRoundState)
+  }
+  return await readAndSubmitLegacyRecoveryCode(page, state, providerId, resumedWithoutRoundState)
 }
 
 /** Handle only the audited Microsoft recovery-email challenge. Unknown security surfaces remain manual. */

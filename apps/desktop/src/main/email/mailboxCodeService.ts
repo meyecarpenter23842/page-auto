@@ -14,6 +14,8 @@ const DEFAULT_TIMEOUT_MS = 20_000
 const MAX_TIMEOUT_MS = 60_000
 const MAX_CONSUMED_SKIPS = 100
 const MAX_CLOSED_PAGE_RECOVERIES = 1
+const MAX_PROVIDER_RELOAD_RECOVERIES = 1
+const PROVIDER_RELOAD_TIMEOUT_MS = 10_000
 
 export interface MailboxCodeServiceRequest {
   mailbox: string
@@ -122,7 +124,7 @@ export class MailboxCodeService {
         request,
         mailbox,
         'unsupported_mailbox',
-        `MailboxCodeService Batch 3 chưa migrate provider ${request.providerId}.`,
+        `MailboxCodeService chưa migrate provider ${request.providerId}.`,
         consumed
       )
     }
@@ -132,6 +134,7 @@ export class MailboxCodeService {
     const deadline = startedAt + timeoutMs
     let consumedSkips = 0
     let closedPageRecoveries = 0
+    let providerReloadRecoveries = 0
 
     while (true) {
       const session = await this.resolveSession(request.providerId)
@@ -175,6 +178,10 @@ export class MailboxCodeService {
       if (providerResult.status !== 'success' && session.page.isClosed()) {
         this.sessions.delete(request.providerId)
         if (closedPageRecoveries < MAX_CLOSED_PAGE_RECOVERIES) {
+          const recoveryRemainingMs = deadline - this.now()
+          if (timeoutMs > 0 && recoveryRemainingMs <= 0) {
+            return withServiceMetadata(request, providerResult, consumed)
+          }
           closedPageRecoveries += 1
           continue
         }
@@ -185,6 +192,37 @@ export class MailboxCodeService {
           'Provider page Inboxes đã đóng trong lúc đọc mail và không phục hồi được.',
           consumed
         )
+      }
+
+      // Live Inboxes can leave a promo/vignette surface in a state where the
+      // audited Close control no longer responds. The operator-confirmed safe
+      // recovery is one F5-equivalent reload. Recreate the provider adapter after
+      // reload so ensureMailbox() re-detects Home/Add Inbox and rebinds the exact
+      // canonical local-part + domain instead of keeping stale driver state.
+      // Recovery is part of the caller's original budget: never add a fresh 10 s
+      // tail after a 4 s rejected-code or 12 s normal request has already expired.
+      if (providerResult.status === 'provider_unavailable' && providerReloadRecoveries < MAX_PROVIDER_RELOAD_RECOVERIES) {
+        const recoveryRemainingMs = deadline - this.now()
+        if (timeoutMs === 0 || recoveryRemainingMs <= 0) {
+          return withServiceMetadata(request, providerResult, consumed)
+        }
+
+        providerReloadRecoveries += 1
+        this.sessions.delete(request.providerId)
+        try {
+          await session.page.reload({
+            waitUntil: 'domcontentloaded',
+            timeout: Math.max(1, Math.min(PROVIDER_RELOAD_TIMEOUT_MS, recoveryRemainingMs))
+          })
+        } catch {
+          // The next resolve decides whether the same page is still adoptable or
+          // whether a new provider page must be created. Keep the retry bounded.
+        }
+
+        if (this.now() >= deadline) {
+          return withServiceMetadata(request, providerResult, consumed)
+        }
+        continue
       }
 
       if (providerResult.status !== 'success') {
@@ -267,8 +305,8 @@ export interface CreateMailboxCodeServiceOptions {
 }
 
 /**
- * Production Batch 3 owner: adopt an existing Inboxes tab when possible; only
- * create a provider page when none exists. Never closes pages and never calls
+ * Production owner: adopt an existing Inboxes tab when possible; only create a
+ * provider page when none exists. Never closes pages and never calls
  * bringToFront(), so mailbox work does not explicitly steal Microsoft focus.
  */
 export function createMailboxCodeService(
