@@ -87,7 +87,7 @@ function normalizedSummaryText(message: BrowserMailboxMessageSummary): {
 
 /** Classify Microsoft mail from list-row evidence before any message detail is opened. */
 export function classifyMicrosoftMailboxMessage(message: BrowserMailboxMessageSummary): MicrosoftMailboxMessageKind {
-  const { sender, subject, preview, combined } = normalizedSummaryText(message)
+  const { subject, preview, combined } = normalizedSummaryText(message)
   const microsoftEvidence = /microsoft|accountprotection(?:\.microsoft)?|account protection/.test(combined)
   if (!microsoftEvidence) return 'unknown'
 
@@ -95,8 +95,7 @@ export function classifyMicrosoftMailboxMessage(message: BrowserMailboxMessageSu
   if (unusualSignIn) return 'microsoft_unusual_signin_notification'
 
   const codeEvidence = /\bsecurity\s+code\b|\bverification\s+code\b|\bone[ -]?time\s+code\b|\buse\s+(?:this\s+)?code\b|\bcode\s+to\s+verify\b|mã\s+(?:bảo\s+mật|xác\s+minh)/i.test(`${subject}\n${preview}`)
-  const trustedSender = /microsoft|accountprotection/.test(sender)
-  if (codeEvidence && trustedSender) return 'microsoft_security_code'
+  if (codeEvidence) return 'microsoft_security_code'
 
   return 'microsoft_other_notification'
 }
