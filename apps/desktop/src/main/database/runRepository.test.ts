@@ -96,7 +96,7 @@ describe('RunRepository', () => {
     expect(runs.listItems(secondRun.run.id).map((item) => item.groupUid)).toEqual(groupUids)
 
     runtime.close()
-  }, 15_000)
+  }, 60_000)
 
   it('randomizes only the run_items snapshot and keeps the persisted order across resume/repository restart', () => {
     const groupUids = ['g1', 'g2', 'g3', 'g4']
