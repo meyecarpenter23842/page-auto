@@ -1,5 +1,6 @@
 import type { Locator, Page } from 'playwright-core'
 import { emailDiagnostic } from './emailRuntimeDiagnostic'
+import { normalizeMailboxAddress } from './mailProvider'
 import { parseVerificationCode, type MailMessageSnapshot } from './verificationCodeParser'
 import type {
   InboxesEnsureMailboxResult,
@@ -7,8 +8,15 @@ import type {
   InboxesMessageSummary
 } from './inboxesProvider'
 import { parseInboxesReceivedAtLabel } from './inboxesPlaywrightDriver'
+import {
+  closeUnexpectedInboxesPopupPages,
+  dismissInboxesGoogleVignette,
+  snapshotInboxesContextPages,
+  type InboxesVignetteDismissResult
+} from './inboxesVignetteGuard'
 
 const VISIBLE_RECEIVED_LABEL = /\b(?:just now|now|(?:a few|few|a) seconds? ago|\d+\s*(?:sec|secs|second|seconds|min|mins|minute|minutes|hour|hours|day|days)\s+ago)\b/i
+const INBOXES_POLL_VIGNETTE_RELOAD_TIMEOUT_MS = 8_000
 
 export interface InboxesVisibleCodeRowEvidence {
   text: string
@@ -27,6 +35,13 @@ function normalizeKey(value: string): string {
 
 async function visible(locator: Locator): Promise<boolean> {
   return (await locator.count()) > 0 && await locator.first().isVisible().catch(() => false)
+}
+
+export function shouldReverifyInboxesAfterPollRecovery(
+  vignetteState: InboxesVignetteDismissResult,
+  unexpectedPopupCount = 0
+): boolean {
+  return vignetteState === 'dismissed' || unexpectedPopupCount > 0
 }
 
 export function parseInboxesVisibleCodeRow(
@@ -57,6 +72,8 @@ export function parseInboxesVisibleCodeRow(
 
 export class InboxesVisibleCodeFallbackDriver implements InboxesMailboxDriver {
   private readonly visibleSnapshots = new Map<string, MailMessageSnapshot>()
+  private activeMailbox: string | null = null
+  private blockedVignetteReloads = 0
 
   constructor(
     private readonly page: Page,
@@ -76,6 +93,9 @@ export class InboxesVisibleCodeFallbackDriver implements InboxesMailboxDriver {
     })
 
     const result = await this.base.ensureMailbox(mailbox)
+    this.activeMailbox = result.status === 'ready'
+      ? normalizeMailboxAddress(result.activeMailbox)
+      : null
     emailDiagnostic('inboxes-dom', 'ensure-result', {
       status: result.status,
       activeMatches: result.status === 'ready'
@@ -84,7 +104,13 @@ export class InboxesVisibleCodeFallbackDriver implements InboxesMailboxDriver {
   }
 
   async listMessages(now = Date.now()): Promise<InboxesMessageSummary[]> {
-    const baseMessages = await this.base.listMessages(now)
+    await this.recoverPollingVignette('before-list')
+    let baseMessages = await this.base.listMessages(now)
+    const recoveredAfterList = await this.recoverPollingVignette('after-list')
+    if (recoveredAfterList) {
+      baseMessages = await this.base.listMessages(now)
+    }
+
     this.visibleSnapshots.clear()
     if (this.page.isClosed()) {
       emailDiagnostic('inboxes-dom', 'list-page-closed', {
@@ -122,11 +148,18 @@ export class InboxesVisibleCodeFallbackDriver implements InboxesMailboxDriver {
       return visibleSnapshot
     }
 
+    await this.recoverPollingVignette('before-read')
+    const pagesBeforeRead = snapshotInboxesContextPages(this.page)
     emailDiagnostic('inboxes-dom', 'read-base-message', {
       receivedLabel: message.receivedLabel,
       preview: message.preview
     })
-    const snapshot = await this.base.readMessage(message)
+    let snapshot = await this.base.readMessage(message)
+    const popupCount = await closeUnexpectedInboxesPopupPages(this.page, pagesBeforeRead)
+    const recoveredAfterRead = await this.recoverPollingVignette('after-read', popupCount)
+    if (!snapshot && recoveredAfterRead) {
+      snapshot = await this.base.readMessage(message)
+    }
     emailDiagnostic('inboxes-dom', 'read-base-result', {
       snapshot: snapshot !== null,
       subject: snapshot?.subject ?? ''
@@ -136,8 +169,79 @@ export class InboxesVisibleCodeFallbackDriver implements InboxesMailboxDriver {
 
   async refreshMailbox(): Promise<void> {
     this.visibleSnapshots.clear()
+    await this.recoverPollingVignette('before-refresh')
+    const pagesBeforeRefresh = snapshotInboxesContextPages(this.page)
     emailDiagnostic('inboxes-dom', 'refresh', {})
     await this.base.refreshMailbox()
+    const popupCount = await closeUnexpectedInboxesPopupPages(this.page, pagesBeforeRefresh)
+    await this.recoverPollingVignette('after-refresh', popupCount)
+  }
+
+  private async recoverPollingVignette(stage: string, unexpectedPopupCount = 0): Promise<boolean> {
+    if (this.page.isClosed()) return false
+
+    let vignetteState = await dismissInboxesGoogleVignette(this.page)
+    emailDiagnostic('inboxes-dom', 'poll-guard', {
+      stage,
+      vignetteState,
+      unexpectedPopupCount,
+      blockedReloads: this.blockedVignetteReloads
+    })
+
+    if (vignetteState === 'blocked') {
+      if (this.blockedVignetteReloads >= 1) {
+        throw new Error('Google vignette is still blocking Inboxes polling after bounded reload recovery.')
+      }
+
+      this.blockedVignetteReloads += 1
+      emailDiagnostic('inboxes-dom', 'poll-vignette-reload', {
+        stage,
+        attempt: this.blockedVignetteReloads
+      })
+      try {
+        await this.page.reload({
+          waitUntil: 'domcontentloaded',
+          timeout: INBOXES_POLL_VIGNETTE_RELOAD_TIMEOUT_MS
+        })
+      } catch {
+        throw new Error('Inboxes vignette reload recovery failed during code polling.')
+      }
+
+      vignetteState = await dismissInboxesGoogleVignette(this.page)
+      if (vignetteState === 'blocked') {
+        throw new Error('Google vignette is still blocking Inboxes after reload recovery.')
+      }
+      await this.reverifyActiveMailbox(`${stage}:reload`)
+      return true
+    }
+
+    if (!shouldReverifyInboxesAfterPollRecovery(vignetteState, unexpectedPopupCount)) {
+      return false
+    }
+
+    await this.reverifyActiveMailbox(stage)
+    return true
+  }
+
+  private async reverifyActiveMailbox(stage: string): Promise<void> {
+    const mailbox = this.activeMailbox
+    if (!mailbox) return
+
+    const verified = await this.base.ensureMailbox(mailbox)
+    const verifiedMailbox = verified.status === 'ready'
+      ? normalizeMailboxAddress(verified.activeMailbox)
+      : null
+    const matches = verified.status === 'ready' && verifiedMailbox === mailbox
+
+    emailDiagnostic('inboxes-dom', 'poll-reverify', {
+      stage,
+      status: verified.status,
+      activeMatches: matches
+    })
+
+    if (!matches) {
+      throw new Error('Inboxes mailbox changed while recovering polling interruption.')
+    }
   }
 
   private async scanVisibleCodeRows(now: number): Promise<InboxesMessageSummary[]> {

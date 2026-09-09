@@ -8,6 +8,8 @@ import {
 import type { MailProviderCodeRequest, MailProviderCodeResult } from './mailProvider'
 import { resolveMailProviderId } from './mailProviderRegistry'
 
+const INBOXES_SECURITY_CODE_MIN_WAIT_MS = 60_000
+
 export type InboxesMessageSummary = BrowserMailboxMessageSummary
 export type InboxesEnsureMailboxResult = BrowserEnsureMailboxResult
 export type InboxesMailboxDriver = BrowserMailboxDriver
@@ -23,6 +25,20 @@ export function isInboxesRecoveryWarmProbe(request: MailProviderCodeRequest): bo
     && request.purpose === 'microsoft_security'
     && request.timeoutMs === 0
     && request.notBefore === undefined
+}
+
+/**
+ * Live Inboxes delivery is not reliably sub-12-second. Keep zero-timeout warm
+ * probes unchanged, but give actual Microsoft recovery-code waits a full minute.
+ * BrowserMailboxProvider still owns the hard max clamp and freshness filtering.
+ */
+export function effectiveInboxesCodeTimeoutMs(request: MailProviderCodeRequest): number | undefined {
+  if (request.role !== 'recovery' || request.purpose !== 'microsoft_security') return request.timeoutMs
+  if (request.timeoutMs === 0) return 0
+  if (request.timeoutMs !== undefined && (!Number.isFinite(request.timeoutMs) || request.timeoutMs < 0)) {
+    return request.timeoutMs
+  }
+  return Math.max(INBOXES_SECURITY_CODE_MIN_WAIT_MS, request.timeoutMs ?? 0)
 }
 
 /**
@@ -52,6 +68,11 @@ export class InboxesProvider extends BrowserMailboxProvider<'inboxes'> {
         notBefore: Number.MAX_SAFE_INTEGER
       })
     }
-    return await super.getVerificationCode(request)
+
+    const timeoutMs = effectiveInboxesCodeTimeoutMs(request)
+    return await super.getVerificationCode({
+      ...request,
+      ...(timeoutMs === undefined ? {} : { timeoutMs })
+    })
   }
 }
