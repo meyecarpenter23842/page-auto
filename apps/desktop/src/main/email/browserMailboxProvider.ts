@@ -1,5 +1,6 @@
 import type { MailMessageSnapshot } from './verificationCodeParser'
 import { parseVerificationCode } from './verificationCodeParser'
+import { emailDiagnostic } from './emailRuntimeDiagnostic'
 import {
   normalizeMailboxAddress,
   type MailProvider,
@@ -93,6 +94,9 @@ export class BrowserMailboxProvider<Id extends MailProviderId> implements MailPr
   async getVerificationCode(request: MailProviderCodeRequest): Promise<MailProviderCodeResult> {
     const mailbox = normalizeMailboxAddress(request.mailbox)
     if (!mailbox || !this.config.supportsMailbox(mailbox)) {
+      emailDiagnostic('mailbox-provider', 'unsupported-mailbox', {
+        provider: this.config.providerLabel
+      })
       return this.result(
         request.mailbox.trim().toLowerCase(),
         'unsupported_mailbox',
@@ -104,8 +108,19 @@ export class BrowserMailboxProvider<Id extends MailProviderId> implements MailPr
     try {
       prepared = await this.driver.ensureMailbox(mailbox)
     } catch {
+      emailDiagnostic('mailbox-provider', 'ensure-error', {
+        provider: this.config.providerLabel
+      })
       return this.result(mailbox, 'provider_unavailable', `Không mở được ${this.config.providerLabel} bằng Email runtime hiện tại.`)
     }
+
+    emailDiagnostic('mailbox-provider', 'ensure-result', {
+      provider: this.config.providerLabel,
+      status: prepared.status,
+      activeMatches: prepared.status === 'ready'
+        ? normalizeMailboxAddress(prepared.activeMailbox) === mailbox
+        : false
+    })
 
     if (prepared.status !== 'ready') return this.result(mailbox, prepared.status, prepared.message)
     const activeMailbox = normalizeMailboxAddress(prepared.activeMailbox)
@@ -124,38 +139,124 @@ export class BrowserMailboxProvider<Id extends MailProviderId> implements MailPr
     const firstSeen = this.firstSeenMessageAt.get(mailbox) ?? new Map<string, number>()
     this.firstSeenMessageAt.set(mailbox, firstSeen)
 
+    emailDiagnostic('mailbox-provider', 'request', {
+      provider: this.config.providerLabel,
+      purpose: request.purpose,
+      explicitNotBefore: explicitNotBefore !== null,
+      cutoffAgeMs: requestStartedAt - freshnessCutoff,
+      timeoutMs,
+      pollMs,
+      consumedKeys: consumed.size
+    })
+
+    let poll = 0
     while (true) {
+      poll += 1
       const now = this.now()
       let summaries: BrowserMailboxMessageSummary[]
       try {
         summaries = await this.driver.listMessages(now)
       } catch {
+        emailDiagnostic('mailbox-provider', 'list-error', {
+          provider: this.config.providerLabel,
+          poll
+        })
         return this.result(mailbox, 'provider_unavailable', `Không đọc được danh sách mail từ ${this.config.providerLabel}.`)
       }
 
-      const candidates = summaries.flatMap((message) => {
-        if (consumed.has(message.key) || !messageLooksRelevant(request, message)) return []
+      emailDiagnostic('mailbox-provider', 'poll', {
+        provider: this.config.providerLabel,
+        poll,
+        summaries: summaries.length
+      })
+
+      const candidates = summaries.flatMap((message, index) => {
+        const alreadyConsumed = consumed.has(message.key)
+        const relevant = messageLooksRelevant(request, message)
         const receivedAt = this.effectiveReceivedAt(message, now, firstSeen)
-        if (receivedAt === null || receivedAt < freshnessCutoff || receivedAt > now + 5_000) return []
+        const tooOld = receivedAt !== null && receivedAt < freshnessCutoff
+        const tooFuture = receivedAt !== null && receivedAt > now + 5_000
+        const fresh = receivedAt !== null && !tooOld && !tooFuture
+
+        emailDiagnostic('mailbox-provider', 'summary', {
+          provider: this.config.providerLabel,
+          poll,
+          index,
+          consumed: alreadyConsumed,
+          relevant,
+          receivedLabel: message.receivedLabel,
+          timestampKnown: receivedAt !== null,
+          ageMs: receivedAt === null ? null : now - receivedAt,
+          fresh,
+          preview: message.preview
+        })
+
+        if (alreadyConsumed || !relevant || !fresh || receivedAt === null) return []
         return [{ message, receivedAt }]
       })
 
-      for (const candidate of candidates) {
+      // Inboxes exposes trustworthy Received timestamps. Always inspect the
+      // freshest eligible message first even if the site's DOM order changes.
+      if (this.id === 'inboxes') {
+        candidates.sort((left, right) => right.receivedAt - left.receivedAt)
+      }
+
+      emailDiagnostic('mailbox-provider', 'candidates', {
+        provider: this.config.providerLabel,
+        poll,
+        count: candidates.length
+      })
+
+      for (const [candidateIndex, candidate] of candidates.entries()) {
         let snapshot: MailMessageSnapshot | null
         try {
           snapshot = await this.driver.readMessage(candidate.message)
         } catch {
+          emailDiagnostic('mailbox-provider', 'read-error', {
+            provider: this.config.providerLabel,
+            poll,
+            candidateIndex
+          })
           return this.result(mailbox, 'provider_unavailable', `Không mở được nội dung mail trên ${this.config.providerLabel}.`)
         }
-        if (!snapshot) continue
+        if (!snapshot) {
+          emailDiagnostic('mailbox-provider', 'read-null', {
+            provider: this.config.providerLabel,
+            poll,
+            candidateIndex
+          })
+          continue
+        }
         const receivedAt = Number.isFinite(snapshot.receivedAt) && snapshot.receivedAt > 0
           ? snapshot.receivedAt
           : candidate.receivedAt
-        if (receivedAt < freshnessCutoff || receivedAt > this.now() + 5_000) continue
+        if (receivedAt < freshnessCutoff || receivedAt > this.now() + 5_000) {
+          emailDiagnostic('mailbox-provider', 'snapshot-stale', {
+            provider: this.config.providerLabel,
+            poll,
+            candidateIndex,
+            ageMs: this.now() - receivedAt
+          })
+          continue
+        }
         const match = parseVerificationCode([{ ...snapshot, receivedAt }], this.now())
+        emailDiagnostic('mailbox-provider', 'parse-result', {
+          provider: this.config.providerLabel,
+          poll,
+          candidateIndex,
+          matched: match !== null,
+          codeLength: match?.code.length ?? 0,
+          subject: snapshot.subject
+        })
         if (!match) continue
 
         consumed.add(candidate.message.key)
+        emailDiagnostic('mailbox-provider', 'success', {
+          provider: this.config.providerLabel,
+          poll,
+          candidateIndex,
+          codeLength: match.code.length
+        })
         return this.result(
           mailbox,
           'success',
@@ -165,6 +266,11 @@ export class BrowserMailboxProvider<Id extends MailProviderId> implements MailPr
       }
 
       if (this.now() >= deadline) {
+        emailDiagnostic('mailbox-provider', 'timeout', {
+          provider: this.config.providerLabel,
+          polls: poll,
+          zeroTimeout: timeoutMs === 0
+        })
         return this.result(
           mailbox,
           timeoutMs === 0 ? 'message_not_found' : 'timeout',
@@ -177,6 +283,10 @@ export class BrowserMailboxProvider<Id extends MailProviderId> implements MailPr
       try {
         await this.driver.refreshMailbox()
       } catch {
+        emailDiagnostic('mailbox-provider', 'refresh-error', {
+          provider: this.config.providerLabel,
+          poll
+        })
         return this.result(mailbox, 'provider_unavailable', `Không refresh được mailbox ${this.config.providerLabel}.`)
       }
       await this.sleep(Math.min(pollMs, Math.max(1, deadline - this.now())))
