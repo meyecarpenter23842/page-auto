@@ -3,6 +3,12 @@ import { EmailPageRegistry } from './emailPageRegistry'
 import { InboxesProvider } from './inboxesProvider'
 import { InboxesBackgroundPlaywrightDriver, isInboxesProviderPageUrl } from './inboxesBackgroundPlaywrightDriver'
 import {
+  closeUnexpectedInboxesPopupPages,
+  dismissInboxesGoogleVignette,
+  hasInboxesProviderEscaped,
+  snapshotInboxesContextPages
+} from './inboxesVignetteGuard'
+import {
   normalizeMailboxAddress,
   type MailProvider,
   type MailProviderCodeResult,
@@ -16,6 +22,7 @@ const MAX_CONSUMED_SKIPS = 100
 const MAX_CLOSED_PAGE_RECOVERIES = 1
 const MAX_PROVIDER_RELOAD_RECOVERIES = 1
 const PROVIDER_RELOAD_TIMEOUT_MS = 10_000
+const INBOXES_HOME_URL = 'https://inboxes.com/'
 
 export interface MailboxCodeServiceRequest {
   mailbox: string
@@ -87,6 +94,25 @@ function failureResult(
   }
 }
 
+async function recoverInboxesProviderPage(page: Page, remainingMs: number): Promise<void> {
+  if (page.isClosed() || remainingMs <= 0) return
+  const options = {
+    waitUntil: 'domcontentloaded' as const,
+    timeout: Math.max(1, Math.min(PROVIDER_RELOAD_TIMEOUT_MS, remainingMs))
+  }
+
+  try {
+    if (hasInboxesProviderEscaped(page)) {
+      await page.goto(INBOXES_HOME_URL, options)
+    } else {
+      await page.reload(options)
+    }
+  } catch {
+    // The next resolve decides whether this page is still adoptable or whether
+    // a fresh provider page is required. Recovery remains bounded by the caller.
+  }
+}
+
 /**
  * Auth V2 mailbox-code boundary.
  *
@@ -148,7 +174,40 @@ export class MailboxCodeService {
         )
       }
 
+      const vignetteState = await dismissInboxesGoogleVignette(session.page)
+      if (vignetteState === 'blocked') {
+        const recoveryRemainingMs = deadline - this.now()
+        if (
+          timeoutMs === 0
+          || recoveryRemainingMs <= 0
+          || providerReloadRecoveries >= MAX_PROVIDER_RELOAD_RECOVERIES
+        ) {
+          return failureResult(
+            request,
+            mailbox,
+            'provider_unavailable',
+            'Google vignette trên Inboxes đang chặn thao tác và không đóng được bằng Close đã audit.',
+            consumed
+          )
+        }
+
+        providerReloadRecoveries += 1
+        this.sessions.delete(request.providerId)
+        await recoverInboxesProviderPage(session.page, recoveryRemainingMs)
+        if (this.now() >= deadline) {
+          return failureResult(
+            request,
+            mailbox,
+            'provider_unavailable',
+            'Google vignette trên Inboxes vẫn chặn sau recovery có giới hạn.',
+            consumed
+          )
+        }
+        continue
+      }
+
       const remainingMs = Math.max(0, deadline - this.now())
+      const pagesBeforeProviderRead = snapshotInboxesContextPages(session.page)
       const providerResult = await session.provider.getVerificationCode({
         mailbox,
         role: 'recovery',
@@ -157,6 +216,42 @@ export class MailboxCodeService {
         timeoutMs: timeoutMs === 0 ? 0 : remainingMs,
         ...(request.pollIntervalMs === undefined ? {} : { pollIntervalMs: request.pollIntervalMs })
       })
+
+      const unexpectedPopupCount = await closeUnexpectedInboxesPopupPages(session.page, pagesBeforeProviderRead)
+      const providerEscaped = hasInboxesProviderEscaped(session.page)
+      if (unexpectedPopupCount > 0 || providerEscaped) {
+        const recoveryRemainingMs = deadline - this.now()
+        this.sessions.delete(request.providerId)
+
+        if (
+          timeoutMs === 0
+          || recoveryRemainingMs <= 0
+          || providerReloadRecoveries >= MAX_PROVIDER_RELOAD_RECOVERIES
+        ) {
+          return failureResult(
+            request,
+            mailbox,
+            'provider_unavailable',
+            providerEscaped
+              ? 'Tab Inboxes bị điều hướng sang trang ngoài provider trong lúc đọc mail.'
+              : 'Click Inboxes bị quảng cáo chặn và mở tab ngoài provider.',
+            consumed
+          )
+        }
+
+        providerReloadRecoveries += 1
+        await recoverInboxesProviderPage(session.page, recoveryRemainingMs)
+        if (this.now() >= deadline) {
+          return failureResult(
+            request,
+            mailbox,
+            'provider_unavailable',
+            'Inboxes không phục hồi kịp trong timeout sau khi quảng cáo chặn click.',
+            consumed
+          )
+        }
+        continue
+      }
 
       if (
         providerResult.providerId !== request.providerId
@@ -209,15 +304,7 @@ export class MailboxCodeService {
 
         providerReloadRecoveries += 1
         this.sessions.delete(request.providerId)
-        try {
-          await session.page.reload({
-            waitUntil: 'domcontentloaded',
-            timeout: Math.max(1, Math.min(PROVIDER_RELOAD_TIMEOUT_MS, recoveryRemainingMs))
-          })
-        } catch {
-          // The next resolve decides whether the same page is still adoptable or
-          // whether a new provider page must be created. Keep the retry bounded.
-        }
+        await recoverInboxesProviderPage(session.page, recoveryRemainingMs)
 
         if (this.now() >= deadline) {
           return withServiceMetadata(request, providerResult, consumed)
