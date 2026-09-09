@@ -15,8 +15,13 @@ import {
 
 const INBOXES_URL = 'https://inboxes.com/'
 const INBOXES_CLICK_TIMEOUT_MS = 2_500
+const INBOXES_VIGNETTE_RELOAD_TIMEOUT_MS = 10_000
 const EMAIL_IN_TEXT = /[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9.-]+\.[a-z]{2,}/i
 const INBOXES_HOST = /(^|\.)inboxes\.com$/i
+const GOOGLE_VIGNETTE_HASH = /(?:^|[#&])google_vignette(?:=|&|$)/i
+
+type AddInboxSubmitResult = 'submitted' | 'retry_after_reload' | 'failed'
+type VignetteRecoveryResult = 'none' | 'reloaded' | 'blocked'
 
 export interface InboxesBackgroundSurfaceSnapshot {
   pageClosed: boolean
@@ -25,6 +30,7 @@ export interface InboxesBackgroundSurfaceSnapshot {
   activeMailbox: string | null
   lastKnownMailbox: string | null
   overlayVisible: boolean
+  googleVignetteVisible: boolean
   usernameInputVisible: boolean
   domainControlVisible: boolean
   addInboxButtonVisible: boolean
@@ -33,6 +39,15 @@ export interface InboxesBackgroundSurfaceSnapshot {
 export function isInboxesProviderPageUrl(value: string): boolean {
   try {
     return INBOXES_HOST.test(new URL(value).hostname)
+  } catch {
+    return false
+  }
+}
+
+function isInboxesGoogleVignetteUrl(value: string): boolean {
+  try {
+    const url = new URL(value)
+    return isInboxesProviderPageUrl(value) && GOOGLE_VIGNETTE_HASH.test(url.hash.replace(/^#/, ''))
   } catch {
     return false
   }
@@ -51,6 +66,11 @@ export function classifyInboxesBackgroundSurface(snapshot: InboxesBackgroundSurf
   if (/service unavailable|temporarily unavailable|bad gateway|gateway timeout|access denied/.test(text)) {
     return 'provider_unavailable'
   }
+  // A Google vignette is a real blocker even when the legitimate Add Inbox form
+  // remains visible behind it. This explicit route evidence must win over the
+  // form-control heuristic so the driver can perform the operator-proven F5
+  // recovery instead of repeatedly interacting with the covered form.
+  if (snapshot.googleVignetteVisible) return 'overlay_blocking'
   // The legitimate Add Inbox form may itself be rendered inside a dialog/modal.
   // Prefer the audited form controls over the generic overlay signal so we do not
   // dismiss the business form as if it were a promotional blocker.
@@ -102,6 +122,7 @@ function mailboxFromText(value: string): string | null {
  */
 export class InboxesBackgroundPlaywrightDriver implements InboxesMailboxDriver {
   private lastKnownMailbox: string | null = null
+  private vignetteReloads = 0
 
   constructor(private readonly page: Page) {}
 
@@ -115,6 +136,8 @@ export class InboxesBackgroundPlaywrightDriver implements InboxesMailboxDriver {
     if (this.page.isClosed()) {
       return { status: 'provider_unavailable', message: 'Tab Inboxes đã đóng.' }
     }
+
+    this.vignetteReloads = 0
 
     if (!isInboxesProviderPageUrl(this.page.url())) {
       try {
@@ -134,6 +157,14 @@ export class InboxesBackgroundPlaywrightDriver implements InboxesMailboxDriver {
         return { status: 'provider_unavailable', message: 'Inboxes.com đang không khả dụng.' }
       }
       if (surface === 'overlay_blocking') {
+        const vignetteRecovery = await this.reloadGoogleVignetteIfNeeded()
+        if (vignetteRecovery === 'reloaded') {
+          await this.waitForUiChange()
+          continue
+        }
+        if (vignetteRecovery === 'blocked') {
+          return { status: 'provider_unavailable', message: 'Google vignette trên Inboxes vẫn chặn sau một lần F5 recovery.' }
+        }
         if (!await this.dismissBlockingOverlay()) {
           return { status: 'provider_unavailable', message: 'Popup Inboxes đang chặn thao tác và không có Close control đã audit.' }
         }
@@ -163,7 +194,12 @@ export class InboxesBackgroundPlaywrightDriver implements InboxesMailboxDriver {
       }
 
       if (surface === 'add_inbox_dialog') {
-        if (!await this.submitAddInbox(parts.local, parts.domain)) {
+        const submitted = await this.submitAddInbox(parts.local, parts.domain)
+        if (submitted === 'retry_after_reload') {
+          await this.waitForUiChange()
+          continue
+        }
+        if (submitted === 'failed') {
           return { status: 'provider_unavailable', message: 'Form Add Inbox không ở trạng thái có thể thao tác.' }
         }
         this.lastKnownMailbox = mailbox
@@ -294,6 +330,7 @@ export class InboxesBackgroundPlaywrightDriver implements InboxesMailboxDriver {
         activeMailbox: null,
         lastKnownMailbox: this.lastKnownMailbox,
         overlayVisible: false,
+        googleVignetteVisible: false,
         usernameInputVisible: false,
         domainControlVisible: false,
         addInboxButtonVisible: false
@@ -319,6 +356,7 @@ export class InboxesBackgroundPlaywrightDriver implements InboxesMailboxDriver {
       activeMailbox,
       lastKnownMailbox: this.lastKnownMailbox,
       overlayVisible: await visible(overlay),
+      googleVignetteVisible: isInboxesGoogleVignetteUrl(this.page.url()),
       usernameInputVisible: await visible(username),
       domainControlVisible: await visible(domain),
       addInboxButtonVisible: await visible(add)
@@ -345,9 +383,17 @@ export class InboxesBackgroundPlaywrightDriver implements InboxesMailboxDriver {
 
     let surface = await this.readSurface(expectedMailbox)
     if (surface === 'overlay_blocking') {
-      if (!await this.dismissBlockingOverlay()) return false
-      await this.waitForUiChange()
-      surface = await this.readSurface(expectedMailbox)
+      const vignetteRecovery = await this.reloadGoogleVignetteIfNeeded()
+      if (vignetteRecovery === 'reloaded') {
+        await this.waitForUiChange()
+        surface = await this.readSurface(expectedMailbox)
+      } else if (vignetteRecovery === 'blocked') {
+        return false
+      } else {
+        if (!await this.dismissBlockingOverlay()) return false
+        await this.waitForUiChange()
+        surface = await this.readSurface(expectedMailbox)
+      }
     }
 
     if (surface === 'mailbox_ready_expected') {
@@ -374,10 +420,14 @@ export class InboxesBackgroundPlaywrightDriver implements InboxesMailboxDriver {
     return false
   }
 
-  private async submitAddInbox(local: string, domain: string): Promise<boolean> {
+  private async submitAddInbox(local: string, domain: string): Promise<AddInboxSubmitResult> {
     const username = this.page.getByPlaceholder(/enter username/i).first()
-    if (!await visible(username)) return false
+    if (!await visible(username)) return 'failed'
     await username.fill(local)
+
+    let vignetteRecovery = await this.reloadGoogleVignetteIfNeeded()
+    if (vignetteRecovery === 'reloaded') return 'retry_after_reload'
+    if (vignetteRecovery === 'blocked') return 'failed'
 
     const nativeSelect = this.page.locator('select:visible').last()
     if (await visible(nativeSelect)) {
@@ -388,19 +438,63 @@ export class InboxesBackgroundPlaywrightDriver implements InboxesMailboxDriver {
       }
     } else {
       const combobox = this.page.getByRole('combobox').last()
-      if (!await visible(combobox) || !await this.clickWithOverlayRecovery(combobox)) return false
+      if (!await visible(combobox) || !await this.clickWithOverlayRecovery(combobox)) {
+        vignetteRecovery = await this.reloadGoogleVignetteIfNeeded()
+        if (vignetteRecovery === 'reloaded') return 'retry_after_reload'
+        return 'failed'
+      }
       const option = this.page.getByRole('option', { name: domain, exact: true }).first()
       if (await visible(option)) {
-        if (!await this.clickWithOverlayRecovery(option)) return false
+        if (!await this.clickWithOverlayRecovery(option)) {
+          vignetteRecovery = await this.reloadGoogleVignetteIfNeeded()
+          if (vignetteRecovery === 'reloaded') return 'retry_after_reload'
+          return 'failed'
+        }
       } else {
         const domainText = this.page.getByText(domain, { exact: true }).last()
-        if (!await visible(domainText) || !await this.clickWithOverlayRecovery(domainText)) return false
+        if (!await visible(domainText) || !await this.clickWithOverlayRecovery(domainText)) {
+          vignetteRecovery = await this.reloadGoogleVignetteIfNeeded()
+          if (vignetteRecovery === 'reloaded') return 'retry_after_reload'
+          return 'failed'
+        }
       }
     }
 
+    // Live Inboxes can inject #google_vignette exactly after local-part/domain are
+    // filled. F5 is the operator-confirmed recovery: after reload the outer state
+    // machine reopens Add Inbox and re-enters the same canonical mailbox once.
+    vignetteRecovery = await this.reloadGoogleVignetteIfNeeded()
+    if (vignetteRecovery === 'reloaded') return 'retry_after_reload'
+    if (vignetteRecovery === 'blocked') return 'failed'
+
     const add = this.page.getByRole('button', { name: /^add inbox$/i }).last()
-    if (!await visible(add)) return false
-    return await this.clickWithOverlayRecovery(add)
+    if (!await visible(add)) return 'failed'
+    if (!await this.clickWithOverlayRecovery(add)) {
+      vignetteRecovery = await this.reloadGoogleVignetteIfNeeded()
+      if (vignetteRecovery === 'reloaded') return 'retry_after_reload'
+      return 'failed'
+    }
+
+    vignetteRecovery = await this.reloadGoogleVignetteIfNeeded()
+    if (vignetteRecovery === 'reloaded') return 'retry_after_reload'
+    if (vignetteRecovery === 'blocked') return 'failed'
+    return 'submitted'
+  }
+
+  private async reloadGoogleVignetteIfNeeded(): Promise<VignetteRecoveryResult> {
+    if (this.page.isClosed() || !isInboxesGoogleVignetteUrl(this.page.url())) return 'none'
+    if (this.vignetteReloads >= 1) return 'blocked'
+
+    this.vignetteReloads += 1
+    try {
+      await this.page.reload({
+        waitUntil: 'domcontentloaded',
+        timeout: INBOXES_VIGNETTE_RELOAD_TIMEOUT_MS
+      })
+      return 'reloaded'
+    } catch {
+      return 'blocked'
+    }
   }
 
   private async clickWithOverlayRecovery(target: Locator): Promise<boolean> {
