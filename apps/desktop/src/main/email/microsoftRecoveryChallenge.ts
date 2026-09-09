@@ -235,6 +235,27 @@ function sessionFor(context: BrowserContext, mailbox: string): MicrosoftRecovery
   return created
 }
 
+/**
+ * Clear only durable recovery metadata after the Microsoft detector has proven
+ * the auth flow is authenticated. The Inboxes tab itself stays open/background;
+ * only the cached provider adapter is dropped so a later command cannot inherit
+ * an old requestedAt/consumed-message challenge.
+ */
+export function completeMicrosoftRecoveryAfterAuthenticated(context: BrowserContext): boolean {
+  const state = sessions.get(context)
+  if (!state) return false
+
+  const hadRecoveryState = state.requestedAt !== null || state.round !== null || state.mailboxCodeService !== null
+  state.requestedAt = null
+  state.methodChoiceAttempts = 0
+  state.round = null
+  if (state.mailboxCodeService) {
+    state.mailboxCodeService.invalidateProvider('inboxes')
+    state.mailboxCodeService = null
+  }
+  return hadRecoveryState
+}
+
 export function microsoftRecoveryBrowserProviderId(mailbox: string): MailProviderId | null {
   const providerId = resolveMailProviderId(mailbox)
   return isBrowserMailProviderId(providerId) ? providerId : null
