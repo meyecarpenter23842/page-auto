@@ -2,6 +2,7 @@ import type { BrowserContext, Page } from 'playwright-core'
 import { EmailPageRegistry } from './emailPageRegistry'
 import { InboxesProvider } from './inboxesProvider'
 import { InboxesBackgroundPlaywrightDriver, isInboxesProviderPageUrl } from './inboxesBackgroundPlaywrightDriver'
+import { InboxesVisibleCodeFallbackDriver } from './inboxesVisibleCodeFallbackDriver'
 import {
   closeUnexpectedInboxesPopupPages,
   dismissInboxesGoogleVignette,
@@ -415,7 +416,10 @@ export function createMailboxCodeService(
         return {
           providerId,
           page,
-          provider: new InboxesProvider(new InboxesBackgroundPlaywrightDriver(page))
+          provider: new InboxesProvider(new InboxesVisibleCodeFallbackDriver(
+            page,
+            new InboxesBackgroundPlaywrightDriver(page)
+          ))
         }
       } catch {
         return null
