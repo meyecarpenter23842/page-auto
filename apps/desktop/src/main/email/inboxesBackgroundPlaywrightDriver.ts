@@ -14,8 +14,9 @@ import {
 } from './inboxesPlaywrightDriver'
 
 const INBOXES_URL = 'https://inboxes.com/'
-const INBOXES_CLICK_TIMEOUT_MS = 2_500
-const INBOXES_VIGNETTE_RELOAD_TIMEOUT_MS = 10_000
+const INBOXES_CLICK_TIMEOUT_MS = 1_500
+const INBOXES_NAV_TIMEOUT_MS = 12_000
+const INBOXES_VIGNETTE_RELOAD_TIMEOUT_MS = 8_000
 const EMAIL_IN_TEXT = /[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9.-]+\.[a-z]{2,}/i
 const INBOXES_HOST = /(^|\.)inboxes\.com$/i
 const GOOGLE_VIGNETTE_HASH = /(?:^|[#&])google_vignette(?:=|&|$)/i
@@ -53,6 +54,15 @@ function isInboxesGoogleVignetteUrl(value: string): boolean {
   }
 }
 
+/** Strong enough for detail verification without treating a list-row subject as opened mail. */
+export function inboxesBodyHasMessageDetail(value: string): boolean {
+  const text = value.replace(/\s+/g, ' ').trim().toLowerCase()
+  const mentionsCode = /security code|verification code|mã bảo mật|mã xác minh/.test(text)
+  if (!mentionsCode) return false
+  return /\b\d{4,8}\b/.test(text)
+    || /use this code|your code is|code to continue|enter this code|here is your code/.test(text)
+}
+
 export function classifyInboxesBackgroundSurface(snapshot: InboxesBackgroundSurfaceSnapshot): MailboxCodeSurface {
   if (snapshot.pageClosed) return 'provider_closed'
 
@@ -61,25 +71,25 @@ export function classifyInboxesBackgroundSurface(snapshot: InboxesBackgroundSurf
   const activeMailbox = snapshot.activeMailbox ? normalizeMailboxAddress(snapshot.activeMailbox) : null
   const lastKnownMailbox = snapshot.lastKnownMailbox ? normalizeMailboxAddress(snapshot.lastKnownMailbox) : null
   const hasInboxTable = /\bfrom\b/.test(text) && /subject\s*-?\s*preview/.test(text) && /\breceived\b/.test(text)
-  const hasMessageDetail = /security code|verification code|mã bảo mật|mã xác minh/.test(text)
+  const hasEmptyInbox = /waiting for incoming messages for/i.test(text)
+  const hasMessageDetail = inboxesBodyHasMessageDetail(snapshot.bodyText)
 
   if (/service unavailable|temporarily unavailable|bad gateway|gateway timeout|access denied/.test(text)) {
     return 'provider_unavailable'
   }
-  // A Google vignette is a real blocker even when the legitimate Add Inbox form
-  // remains visible behind it. This explicit route evidence must win over the
-  // form-control heuristic so the driver can perform the operator-proven F5
-  // recovery instead of repeatedly interacting with the covered form.
   if (snapshot.googleVignetteVisible) return 'overlay_blocking'
-  // The legitimate Add Inbox form may itself be rendered inside a dialog/modal.
-  // Prefer the audited form controls over the generic overlay signal so we do not
-  // dismiss the business form as if it were a promotional blocker.
   if (snapshot.usernameInputVisible && snapshot.domainControlVisible && snapshot.addInboxButtonVisible) {
     return 'add_inbox_dialog'
   }
   if (snapshot.overlayVisible) return 'overlay_blocking'
-  if (hasInboxTable && expectedMailbox && activeMailbox === expectedMailbox) return 'mailbox_ready_expected'
-  if (hasInboxTable && activeMailbox) return 'mailbox_ready_other'
+
+  // An already-open empty mailbox is still a ready mailbox. The previous
+  // implementation required a message table and therefore treated a saved,
+  // logged-in empty inbox as Home, which sent the state machine back to Add Inbox.
+  if ((hasInboxTable || hasEmptyInbox) && expectedMailbox && activeMailbox === expectedMailbox) {
+    return 'mailbox_ready_expected'
+  }
+  if ((hasInboxTable || hasEmptyInbox) && activeMailbox) return 'mailbox_ready_other'
   if (hasInboxTable) return 'message_list'
   if (hasMessageDetail) {
     return expectedMailbox && lastKnownMailbox === expectedMailbox
@@ -109,17 +119,6 @@ function mailboxFromText(value: string): string | null {
   return match ? normalizeMailboxAddress(match) : null
 }
 
-/**
- * Inboxes adapter for Auth V2 background mailbox ownership.
- *
- * Unlike the legacy adapter, this driver never navigates message detail back to
- * the Inboxes home page. It uses browser history only when it can verify that
- * history stayed on Inboxes; otherwise it fails closed and leaves the provider
- * state intact for a later bounded recovery attempt.
- *
- * No method calls bringToFront(): the Microsoft/operator page keeps foreground
- * ownership while mailbox work happens on this provider page.
- */
 export class InboxesBackgroundPlaywrightDriver implements InboxesMailboxDriver {
   private lastKnownMailbox: string | null = null
   private vignetteReloads = 0
@@ -141,7 +140,7 @@ export class InboxesBackgroundPlaywrightDriver implements InboxesMailboxDriver {
 
     if (!isInboxesProviderPageUrl(this.page.url())) {
       try {
-        await this.page.goto(INBOXES_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+        await this.page.goto(INBOXES_URL, { waitUntil: 'domcontentloaded', timeout: INBOXES_NAV_TIMEOUT_MS })
       } catch {
         return { status: 'provider_unavailable', message: 'Không tải được Inboxes.com.' }
       }
@@ -189,7 +188,7 @@ export class InboxesBackgroundPlaywrightDriver implements InboxesMailboxDriver {
         if (!await this.openAddInboxDialog()) {
           return { status: 'mailbox_not_found', message: 'Không tìm thấy mailbox yêu cầu và không mở được Add Inbox.' }
         }
-        await this.waitForUiChange()
+        await this.waitForAddInboxForm()
         continue
       }
 
@@ -220,7 +219,7 @@ export class InboxesBackgroundPlaywrightDriver implements InboxesMailboxDriver {
       if (!await this.openAddInboxDialog()) {
         return { status: 'mailbox_not_found', message: 'Không tìm thấy control Add Inbox trên surface hiện tại.' }
       }
-      await this.waitForUiChange()
+      await this.waitForAddInboxForm()
     }
 
     return { status: 'mailbox_not_found', message: 'Không xác minh được mailbox Inboxes sau nhiều lần đọc lại trạng thái.' }
@@ -230,15 +229,19 @@ export class InboxesBackgroundPlaywrightDriver implements InboxesMailboxDriver {
     if (this.page.isClosed()) throw new Error('Inboxes provider page closed.')
     await this.dismissBlockingOverlay()
 
-    const rows = this.page.locator('tr')
+    const rows = await this.messageRows()
     const count = await rows.count()
     const messages: InboxesMessageSummary[] = []
 
     for (let index = 0; index < count; index += 1) {
       const row = rows.nth(index)
       if (!await row.isVisible().catch(() => false)) continue
-      const cells = row.locator('td')
-      const cellCount = await cells.count()
+      let cells = row.locator('td')
+      let cellCount = await cells.count()
+      if (cellCount < 3) {
+        cells = row.locator('[role="cell"]')
+        cellCount = await cells.count()
+      }
       if (cellCount < 3) continue
 
       const cellTexts: string[] = []
@@ -279,11 +282,13 @@ export class InboxesBackgroundPlaywrightDriver implements InboxesMailboxDriver {
     const row = await this.findMessageRow(message)
     if (!row) return null
 
-    if (!await this.clickWithOverlayRecovery(row)) return null
-    await this.waitForUiChange()
+    const target = await this.messageOpenTarget(row, message)
+    const beforeUrl = this.page.url()
+    const beforeBody = await this.readBodyText(800)
+    if (!await this.clickWithOverlayRecovery(target)) return null
 
-    const bodyText = (await this.page.locator('body').innerText({ timeout: 5_000 }).catch(() => '')).trim()
-    if (!bodyText) return null
+    const detailBody = await this.waitForMessageDetail(beforeUrl, beforeBody)
+    if (!detailBody) return null
 
     const snapshot: MailMessageSnapshot = {
       id: message.key,
@@ -291,12 +296,18 @@ export class InboxesBackgroundPlaywrightDriver implements InboxesMailboxDriver {
       sender: message.sender,
       subject: message.subject,
       bodyPreview: message.preview,
-      bodyText
+      bodyText: detailBody
     }
 
-    // Best-effort state-preserving return. A failure deliberately leaves the
-    // detail open instead of navigating to Inboxes Home and losing mailbox state.
-    if (this.lastKnownMailbox) await this.returnFromMessageDetail(this.lastKnownMailbox)
+    if (this.lastKnownMailbox) {
+      if (this.page.url() === beforeUrl) {
+        if (!await this.closeInlineMessageDetail(this.lastKnownMailbox)) {
+          await this.returnFromMessageDetail(this.lastKnownMailbox)
+        }
+      } else {
+        await this.returnFromMessageDetail(this.lastKnownMailbox)
+      }
+    }
     return snapshot
   }
 
@@ -304,9 +315,10 @@ export class InboxesBackgroundPlaywrightDriver implements InboxesMailboxDriver {
     if (this.page.isClosed()) throw new Error('Inboxes provider page closed.')
 
     if (this.lastKnownMailbox) {
-      const surface = await this.readSurface(this.lastKnownMailbox)
-      if (surface === 'message_detail_expected' || surface === 'message_detail_other') {
-        if (!await this.returnFromMessageDetail(this.lastKnownMailbox)) {
+      const body = await this.readBodyText(800)
+      if (inboxesBodyHasMessageDetail(body)) {
+        if (!await this.closeInlineMessageDetail(this.lastKnownMailbox)
+          && !await this.returnFromMessageDetail(this.lastKnownMailbox)) {
           throw new Error('Inboxes message detail cannot safely return to mailbox list.')
         }
       }
@@ -318,7 +330,7 @@ export class InboxesBackgroundPlaywrightDriver implements InboxesMailboxDriver {
       await this.waitForUiChange()
       return
     }
-    await this.page.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 })
+    await this.page.reload({ waitUntil: 'domcontentloaded', timeout: INBOXES_NAV_TIMEOUT_MS })
   }
 
   private async readSurface(expectedMailbox: string): Promise<MailboxCodeSurface> {
@@ -337,11 +349,15 @@ export class InboxesBackgroundPlaywrightDriver implements InboxesMailboxDriver {
       })
     }
 
-    const bodyText = await this.page.locator('body').innerText({ timeout: 5_000 }).catch(() => '')
+    const bodyText = await this.readBodyText(1_500)
     const username = this.page.getByPlaceholder(/enter username/i)
     const domain = this.page.getByRole('combobox')
     const add = this.page.getByRole('button', { name: /^add inbox$/i })
     const overlay = this.page.locator('[role="dialog"]:visible, [aria-modal="true"]:visible').last()
+    const usernameVisible = await visible(username)
+    const domainVisible = await visible(domain)
+    const addVisible = await visible(add)
+    const overlayVisible = await visible(overlay)
     const headings = await this.page.locator('h1, h2, h3').allInnerTexts().catch(() => [] as string[])
     const activeHeading = headings.find((text) => /don't give them your private email/i.test(text) && EMAIL_IN_TEXT.test(text))
     const emptyInboxText = activeHeading
@@ -349,53 +365,41 @@ export class InboxesBackgroundPlaywrightDriver implements InboxesMailboxDriver {
       : await this.page.getByText(/waiting for incoming messages for/i).first().innerText().catch(() => '')
     const activeMailbox = mailboxFromText(activeHeading ?? emptyInboxText ?? '')
 
+    const hasBusinessUi = usernameVisible && domainVisible && addVisible
+      || /\bfrom\b/i.test(bodyText) && /subject\s*-?\s*preview/i.test(bodyText) && /\breceived\b/i.test(bodyText)
+      || /waiting for incoming messages for/i.test(bodyText)
+    const googleVignetteVisible = isInboxesGoogleVignetteUrl(this.page.url())
+      && (this.vignetteReloads === 0 || !hasBusinessUi)
+
     return classifyInboxesBackgroundSurface({
       pageClosed: false,
       bodyText,
       expectedMailbox,
       activeMailbox,
       lastKnownMailbox: this.lastKnownMailbox,
-      overlayVisible: await visible(overlay),
-      googleVignetteVisible: isInboxesGoogleVignetteUrl(this.page.url()),
-      usernameInputVisible: await visible(username),
-      domainControlVisible: await visible(domain),
-      addInboxButtonVisible: await visible(add)
+      overlayVisible,
+      googleVignetteVisible,
+      usernameInputVisible: usernameVisible,
+      domainControlVisible: domainVisible,
+      addInboxButtonVisible: addVisible
     })
   }
 
   private async returnFromMessageDetail(expectedMailbox: string): Promise<boolean> {
     if (this.page.isClosed() || !isInboxesProviderPageUrl(this.page.url())) return false
 
-    let navigated = false
     try {
-      const response = await this.page.goBack({ waitUntil: 'domcontentloaded', timeout: 10_000 })
-      navigated = response !== null || isInboxesProviderPageUrl(this.page.url())
+      await this.page.goBack({ waitUntil: 'domcontentloaded', timeout: 5_000 })
     } catch {
       return false
     }
-    if (!navigated || this.page.isClosed()) return false
+    if (this.page.isClosed() || !isInboxesProviderPageUrl(this.page.url())) return false
 
     await this.waitForUiChange()
-    if (!isInboxesProviderPageUrl(this.page.url())) {
-      await this.page.goForward({ waitUntil: 'domcontentloaded', timeout: 10_000 }).catch(() => undefined)
-      return false
-    }
+    const body = await this.readBodyText(800)
+    if (inboxesBodyHasMessageDetail(body)) return false
 
-    let surface = await this.readSurface(expectedMailbox)
-    if (surface === 'overlay_blocking') {
-      const vignetteRecovery = await this.reloadGoogleVignetteIfNeeded()
-      if (vignetteRecovery === 'reloaded') {
-        await this.waitForUiChange()
-        surface = await this.readSurface(expectedMailbox)
-      } else if (vignetteRecovery === 'blocked') {
-        return false
-      } else {
-        if (!await this.dismissBlockingOverlay()) return false
-        await this.waitForUiChange()
-        surface = await this.readSurface(expectedMailbox)
-      }
-    }
-
+    const surface = await this.readSurface(expectedMailbox)
     if (surface === 'mailbox_ready_expected') {
       this.lastKnownMailbox = normalizeMailboxAddress(expectedMailbox)
       return true
@@ -404,6 +408,25 @@ export class InboxesBackgroundPlaywrightDriver implements InboxesMailboxDriver {
       || surface === 'message_list'
       || surface === 'home'
       || surface === 'add_inbox_dialog'
+  }
+
+  private async closeInlineMessageDetail(expectedMailbox: string): Promise<boolean> {
+    const controls = [
+      this.page.getByRole('button', { name: /^(back|close)$/i }).last(),
+      this.page.getByRole('link', { name: /^(back|close)$/i }).last(),
+      this.page.getByRole('button', { name: /back to inbox|inbox/i }).last(),
+      this.page.getByRole('link', { name: /back to inbox|inbox/i }).last()
+    ]
+    for (const control of controls) {
+      if (!await visible(control)) continue
+      if (!await this.clickWithOverlayRecovery(control)) continue
+      await this.waitForUiChange()
+      const body = await this.readBodyText(800)
+      if (inboxesBodyHasMessageDetail(body)) continue
+      const surface = await this.readSurface(expectedMailbox)
+      return surface !== 'message_detail_expected' && surface !== 'message_detail_other'
+    }
+    return false
   }
 
   private async openAddInboxDialog(): Promise<boolean> {
@@ -436,6 +459,8 @@ export class InboxesBackgroundPlaywrightDriver implements InboxesMailboxDriver {
       } catch {
         await nativeSelect.selectOption(domain).catch(() => undefined)
       }
+      const selectedText = (await nativeSelect.locator('option:checked').first().innerText().catch(() => '')).trim().toLowerCase()
+      if (selectedText && selectedText !== domain.toLowerCase()) return 'failed'
     } else {
       const combobox = this.page.getByRole('combobox').last()
       if (!await visible(combobox) || !await this.clickWithOverlayRecovery(combobox)) {
@@ -460,9 +485,6 @@ export class InboxesBackgroundPlaywrightDriver implements InboxesMailboxDriver {
       }
     }
 
-    // Live Inboxes can inject #google_vignette exactly after local-part/domain are
-    // filled. F5 is the operator-confirmed recovery: after reload the outer state
-    // machine reopens Add Inbox and re-enters the same canonical mailbox once.
     vignetteRecovery = await this.reloadGoogleVignetteIfNeeded()
     if (vignetteRecovery === 'reloaded') return 'retry_after_reload'
     if (vignetteRecovery === 'blocked') return 'failed'
@@ -483,7 +505,12 @@ export class InboxesBackgroundPlaywrightDriver implements InboxesMailboxDriver {
 
   private async reloadGoogleVignetteIfNeeded(): Promise<VignetteRecoveryResult> {
     if (this.page.isClosed() || !isInboxesGoogleVignetteUrl(this.page.url())) return 'none'
-    if (this.vignetteReloads >= 1) return 'blocked'
+
+    if (this.vignetteReloads >= 1) {
+      // Chrome/site can leave #google_vignette in the URL after F5 even though
+      // the provider UI is usable again. Do not treat a stale hash as a blocker.
+      return await this.providerBusinessUiVisible() ? 'none' : 'blocked'
+    }
 
     this.vignetteReloads += 1
     try {
@@ -518,8 +545,8 @@ export class InboxesBackgroundPlaywrightDriver implements InboxesMailboxDriver {
     for (const control of controls) {
       if (!await visible(control)) continue
       try {
-        await control.click({ timeout: 1_500 })
-        await this.page.waitForTimeout(150)
+        await control.click({ timeout: 1_200 })
+        await this.page.waitForTimeout(80)
         return true
       } catch {
         // Try the next explicit Close control; never force-click content behind it.
@@ -528,8 +555,14 @@ export class InboxesBackgroundPlaywrightDriver implements InboxesMailboxDriver {
     return false
   }
 
+  private async messageRows(): Promise<Locator> {
+    const tableRows = this.page.locator('tr')
+    if (await tableRows.count() > 0) return tableRows
+    return this.page.locator('[role="row"]')
+  }
+
   private async findMessageRow(message: InboxesMessageSummary): Promise<Locator | null> {
-    const rows = this.page.locator('tr')
+    const rows = await this.messageRows()
     const count = await rows.count()
     for (let index = 0; index < count; index += 1) {
       const row = rows.nth(index)
@@ -550,11 +583,65 @@ export class InboxesBackgroundPlaywrightDriver implements InboxesMailboxDriver {
     return null
   }
 
+  private async messageOpenTarget(row: Locator, message: InboxesMessageSummary): Promise<Locator> {
+    const anchors = row.locator('a[href]')
+    const anchorCount = await anchors.count()
+    for (let index = 0; index < anchorCount; index += 1) {
+      const anchor = anchors.nth(index)
+      if (await anchor.isVisible().catch(() => false)) return anchor
+    }
+
+    const subject = row.getByText(message.subject, { exact: true }).first()
+    if (await visible(subject)) return subject
+
+    const roleLink = row.getByRole('link').first()
+    if (await visible(roleLink)) return roleLink
+    const roleButton = row.getByRole('button').first()
+    if (await visible(roleButton)) return roleButton
+    return row
+  }
+
+  private async waitForMessageDetail(beforeUrl: string, beforeBody: string): Promise<string | null> {
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      if (this.page.isClosed() || !isInboxesProviderPageUrl(this.page.url())) return null
+      const body = await this.readBodyText(600)
+      const changed = this.page.url() !== beforeUrl || normalizeRowKey(body) !== normalizeRowKey(beforeBody)
+      if (changed && inboxesBodyHasMessageDetail(body)) return body
+      await this.page.waitForTimeout(100)
+    }
+    return null
+  }
+
+  private async providerBusinessUiVisible(): Promise<boolean> {
+    const username = this.page.getByPlaceholder(/enter username/i)
+    const domain = this.page.getByRole('combobox')
+    const add = this.page.getByRole('button', { name: /^add inbox$/i })
+    if (await visible(username) && await visible(domain) && await visible(add)) return true
+    if (await visible(this.page.getByRole('button', { name: /add inbox|get my first inbox/i }).first())) return true
+    const body = await this.readBodyText(800)
+    return /waiting for incoming messages for/i.test(body)
+      || /\bfrom\b/i.test(body) && /subject\s*-?\s*preview/i.test(body) && /\breceived\b/i.test(body)
+  }
+
+  private async waitForAddInboxForm(): Promise<void> {
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const username = this.page.getByPlaceholder(/enter username/i)
+      const domain = this.page.getByRole('combobox')
+      const add = this.page.getByRole('button', { name: /^add inbox$/i })
+      if (await visible(username) && await visible(domain) && await visible(add)) return
+      await this.page.waitForTimeout(80)
+    }
+  }
+
+  private async readBodyText(timeout: number): Promise<string> {
+    return (await this.page.locator('body').innerText({ timeout }).catch(() => '')).trim()
+  }
+
   private async waitForUiChange(): Promise<void> {
     await Promise.race([
-      this.page.waitForLoadState('domcontentloaded', { timeout: 2_000 }).catch(() => undefined),
-      this.page.waitForTimeout(500)
+      this.page.waitForLoadState('domcontentloaded', { timeout: 800 }).catch(() => undefined),
+      this.page.waitForTimeout(250)
     ])
-    await this.page.waitForTimeout(150)
+    await this.page.waitForTimeout(60)
   }
 }
