@@ -13,6 +13,7 @@ function snapshot(overrides: Partial<InboxesBackgroundSurfaceSnapshot> = {}): In
     activeMailbox: null,
     lastKnownMailbox: null,
     overlayVisible: false,
+    googleVignetteVisible: false,
     usernameInputVisible: false,
     domainControlVisible: false,
     addInboxButtonVisible: false,
@@ -70,6 +71,16 @@ describe('classifyInboxesBackgroundSurface', () => {
       domainControlVisible: true,
       addInboxButtonVisible: true
     }))).toBe('add_inbox_dialog')
+  })
+
+  it('treats a Google vignette as blocking even when the Add Inbox form stays visible behind it', () => {
+    expect(classifyInboxesBackgroundSurface(snapshot({
+      overlayVisible: true,
+      googleVignetteVisible: true,
+      usernameInputVisible: true,
+      domainControlVisible: true,
+      addInboxButtonVisible: true
+    }))).toBe('overlay_blocking')
   })
 })
 
