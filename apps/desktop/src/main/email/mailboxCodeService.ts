@@ -178,6 +178,10 @@ export class MailboxCodeService {
       if (providerResult.status !== 'success' && session.page.isClosed()) {
         this.sessions.delete(request.providerId)
         if (closedPageRecoveries < MAX_CLOSED_PAGE_RECOVERIES) {
+          const recoveryRemainingMs = deadline - this.now()
+          if (timeoutMs > 0 && recoveryRemainingMs <= 0) {
+            return withServiceMetadata(request, providerResult, consumed)
+          }
           closedPageRecoveries += 1
           continue
         }
@@ -195,14 +199,28 @@ export class MailboxCodeService {
       // recovery is one F5-equivalent reload. Recreate the provider adapter after
       // reload so ensureMailbox() re-detects Home/Add Inbox and rebinds the exact
       // canonical local-part + domain instead of keeping stale driver state.
+      // Recovery is part of the caller's original budget: never add a fresh 10 s
+      // tail after a 4 s rejected-code or 12 s normal request has already expired.
       if (providerResult.status === 'provider_unavailable' && providerReloadRecoveries < MAX_PROVIDER_RELOAD_RECOVERIES) {
+        const recoveryRemainingMs = deadline - this.now()
+        if (timeoutMs === 0 || recoveryRemainingMs <= 0) {
+          return withServiceMetadata(request, providerResult, consumed)
+        }
+
         providerReloadRecoveries += 1
         this.sessions.delete(request.providerId)
         try {
-          await session.page.reload({ waitUntil: 'domcontentloaded', timeout: PROVIDER_RELOAD_TIMEOUT_MS })
+          await session.page.reload({
+            waitUntil: 'domcontentloaded',
+            timeout: Math.max(1, Math.min(PROVIDER_RELOAD_TIMEOUT_MS, recoveryRemainingMs))
+          })
         } catch {
           // The next resolve decides whether the same page is still adoptable or
           // whether a new provider page must be created. Keep the retry bounded.
+        }
+
+        if (this.now() >= deadline) {
+          return withServiceMetadata(request, providerResult, consumed)
         }
         continue
       }
