@@ -1,4 +1,6 @@
 import type { Page } from 'playwright-core'
+import { completeMicrosoftRecoveryAfterAuthenticated } from './microsoftRecoveryChallenge'
+import { detectMicrosoftSurface } from './microsoftSurfaceDetector'
 
 export function isMicrosoftOwnedNavigationUrl(value: string): boolean {
   try {
@@ -18,6 +20,15 @@ export function isMicrosoftAuthNavigationUrl(value: string): boolean {
   try {
     const hostname = new URL(value).hostname.toLowerCase()
     return hostname === 'login.live.com' || hostname === 'login.microsoftonline.com'
+  } catch {
+    return false
+  }
+}
+
+function canBeDetectorProvenAuthenticated(value: string): boolean {
+  try {
+    const hostname = new URL(value).hostname.toLowerCase()
+    return hostname === 'outlook.live.com' || hostname === 'account.live.com'
   } catch {
     return false
   }
@@ -102,8 +113,19 @@ export async function closeDuplicateMicrosoftAuthPages(activePage: Page): Promis
  * Close the Microsoft-owned opener lineage of an adopted page, then clean up auth-host
  * siblings that Microsoft may have detached from opener(). This still leaves Outlook/mail,
  * account.live.com and unrelated operator tabs untouched.
+ *
+ * Recovery state is cleared here only when the central Microsoft detector proves the
+ * active surface is authenticated. A mere Next click or an intermediate username/password
+ * surface therefore cannot destroy the durable rejected/re-entrant recovery round.
  */
 export async function closeMicrosoftOwnedOpenerChain(activePage: Page, maxDepth = 4): Promise<void> {
+  if (!activePage.isClosed() && canBeDetectorProvenAuthenticated(activePage.url())) {
+    const detection = await detectMicrosoftSurface(activePage).catch(() => null)
+    if (detection?.surface === 'authenticated') {
+      completeMicrosoftRecoveryAfterAuthenticated(activePage.context())
+    }
+  }
+
   let opener = await activePage.opener().catch(() => null)
   for (let depth = 0; opener && depth < maxDepth; depth += 1) {
     if (opener.isClosed() || !isMicrosoftOwnedNavigationUrl(opener.url())) break
