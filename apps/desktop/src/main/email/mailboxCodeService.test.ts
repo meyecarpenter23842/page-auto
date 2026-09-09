@@ -10,16 +10,19 @@ import {
 type FakePage = Page & {
   setClosed: (value: boolean) => void
   close: ReturnType<typeof vi.fn>
+  reload: ReturnType<typeof vi.fn>
 }
 
 function fakePage(url: string, closed = false): FakePage {
   let isClosed = closed
   const close = vi.fn(async () => { isClosed = true })
+  const reload = vi.fn(async () => null)
   return {
     url: () => url,
     isClosed: () => isClosed,
     setClosed: (value: boolean) => { isClosed = value },
-    close
+    close,
+    reload
   } as unknown as FakePage
 }
 
@@ -73,7 +76,7 @@ describe('MailboxCodeService', () => {
     expect(resolveProviderSession).not.toHaveBeenCalled()
   })
 
-  it('keeps non-Inboxes providers out of Batch 3 without changing their existing semantics', async () => {
+  it('keeps non-Inboxes providers out of the new background boundary', async () => {
     const resolveProviderSession = vi.fn()
     const service = new MailboxCodeService({ resolveProviderSession })
 
@@ -200,6 +203,55 @@ describe('MailboxCodeService', () => {
     expect(resolveProviderSession).toHaveBeenCalledTimes(2)
     expect(firstPage.close).not.toHaveBeenCalled()
     expect(secondPage.close).not.toHaveBeenCalled()
+  })
+
+  it('reloads once after a non-terminal Inboxes provider failure, then re-resolves the adapter', async () => {
+    const page = fakePage('https://inboxes.com/#google_vignette')
+    const blockedProvider = providerWith([
+      result('provider_unavailable', { message: 'popup blocks click' })
+    ])
+    const recoveredProvider = providerWith([
+      result('success', { messageKey: 'fresh-after-f5', code: '555555' })
+    ])
+    const sessions = [session(page, blockedProvider), session(page, recoveredProvider)]
+    const resolveProviderSession = vi.fn(async () => sessions.shift() ?? null)
+    const service = new MailboxCodeService({ resolveProviderSession, now: () => 2_700_000 })
+
+    const response = await service.getFreshCode({
+      mailbox: 'owner@getnada.com',
+      providerId: 'inboxes',
+      challengeId: 'challenge-popup-reload',
+      consumedMessageKeys: [],
+      timeoutMs: 0
+    })
+
+    expect(response.status).toBe('success')
+    expect(response.code).toBe('555555')
+    expect(page.reload).toHaveBeenCalledTimes(1)
+    expect(resolveProviderSession).toHaveBeenCalledTimes(2)
+    expect(page.close).not.toHaveBeenCalled()
+  })
+
+  it('bounds the F5-style recovery to one reload', async () => {
+    const page = fakePage('https://inboxes.com/#google_vignette')
+    const first = providerWith([result('provider_unavailable')])
+    const second = providerWith([result('provider_unavailable')])
+    const sessions = [session(page, first), session(page, second)]
+    const service = new MailboxCodeService({
+      resolveProviderSession: async () => sessions.shift() ?? null,
+      now: () => 2_800_000
+    })
+
+    const response = await service.getFreshCode({
+      mailbox: 'owner@getnada.com',
+      providerId: 'inboxes',
+      challengeId: 'challenge-popup-reload-bounded',
+      consumedMessageKeys: [],
+      timeoutMs: 0
+    })
+
+    expect(response.status).toBe('provider_unavailable')
+    expect(page.reload).toHaveBeenCalledTimes(1)
   })
 
   it('reuses the same open provider session across challenge calls', async () => {

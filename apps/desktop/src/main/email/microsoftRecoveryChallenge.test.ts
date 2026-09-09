@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest'
+import type { EmailRecoveryRoundContract } from './emailAuthV2Contracts'
 import { classifyMicrosoftLoginSurface } from './emailLoginPolicy'
 import {
   microsoftRecoveryBrowserProviderId,
   microsoftRecoveryCodeChallengeMatchesBackupEmail,
   microsoftRecoveryCodeInputParts,
+  microsoftRecoveryCodeWasRejected,
   microsoftRecoveryConfirmationValue,
   microsoftRecoveryHintMatchesBackupEmail,
   microsoftRecoveryLocalPart,
+  microsoftRecoveryRecordSubmittedCode,
   microsoftRecoveryRequiresResumeMailboxBaseline,
   parseMicrosoftRecoveryEmailHints
 } from './microsoftRecoveryChallenge'
@@ -171,6 +174,31 @@ describe('Microsoft recovery email challenge policy', () => {
     expect(microsoftRecoveryCodeInputParts('112974', 6)).toEqual(['1', '1', '2', '9', '7', '4'])
     expect(microsoftRecoveryCodeInputParts('112974', 5)).toBeNull()
     expect(microsoftRecoveryCodeInputParts('123', 3)).toBeNull()
+  })
+
+  it('recognizes the live Microsoft rejected-code copy so the round can exclude the submitted message', () => {
+    expect(microsoftRecoveryCodeWasRejected("That code didn't work. Check the code and try again.")).toBe(true)
+    expect(microsoftRecoveryCodeWasRejected('Enter your security code')).toBe(false)
+  })
+
+  it('keeps durable consumed message metadata without storing the plaintext code', () => {
+    const round: EmailRecoveryRoundContract = {
+      challengeId: 'challenge-live',
+      mailbox: 'owner@getnada.com',
+      providerId: 'inboxes',
+      requestedAt: 123,
+      consumedMessageKeys: ['old-mail'],
+      lastSubmittedMessageKey: null,
+      lastSubmittedCodeFingerprint: null,
+      submitAttempts: 0
+    }
+
+    const updated = microsoftRecoveryRecordSubmittedCode(round, 'fresh-mail', '481726')
+    expect(updated.consumedMessageKeys).toEqual(['old-mail', 'fresh-mail'])
+    expect(updated.lastSubmittedMessageKey).toBe('fresh-mail')
+    expect(updated.lastSubmittedCodeFingerprint).toBeTruthy()
+    expect(updated.lastSubmittedCodeFingerprint).not.toBe('481726')
+    expect(updated.submitAttempts).toBe(1)
   })
 
   it('keeps authenticator and non-email security-code surfaces manual', () => {
