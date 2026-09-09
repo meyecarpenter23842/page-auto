@@ -16,14 +16,16 @@ import {
   runMicrosoftAuthDispatchLoop,
   type MicrosoftAuthHandlerMap
 } from './microsoftAuthDispatcher'
-import {
-  handleMicrosoftRecoveryChallenge,
-  isMicrosoftRecoverySurface
-} from './microsoftRecoveryChallenge'
+import { handleMicrosoftRecoveryChallenge } from './microsoftRecoveryChallenge'
 import {
   detectMicrosoftSurface,
   type MicrosoftSurfaceDetection
 } from './microsoftSurfaceDetector'
+
+type MicrosoftRecoveryV2Surface =
+  | 'recovery_method_choice'
+  | 'recovery_email_confirmation'
+  | 'recovery_code'
 
 export interface MicrosoftAuthV2WorkerCredentials {
   accountId: number
@@ -203,10 +205,7 @@ export async function runMicrosoftAuthV2WorkerController(
     return outcome.result
   }
 
-  const recovery = async (surface: EmailAuthV2Surface): Promise<EmailAuthV2HandlerResult> => {
-    if (!isMicrosoftRecoverySurface(surface)) {
-      return setAttention('security_review', `Surface ${surface} không thuộc recovery handler đã audit.`)
-    }
+  const recovery = async (surface: MicrosoftRecoveryV2Surface): Promise<EmailAuthV2HandlerResult> => {
     const result = await handleMicrosoftRecoveryChallenge(page, surface, credentials.backupEmail)
     if (result.status === 'needs_attention') return setAttention('security_review', result.message)
     attempted = true
