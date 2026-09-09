@@ -1,4 +1,5 @@
 import type { Locator, Page } from 'playwright-core'
+import { emailDiagnostic } from './emailRuntimeDiagnostic'
 import { parseVerificationCode, type MailMessageSnapshot } from './verificationCodeParser'
 import type {
   InboxesEnsureMailboxResult,
@@ -28,12 +29,6 @@ async function visible(locator: Locator): Promise<boolean> {
   return (await locator.count()) > 0 && await locator.first().isVisible().catch(() => false)
 }
 
-/**
- * Live Inboxes can render a complete Microsoft security code in a row whose DOM
- * does not expose the legacy td/role=cell shape. Only accept a fallback row when
- * both a trustworthy relative Received label and the canonical verification
- * parser prove that the visible text contains a verification code.
- */
 export function parseInboxesVisibleCodeRow(
   rowTextInput: string,
   now = Date.now()
@@ -60,12 +55,6 @@ export function parseInboxesVisibleCodeRow(
   return { text, receivedLabel, receivedAt, code: match.code }
 }
 
-/**
- * Decorates the production Inboxes driver with a narrow live-DOM fallback.
- * The base driver remains authoritative for mailbox selection, overlays,
- * refresh and message-detail navigation. This layer only contributes messages
- * when a verification code is already visibly rendered in a row.
- */
 export class InboxesVisibleCodeFallbackDriver implements InboxesMailboxDriver {
   private readonly visibleSnapshots = new Map<string, MailMessageSnapshot>()
 
@@ -76,30 +65,78 @@ export class InboxesVisibleCodeFallbackDriver implements InboxesMailboxDriver {
 
   async ensureMailbox(mailbox: string): Promise<InboxesEnsureMailboxResult> {
     this.visibleSnapshots.clear()
-    return await this.base.ensureMailbox(mailbox)
+    emailDiagnostic('inboxes-dom', 'ensure-start', {
+      pageState: this.page.isClosed()
+        ? 'closed'
+        : /^https:\/\/([^/]+\.)?inboxes\.com\//i.test(this.page.url())
+          ? 'inboxes-existing'
+          : this.page.url() === 'about:blank'
+            ? 'new-blank'
+            : 'other'
+    })
+
+    const result = await this.base.ensureMailbox(mailbox)
+    emailDiagnostic('inboxes-dom', 'ensure-result', {
+      status: result.status,
+      activeMatches: result.status === 'ready'
+    })
+    return result
   }
 
   async listMessages(now = Date.now()): Promise<InboxesMessageSummary[]> {
     const baseMessages = await this.base.listMessages(now)
     this.visibleSnapshots.clear()
-    if (this.page.isClosed()) return baseMessages
+    if (this.page.isClosed()) {
+      emailDiagnostic('inboxes-dom', 'list-page-closed', {
+        baseMessages: baseMessages.length
+      })
+      return baseMessages
+    }
 
     const fallbackMessages = await this.scanVisibleCodeRows(now)
-    if (fallbackMessages.length === 0) return baseMessages
-
     const merged = new Map(baseMessages.map((message) => [message.key, message] as const))
     for (const message of fallbackMessages) merged.set(message.key, message)
-    return [...merged.values()]
+
+    const messages = [...merged.values()].sort((left, right) => {
+      const leftAt = left.receivedAt ?? Number.NEGATIVE_INFINITY
+      const rightAt = right.receivedAt ?? Number.NEGATIVE_INFINITY
+      return rightAt - leftAt
+    })
+
+    emailDiagnostic('inboxes-dom', 'list-result', {
+      baseMessages: baseMessages.length,
+      fallbackMessages: fallbackMessages.length,
+      mergedMessages: messages.length,
+      newestReceivedLabel: messages[0]?.receivedLabel ?? ''
+    })
+    return messages
   }
 
   async readMessage(message: InboxesMessageSummary): Promise<MailMessageSnapshot | null> {
     const visibleSnapshot = this.visibleSnapshots.get(message.key)
-    if (visibleSnapshot) return visibleSnapshot
-    return await this.base.readMessage(message)
+    if (visibleSnapshot) {
+      emailDiagnostic('inboxes-dom', 'read-visible-row', {
+        receivedLabel: message.receivedLabel,
+        preview: message.preview
+      })
+      return visibleSnapshot
+    }
+
+    emailDiagnostic('inboxes-dom', 'read-base-message', {
+      receivedLabel: message.receivedLabel,
+      preview: message.preview
+    })
+    const snapshot = await this.base.readMessage(message)
+    emailDiagnostic('inboxes-dom', 'read-base-result', {
+      snapshot: snapshot !== null,
+      subject: snapshot?.subject ?? ''
+    })
+    return snapshot
   }
 
   async refreshMailbox(): Promise<void> {
     this.visibleSnapshots.clear()
+    emailDiagnostic('inboxes-dom', 'refresh', {})
     await this.base.refreshMailbox()
   }
 
@@ -108,16 +145,26 @@ export class InboxesVisibleCodeFallbackDriver implements InboxesMailboxDriver {
     const count = await rows.count()
     const messages: InboxesMessageSummary[] = []
 
+    emailDiagnostic('inboxes-dom', 'scan-start', { rows: count })
+
     for (let index = 0; index < count; index += 1) {
       const row = rows.nth(index)
       if (!await visible(row)) continue
 
-      const rowText = await row.innerText().catch(() => '')
+      const rowText = normalizeText(await row.innerText().catch(() => ''))
+      if (!rowText) continue
       const evidence = parseInboxesVisibleCodeRow(rowText, now)
-      if (!evidence) continue
 
       const cells = row.locator('td, [role="cell"], [role="gridcell"]')
       const cellCount = await cells.count()
+      emailDiagnostic('inboxes-dom', 'row', {
+        index,
+        cells: cellCount,
+        codeEvidence: evidence !== null,
+        preview: rowText
+      })
+      if (!evidence) continue
+
       const cellTexts: string[] = []
       for (let cellIndex = 0; cellIndex < cellCount; cellIndex += 1) {
         const value = normalizeText(await cells.nth(cellIndex).innerText().catch(() => ''))
@@ -146,7 +193,8 @@ export class InboxesVisibleCodeFallbackDriver implements InboxesMailboxDriver {
         bodyPreview: evidence.text,
         bodyText: evidence.text
       }
-      if (!parseVerificationCode([snapshot], now)) continue
+      const verified = parseVerificationCode([snapshot], now)
+      if (!verified) continue
 
       this.visibleSnapshots.set(key, snapshot)
       messages.push({
@@ -159,6 +207,20 @@ export class InboxesVisibleCodeFallbackDriver implements InboxesMailboxDriver {
       })
     }
 
-    return messages
+    if (messages.length === 0) {
+      const body = await this.page.locator('body').innerText({ timeout: 800 }).catch(() => '')
+      const relevantLines = body
+        .split(/\r?\n/)
+        .map(normalizeText)
+        .filter((line) => /microsoft|security code|verification code|secs? ago|mins? ago|seconds? ago/i.test(line))
+        .slice(0, 12)
+        .join(' | ')
+      emailDiagnostic('inboxes-dom', 'scan-no-code-row', {
+        rows: count,
+        relevantBodyText: relevantLines
+      })
+    }
+
+    return messages.sort((left, right) => (right.receivedAt ?? 0) - (left.receivedAt ?? 0))
   }
 }
