@@ -45,12 +45,13 @@ describe('Email Auth V2 Batch 0 contracts', () => {
     ]))
   })
 
-  it('keeps recovery-round state limited to metadata and consumed message identity', () => {
+  it('keeps recovery-round state limited to safe metadata, baseline and consumed message identity', () => {
     const round: EmailRecoveryRoundContract = {
       challengeId: 'challenge-1',
       mailbox: 'owner@example.com',
       providerId: 'inboxes',
       requestedAt: 1_000_000,
+      baselineMessageKeys: ['mail-before-send'],
       consumedMessageKeys: ['mail-1'],
       lastSubmittedMessageKey: 'mail-1',
       lastSubmittedCodeFingerprint: 'sha256:deadbeef',
@@ -59,6 +60,7 @@ describe('Email Auth V2 Batch 0 contracts', () => {
 
     expect(round).not.toHaveProperty('code')
     expect(round).not.toHaveProperty('password')
+    expect(round.baselineMessageKeys).toEqual(['mail-before-send'])
     expect(round.consumedMessageKeys).toEqual(['mail-1'])
   })
 })

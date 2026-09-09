@@ -23,6 +23,8 @@ export interface MailProviderCodeRequest {
   purpose: MailCodePurpose
   /** Earliest acceptable provider message timestamp for this verification request. */
   notBefore?: number
+  /** Message keys that must be rejected before candidate selection/open. */
+  excludedMessageKeys?: readonly string[]
   timeoutMs?: number
   pollIntervalMs?: number
 }
@@ -37,9 +39,25 @@ export interface MailProviderCodeResult {
   message: string
 }
 
+export interface MailProviderMessageKeySnapshotRequest {
+  mailbox: string
+  role: MailboxRole
+  purpose: MailCodePurpose
+}
+
+export interface MailProviderMessageKeySnapshotResult {
+  providerId: MailProviderId
+  mailbox: string
+  status: MailProviderResultStatus
+  messageKeys: readonly string[]
+  message: string
+}
+
 export interface MailProvider {
   readonly id: MailProviderId
   getVerificationCode(request: MailProviderCodeRequest): Promise<MailProviderCodeResult>
+  /** Optional browser-provider capability used to baseline message identity before a new challenge is sent. */
+  snapshotMessageKeys?(request: MailProviderMessageKeySnapshotRequest): Promise<MailProviderMessageKeySnapshotResult>
 }
 
 export function normalizeMailboxAddress(value: string): string | null {

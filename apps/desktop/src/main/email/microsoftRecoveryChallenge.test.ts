@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { EmailRecoveryRoundContract } from './emailAuthV2Contracts'
 import { classifyMicrosoftLoginSurface } from './emailLoginPolicy'
 import {
+  createMicrosoftRecoveryRound,
   microsoftRecoveryBrowserProviderId,
   microsoftRecoveryCodeChallengeMatchesBackupEmail,
   microsoftRecoveryCodeInputParts,
@@ -181,12 +182,35 @@ describe('Microsoft recovery email challenge policy', () => {
     expect(microsoftRecoveryCodeWasRejected('Enter your security code')).toBe(false)
   })
 
+  it('seeds every new round with the pre-Send baseline and session-consumed history', () => {
+    const first = createMicrosoftRecoveryRound(
+      'owner@getnada.com',
+      'inboxes',
+      1000,
+      ['mail-before-send', 'notification-before-send'],
+      ['submitted-a']
+    )
+    expect(first.baselineMessageKeys).toEqual(['mail-before-send', 'notification-before-send'])
+    expect(first.consumedMessageKeys).toEqual(['submitted-a'])
+
+    const second = createMicrosoftRecoveryRound(
+      'owner@getnada.com',
+      'inboxes',
+      1002,
+      ['mail-before-send', 'submitted-a'],
+      [...first.consumedMessageKeys, 'submitted-b']
+    )
+    expect(second.consumedMessageKeys).toEqual(['submitted-a', 'submitted-b'])
+    expect(second.baselineMessageKeys).toContain('submitted-a')
+  })
+
   it('keeps durable consumed message metadata without storing the plaintext code', () => {
     const round: EmailRecoveryRoundContract = {
       challengeId: 'challenge-live',
       mailbox: 'owner@getnada.com',
       providerId: 'inboxes',
       requestedAt: 123,
+      baselineMessageKeys: ['mail-before-send'],
       consumedMessageKeys: ['old-mail'],
       lastSubmittedMessageKey: null,
       lastSubmittedCodeFingerprint: null,

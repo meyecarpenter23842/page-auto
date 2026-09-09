@@ -6,7 +6,9 @@ import {
   type MailProvider,
   type MailProviderCodeRequest,
   type MailProviderCodeResult,
-  type MailProviderId
+  type MailProviderId,
+  type MailProviderMessageKeySnapshotRequest,
+  type MailProviderMessageKeySnapshotResult
 } from './mailProvider'
 
 const DEFAULT_TIMEOUT_MS = 20_000
@@ -24,6 +26,12 @@ export interface BrowserMailboxMessageSummary {
   receivedLabel: string
   receivedAt: number | null
 }
+
+export type MicrosoftMailboxMessageKind =
+  | 'microsoft_security_code'
+  | 'microsoft_unusual_signin_notification'
+  | 'microsoft_other_notification'
+  | 'unknown'
 
 export type BrowserEnsureMailboxResult =
   | { status: 'ready'; activeMailbox: string }
@@ -65,14 +73,45 @@ function clampPoll(value: number | undefined): number {
   return Math.max(MIN_POLL_MS, Math.min(MAX_POLL_MS, Math.floor(value)))
 }
 
+function normalizedSummaryText(message: BrowserMailboxMessageSummary): {
+  sender: string
+  subject: string
+  preview: string
+  combined: string
+} {
+  const sender = message.sender.replace(/\s+/g, ' ').trim().toLowerCase()
+  const subject = message.subject.replace(/\s+/g, ' ').trim().toLowerCase()
+  const preview = message.preview.replace(/\s+/g, ' ').trim().toLowerCase()
+  return { sender, subject, preview, combined: `${sender}\n${subject}\n${preview}` }
+}
+
+/** Classify Microsoft mail from list-row evidence before any message detail is opened. */
+export function classifyMicrosoftMailboxMessage(message: BrowserMailboxMessageSummary): MicrosoftMailboxMessageKind {
+  const { sender, subject, preview, combined } = normalizedSummaryText(message)
+  const microsoftEvidence = /microsoft|accountprotection(?:\.microsoft)?|account protection/.test(combined)
+  if (!microsoftEvidence) return 'unknown'
+
+  const unusualSignIn = /unusual\s+sign[ -]?in(?:\s+activity)?|suspicious\s+sign[ -]?in|unrecognized\s+sign[ -]?in/.test(`${subject}\n${preview}`)
+  if (unusualSignIn) return 'microsoft_unusual_signin_notification'
+
+  const codeEvidence = /\bsecurity\s+code\b|\bverification\s+code\b|\bone[ -]?time\s+code\b|\buse\s+(?:this\s+)?code\b|\bcode\s+to\s+verify\b|mã\s+(?:bảo\s+mật|xác\s+minh)/i.test(`${subject}\n${preview}`)
+  const trustedSender = /microsoft|accountprotection/.test(sender)
+  if (codeEvidence && trustedSender) return 'microsoft_security_code'
+
+  return 'microsoft_other_notification'
+}
+
 function messageLooksRelevant(request: MailProviderCodeRequest, message: BrowserMailboxMessageSummary): boolean {
   if (request.purpose === 'generic_verification') return true
-  const text = `${message.sender}\n${message.subject}\n${message.preview}`
-  return /microsoft|accountprotection|security|verification|xác minh|bảo mật/i.test(text)
+  return classifyMicrosoftMailboxMessage(message) === 'microsoft_security_code'
 }
 
 function validNotBefore(value: number | undefined): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null
+}
+
+function normalizeMessageKeys(values: readonly string[] | undefined): Set<string> {
+  return new Set((values ?? []).map((value) => value.trim()).filter(Boolean))
 }
 
 export class BrowserMailboxProvider<Id extends MailProviderId> implements MailProvider {
@@ -89,6 +128,45 @@ export class BrowserMailboxProvider<Id extends MailProviderId> implements MailPr
     this.id = config.providerId
     this.now = config.now ?? Date.now
     this.sleep = config.sleep ?? ((milliseconds) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)))
+  }
+
+  async snapshotMessageKeys(request: MailProviderMessageKeySnapshotRequest): Promise<MailProviderMessageKeySnapshotResult> {
+    const mailbox = normalizeMailboxAddress(request.mailbox)
+    if (!mailbox || !this.config.supportsMailbox(mailbox)) {
+      return this.snapshotResult(
+        request.mailbox.trim().toLowerCase(),
+        'unsupported_mailbox',
+        `Mailbox không thuộc provider ${this.config.providerLabel} đã biết.`,
+        []
+      )
+    }
+
+    let prepared: BrowserEnsureMailboxResult
+    try {
+      prepared = await this.driver.ensureMailbox(mailbox)
+    } catch {
+      return this.snapshotResult(mailbox, 'provider_unavailable', `Không mở được ${this.config.providerLabel} bằng Email runtime hiện tại.`, [])
+    }
+
+    if (prepared.status !== 'ready') return this.snapshotResult(mailbox, prepared.status, prepared.message, [])
+    if (normalizeMailboxAddress(prepared.activeMailbox) !== mailbox) {
+      return this.snapshotResult(mailbox, 'mailbox_not_found', `${this.config.providerLabel} đang mở mailbox khác với mailbox được yêu cầu.`, [])
+    }
+
+    let summaries: BrowserMailboxMessageSummary[]
+    try {
+      summaries = await this.driver.listMessages(this.now())
+    } catch {
+      return this.snapshotResult(mailbox, 'provider_unavailable', `Không đọc được danh sách mail từ ${this.config.providerLabel}.`, [])
+    }
+
+    const messageKeys = [...new Set(summaries.map((message) => message.key.trim()).filter(Boolean))]
+    emailDiagnostic('mailbox-provider', 'snapshot-keys', {
+      provider: this.config.providerLabel,
+      purpose: request.purpose,
+      count: messageKeys.length
+    })
+    return this.snapshotResult(mailbox, 'success', `Đã baseline message identity từ ${this.config.providerLabel}.`, messageKeys)
   }
 
   async getVerificationCode(request: MailProviderCodeRequest): Promise<MailProviderCodeResult> {
@@ -136,6 +214,7 @@ export class BrowserMailboxProvider<Id extends MailProviderId> implements MailPr
     const deadline = requestStartedAt + timeoutMs
     const consumed = this.consumedMessageKeys.get(mailbox) ?? new Set<string>()
     this.consumedMessageKeys.set(mailbox, consumed)
+    const excluded = normalizeMessageKeys(request.excludedMessageKeys)
     const firstSeen = this.firstSeenMessageAt.get(mailbox) ?? new Map<string, number>()
     this.firstSeenMessageAt.set(mailbox, firstSeen)
 
@@ -146,7 +225,8 @@ export class BrowserMailboxProvider<Id extends MailProviderId> implements MailPr
       cutoffAgeMs: requestStartedAt - freshnessCutoff,
       timeoutMs,
       pollMs,
-      consumedKeys: consumed.size
+      consumedKeys: consumed.size,
+      excludedKeys: excluded.size
     })
 
     let poll = 0
@@ -171,7 +251,12 @@ export class BrowserMailboxProvider<Id extends MailProviderId> implements MailPr
       })
 
       const candidates = summaries.flatMap((message, index) => {
-        const alreadyConsumed = consumed.has(message.key)
+        const providerConsumed = consumed.has(message.key)
+        const requestExcluded = excluded.has(message.key)
+        const alreadyConsumed = providerConsumed || requestExcluded
+        const messageKind = request.purpose === 'microsoft_security'
+          ? classifyMicrosoftMailboxMessage(message)
+          : 'unknown'
         const relevant = messageLooksRelevant(request, message)
         const receivedAt = this.effectiveReceivedAt(message, now, firstSeen)
         const tooOld = receivedAt !== null && receivedAt < freshnessCutoff
@@ -182,13 +267,14 @@ export class BrowserMailboxProvider<Id extends MailProviderId> implements MailPr
           provider: this.config.providerLabel,
           poll,
           index,
-          consumed: alreadyConsumed,
+          consumed: providerConsumed,
+          excluded: requestExcluded,
           relevant,
+          messageKind,
           receivedLabel: message.receivedLabel,
           timestampKnown: receivedAt !== null,
           ageMs: receivedAt === null ? null : now - receivedAt,
-          fresh,
-          preview: message.preview
+          fresh
         })
 
         if (alreadyConsumed || !relevant || !fresh || receivedAt === null) return []
@@ -245,8 +331,7 @@ export class BrowserMailboxProvider<Id extends MailProviderId> implements MailPr
           poll,
           candidateIndex,
           matched: match !== null,
-          codeLength: match?.code.length ?? 0,
-          subject: snapshot.subject
+          codeLength: match?.code.length ?? 0
         })
         if (!match) continue
 
@@ -305,6 +390,21 @@ export class BrowserMailboxProvider<Id extends MailProviderId> implements MailPr
     if (existing !== undefined) return existing
     firstSeen.set(message.key, now)
     return now
+  }
+
+  private snapshotResult(
+    mailbox: string,
+    status: MailProviderMessageKeySnapshotResult['status'],
+    message: string,
+    messageKeys: readonly string[]
+  ): MailProviderMessageKeySnapshotResult {
+    return {
+      providerId: this.id,
+      mailbox,
+      status,
+      messageKeys,
+      message
+    }
   }
 
   private result(
