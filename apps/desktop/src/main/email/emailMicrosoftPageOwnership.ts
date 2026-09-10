@@ -62,9 +62,10 @@ export async function waitForMicrosoftOwnedPage(page: Page, timeoutMs = 8_000): 
 }
 
 /**
- * Microsoft can open a second auth page after account-picker / username / password actions,
- * not only from the Outlook landing CTA. Track pages that did not exist when this login loop
- * started and adopt the newest Microsoft-owned page. Existing operator tabs are ignored.
+ * Microsoft can open a second auth page after account-picker / username / password actions.
+ * A newly proven Microsoft-owned page becomes the single operator page; retire the previous
+ * Microsoft-owned operator immediately so an Outlook/auth sibling cannot remain visible.
+ * Unrelated operator tabs are never closed here.
  */
 export async function adoptNewestMicrosoftFlowPage(
   activePage: Page,
@@ -87,6 +88,9 @@ export async function adoptNewestMicrosoftFlowPage(
     }
 
     if (candidate.isClosed() || !isMicrosoftOwnedNavigationUrl(candidate.url())) continue
+    if (!activePage.isClosed() && isMicrosoftOwnedNavigationUrl(activePage.url())) {
+      await activePage.close({ runBeforeUnload: false }).catch(() => undefined)
+    }
     await candidate.bringToFront().catch(() => undefined)
     await closeDuplicateMicrosoftAuthPages(candidate)
     return candidate

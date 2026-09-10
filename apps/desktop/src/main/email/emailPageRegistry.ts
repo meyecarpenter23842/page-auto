@@ -41,12 +41,24 @@ export interface EmailPageRegistrySnapshot {
 }
 
 /**
+ * A newly launched persistent Chrome profile normally owns exactly one
+ * about:blank page. That page is safe to promote into the Email operator page;
+ * once any other live page exists, blank tabs are treated as unrelated again.
+ */
+export function soleInitialBlankPage(pages: readonly Page[]): Page | null {
+  const openPages = pages.filter((page) => !page.isClosed())
+  return openPages.length === 1 && openPages[0]?.url() === 'about:blank'
+    ? openPages[0]
+    : null
+}
+
+/**
  * Resolves browser pages by explicit role evidence instead of tab index.
  *
- * The registry deliberately does not own navigation or cleanup. Callers decide
- * whether an existing role-matching page can be reused for a target, while the
- * registry guarantees that a mailbox/operator page is never selected merely
- * because it happens to be context.pages()[0].
+ * The registry keeps one visible Microsoft operator page. Exact target evidence
+ * wins, then any existing Microsoft/Outlook operator page can be navigated to the
+ * requested target, then the sole initial about:blank page may be promoted. It
+ * never reuses provider or arbitrary unrelated tabs.
  */
 export class EmailPageRegistry {
   constructor(private readonly context: BrowserContext) {}
@@ -91,12 +103,16 @@ export class EmailPageRegistry {
   }
 
   async resolveOrCreate(role: 'microsoft_auth' | 'outlook_mail', predicate?: (page: Page) => boolean): Promise<Page> {
-    return this.newest(role, predicate) ?? await this.context.newPage()
+    return this.newest(role, predicate)
+      ?? this.newestMicrosoft()
+      ?? soleInitialBlankPage(this.context.pages())
+      ?? await this.context.newPage()
   }
 
   async resolveMicrosoftActionPage(predicate?: (page: Page) => boolean): Promise<Page> {
     return this.newestMicrosoft(predicate)
       ?? this.newestMicrosoft()
+      ?? soleInitialBlankPage(this.context.pages())
       ?? await this.context.newPage()
   }
 }
