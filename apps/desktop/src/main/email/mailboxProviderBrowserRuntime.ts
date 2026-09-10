@@ -13,10 +13,10 @@ export type MailboxProviderBrowserLauncher = (options: {
 }) => Promise<Browser>
 
 export interface MailboxProviderBrowserConfig {
-  executablePath?: string
-  proxy?: MailboxProviderProxyConfig
+  executablePath?: string | undefined
+  proxy?: MailboxProviderProxyConfig | undefined
   /** Test seam; production uses Playwright chromium.launch. */
-  launchBrowser?: MailboxProviderBrowserLauncher
+  launchBrowser?: MailboxProviderBrowserLauncher | undefined
 }
 
 interface MailboxProviderBrowserRuntime {
@@ -37,7 +37,11 @@ export function configureMailboxProviderBrowser(
   operatorContext: BrowserContext,
   config: MailboxProviderBrowserConfig
 ): void {
-  configs.set(operatorContext, { ...config })
+  configs.set(operatorContext, {
+    ...(config.executablePath ? { executablePath: config.executablePath } : {}),
+    ...(config.proxy ? { proxy: config.proxy } : {}),
+    ...(config.launchBrowser ? { launchBrowser: config.launchBrowser } : {})
+  })
   if (cleanupBound.has(operatorContext)) return
   cleanupBound.add(operatorContext)
 
