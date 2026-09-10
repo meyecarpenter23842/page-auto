@@ -22,10 +22,13 @@ import {
   type MicrosoftSurfaceDetection
 } from './microsoftSurfaceDetector'
 
-type MicrosoftRecoveryV2Surface =
+export type MicrosoftRecoveryV2Surface =
   | 'recovery_method_choice'
   | 'recovery_email_confirmation'
   | 'recovery_code'
+
+const RECOVERY_CODE_SETTLE_PROBES = 4
+const RECOVERY_CODE_SETTLE_INTERVAL_MS = 500
 
 export interface MicrosoftAuthV2WorkerCredentials {
   accountId: number
@@ -71,6 +74,63 @@ export async function waitForMicrosoftAuthStep(page: Page): Promise<void> {
     page.waitForTimeout(900)
   ])
   await page.waitForTimeout(150)
+}
+
+/**
+ * Inboxes/ad pages can be created while a recovery handler is reading code.
+ * Creating a new Chromium tab steals foreground even when Playwright then works
+ * with that provider tab in the background. Keep the Microsoft operator page in
+ * front without closing/navigating the provider page or changing its ownership.
+ */
+export async function keepMicrosoftForegroundDuring<T>(
+  page: Page,
+  task: () => Promise<T>
+): Promise<T> {
+  const context = page.context()
+  const restoreForeground = (_openedPage: Page): void => {
+    if (page.isClosed()) return
+    void page.bringToFront().catch(() => undefined)
+  }
+
+  context.on('page', restoreForeground)
+  try {
+    if (!page.isClosed()) await page.bringToFront().catch(() => undefined)
+    return await task()
+  } finally {
+    context.off('page', restoreForeground)
+    if (!page.isClosed()) await page.bringToFront().catch(() => undefined)
+  }
+}
+
+/**
+ * A handler result belongs to the surface that was detected before the handler
+ * started. If Microsoft has already moved to another audited surface meanwhile,
+ * that live state is authoritative and the dispatcher must detect/dispatch it
+ * instead of terminating on a stale recovery result.
+ */
+export function shouldYieldRecoveryNeedsAttentionToFreshSurface(
+  handledSurface: MicrosoftRecoveryV2Surface,
+  currentSurface: EmailAuthV2Surface | null
+): boolean {
+  return currentSurface !== null && currentSurface !== handledSurface
+}
+
+/**
+ * After submitting a recovery code Microsoft can hydrate Stay signed in (or the
+ * next auth surface) slightly after the click. Give that transition a bounded
+ * settle window before allowing another recovery_code dispatch, otherwise the
+ * new handler can begin a long mailbox wait while Microsoft is already leaving
+ * the old code surface.
+ */
+async function settleHandledRecoveryCode(page: Page): Promise<void> {
+  await waitForMicrosoftAuthStep(page)
+  for (let probe = 0; probe < RECOVERY_CODE_SETTLE_PROBES; probe += 1) {
+    const detected = await detectMicrosoftSurface(page).catch(() => null)
+    if (!detected || detected.surface !== 'recovery_code') return
+    if (probe + 1 < RECOVERY_CODE_SETTLE_PROBES) {
+      await page.waitForTimeout(RECOVERY_CODE_SETTLE_INTERVAL_MS).catch(() => undefined)
+    }
+  }
 }
 
 async function clickUseYourPassword(page: Page): Promise<boolean> {
@@ -207,10 +267,25 @@ export async function runMicrosoftAuthV2WorkerController(
   }
 
   const recovery = async (surface: MicrosoftRecoveryV2Surface): Promise<EmailAuthV2HandlerResult> => {
-    const result = await handleMicrosoftRecoveryChallenge(page, surface, credentials.backupEmail)
-    if (result.status === 'needs_attention') return setAttention('security_review', result.message)
+    const result = await keepMicrosoftForegroundDuring(
+      page,
+      async () => await handleMicrosoftRecoveryChallenge(page, surface, credentials.backupEmail)
+    )
+
+    if (result.status === 'needs_attention') {
+      const current = await detectMicrosoftSurface(page).catch(() => null)
+      if (shouldYieldRecoveryNeedsAttentionToFreshSurface(surface, current?.surface ?? null)) {
+        return { kind: 'handled' }
+      }
+      return setAttention('security_review', result.message)
+    }
+
     attempted = true
-    await waitForMicrosoftAuthStep(page)
+    if (surface === 'recovery_code') {
+      await settleHandledRecoveryCode(page)
+    } else {
+      await waitForMicrosoftAuthStep(page)
+    }
     return { kind: 'handled' }
   }
 
