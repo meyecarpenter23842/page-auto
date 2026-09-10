@@ -13,7 +13,8 @@ import {
   normalizeMailboxAddress,
   type MailProvider,
   type MailProviderCodeResult,
-  type MailProviderId
+  type MailProviderId,
+  type MailProviderResultStatus
 } from './mailProvider'
 import { resolveMailProviderId } from './mailProviderRegistry'
 
@@ -31,8 +32,10 @@ export interface MailboxCodeServiceRequest {
   challengeId: string
   /** Earliest acceptable provider message timestamp for this challenge. */
   notBefore?: number
-  /** Message keys already consumed by the durable recovery round. */
+  /** Message keys already consumed by the durable recovery session/round. */
   consumedMessageKeys: readonly string[]
+  /** Message keys present before Send code for this round; never candidates for the new challenge. */
+  baselineMessageKeys?: readonly string[]
   timeoutMs?: number
   pollIntervalMs?: number
 }
@@ -40,6 +43,19 @@ export interface MailboxCodeServiceRequest {
 export interface MailboxCodeServiceResult extends MailProviderCodeResult {
   challengeId: string
   consumedMessageKeys: readonly string[]
+}
+
+export interface MailboxCodeChallengeBaselineRequest {
+  mailbox: string
+  providerId: MailProviderId
+}
+
+export interface MailboxCodeChallengeBaselineResult {
+  providerId: MailProviderId
+  mailbox: string
+  status: MailProviderResultStatus
+  messageKeys: readonly string[]
+  message: string
 }
 
 export interface MailboxCodeProviderSession {
@@ -59,8 +75,16 @@ function boundedTimeout(value: number | undefined): number {
   return Math.max(0, Math.min(MAX_TIMEOUT_MS, Math.floor(value)))
 }
 
-function normalizeConsumedKeys(values: readonly string[]): Set<string> {
-  return new Set(values.map((value) => value.trim()).filter(Boolean))
+function normalizeMessageKeys(values: readonly string[] | undefined): Set<string> {
+  return new Set((values ?? []).map((value) => value.trim()).filter(Boolean))
+}
+
+function unionMessageKeys(...sets: readonly Set<string>[]): Set<string> {
+  const result = new Set<string>()
+  for (const set of sets) {
+    for (const key of set) result.add(key)
+  }
+  return result
 }
 
 function withServiceMetadata(
@@ -95,6 +119,21 @@ function failureResult(
   }
 }
 
+function baselineFailure(
+  request: MailboxCodeChallengeBaselineRequest,
+  mailbox: string,
+  status: MailProviderResultStatus,
+  message: string
+): MailboxCodeChallengeBaselineResult {
+  return {
+    providerId: request.providerId,
+    mailbox,
+    status,
+    messageKeys: [],
+    message
+  }
+}
+
 async function recoverInboxesProviderPage(page: Page, remainingMs: number): Promise<void> {
   if (page.isClosed() || remainingMs <= 0) return
   const options = {
@@ -117,21 +156,80 @@ async function recoverInboxesProviderPage(page: Page, remainingMs: number): Prom
 /**
  * Auth V2 mailbox-code boundary.
  *
- * It owns provider page/provider instance reuse and durable consumed-message-key
- * filtering. It intentionally knows nothing about Microsoft DOM, Microsoft Next,
- * authentication success, or recovery-round cleanup.
+ * It owns provider page/provider instance reuse, cross-round consumed-message
+ * identity, and pre-Send baseline filtering. It intentionally knows nothing
+ * about Microsoft DOM, Microsoft Next, authentication success, or round cleanup.
  */
 export class MailboxCodeService {
   private readonly now: () => number
   private readonly sessions = new Map<MailProviderId, MailboxCodeProviderSession>()
+  private readonly sessionConsumedMessageKeys = new Map<string, Set<string>>()
 
   constructor(private readonly dependencies: MailboxCodeServiceDependencies) {
     this.now = dependencies.now ?? Date.now
   }
 
+  /** Snapshot message identity before Microsoft Send code without opening message detail. */
+  async prepareChallengeBaseline(request: MailboxCodeChallengeBaselineRequest): Promise<MailboxCodeChallengeBaselineResult> {
+    const mailbox = normalizeMailboxAddress(request.mailbox) ?? request.mailbox.trim().toLowerCase()
+    const resolvedProviderId = resolveMailProviderId(mailbox)
+    if (!mailbox || resolvedProviderId !== request.providerId) {
+      return baselineFailure(request, mailbox, 'unsupported_mailbox', 'Mailbox/provider không khớp canonical provider đã resolve.')
+    }
+    if (request.providerId !== 'inboxes') {
+      return baselineFailure(request, mailbox, 'unsupported_mailbox', `Baseline challenge chưa migrate provider ${request.providerId}.`)
+    }
+
+    const session = await this.resolveSession(request.providerId)
+    if (!session) {
+      return baselineFailure(request, mailbox, 'provider_unavailable', 'Không resolve/adopt được provider page cho Inboxes trước Send code.')
+    }
+
+    const vignetteState = await dismissInboxesGoogleVignette(session.page)
+    if (vignetteState === 'blocked') {
+      return baselineFailure(request, mailbox, 'provider_unavailable', 'Google vignette trên Inboxes đang chặn baseline trước Send code.')
+    }
+
+    const snapshot = session.provider.snapshotMessageKeys
+    if (!snapshot) {
+      return baselineFailure(request, mailbox, 'provider_unavailable', 'Provider Inboxes hiện tại không hỗ trợ baseline message identity.')
+    }
+
+    const pagesBeforeSnapshot = snapshotInboxesContextPages(session.page)
+    let result: Awaited<ReturnType<NonNullable<MailProvider['snapshotMessageKeys']>>>
+    try {
+      result = await snapshot.call(session.provider, {
+        mailbox,
+        role: 'recovery',
+        purpose: 'microsoft_security'
+      })
+    } catch {
+      return baselineFailure(request, mailbox, 'provider_unavailable', 'Không snapshot được message identity từ Inboxes trước Send code.')
+    }
+
+    const unexpectedPopupCount = await closeUnexpectedInboxesPopupPages(session.page, pagesBeforeSnapshot)
+    if (unexpectedPopupCount > 0 || hasInboxesProviderEscaped(session.page) || session.page.isClosed()) {
+      this.sessions.delete(request.providerId)
+      return baselineFailure(request, mailbox, 'provider_unavailable', 'Inboxes đổi/đóng provider page trong lúc baseline trước Send code.')
+    }
+
+    if (result.providerId !== request.providerId || normalizeMailboxAddress(result.mailbox) !== mailbox) {
+      return baselineFailure(request, mailbox, 'provider_unavailable', 'Provider trả baseline không khớp mailbox/provider canonical.')
+    }
+
+    return {
+      providerId: request.providerId,
+      mailbox,
+      status: result.status,
+      messageKeys: [...normalizeMessageKeys(result.messageKeys)],
+      message: result.message
+    }
+  }
+
   async getFreshCode(request: MailboxCodeServiceRequest): Promise<MailboxCodeServiceResult> {
     const mailbox = normalizeMailboxAddress(request.mailbox) ?? request.mailbox.trim().toLowerCase()
-    const consumed = normalizeConsumedKeys(request.consumedMessageKeys)
+    const suppliedConsumed = normalizeMessageKeys(request.consumedMessageKeys)
+    const baseline = normalizeMessageKeys(request.baselineMessageKeys)
     const resolvedProviderId = resolveMailProviderId(mailbox)
 
     if (!mailbox || resolvedProviderId !== request.providerId) {
@@ -140,7 +238,7 @@ export class MailboxCodeService {
         mailbox,
         'unsupported_mailbox',
         'Mailbox/provider không khớp canonical provider đã resolve.',
-        consumed
+        suppliedConsumed
       )
     }
 
@@ -152,9 +250,13 @@ export class MailboxCodeService {
         mailbox,
         'unsupported_mailbox',
         `MailboxCodeService chưa migrate provider ${request.providerId}.`,
-        consumed
+        suppliedConsumed
       )
     }
+
+    const consumed = this.sessionConsumedMessageKeys.get(mailbox) ?? new Set<string>()
+    for (const key of suppliedConsumed) consumed.add(key)
+    this.sessionConsumedMessageKeys.set(mailbox, consumed)
 
     const timeoutMs = boundedTimeout(request.timeoutMs)
     const startedAt = this.now()
@@ -209,11 +311,13 @@ export class MailboxCodeService {
 
       const remainingMs = Math.max(0, deadline - this.now())
       const pagesBeforeProviderRead = snapshotInboxesContextPages(session.page)
+      const excludedMessageKeys = [...unionMessageKeys(consumed, baseline)]
       const providerResult = await session.provider.getVerificationCode({
         mailbox,
         role: 'recovery',
         purpose: 'microsoft_security',
         ...(request.notBefore === undefined ? {} : { notBefore: request.notBefore }),
+        excludedMessageKeys,
         timeoutMs: timeoutMs === 0 ? 0 : remainingMs,
         ...(request.pollIntervalMs === undefined ? {} : { pollIntervalMs: request.pollIntervalMs })
       })
@@ -328,28 +432,28 @@ export class MailboxCodeService {
         )
       }
 
-      if (!consumed.has(messageKey)) {
+      if (!consumed.has(messageKey) && !baseline.has(messageKey)) {
         consumed.add(messageKey)
         return withServiceMetadata(request, providerResult, consumed)
       }
 
-      // The provider instance now marks this key consumed internally. Repeat on
-      // the same instance to reach the next candidate. If the page/provider was
-      // recreated, the durable round key set still prevents reuse here.
+      // A provider adapter that does not understand excludedMessageKeys can still
+      // return an old key. Keep the service boundary authoritative and retry the
+      // same request; recreated adapters receive the same durable exclusion set.
       consumedSkips += 1
       if (consumedSkips >= MAX_CONSUMED_SKIPS || (timeoutMs > 0 && this.now() >= deadline)) {
         return failureResult(
           request,
           mailbox,
           timeoutMs === 0 ? 'message_not_found' : 'timeout',
-          'Không có verification message mới sau khi loại các messageKey đã consume.',
+          'Không có verification message mới sau khi loại baseline/consumed messageKey.',
           consumed
         )
       }
     }
   }
 
-  /** Drop only the cached handle. Provider tabs are not closed by this service. */
+  /** Drop only the cached handle. Provider tabs and cross-round consumed identity stay intact. */
   invalidateProvider(providerId: MailProviderId): void {
     this.sessions.delete(providerId)
   }

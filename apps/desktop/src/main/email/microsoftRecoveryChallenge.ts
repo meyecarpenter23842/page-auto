@@ -45,6 +45,10 @@ interface MicrosoftRecoverySession {
   provider: MailProvider | null
   mailboxCodeService: MailboxCodeService | null
   round: EmailRecoveryRoundContract | null
+  /** Durable across multiple Send-code rounds in the same auth/recovery session. */
+  sessionConsumedMessageKeys: string[]
+  /** Captured immediately before Send code and transferred into the next round. */
+  pendingBaselineMessageKeys: string[]
 }
 
 const sessions = new WeakMap<BrowserContext, MicrosoftRecoverySession>()
@@ -170,10 +174,23 @@ function codeFingerprint(code: string): string {
   return createHash('sha256').update(code).digest('hex').slice(0, 16)
 }
 
-function createRecoveryRound(
+function uniqueMessageKeys(...values: readonly (readonly string[])[]): string[] {
+  const keys = new Set<string>()
+  for (const list of values) {
+    for (const value of list) {
+      const key = value.trim()
+      if (key) keys.add(key)
+    }
+  }
+  return [...keys]
+}
+
+export function createMicrosoftRecoveryRound(
   mailbox: string,
   providerId: MailProviderId,
-  requestedAt: number | null
+  requestedAt: number | null,
+  baselineMessageKeys: readonly string[] = [],
+  sessionConsumedMessageKeys: readonly string[] = []
 ): EmailRecoveryRoundContract {
   recoveryChallengeSequence += 1
   return {
@@ -181,7 +198,8 @@ function createRecoveryRound(
     mailbox,
     providerId,
     requestedAt,
-    consumedMessageKeys: [],
+    baselineMessageKeys: uniqueMessageKeys(baselineMessageKeys),
+    consumedMessageKeys: uniqueMessageKeys(sessionConsumedMessageKeys),
     lastSubmittedMessageKey: null,
     lastSubmittedCodeFingerprint: null,
     submitAttempts: 0
@@ -229,7 +247,9 @@ function sessionFor(context: BrowserContext, mailbox: string): MicrosoftRecovery
     providerId: null,
     provider: null,
     mailboxCodeService: null,
-    round: null
+    round: null,
+    sessionConsumedMessageKeys: [],
+    pendingBaselineMessageKeys: []
   }
   sessions.set(context, created)
   return created
@@ -249,6 +269,8 @@ export function completeMicrosoftRecoveryAfterAuthenticated(context: BrowserCont
   state.requestedAt = null
   state.methodChoiceAttempts = 0
   state.round = null
+  state.sessionConsumedMessageKeys = []
+  state.pendingBaselineMessageKeys = []
   if (state.mailboxCodeService) {
     state.mailboxCodeService.invalidateProvider('inboxes')
     state.mailboxCodeService = null
@@ -349,12 +371,19 @@ async function warmMailboxBeforeSend(
     }
   }
 
-  // Inboxes has trustworthy received timestamps and Batch 4 owns a durable
-  // consumed-message set. Do not waste time opening/baselining old mail before
-  // Send code; initialize the background service and let notBefore=requestedAt
-  // select the fresh message after Microsoft actually sends it.
   if (providerId === 'inboxes') {
     state.mailboxCodeService ??= createMailboxCodeService(microsoftPage.context())
+    const baseline = await state.mailboxCodeService.prepareChallengeBaseline({
+      mailbox: state.mailbox,
+      providerId
+    })
+    if (baseline.status !== 'success') {
+      return {
+        status: 'needs_attention',
+        message: baseline.message
+      }
+    }
+    state.pendingBaselineMessageKeys = uniqueMessageKeys(baseline.messageKeys)
     return { status: 'handled' }
   }
 
@@ -438,9 +467,6 @@ async function confirmRecoveryEmailAndSend(
     return { status: 'needs_attention', message: 'Không xác định duy nhất ô nhập Mail KP trên màn Microsoft hiện tại.' }
   }
 
-  const warmed = await warmMailboxBeforeSend(page, state)
-  if (warmed.status === 'needs_attention') return warmed
-
   await input.fill(confirmation.value)
   const filled = (await input.inputValue().catch(() => '')).trim().toLowerCase()
   if (filled !== confirmation.value.toLowerCase()) {
@@ -458,6 +484,21 @@ async function confirmRecoveryEmailAndSend(
     return { status: 'needs_attention', message: 'Nút Send code của Microsoft chưa ở trạng thái có thể thao tác.' }
   }
 
+  // Take the mailbox identity baseline at the actual Send-code boundary, after
+  // the form is filled and the control is known to be actionable. This closes
+  // the gap where a delayed code from the preceding challenge could arrive
+  // between an early baseline and this click.
+  const warmed = await warmMailboxBeforeSend(page, state)
+  if (warmed.status === 'needs_attention') return warmed
+
+  const boundaryFilled = (await input.inputValue().catch(() => '')).trim().toLowerCase()
+  const sendReadyAtBoundary = await send.isVisible().catch(() => false)
+    && await send.isEnabled().catch(() => false)
+  if (boundaryFilled !== confirmation.value.toLowerCase() || !sendReadyAtBoundary) {
+    if (microsoftRecoveryBrowserProviderId(state.mailbox) !== 'inboxes') await endLegacyProviderRound(state)
+    return { status: 'needs_attention', message: 'Microsoft đổi trạng thái form trong lúc baseline Mail KP; PAGE-AUTO không bấm Send code trên surface cũ.' }
+  }
+
   const requestedAt = Date.now()
   try {
     await send.click({ timeout: 8_000 })
@@ -470,10 +511,14 @@ async function confirmRecoveryEmailAndSend(
   state.requestedAt = requestedAt
   state.methodChoiceAttempts = 0
   if (providerId === 'inboxes') {
-    // A successful Send creates a new logical code challenge. Old message keys
-    // from a previous challenge must not leak into this round, while a reject
-    // within this same round keeps the set and therefore cannot reuse that mail.
-    state.round = createRecoveryRound(state.mailbox, providerId, requestedAt)
+    state.round = createMicrosoftRecoveryRound(
+      state.mailbox,
+      providerId,
+      requestedAt,
+      state.pendingBaselineMessageKeys,
+      state.sessionConsumedMessageKeys
+    )
+    state.pendingBaselineMessageKeys = []
   }
   await page.waitForTimeout(350)
   return { status: 'handled' }
@@ -542,7 +587,13 @@ async function readAndSubmitInboxesRecoveryCode(
   resumedWithoutRoundState: boolean
 ): Promise<MicrosoftRecoveryChallengeResult> {
   state.mailboxCodeService ??= createMailboxCodeService(page.context())
-  state.round ??= createRecoveryRound(state.mailbox, 'inboxes', state.requestedAt)
+  state.round ??= createMicrosoftRecoveryRound(
+    state.mailbox,
+    'inboxes',
+    state.requestedAt,
+    [],
+    state.sessionConsumedMessageKeys
+  )
 
   const notBefore = state.requestedAt !== null
     ? Math.max(1, state.requestedAt - 5_000)
@@ -553,14 +604,16 @@ async function readAndSubmitInboxesRecoveryCode(
     providerId: 'inboxes',
     challengeId: state.round.challengeId,
     notBefore,
-    consumedMessageKeys: state.round.consumedMessageKeys,
+    baselineMessageKeys: state.round.baselineMessageKeys,
+    consumedMessageKeys: uniqueMessageKeys(state.sessionConsumedMessageKeys, state.round.consumedMessageKeys),
     timeoutMs: rejectedPreviousCode ? INBOXES_REJECTED_CODE_TIMEOUT_MS : INBOXES_CODE_TIMEOUT_MS,
     pollIntervalMs: INBOXES_CODE_POLL_MS
   })
 
+  state.sessionConsumedMessageKeys = uniqueMessageKeys(state.sessionConsumedMessageKeys, codeResult.consumedMessageKeys)
   state.round = {
     ...state.round,
-    consumedMessageKeys: [...codeResult.consumedMessageKeys]
+    consumedMessageKeys: [...state.sessionConsumedMessageKeys]
   }
 
   if (codeResult.status !== 'success' || !codeResult.code || !codeResult.messageKey) {
@@ -578,6 +631,7 @@ async function readAndSubmitInboxesRecoveryCode(
   }
 
   state.round = microsoftRecoveryRecordSubmittedCode(state.round, codeResult.messageKey, codeResult.code)
+  state.sessionConsumedMessageKeys = uniqueMessageKeys(state.sessionConsumedMessageKeys, state.round.consumedMessageKeys)
   return await submitSecurityCode(page, codeResult.code)
 }
 

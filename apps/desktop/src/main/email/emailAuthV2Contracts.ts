@@ -90,6 +90,9 @@ export interface EmailRecoveryRoundContract {
   mailbox: string
   providerId: MailProviderId | null
   requestedAt: number | null
+  /** Message identity present before Send code; authority preventing old mail from entering this round. */
+  baselineMessageKeys: readonly string[]
+  /** Message identity already consumed/submitted in this auth recovery session/round. */
   consumedMessageKeys: readonly string[]
   lastSubmittedMessageKey: string | null
   lastSubmittedCodeFingerprint: string | null
