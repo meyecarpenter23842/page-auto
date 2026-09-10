@@ -65,7 +65,10 @@ export interface MailboxCodeProviderSession {
 }
 
 export interface MailboxCodeServiceDependencies {
-  resolveProviderSession: (providerId: MailProviderId) => Promise<MailboxCodeProviderSession | null>
+  resolveProviderSession: (
+    providerId: MailProviderId,
+    preferredPage?: Page | null
+  ) => Promise<MailboxCodeProviderSession | null>
   now?: () => number
 }
 
@@ -148,8 +151,8 @@ async function recoverInboxesProviderPage(page: Page, remainingMs: number): Prom
       await page.reload(options)
     }
   } catch {
-    // The next resolve decides whether this page is still adoptable or whether
-    // a fresh provider page is required. Recovery remains bounded by the caller.
+    // The same explicitly owned provider page remains the preferred recovery
+    // target even if navigation/reload failed or left it at about:blank.
   }
 }
 
@@ -163,6 +166,7 @@ async function recoverInboxesProviderPage(page: Page, remainingMs: number): Prom
 export class MailboxCodeService {
   private readonly now: () => number
   private readonly sessions = new Map<MailProviderId, MailboxCodeProviderSession>()
+  private readonly ownedProviderPages = new Map<MailProviderId, Page>()
   private readonly sessionConsumedMessageKeys = new Map<string, Set<string>>()
 
   constructor(private readonly dependencies: MailboxCodeServiceDependencies) {
@@ -453,7 +457,7 @@ export class MailboxCodeService {
     }
   }
 
-  /** Drop only the cached handle. Provider tabs and cross-round consumed identity stay intact. */
+  /** Drop only the cached adapter handle. Owned provider page and consumed identity stay intact. */
   invalidateProvider(providerId: MailProviderId): void {
     this.sessions.delete(providerId)
   }
@@ -461,11 +465,15 @@ export class MailboxCodeService {
   private async resolveSession(providerId: MailProviderId): Promise<MailboxCodeProviderSession | null> {
     const existing = this.sessions.get(providerId)
     if (existing && this.isSessionReusable(existing)) return existing
+
+    const ownedPage = existing?.page ?? this.ownedProviderPages.get(providerId) ?? null
     if (existing) this.sessions.delete(providerId)
+    if (ownedPage?.isClosed()) this.ownedProviderPages.delete(providerId)
+    const preferredPage = ownedPage && !ownedPage.isClosed() ? ownedPage : null
 
     let resolved: MailboxCodeProviderSession | null
     try {
-      resolved = await this.dependencies.resolveProviderSession(providerId)
+      resolved = await this.dependencies.resolveProviderSession(providerId, preferredPage)
     } catch {
       // A closed/crashed Playwright context can reject context.newPage(). Keep
       // this boundary structured so Auth V2 can handle provider unavailability.
@@ -473,6 +481,7 @@ export class MailboxCodeService {
     }
     if (!resolved || resolved.page.isClosed() || resolved.provider.id !== providerId) return null
     this.sessions.set(providerId, resolved)
+    this.ownedProviderPages.set(providerId, resolved.page)
     return resolved
   }
 
@@ -492,14 +501,23 @@ export function newestOpenInboxesProviderPage(pages: readonly Page[]): Page | nu
   return null
 }
 
+export function ownedOrNewestOpenInboxesProviderPage(
+  ownedPage: Page | null | undefined,
+  pages: readonly Page[]
+): Page | null {
+  if (ownedPage && !ownedPage.isClosed()) return ownedPage
+  return newestOpenInboxesProviderPage(pages)
+}
+
 export interface CreateMailboxCodeServiceOptions {
   now?: () => number
 }
 
 /**
- * Production owner: adopt an existing Inboxes tab when possible; only create a
- * provider page when none exists. Never closes pages and never calls
- * bringToFront(), so mailbox work does not explicitly steal Microsoft focus.
+ * Production owner: reclaim the service-owned Inboxes page first, even when a
+ * failed refresh temporarily left that owned page at about:blank/another URL.
+ * Only when no owned/open provider page exists may a new page be created.
+ * Never closes unrelated pages and never calls bringToFront().
  */
 export function createMailboxCodeService(
   context: BrowserContext,
@@ -509,12 +527,14 @@ export function createMailboxCodeService(
 
   return new MailboxCodeService({
     ...(options.now ? { now: options.now } : {}),
-    resolveProviderSession: async (providerId) => {
+    resolveProviderSession: async (providerId, preferredPage) => {
       if (providerId !== 'inboxes') return null
 
       try {
-        const existing = newestOpenInboxesProviderPage(registry.pages('mailbox_provider'))
-        const page = existing ?? await context.newPage()
+        const page = ownedOrNewestOpenInboxesProviderPage(
+          preferredPage,
+          registry.pages('mailbox_provider')
+        ) ?? await context.newPage()
         if (page.isClosed()) return null
 
         return {
