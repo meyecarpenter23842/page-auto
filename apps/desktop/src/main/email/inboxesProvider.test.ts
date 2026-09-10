@@ -166,11 +166,10 @@ describe('InboxesProvider', () => {
     expect(readMessage).not.toHaveBeenCalled()
   })
 
-  it('polls pushed DOM state without driving the Inboxes refresh control, then returns timeout when none arrives', async () => {
+  it('polls by state until a new message arrives and returns timeout when none arrives', async () => {
     let now = 2_000_000
     let reads = 0
     const mail = summary('mail-new', undefined, now + 1_000)
-    const refreshMailbox = vi.fn(async () => undefined)
     const driver: InboxesMailboxDriver = {
       ensureMailbox: async (mailbox) => ({ status: 'ready', activeMailbox: mailbox }),
       listMessages: async () => {
@@ -178,7 +177,7 @@ describe('InboxesProvider', () => {
         return reads >= 2 ? [mail] : []
       },
       readMessage: async (message) => snapshot(message, '778899'),
-      refreshMailbox
+      refreshMailbox: vi.fn(async () => undefined)
     }
     const provider = new InboxesProvider(driver, {
       now: () => now,
@@ -196,14 +195,12 @@ describe('InboxesProvider', () => {
     expect(result.status).toBe('success')
     expect(result.code).toBe('778899')
     expect(reads).toBe(2)
-    expect(refreshMailbox).not.toHaveBeenCalled()
 
-    const emptyRefreshMailbox = vi.fn(async () => undefined)
     const emptyProvider = new InboxesProvider({
       ensureMailbox: async (mailbox) => ({ status: 'ready', activeMailbox: mailbox }),
       listMessages: async () => [],
       readMessage: async () => null,
-      refreshMailbox: emptyRefreshMailbox
+      refreshMailbox: async () => undefined
     }, {
       now: () => now,
       sleep: async (milliseconds) => { now += milliseconds }
@@ -217,6 +214,5 @@ describe('InboxesProvider', () => {
       pollIntervalMs: 500
     })
     expect(timeout.status).toBe('timeout')
-    expect(emptyRefreshMailbox).not.toHaveBeenCalled()
   })
 })

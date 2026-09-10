@@ -1,6 +1,9 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import type { Page } from 'playwright-core'
+import type { InboxesMailboxDriver } from './inboxesProvider'
 import {
   createInboxesStableFallbackMessageKey,
+  InboxesVisibleCodeFallbackDriver,
   parseInboxesVisibleCodeRow
 } from './inboxesVisibleCodeFallbackDriver'
 
@@ -57,5 +60,39 @@ describe('Inboxes visible-code row fallback', () => {
       'Microsoft account team Microsoft account security code 481726',
       1_000_000
     )).toBeNull()
+  })
+
+  it('uses the poll refresh hook only as a provider-page health check', async () => {
+    const baseRefresh = vi.fn(async () => undefined)
+    const base: InboxesMailboxDriver = {
+      ensureMailbox: async (mailbox) => ({ status: 'ready', activeMailbox: mailbox }),
+      listMessages: async () => [],
+      readMessage: async () => null,
+      refreshMailbox: baseRefresh
+    }
+    const page = {
+      isClosed: () => false,
+      url: () => 'https://inboxes.com/'
+    } as unknown as Page
+    const driver = new InboxesVisibleCodeFallbackDriver(page, base)
+
+    await expect(driver.refreshMailbox()).resolves.toBeUndefined()
+    expect(baseRefresh).not.toHaveBeenCalled()
+  })
+
+  it('fails the poll health check promptly when the owned Inboxes page is lost', async () => {
+    const base: InboxesMailboxDriver = {
+      ensureMailbox: async (mailbox) => ({ status: 'ready', activeMailbox: mailbox }),
+      listMessages: async () => [],
+      readMessage: async () => null,
+      refreshMailbox: async () => undefined
+    }
+    const page = {
+      isClosed: () => false,
+      url: () => 'about:blank'
+    } as unknown as Page
+    const driver = new InboxesVisibleCodeFallbackDriver(page, base)
+
+    await expect(driver.refreshMailbox()).rejects.toThrow(/left the provider page/i)
   })
 })
