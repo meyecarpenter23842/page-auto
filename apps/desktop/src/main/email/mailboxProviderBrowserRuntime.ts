@@ -84,9 +84,10 @@ async function externalProxyBoundaryIsUnknown(config: MailboxProviderBrowserConf
 }
 
 /**
- * Bind mailbox browsing to an isolated headless Chromium process owned by the
- * visible Email operator context. This keeps provider/ad pages out of the user's
- * Microsoft Chrome window while preserving the Email proxy boundary.
+ * Bind mailbox browsing to an isolated headed Chromium process owned by the
+ * visible Email operator context. The provider remains outside the Microsoft
+ * Chrome window, but its own window is visible so live Inboxes failures can be
+ * inspected directly instead of being hidden inside a headless worker.
  */
 export function configureMailboxProviderBrowser(
   operatorContext: BrowserContext,
@@ -133,7 +134,7 @@ async function launchMailboxProviderRuntime(
   try {
     browser = await launch({
       executablePath,
-      headless: true,
+      headless: false,
       ...(config.proxy ? { proxy: config.proxy } : {})
     })
     const context = await browser.newContext()
@@ -148,13 +149,13 @@ async function launchMailboxProviderRuntime(
 }
 
 /**
- * When Auth V2 configured isolation, failure to launch the hidden provider browser
- * fails closed instead of falling back to operatorContext.newPage() and exposing a
- * mailbox tab. A live DevToolsActivePort means the worker attached to an already
- * running Email Chrome profile; without an explicit proxy config we cannot safely
- * reproduce that external network boundary in a new browser, so fail closed before
- * any direct headless launch. Direct/unit callers without configuration retain the
- * legacy context.
+ * When Auth V2 configured isolation, failure to launch the separate provider
+ * browser fails closed instead of falling back to operatorContext.newPage() and
+ * exposing a mailbox tab inside Microsoft Chrome. A live DevToolsActivePort means
+ * the worker attached to an already running Email Chrome profile; without an
+ * explicit proxy config we cannot safely reproduce that external network boundary
+ * in the provider browser, so fail closed before any direct launch. Direct/unit
+ * callers without configuration retain the legacy context.
  */
 export async function resolveMailboxProviderContext(
   operatorContext: BrowserContext

@@ -45,10 +45,10 @@ describe('mailbox provider browser isolation', () => {
     expect(await resolveMailboxProviderContext(operator)).toBe(operator)
   })
 
-  it('reuses one hidden provider context and never falls back to the visible operator context', async () => {
+  it('reuses one visible provider context and never falls back to the Microsoft operator context', async () => {
     const operator = fakeContext()
-    const hidden = fakeContext()
-    const browser = fakeBrowser(hidden)
+    const providerContext = fakeContext()
+    const browser = fakeBrowser(providerContext)
     const launchBrowser = vi.fn(async () => browser)
 
     configureMailboxProviderBrowser(operator, {
@@ -60,13 +60,13 @@ describe('mailbox provider browser isolation', () => {
     const first = await resolveMailboxProviderContext(operator)
     const second = await resolveMailboxProviderContext(operator)
 
-    expect(first).toBe(hidden)
-    expect(second).toBe(hidden)
+    expect(first).toBe(providerContext)
+    expect(second).toBe(providerContext)
     expect(first).not.toBe(operator)
     expect(launchBrowser).toHaveBeenCalledTimes(1)
     expect(launchBrowser).toHaveBeenCalledWith({
       executablePath: 'C:\\Chrome\\chrome.exe',
-      headless: true,
+      headless: false,
       proxy: { server: 'http://127.0.0.1:8080' }
     })
   })
@@ -101,8 +101,8 @@ describe('mailbox provider browser isolation', () => {
 
   it('reproduces an explicit proxy without probing the external boundary', async () => {
     const operator = fakeContext()
-    const hidden = fakeContext()
-    const browser = fakeBrowser(hidden)
+    const providerContext = fakeContext()
+    const browser = fakeBrowser(providerContext)
     const launchBrowser = vi.fn(async () => browser)
     const hasLiveCdpEndpoint = vi.fn(async () => true)
 
@@ -114,25 +114,25 @@ describe('mailbox provider browser isolation', () => {
       hasLiveCdpEndpoint
     })
 
-    expect(await resolveMailboxProviderContext(operator)).toBe(hidden)
+    expect(await resolveMailboxProviderContext(operator)).toBe(providerContext)
     expect(hasLiveCdpEndpoint).not.toHaveBeenCalled()
     expect(launchBrowser).toHaveBeenCalledWith({
       executablePath: 'C:\\Chrome\\chrome.exe',
-      headless: true,
+      headless: false,
       proxy: { server: 'http://127.0.0.1:8080' }
     })
   })
 
-  it('closes the hidden provider browser when the visible operator context closes', async () => {
+  it('closes the visible provider browser when the Microsoft operator context closes', async () => {
     const operator = fakeContext()
-    const hidden = fakeContext()
-    const browser = fakeBrowser(hidden)
+    const providerContext = fakeContext()
+    const browser = fakeBrowser(providerContext)
 
     configureMailboxProviderBrowser(operator, {
       executablePath: 'C:\\Chrome\\chrome.exe',
       launchBrowser: async () => browser
     })
-    expect(await resolveMailboxProviderContext(operator)).toBe(hidden)
+    expect(await resolveMailboxProviderContext(operator)).toBe(providerContext)
 
     operator.emitClose()
     await Promise.resolve()
