@@ -58,7 +58,12 @@ function withStableInboxesMessageIdentity(driver: InboxesMailboxDriver): Inboxes
       key: createInboxesStableMessageKey(message)
     })),
     readMessage: async (message) => await driver.readMessage(message),
-    refreshMailbox: async () => await driver.refreshMailbox()
+    // Live Inboxes pushes mailbox updates into the already-open page. Driving the
+    // site's toolbar refresh on every poll is unsafe: the current UI can route that
+    // interaction into the "Your Inboxes" drawer/ad flow and temporarily escape to
+    // about:blank. Poll the DOM only; MailboxCodeService still owns bounded reload/
+    // rebind recovery when the provider page is actually unavailable or escaped.
+    refreshMailbox: async () => undefined
   }
 }
 
