@@ -8,6 +8,7 @@ import {
   microsoftRouteLogLabel,
   waitForMicrosoftOwnedPage
 } from './emailMicrosoftPageOwnership'
+import { configureMailboxProviderBrowser } from './mailboxProviderBrowserRuntime'
 import {
   createPlaywrightMicrosoftCommonAuthUi,
   MicrosoftCommonAuthHandlers
@@ -33,6 +34,12 @@ const RECOVERY_CODE_SETTLE_INTERVAL_MS = 500
 export interface MicrosoftAuthV2WorkerCredentials {
   accountId: number
   profileDirectory: string
+  executablePath?: string
+  proxy?: {
+    server: string
+    username?: string
+    password?: string
+  }
   loginEmail?: string
   loginPassword?: string
   backupEmail?: string
@@ -127,6 +134,21 @@ export function shouldContinueRecoveryPostCodeSettle(
 }
 
 /**
+ * Outlook's audited CTA frequently has a real Microsoft href but target=_blank.
+ * Navigating that href directly keeps the flow in the existing operator tab.
+ */
+export function microsoftSameTabNavigationTarget(href: string | null, baseUrl: string): string | null {
+  const candidate = href?.trim() ?? ''
+  if (!candidate || candidate.toLowerCase().startsWith('javascript:')) return null
+  try {
+    const target = new URL(candidate, baseUrl).toString()
+    return isMicrosoftOwnedNavigationUrl(target) ? target : null
+  } catch {
+    return null
+  }
+}
+
+/**
  * After submitting a recovery code Microsoft can hydrate Stay signed in (or the
  * next auth surface) slightly after the click. Give that transition a bounded
  * settle window before allowing another recovery_code dispatch, otherwise the
@@ -172,6 +194,18 @@ async function continueFromOutlookLanding(page: Page): Promise<Page | null> {
 
   const beforeUrl = page.url()
   const href = await link.getAttribute('href').catch(() => null)
+  const sameTabTarget = microsoftSameTabNavigationTarget(href, beforeUrl)
+  if (sameTabTarget) {
+    try {
+      await page.goto(sameTabTarget, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+    } catch (error) {
+      if (!expectedMicrosoftNavigationInterruption(error, page.url())) throw error
+      await waitForMicrosoftAuthStep(page)
+    }
+    await page.bringToFront().catch(() => undefined)
+    return page
+  }
+
   const popupPromise = page.waitForEvent('popup', { timeout: 2_500 }).catch(() => null)
 
   try {
@@ -209,23 +243,6 @@ async function continueFromOutlookLanding(page: Page): Promise<Page | null> {
   }
 
   await waitForMicrosoftAuthStep(page)
-
-  if (page.url() === beforeUrl && href && !href.toLowerCase().startsWith('javascript:')) {
-    try {
-      const target = new URL(href, beforeUrl).toString()
-      if (isMicrosoftOwnedNavigationUrl(target)) {
-        try {
-          await page.goto(target, { waitUntil: 'domcontentloaded', timeout: 30_000 })
-        } catch (error) {
-          if (!expectedMicrosoftNavigationInterruption(error, page.url())) throw error
-          await waitForMicrosoftAuthStep(page)
-        }
-      }
-    } catch {
-      // The audited visible CTA remains authoritative; malformed hrefs fail closed.
-    }
-  }
-
   await page.bringToFront().catch(() => undefined)
   return page
 }
@@ -245,6 +262,12 @@ export async function runMicrosoftAuthV2WorkerController(
   credentials: MicrosoftAuthV2WorkerCredentials,
   options: MicrosoftAuthV2WorkerOptions = {}
 ): Promise<MicrosoftAuthV2WorkerResult> {
+  configureMailboxProviderBrowser(initialPage.context(), {
+    executablePath: credentials.executablePath,
+    proxy: credentials.proxy,
+    profileDirectory: credentials.profileDirectory
+  })
+
   const pagesAtFlowStart = new Set(initialPage.context().pages())
   const commonHandlers = new MicrosoftCommonAuthHandlers(credentials)
   let page = initialPage

@@ -17,6 +17,7 @@ import {
   type MailProviderResultStatus
 } from './mailProvider'
 import { resolveMailProviderId } from './mailProviderRegistry'
+import { resolveMailboxProviderContext } from './mailboxProviderBrowserRuntime'
 
 const DEFAULT_TIMEOUT_MS = 20_000
 const MAX_TIMEOUT_MS = 60_000
@@ -514,27 +515,28 @@ export interface CreateMailboxCodeServiceOptions {
 }
 
 /**
- * Production owner: reclaim the service-owned Inboxes page first, even when a
- * failed refresh temporarily left that owned page at about:blank/another URL.
- * Only when no owned/open provider page exists may a new page be created.
- * Never closes unrelated pages and never calls bringToFront().
+ * Production owner: resolve the mailbox provider into the isolated provider
+ * context configured by Microsoft Auth V2. Direct/unit callers without that
+ * configuration keep legacy context semantics. Provider page ownership/reuse is
+ * unchanged, but automatic recovery no longer adds a tab to visible Chrome.
  */
 export function createMailboxCodeService(
   context: BrowserContext,
   options: CreateMailboxCodeServiceOptions = {}
 ): MailboxCodeService {
-  const registry = new EmailPageRegistry(context)
-
   return new MailboxCodeService({
     ...(options.now ? { now: options.now } : {}),
     resolveProviderSession: async (providerId, preferredPage) => {
       if (providerId !== 'inboxes') return null
 
       try {
+        const providerContext = await resolveMailboxProviderContext(context)
+        if (!providerContext) return null
+        const registry = new EmailPageRegistry(providerContext)
         const page = ownedOrNewestOpenInboxesProviderPage(
           preferredPage,
           registry.pages('mailbox_provider')
-        ) ?? await context.newPage()
+        ) ?? await providerContext.newPage()
         if (page.isClosed()) return null
 
         return {

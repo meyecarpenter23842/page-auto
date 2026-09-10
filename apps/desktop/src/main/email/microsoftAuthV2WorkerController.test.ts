@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { BrowserContext, Page } from 'playwright-core'
 import {
   keepMicrosoftForegroundDuring,
+  microsoftSameTabNavigationTarget,
   shouldContinueRecoveryPostCodeSettle,
   shouldYieldRecoveryNeedsAttentionToFreshSurface
 } from './microsoftAuthV2WorkerController'
@@ -57,6 +58,23 @@ describe('Microsoft Auth V2 recovery continuation', () => {
 
     context.emitPage({} as Page)
     expect(microsoftPage.bringToFront).toHaveBeenCalledTimes(3)
+  })
+
+  it('navigates audited Outlook sign-in hrefs in the same operator tab', () => {
+    expect(microsoftSameTabNavigationTarget(
+      '/oauth20_authorize.srf?state=abc',
+      'https://login.live.com/'
+    )).toBe('https://login.live.com/oauth20_authorize.srf?state=abc')
+    expect(microsoftSameTabNavigationTarget(
+      'https://go.microsoft.com/fwlink/?linkid=123',
+      'https://outlook.live.com/'
+    )).toBe('https://go.microsoft.com/fwlink/?linkid=123')
+  })
+
+  it('does not same-tab navigate javascript or non-Microsoft CTA targets', () => {
+    expect(microsoftSameTabNavigationTarget('javascript:void(0)', 'https://outlook.live.com/')).toBeNull()
+    expect(microsoftSameTabNavigationTarget('https://example.com/login', 'https://outlook.live.com/')).toBeNull()
+    expect(microsoftSameTabNavigationTarget(null, 'https://outlook.live.com/')).toBeNull()
   })
 
   it('yields stale recovery failure to a newly detected Stay signed in surface', () => {
