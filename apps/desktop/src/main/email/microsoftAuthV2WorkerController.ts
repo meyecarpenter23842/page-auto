@@ -97,7 +97,7 @@ export async function keepMicrosoftForegroundDuring<T>(
     if (!page.isClosed()) await page.bringToFront().catch(() => undefined)
     return await task()
   } finally {
-    context.off('page', restoreForeground)
+    context.removeListener('page', restoreForeground)
     if (!page.isClosed()) await page.bringToFront().catch(() => undefined)
   }
 }
