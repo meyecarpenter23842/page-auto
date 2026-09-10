@@ -264,7 +264,8 @@ export async function runMicrosoftAuthV2WorkerController(
 ): Promise<MicrosoftAuthV2WorkerResult> {
   configureMailboxProviderBrowser(initialPage.context(), {
     executablePath: credentials.executablePath,
-    proxy: credentials.proxy
+    proxy: credentials.proxy,
+    profileDirectory: credentials.profileDirectory
   })
 
   const pagesAtFlowStart = new Set(initialPage.context().pages())

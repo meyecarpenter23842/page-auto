@@ -1,3 +1,6 @@
+import { readFile } from 'node:fs/promises'
+import { request } from 'node:http'
+import { join } from 'node:path'
 import { chromium, type Browser, type BrowserContext } from 'playwright-core'
 
 export interface MailboxProviderProxyConfig {
@@ -15,8 +18,11 @@ export type MailboxProviderBrowserLauncher = (options: {
 export interface MailboxProviderBrowserConfig {
   executablePath?: string | undefined
   proxy?: MailboxProviderProxyConfig | undefined
+  profileDirectory?: string | undefined
   /** Test seam; production uses Playwright chromium.launch. */
   launchBrowser?: MailboxProviderBrowserLauncher | undefined
+  /** Test seam for detecting a live externally attached CDP profile. */
+  hasLiveCdpEndpoint?: ((profileDirectory: string) => Promise<boolean>) | undefined
 }
 
 interface MailboxProviderBrowserRuntime {
@@ -27,6 +33,55 @@ interface MailboxProviderBrowserRuntime {
 const configs = new WeakMap<BrowserContext, MailboxProviderBrowserConfig>()
 const runtimes = new WeakMap<BrowserContext, Promise<MailboxProviderBrowserRuntime | null>>()
 const cleanupBound = new WeakSet<BrowserContext>()
+
+async function readCdpEndpoint(profileDirectory: string): Promise<string | null> {
+  try {
+    const [portText] = (await readFile(join(profileDirectory, 'DevToolsActivePort'), 'utf8')).trim().split(/\r?\n/)
+    if (portText && /^\d+$/.test(portText)) return `http://127.0.0.1:${portText}`
+  } catch {
+    // App-launched Playwright persistent contexts use the pipe transport and do
+    // not require a DevToolsActivePort file. Missing/stale files are not external.
+  }
+  return null
+}
+
+async function probeCdpEndpoint(endpoint: string, timeoutMs = 650): Promise<boolean> {
+  return await new Promise<boolean>((resolveProbe) => {
+    let settled = false
+    const finish = (value: boolean) => {
+      if (settled) return
+      settled = true
+      resolveProbe(value)
+    }
+    try {
+      const req = request(new URL('/json/version', endpoint), { method: 'GET', timeout: timeoutMs }, (response) => {
+        response.resume()
+        finish((response.statusCode ?? 500) >= 200 && (response.statusCode ?? 500) < 500)
+      })
+      req.once('timeout', () => {
+        req.destroy()
+        finish(false)
+      })
+      req.once('error', () => finish(false))
+      req.end()
+    } catch {
+      finish(false)
+    }
+  })
+}
+
+async function hasLiveEmailCdpEndpoint(profileDirectory: string): Promise<boolean> {
+  const endpoint = await readCdpEndpoint(profileDirectory)
+  return endpoint !== null && await probeCdpEndpoint(endpoint)
+}
+
+async function externalProxyBoundaryIsUnknown(config: MailboxProviderBrowserConfig): Promise<boolean> {
+  if (config.proxy) return false
+  const profileDirectory = config.profileDirectory?.trim()
+  if (!profileDirectory) return false
+  const hasLiveCdpEndpoint = config.hasLiveCdpEndpoint ?? hasLiveEmailCdpEndpoint
+  return await hasLiveCdpEndpoint(profileDirectory)
+}
 
 /**
  * Bind mailbox browsing to an isolated headless Chromium process owned by the
@@ -40,7 +95,9 @@ export function configureMailboxProviderBrowser(
   configs.set(operatorContext, {
     ...(config.executablePath ? { executablePath: config.executablePath } : {}),
     ...(config.proxy ? { proxy: config.proxy } : {}),
-    ...(config.launchBrowser ? { launchBrowser: config.launchBrowser } : {})
+    ...(config.profileDirectory ? { profileDirectory: config.profileDirectory } : {}),
+    ...(config.launchBrowser ? { launchBrowser: config.launchBrowser } : {}),
+    ...(config.hasLiveCdpEndpoint ? { hasLiveCdpEndpoint: config.hasLiveCdpEndpoint } : {})
   })
   if (cleanupBound.has(operatorContext)) return
   cleanupBound.add(operatorContext)
@@ -93,13 +150,18 @@ async function launchMailboxProviderRuntime(
 /**
  * When Auth V2 configured isolation, failure to launch the hidden provider browser
  * fails closed instead of falling back to operatorContext.newPage() and exposing a
- * mailbox tab. Direct/unit callers without configuration retain the legacy context.
+ * mailbox tab. A live DevToolsActivePort means the worker attached to an already
+ * running Email Chrome profile; without an explicit proxy config we cannot safely
+ * reproduce that external network boundary in a new browser, so fail closed before
+ * any direct headless launch. Direct/unit callers without configuration retain the
+ * legacy context.
  */
 export async function resolveMailboxProviderContext(
   operatorContext: BrowserContext
 ): Promise<BrowserContext | null> {
   const config = configs.get(operatorContext)
   if (!config) return operatorContext
+  if (await externalProxyBoundaryIsUnknown(config)) return null
 
   const existing = runtimes.get(operatorContext)
   if (existing) return (await existing)?.context ?? null

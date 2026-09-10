@@ -82,6 +82,47 @@ describe('mailbox provider browser isolation', () => {
     expect(launchBrowser).not.toHaveBeenCalled()
   })
 
+  it('fails closed before launch when a live attached profile has no reproducible proxy config', async () => {
+    const operator = fakeContext()
+    const launchBrowser = vi.fn()
+    const hasLiveCdpEndpoint = vi.fn(async () => true)
+
+    configureMailboxProviderBrowser(operator, {
+      executablePath: 'C:\\Chrome\\chrome.exe',
+      profileDirectory: 'C:\\Profiles\\Email-1',
+      launchBrowser,
+      hasLiveCdpEndpoint
+    })
+
+    expect(await resolveMailboxProviderContext(operator)).toBeNull()
+    expect(hasLiveCdpEndpoint).toHaveBeenCalledWith('C:\\Profiles\\Email-1')
+    expect(launchBrowser).not.toHaveBeenCalled()
+  })
+
+  it('reproduces an explicit proxy without probing the external boundary', async () => {
+    const operator = fakeContext()
+    const hidden = fakeContext()
+    const browser = fakeBrowser(hidden)
+    const launchBrowser = vi.fn(async () => browser)
+    const hasLiveCdpEndpoint = vi.fn(async () => true)
+
+    configureMailboxProviderBrowser(operator, {
+      executablePath: 'C:\\Chrome\\chrome.exe',
+      profileDirectory: 'C:\\Profiles\\Email-1',
+      proxy: { server: 'http://127.0.0.1:8080' },
+      launchBrowser,
+      hasLiveCdpEndpoint
+    })
+
+    expect(await resolveMailboxProviderContext(operator)).toBe(hidden)
+    expect(hasLiveCdpEndpoint).not.toHaveBeenCalled()
+    expect(launchBrowser).toHaveBeenCalledWith({
+      executablePath: 'C:\\Chrome\\chrome.exe',
+      headless: true,
+      proxy: { server: 'http://127.0.0.1:8080' }
+    })
+  })
+
   it('closes the hidden provider browser when the visible operator context closes', async () => {
     const operator = fakeContext()
     const hidden = fakeContext()
