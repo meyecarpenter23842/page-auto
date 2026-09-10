@@ -4,6 +4,7 @@ import type { MailProvider, MailProviderCodeRequest, MailProviderCodeResult } fr
 import {
   MailboxCodeService,
   newestOpenInboxesProviderPage,
+  ownedOrNewestOpenInboxesProviderPage,
   type MailboxCodeProviderSession
 } from './mailboxCodeService'
 
@@ -205,7 +206,7 @@ describe('MailboxCodeService', () => {
     expect(secondPage.close).not.toHaveBeenCalled()
   })
 
-  it('reloads once after an early Inboxes provider failure, then re-resolves the adapter within the same deadline', async () => {
+  it('reloads once after an early Inboxes provider failure, then reuses the same owned page for the recreated adapter', async () => {
     const page = fakePage('https://inboxes.com/#google_vignette')
     const blockedProvider = providerWith([
       result('provider_unavailable', { message: 'popup blocks click' })
@@ -214,7 +215,11 @@ describe('MailboxCodeService', () => {
       result('success', { messageKey: 'fresh-after-f5', code: '555555' })
     ])
     const sessions = [session(page, blockedProvider), session(page, recoveredProvider)]
-    const resolveProviderSession = vi.fn(async () => sessions.shift() ?? null)
+    const preferredPages: Array<Page | null | undefined> = []
+    const resolveProviderSession = vi.fn(async (_providerId, preferredPage?: Page | null) => {
+      preferredPages.push(preferredPage)
+      return sessions.shift() ?? null
+    })
     const service = new MailboxCodeService({ resolveProviderSession, now: () => 2_700_000 })
 
     const response = await service.getFreshCode({
@@ -229,6 +234,7 @@ describe('MailboxCodeService', () => {
     expect(response.code).toBe('555555')
     expect(page.reload).toHaveBeenCalledTimes(1)
     expect(resolveProviderSession).toHaveBeenCalledTimes(2)
+    expect(preferredPages).toEqual([null, page])
     expect(page.close).not.toHaveBeenCalled()
     expect(page.reload.mock.calls[0]?.[0]).toMatchObject({ timeout: 5_000 })
   })
@@ -375,5 +381,30 @@ describe('newestOpenInboxesProviderPage', () => {
       fakePage('about:blank'),
       fakePage('https://fviainboxes.com/')
     ])).toBeNull()
+  })
+})
+
+describe('ownedOrNewestOpenInboxesProviderPage', () => {
+  it('reclaims the explicitly owned provider page even when refresh left it at about:blank', () => {
+    const unrelatedBlank = fakePage('about:blank')
+    const ownedBlank = fakePage('about:blank')
+    const inboxes = fakePage('https://inboxes.com/')
+
+    expect(ownedOrNewestOpenInboxesProviderPage(ownedBlank, [unrelatedBlank, inboxes])).toBe(ownedBlank)
+  })
+
+  it('never adopts an unrelated blank page when there is no explicit ownership', () => {
+    const unrelatedBlank = fakePage('about:blank')
+    const inboxes = fakePage('https://inboxes.com/')
+
+    expect(ownedOrNewestOpenInboxesProviderPage(null, [unrelatedBlank, inboxes])).toBe(inboxes)
+    expect(ownedOrNewestOpenInboxesProviderPage(null, [unrelatedBlank])).toBeNull()
+  })
+
+  it('falls back to a live Inboxes tab when the previously owned page is closed', () => {
+    const closedOwned = fakePage('about:blank', true)
+    const inboxes = fakePage('https://inboxes.com/')
+
+    expect(ownedOrNewestOpenInboxesProviderPage(closedOwned, [inboxes])).toBe(inboxes)
   })
 })
