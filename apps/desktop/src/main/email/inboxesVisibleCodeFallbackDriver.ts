@@ -51,6 +51,16 @@ interface InboxesFastRowReference {
   receivedAt: number
 }
 
+interface InboxesScannedFastRow {
+  baseKey: string
+  sender: string
+  subject: string
+  rowText: string
+  receivedLabel: string
+  receivedAt: number
+  visibleCode: InboxesVisibleCodeRowEvidence | null
+}
+
 function normalizeText(value: string): string {
   return value.replace(/\s+/g, ' ').trim()
 }
@@ -75,6 +85,26 @@ export function createInboxesStableFallbackMessageKey(
     .digest('hex')
     .slice(0, 24)
   return `fast:${digest}`
+}
+
+/**
+ * Inboxes can render the same non-message-specific href/data/id on multiple rows.
+ * The list is newest-first, so number duplicate base identities from the oldest
+ * occurrence. Prepending a newly delivered message then gives only the new row a
+ * new key while every already-observed row keeps its previous key.
+ */
+export function createInboxesStableOccurrenceKeys(baseKeys: readonly string[]): string[] {
+  const occurrences = new Map<string, number>()
+  const keys = new Array<string>(baseKeys.length)
+
+  for (let index = baseKeys.length - 1; index >= 0; index -= 1) {
+    const baseKey = baseKeys[index] ?? ''
+    const occurrence = (occurrences.get(baseKey) ?? 0) + 1
+    occurrences.set(baseKey, occurrence)
+    keys[index] = `${baseKey}:occ:${occurrence}`
+  }
+
+  return keys
 }
 
 async function visible(locator: Locator): Promise<boolean> {
@@ -447,17 +477,40 @@ export class InboxesVisibleCodeFallbackDriver implements InboxesMailboxDriver {
     const count = await rows.count()
     const expectedSubject = normalizeKey(reference.subject)
     const expectedSender = normalizeKey(reference.sender)
+    let fallbackRow: Locator | null = null
+    let closestRow: Locator | null = null
+    let closestDelta = Number.POSITIVE_INFINITY
 
     for (let index = 0; index < count; index += 1) {
       const row = rows.nth(index)
       if (!await visible(row)) continue
-      const rowText = normalizeKey(await row.innerText({ timeout: INBOXES_DOM_PROBE_TIMEOUT_MS }).catch(() => ''))
+      const rowTextRaw = await row.innerText({ timeout: INBOXES_DOM_PROBE_TIMEOUT_MS }).catch(() => '')
+      const rowText = normalizeKey(rowTextRaw)
       if (!rowText) continue
       if (expectedSubject && !rowText.includes(expectedSubject)) continue
       if (expectedSender && !rowText.includes(expectedSender)) continue
-      return row
+
+      fallbackRow ??= row
+
+      const cells = row.locator('td, [role="cell"], [role="gridcell"]')
+      const cellTexts: string[] = []
+      for (let cellIndex = 0; cellIndex < await cells.count(); cellIndex += 1) {
+        const value = await shortText(cells.nth(cellIndex))
+        if (value) cellTexts.push(value)
+      }
+      const observedAt = Date.now()
+      const parsed = parseInboxesMessageRowCells(cellTexts, observedAt)
+      const visibleCode = parseInboxesVisibleCodeRow(rowTextRaw, observedAt)
+      const receivedAt = parsed?.receivedAt ?? visibleCode?.receivedAt ?? null
+      if (receivedAt === null) continue
+
+      const delta = Math.abs(receivedAt - reference.receivedAt)
+      if (delta < closestDelta) {
+        closestDelta = delta
+        closestRow = row
+      }
     }
-    return null
+    return closestRow ?? fallbackRow
   }
 
   private async fastMessageOpenTarget(row: Locator, message: InboxesMessageSummary): Promise<Locator> {
@@ -576,7 +629,7 @@ export class InboxesVisibleCodeFallbackDriver implements InboxesMailboxDriver {
 
     const rows = this.page.locator('tr, [role="row"], [role="listitem"]')
     const count = await rows.count()
-    const messages = new Map<string, InboxesMessageSummary>()
+    const scanned: InboxesScannedFastRow[] = []
 
     emailDiagnostic('inboxes-dom', 'scan-start', { rows: count })
 
@@ -619,7 +672,7 @@ export class InboxesVisibleCodeFallbackDriver implements InboxesMailboxDriver {
       const href = await shortAttribute(row.locator('a[href]'), 'href')
       const dataId = await shortAttribute(row, 'data-id')
       const id = await shortAttribute(row, 'id')
-      const key = href
+      const baseKey = href
         ? `href:${href}`
         : dataId
           ? `data:${dataId}`
@@ -627,33 +680,67 @@ export class InboxesVisibleCodeFallbackDriver implements InboxesMailboxDriver {
             ? `id:${id}`
             : createInboxesStableFallbackMessageKey(sender, subject, rowText, receivedLabel)
 
-      const summary: InboxesMessageSummary = {
-        key,
+      scanned.push({
+        baseKey,
         sender,
         subject,
-        preview: rowText || subject,
+        rowText,
         receivedLabel,
-        receivedAt
-      }
-      messages.set(key, summary)
-      this.fastRows.set(key, { sender, subject, receivedLabel, receivedAt })
+        receivedAt,
+        visibleCode
+      })
+    }
 
-      if (visibleCode) {
+    const baseKeys = scanned.map((message) => message.baseKey)
+    const stableKeys = createInboxesStableOccurrenceKeys(baseKeys)
+    const messages: InboxesMessageSummary[] = []
+
+    for (const [index, scannedMessage] of scanned.entries()) {
+      const key = stableKeys[index]
+      if (!key) continue
+
+      const summary: InboxesMessageSummary = {
+        key,
+        sender: scannedMessage.sender,
+        subject: scannedMessage.subject,
+        preview: scannedMessage.rowText || scannedMessage.subject,
+        receivedLabel: scannedMessage.receivedLabel,
+        receivedAt: scannedMessage.receivedAt
+      }
+      messages.push(summary)
+      this.fastRows.set(key, {
+        sender: scannedMessage.sender,
+        subject: scannedMessage.subject,
+        receivedLabel: scannedMessage.receivedLabel,
+        receivedAt: scannedMessage.receivedAt
+      })
+
+      if (scannedMessage.visibleCode) {
         const snapshot: MailMessageSnapshot = {
           id: key,
-          receivedAt,
-          sender,
-          subject,
-          bodyPreview: rowText,
-          bodyText: rowText
+          receivedAt: scannedMessage.receivedAt,
+          sender: scannedMessage.sender,
+          subject: scannedMessage.subject,
+          bodyPreview: scannedMessage.rowText,
+          bodyText: scannedMessage.rowText
         }
+        const observedAt = startNow + Math.max(0, Date.now() - wallStartedAt)
         if (parseVerificationCode([snapshot], observedAt)) {
           this.visibleSnapshots.set(key, snapshot)
         }
       }
     }
 
-    const result = [...messages.values()].sort((left, right) => (right.receivedAt ?? 0) - (left.receivedAt ?? 0))
+    const uniqueBaseKeyCount = new Set(baseKeys).size
+    if (scanned.length > uniqueBaseKeyCount) {
+      emailDiagnostic('inboxes-dom', 'row-identity-collision', {
+        parsedRows: scanned.length,
+        uniqueBaseKeys: uniqueBaseKeyCount,
+        disambiguatedRows: scanned.length - uniqueBaseKeyCount
+      })
+    }
+
+    const result = messages.sort((left, right) => (right.receivedAt ?? 0) - (left.receivedAt ?? 0))
     if (result.length === 0) {
       const body = await this.page.locator('body').innerText({ timeout: INBOXES_DOM_PROBE_TIMEOUT_MS }).catch(() => '')
       const relevantLines = body
