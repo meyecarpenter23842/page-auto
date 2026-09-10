@@ -329,12 +329,20 @@ export class InboxesVisibleCodeFallbackDriver implements InboxesMailboxDriver {
       await this.prepareCanonicalMailboxFromDetail()
     }
 
-    await this.recoverPollingVignette('before-refresh')
-    const pagesBeforeRefresh = snapshotInboxesContextPages(this.page)
-    emailDiagnostic('inboxes-dom', 'refresh', {})
-    await this.base.refreshMailbox()
-    const popupCount = await closeUnexpectedInboxesPopupPages(this.page, pagesBeforeRefresh)
-    await this.recoverPollingVignette('after-refresh', popupCount)
+    // Inboxes pushes new messages into the open mailbox DOM. The generic provider
+    // poll hook must therefore never click the site's Refresh control or reload the
+    // page. Keep the hook alive only as a cheap ownership/health boundary so a
+    // closed or escaped provider page surfaces provider_unavailable immediately and
+    // MailboxCodeService still has budget for its bounded reload/rebind recovery.
+    if (this.page.isClosed()) {
+      emailDiagnostic('inboxes-dom', 'poll-health-page-closed', {})
+      throw new Error('Inboxes provider page closed during code polling.')
+    }
+    if (!isInboxesProviderPageUrl(this.page.url())) {
+      emailDiagnostic('inboxes-dom', 'poll-health-page-escaped', {})
+      throw new Error('Inboxes provider page left the provider page during code polling.')
+    }
+    emailDiagnostic('inboxes-dom', 'poll-health-ok', {})
   }
 
   private async prepareCanonicalMailboxFromDetail(): Promise<void> {
