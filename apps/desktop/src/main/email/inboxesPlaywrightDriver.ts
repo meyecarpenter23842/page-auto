@@ -141,6 +141,22 @@ function normalizeRowKey(value: string): string {
   return value.replace(/\s+/g, ' ').trim().toLowerCase()
 }
 
+/**
+ * Preserve the actual rendered row content for fallback message identity. The
+ * subject alone is not enough: consecutive Microsoft code mails can have the
+ * same sender/subject/Received label while only the preview/code differs.
+ */
+export function inboxesMessageRowPreview(
+  rowTextInput: string,
+  cellTexts: readonly string[],
+  subject: string
+): string {
+  const rowText = rowTextInput.replace(/\s+/g, ' ').trim()
+  if (rowText) return rowText
+  const cellsText = cellTexts.join(' ').replace(/\s+/g, ' ').trim()
+  return cellsText || subject
+}
+
 function mailboxFromText(value: string): string | null {
   const match = value.match(EMAIL_IN_TEXT)?.[0]
   return match ? normalizeMailboxAddress(match) : null
@@ -248,6 +264,11 @@ export class InboxesPlaywrightDriver implements InboxesMailboxDriver {
       const href = await row.locator('a[href]').first().getAttribute('href').catch(() => null)
       const dataId = await row.getAttribute('data-id').catch(() => null)
       const id = await row.getAttribute('id').catch(() => null)
+      const rowPreview = inboxesMessageRowPreview(
+        await row.innerText().catch(() => ''),
+        cellTexts,
+        subject
+      )
       const key = href
         ? `href:${href}`
         : dataId
@@ -260,7 +281,7 @@ export class InboxesPlaywrightDriver implements InboxesMailboxDriver {
         key,
         sender,
         subject,
-        preview: subject,
+        preview: rowPreview,
         receivedLabel,
         receivedAt
       })

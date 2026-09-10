@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import {
   BrowserMailboxProvider,
   type BrowserEnsureMailboxResult,
@@ -17,6 +18,49 @@ export type InboxesMessageSummary = BrowserMailboxMessageSummary
 export type InboxesEnsureMailboxResult = BrowserEnsureMailboxResult
 export type InboxesMailboxDriver = BrowserMailboxDriver
 export type InboxesProviderOptions = BrowserMailboxProviderOptions
+
+function normalizeInboxesMessageIdentityText(value: string): string {
+  return value.replace(/\s+/g, ' ').trim().toLowerCase()
+}
+
+/**
+ * Inboxes does not always expose href/data-id/id on message rows. In that case
+ * the driver historically fell back to sender + subject + relative Received label,
+ * which collides for two consecutive Microsoft security-code messages and also
+ * changes as "A few seconds ago" ages. Hash the stable row content instead:
+ * different code/preview => different key, changing relative label => same key,
+ * and OTP plaintext never appears in the identity.
+ */
+export function createInboxesStableMessageKey(message: InboxesMessageSummary): string {
+  const originalKey = message.key.trim()
+  if (!originalKey.startsWith('row:')) return originalKey
+
+  const receivedLabel = message.receivedLabel.trim()
+  const stablePreview = normalizeInboxesMessageIdentityText(
+    receivedLabel ? message.preview.replace(receivedLabel, ' ') : message.preview
+  )
+  const digest = createHash('sha256')
+    .update([
+      normalizeInboxesMessageIdentityText(message.sender),
+      normalizeInboxesMessageIdentityText(message.subject),
+      stablePreview
+    ].join('\n'))
+    .digest('hex')
+    .slice(0, 24)
+  return `rowhash:${digest}`
+}
+
+function withStableInboxesMessageIdentity(driver: InboxesMailboxDriver): InboxesMailboxDriver {
+  return {
+    ensureMailbox: async (mailbox) => await driver.ensureMailbox(mailbox),
+    listMessages: async (now) => (await driver.listMessages(now)).map((message) => ({
+      ...message,
+      key: createInboxesStableMessageKey(message)
+    })),
+    readMessage: async (message) => await driver.readMessage(message),
+    refreshMailbox: async () => await driver.refreshMailbox()
+  }
+}
 
 /**
  * The Microsoft recovery flow calls one zero-timeout recovery probe before it
@@ -66,7 +110,7 @@ export class InboxesProvider extends BrowserMailboxProvider<'inboxes'> {
   private readonly retrySleep: (milliseconds: number) => Promise<void>
 
   constructor(driver: InboxesMailboxDriver, options: InboxesProviderOptions = {}) {
-    super(driver, {
+    super(withStableInboxesMessageIdentity(driver), {
       ...options,
       providerId: 'inboxes',
       providerLabel: 'Inboxes.com',
