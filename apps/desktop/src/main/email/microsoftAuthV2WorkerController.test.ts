@@ -20,7 +20,7 @@ function fakeContext(): FakeContext {
       if (event === 'page') pageListeners.add(listener)
       return context
     }),
-    off: vi.fn((event: string, listener: PageListener) => {
+    removeListener: vi.fn((event: string, listener: PageListener) => {
       if (event === 'page') pageListeners.delete(listener)
       return context
     }),
