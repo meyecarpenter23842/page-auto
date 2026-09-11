@@ -1199,3 +1199,36 @@ Lô này **chưa** bật NSIS hay updater. Packaging vẫn là portable ZIP cho 
 - DB/profile/runtime data ở stable root không được đưa vào installer artifact và không được uninstall/update như file ứng dụng;
 - update code phải mở đúng stable data root rồi chạy migration versioned hiện hữu;
 - live Windows acceptance phải dùng bản copy/backup của data thật trước khi coi migration sang installer an toàn.
+
+---
+
+## 28. Email module ownership — independent mailbox providers
+
+Email/Microsoft architecture từ `main@484bdf641df1e1cc3d56e7caebae29cfcfb42f6c` được khóa chi tiết trong [`EMAIL_ARCHITECTURE.md`](./EMAIL_ARCHITECTURE.md). Tài liệu đó là phần mở rộng bắt buộc của `ARCHITECTURE.md` khi sửa Email.
+
+Invariant ngắn gọn:
+
+> **Mỗi loại mail là một module độc lập. Microsoft Auth và Hotmail/Outlook Mailbox là hai module khác nhau.**
+
+Dependency bắt buộc:
+
+```text
+Microsoft Auth
+      |
+      | cần code cho mailbox X
+      v
+Mailbox Router / typed contract
+      |
+      +--> Inboxes module
+      +--> FviaInboxes module
+      +--> MailtoPlus module
+      +--> Hotmail/Outlook Mailbox module
+```
+
+- Microsoft Auth không được import concrete provider driver/provider hoặc biết DOM/URL/polling của Inboxes/Fvia/MailtoPlus/Outlook mailbox.
+- Router/Common chỉ resolve provider + chuyển typed request/result; không chứa provider-specific selector, popup/vignette, reload/recovery hay polling policy.
+- Mỗi provider tự sở hữu DOM/API/browser lifecycle/failure semantics của chính nó.
+- Repeated Microsoft code challenge phải giữ challenge/message identity; `messageKey` đã submit không được reuse.
+- Provider không được quyết định Microsoft đã authenticated; Microsoft Auth không được điều khiển provider internals.
+
+Audit hiện tại xác nhận source **chưa migrate xong**: `mailboxCodeService.ts` còn biết implementation Inboxes/Fvia và `microsoftRecoveryChallenge.ts` còn branch theo provider/timeouts/lifecycle. Đây là technical debt phải tách theo E-MOD-1..E-MOD-6 trong `EMAIL_ARCHITECTURE.md`, không được nhân rộng.
