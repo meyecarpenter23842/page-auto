@@ -1,5 +1,7 @@
 import type { BrowserContext, Page } from 'playwright-core'
 import { EmailPageRegistry } from './emailPageRegistry'
+import { FviaInboxesPlaywrightDriver } from './fviaInboxesPlaywrightDriver'
+import { FviaInboxesProvider } from './fviaInboxesProvider'
 import { InboxesProvider } from './inboxesProvider'
 import { InboxesBackgroundPlaywrightDriver, isInboxesProviderPageUrl } from './inboxesBackgroundPlaywrightDriver'
 import { InboxesVisibleCodeFallbackDriver } from './inboxesVisibleCodeFallbackDriver'
@@ -26,6 +28,13 @@ const MAX_CLOSED_PAGE_RECOVERIES = 1
 const MAX_PROVIDER_RELOAD_RECOVERIES = 1
 const PROVIDER_RELOAD_TIMEOUT_MS = 10_000
 const INBOXES_HOME_URL = 'https://inboxes.com/'
+const MAILBOX_CODE_SERVICE_PROVIDER_IDS = new Set<MailProviderId>(['inboxes', 'fvia_inboxes'])
+
+export type MailboxCodeServiceProviderId = 'inboxes' | 'fvia_inboxes'
+
+export function isMailboxCodeServiceProviderId(providerId: MailProviderId): providerId is MailboxCodeServiceProviderId {
+  return MAILBOX_CODE_SERVICE_PROVIDER_IDS.has(providerId)
+}
 
 export interface MailboxCodeServiceRequest {
   mailbox: string
@@ -71,6 +80,8 @@ export interface MailboxCodeServiceDependencies {
     preferredPage?: Page | null
   ) => Promise<MailboxCodeProviderSession | null>
   now?: () => number
+  /** Direct callers stay Inboxes-only unless they explicitly opt into another audited service provider. */
+  enabledProviderIds?: readonly MailboxCodeServiceProviderId[]
 }
 
 function boundedTimeout(value: number | undefined): number {
@@ -89,6 +100,12 @@ function unionMessageKeys(...sets: readonly Set<string>[]): Set<string> {
     for (const key of set) result.add(key)
   }
   return result
+}
+
+function providerLabel(providerId: MailProviderId): string {
+  if (providerId === 'inboxes') return 'Inboxes'
+  if (providerId === 'fvia_inboxes') return 'FviaInboxes'
+  return providerId
 }
 
 function withServiceMetadata(
@@ -138,6 +155,21 @@ function baselineFailure(
   }
 }
 
+export function isFviaInboxesProviderPageUrl(value: string): boolean {
+  try {
+    const hostname = new URL(value).hostname.toLowerCase()
+    return hostname === 'fviainboxes.com' || hostname.endsWith('.fviainboxes.com')
+  } catch {
+    return false
+  }
+}
+
+function isProviderPageUrl(providerId: MailboxCodeServiceProviderId, value: string): boolean {
+  return providerId === 'inboxes'
+    ? isInboxesProviderPageUrl(value)
+    : isFviaInboxesProviderPageUrl(value)
+}
+
 async function recoverInboxesProviderPage(page: Page, remainingMs: number): Promise<void> {
   if (page.isClosed() || remainingMs <= 0) return
   const options = {
@@ -166,12 +198,18 @@ async function recoverInboxesProviderPage(page: Page, remainingMs: number): Prom
  */
 export class MailboxCodeService {
   private readonly now: () => number
+  private readonly enabledProviderIds: ReadonlySet<MailboxCodeServiceProviderId>
   private readonly sessions = new Map<MailProviderId, MailboxCodeProviderSession>()
   private readonly ownedProviderPages = new Map<MailProviderId, Page>()
   private readonly sessionConsumedMessageKeys = new Map<string, Set<string>>()
 
   constructor(private readonly dependencies: MailboxCodeServiceDependencies) {
     this.now = dependencies.now ?? Date.now
+    this.enabledProviderIds = new Set(dependencies.enabledProviderIds ?? ['inboxes'])
+  }
+
+  private providerEnabled(providerId: MailProviderId): providerId is MailboxCodeServiceProviderId {
+    return isMailboxCodeServiceProviderId(providerId) && this.enabledProviderIds.has(providerId)
   }
 
   /** Snapshot message identity before Microsoft Send code without opening message detail. */
@@ -181,26 +219,39 @@ export class MailboxCodeService {
     if (!mailbox || resolvedProviderId !== request.providerId) {
       return baselineFailure(request, mailbox, 'unsupported_mailbox', 'Mailbox/provider không khớp canonical provider đã resolve.')
     }
-    if (request.providerId !== 'inboxes') {
+    if (!this.providerEnabled(request.providerId)) {
       return baselineFailure(request, mailbox, 'unsupported_mailbox', `Baseline challenge chưa migrate provider ${request.providerId}.`)
     }
 
     const session = await this.resolveSession(request.providerId)
     if (!session) {
-      return baselineFailure(request, mailbox, 'provider_unavailable', 'Không resolve/adopt được provider page cho Inboxes trước Send code.')
+      return baselineFailure(
+        request,
+        mailbox,
+        'provider_unavailable',
+        `Không resolve/adopt được provider page cho ${providerLabel(request.providerId)} trước Send code.`
+      )
     }
 
-    const vignetteState = await dismissInboxesGoogleVignette(session.page)
-    if (vignetteState === 'blocked') {
-      return baselineFailure(request, mailbox, 'provider_unavailable', 'Google vignette trên Inboxes đang chặn baseline trước Send code.')
+    let pagesBeforeSnapshot: ReturnType<typeof snapshotInboxesContextPages> | null = null
+    if (request.providerId === 'inboxes') {
+      const vignetteState = await dismissInboxesGoogleVignette(session.page)
+      if (vignetteState === 'blocked') {
+        return baselineFailure(request, mailbox, 'provider_unavailable', 'Google vignette trên Inboxes đang chặn baseline trước Send code.')
+      }
+      pagesBeforeSnapshot = snapshotInboxesContextPages(session.page)
     }
 
     const snapshot = session.provider.snapshotMessageKeys
     if (!snapshot) {
-      return baselineFailure(request, mailbox, 'provider_unavailable', 'Provider Inboxes hiện tại không hỗ trợ baseline message identity.')
+      return baselineFailure(
+        request,
+        mailbox,
+        'provider_unavailable',
+        `Provider ${providerLabel(request.providerId)} hiện tại không hỗ trợ baseline message identity.`
+      )
     }
 
-    const pagesBeforeSnapshot = snapshotInboxesContextPages(session.page)
     let result: Awaited<ReturnType<NonNullable<MailProvider['snapshotMessageKeys']>>>
     try {
       result = await snapshot.call(session.provider, {
@@ -209,13 +260,23 @@ export class MailboxCodeService {
         purpose: 'microsoft_security'
       })
     } catch {
-      return baselineFailure(request, mailbox, 'provider_unavailable', 'Không snapshot được message identity từ Inboxes trước Send code.')
+      return baselineFailure(
+        request,
+        mailbox,
+        'provider_unavailable',
+        `Không snapshot được message identity từ ${providerLabel(request.providerId)} trước Send code.`
+      )
     }
 
-    const unexpectedPopupCount = await closeUnexpectedInboxesPopupPages(session.page, pagesBeforeSnapshot)
-    if (unexpectedPopupCount > 0 || hasInboxesProviderEscaped(session.page) || session.page.isClosed()) {
+    if (request.providerId === 'inboxes' && pagesBeforeSnapshot) {
+      const unexpectedPopupCount = await closeUnexpectedInboxesPopupPages(session.page, pagesBeforeSnapshot)
+      if (unexpectedPopupCount > 0 || hasInboxesProviderEscaped(session.page) || session.page.isClosed()) {
+        this.sessions.delete(request.providerId)
+        return baselineFailure(request, mailbox, 'provider_unavailable', 'Inboxes đổi/đóng provider page trong lúc baseline trước Send code.')
+      }
+    } else if (session.page.isClosed() || !isFviaInboxesProviderPageUrl(session.page.url())) {
       this.sessions.delete(request.providerId)
-      return baselineFailure(request, mailbox, 'provider_unavailable', 'Inboxes đổi/đóng provider page trong lúc baseline trước Send code.')
+      return baselineFailure(request, mailbox, 'provider_unavailable', 'FviaInboxes đổi/đóng provider page trong lúc baseline trước Send code.')
     }
 
     if (result.providerId !== request.providerId || normalizeMailboxAddress(result.mailbox) !== mailbox) {
@@ -247,9 +308,7 @@ export class MailboxCodeService {
       )
     }
 
-    // Issue #347 Batch 3 intentionally migrates Inboxes first. Other browser
-    // providers keep their current semantics until they have equivalent regressions.
-    if (request.providerId !== 'inboxes') {
+    if (!this.providerEnabled(request.providerId)) {
       return failureResult(
         request,
         mailbox,
@@ -277,45 +336,49 @@ export class MailboxCodeService {
           request,
           mailbox,
           'provider_unavailable',
-          'Không resolve/adopt được provider page cho Inboxes.',
+          `Không resolve/adopt được provider page cho ${providerLabel(request.providerId)}.`,
           consumed
         )
       }
 
-      const vignetteState = await dismissInboxesGoogleVignette(session.page)
-      if (vignetteState === 'blocked') {
-        const recoveryRemainingMs = deadline - this.now()
-        if (
-          timeoutMs === 0
-          || recoveryRemainingMs <= 0
-          || providerReloadRecoveries >= MAX_PROVIDER_RELOAD_RECOVERIES
-        ) {
-          return failureResult(
-            request,
-            mailbox,
-            'provider_unavailable',
-            'Google vignette trên Inboxes đang chặn thao tác và không đóng được bằng Close đã audit.',
-            consumed
-          )
-        }
+      if (request.providerId === 'inboxes') {
+        const vignetteState = await dismissInboxesGoogleVignette(session.page)
+        if (vignetteState === 'blocked') {
+          const recoveryRemainingMs = deadline - this.now()
+          if (
+            timeoutMs === 0
+            || recoveryRemainingMs <= 0
+            || providerReloadRecoveries >= MAX_PROVIDER_RELOAD_RECOVERIES
+          ) {
+            return failureResult(
+              request,
+              mailbox,
+              'provider_unavailable',
+              'Google vignette trên Inboxes đang chặn thao tác và không đóng được bằng Close đã audit.',
+              consumed
+            )
+          }
 
-        providerReloadRecoveries += 1
-        this.sessions.delete(request.providerId)
-        await recoverInboxesProviderPage(session.page, recoveryRemainingMs)
-        if (this.now() >= deadline) {
-          return failureResult(
-            request,
-            mailbox,
-            'provider_unavailable',
-            'Google vignette trên Inboxes vẫn chặn sau recovery có giới hạn.',
-            consumed
-          )
+          providerReloadRecoveries += 1
+          this.sessions.delete(request.providerId)
+          await recoverInboxesProviderPage(session.page, recoveryRemainingMs)
+          if (this.now() >= deadline) {
+            return failureResult(
+              request,
+              mailbox,
+              'provider_unavailable',
+              'Google vignette trên Inboxes vẫn chặn sau recovery có giới hạn.',
+              consumed
+            )
+          }
+          continue
         }
-        continue
       }
 
       const remainingMs = Math.max(0, deadline - this.now())
-      const pagesBeforeProviderRead = snapshotInboxesContextPages(session.page)
+      const pagesBeforeProviderRead = request.providerId === 'inboxes'
+        ? snapshotInboxesContextPages(session.page)
+        : null
       const excludedMessageKeys = [...unionMessageKeys(consumed, baseline)]
       const providerResult = await session.provider.getVerificationCode({
         mailbox,
@@ -327,40 +390,42 @@ export class MailboxCodeService {
         ...(request.pollIntervalMs === undefined ? {} : { pollIntervalMs: request.pollIntervalMs })
       })
 
-      const unexpectedPopupCount = await closeUnexpectedInboxesPopupPages(session.page, pagesBeforeProviderRead)
-      const providerEscaped = hasInboxesProviderEscaped(session.page)
-      if (unexpectedPopupCount > 0 || providerEscaped) {
-        const recoveryRemainingMs = deadline - this.now()
-        this.sessions.delete(request.providerId)
+      if (request.providerId === 'inboxes' && pagesBeforeProviderRead) {
+        const unexpectedPopupCount = await closeUnexpectedInboxesPopupPages(session.page, pagesBeforeProviderRead)
+        const providerEscaped = hasInboxesProviderEscaped(session.page)
+        if (unexpectedPopupCount > 0 || providerEscaped) {
+          const recoveryRemainingMs = deadline - this.now()
+          this.sessions.delete(request.providerId)
 
-        if (
-          timeoutMs === 0
-          || recoveryRemainingMs <= 0
-          || providerReloadRecoveries >= MAX_PROVIDER_RELOAD_RECOVERIES
-        ) {
-          return failureResult(
-            request,
-            mailbox,
-            'provider_unavailable',
-            providerEscaped
-              ? 'Tab Inboxes bị điều hướng sang trang ngoài provider trong lúc đọc mail.'
-              : 'Click Inboxes bị quảng cáo chặn và mở tab ngoài provider.',
-            consumed
-          )
-        }
+          if (
+            timeoutMs === 0
+            || recoveryRemainingMs <= 0
+            || providerReloadRecoveries >= MAX_PROVIDER_RELOAD_RECOVERIES
+          ) {
+            return failureResult(
+              request,
+              mailbox,
+              'provider_unavailable',
+              providerEscaped
+                ? 'Tab Inboxes bị điều hướng sang trang ngoài provider trong lúc đọc mail.'
+                : 'Click Inboxes bị quảng cáo chặn và mở tab ngoài provider.',
+              consumed
+            )
+          }
 
-        providerReloadRecoveries += 1
-        await recoverInboxesProviderPage(session.page, recoveryRemainingMs)
-        if (this.now() >= deadline) {
-          return failureResult(
-            request,
-            mailbox,
-            'provider_unavailable',
-            'Inboxes không phục hồi kịp trong timeout sau khi quảng cáo chặn click.',
-            consumed
-          )
+          providerReloadRecoveries += 1
+          await recoverInboxesProviderPage(session.page, recoveryRemainingMs)
+          if (this.now() >= deadline) {
+            return failureResult(
+              request,
+              mailbox,
+              'provider_unavailable',
+              'Inboxes không phục hồi kịp trong timeout sau khi quảng cáo chặn click.',
+              consumed
+            )
+          }
+          continue
         }
-        continue
       }
 
       if (
@@ -394,19 +459,19 @@ export class MailboxCodeService {
           request,
           mailbox,
           'provider_unavailable',
-          'Provider page Inboxes đã đóng trong lúc đọc mail và không phục hồi được.',
+          `Provider page ${providerLabel(request.providerId)} đã đóng trong lúc đọc mail và không phục hồi được.`,
           consumed
         )
       }
 
-      // Live Inboxes can leave a promo/vignette surface in a state where the
-      // audited Close control no longer responds. The operator-confirmed safe
-      // recovery is one F5-equivalent reload. Recreate the provider adapter after
-      // reload so ensureMailbox() re-detects Home/Add Inbox and rebinds the exact
-      // canonical local-part + domain instead of keeping stale driver state.
-      // Recovery is part of the caller's original budget: never add a fresh 10 s
-      // tail after a 4 s rejected-code or 12 s normal request has already expired.
-      if (providerResult.status === 'provider_unavailable' && providerReloadRecoveries < MAX_PROVIDER_RELOAD_RECOVERIES) {
+      // Only Inboxes has the audited F5/vignette recovery contract. FviaInboxes
+      // remains on its own visible form/list semantics and fails closed instead
+      // of inheriting provider-specific recovery behavior that was never audited.
+      if (
+        request.providerId === 'inboxes'
+        && providerResult.status === 'provider_unavailable'
+        && providerReloadRecoveries < MAX_PROVIDER_RELOAD_RECOVERIES
+      ) {
         const recoveryRemainingMs = deadline - this.now()
         if (timeoutMs === 0 || recoveryRemainingMs <= 0) {
           return withServiceMetadata(request, providerResult, consumed)
@@ -480,34 +545,53 @@ export class MailboxCodeService {
       // this boundary structured so Auth V2 can handle provider unavailability.
       return null
     }
-    if (!resolved || resolved.page.isClosed() || resolved.provider.id !== providerId) return null
+    if (
+      !resolved
+      || resolved.page.isClosed()
+      || resolved.providerId !== providerId
+      || resolved.provider.id !== providerId
+    ) return null
     this.sessions.set(providerId, resolved)
     this.ownedProviderPages.set(providerId, resolved.page)
     return resolved
   }
 
   private isSessionReusable(session: MailboxCodeProviderSession): boolean {
-    if (session.page.isClosed()) return false
-    if (session.providerId !== 'inboxes') return true
+    if (session.page.isClosed() || !isMailboxCodeServiceProviderId(session.providerId)) return false
     const url = session.page.url()
-    return url === 'about:blank' || isInboxesProviderPageUrl(url)
+    return url === 'about:blank' || isProviderPageUrl(session.providerId, url)
   }
 }
 
-export function newestOpenInboxesProviderPage(pages: readonly Page[]): Page | null {
+export function newestOpenMailboxProviderPage(
+  providerId: MailboxCodeServiceProviderId,
+  pages: readonly Page[]
+): Page | null {
   for (let index = pages.length - 1; index >= 0; index -= 1) {
     const page = pages[index]
-    if (page && !page.isClosed() && isInboxesProviderPageUrl(page.url())) return page
+    if (page && !page.isClosed() && isProviderPageUrl(providerId, page.url())) return page
   }
   return null
+}
+
+export function ownedOrNewestOpenMailboxProviderPage(
+  providerId: MailboxCodeServiceProviderId,
+  ownedPage: Page | null | undefined,
+  pages: readonly Page[]
+): Page | null {
+  if (ownedPage && !ownedPage.isClosed()) return ownedPage
+  return newestOpenMailboxProviderPage(providerId, pages)
+}
+
+export function newestOpenInboxesProviderPage(pages: readonly Page[]): Page | null {
+  return newestOpenMailboxProviderPage('inboxes', pages)
 }
 
 export function ownedOrNewestOpenInboxesProviderPage(
   ownedPage: Page | null | undefined,
   pages: readonly Page[]
 ): Page | null {
-  if (ownedPage && !ownedPage.isClosed()) return ownedPage
-  return newestOpenInboxesProviderPage(pages)
+  return ownedOrNewestOpenMailboxProviderPage('inboxes', ownedPage, pages)
 }
 
 export interface CreateMailboxCodeServiceOptions {
@@ -526,26 +610,32 @@ export function createMailboxCodeService(
 ): MailboxCodeService {
   return new MailboxCodeService({
     ...(options.now ? { now: options.now } : {}),
+    enabledProviderIds: ['inboxes', 'fvia_inboxes'],
     resolveProviderSession: async (providerId, preferredPage) => {
-      if (providerId !== 'inboxes') return null
+      if (!isMailboxCodeServiceProviderId(providerId)) return null
 
       try {
         const providerContext = await resolveMailboxProviderContext(context)
         if (!providerContext) return null
         const registry = new EmailPageRegistry(providerContext)
-        const page = ownedOrNewestOpenInboxesProviderPage(
+        const page = ownedOrNewestOpenMailboxProviderPage(
+          providerId,
           preferredPage,
           registry.pages('mailbox_provider')
         ) ?? await providerContext.newPage()
         if (page.isClosed()) return null
 
-        return {
-          providerId,
-          page,
-          provider: new InboxesProvider(new InboxesVisibleCodeFallbackDriver(
+        const provider: MailProvider = providerId === 'inboxes'
+          ? new InboxesProvider(new InboxesVisibleCodeFallbackDriver(
             page,
             new InboxesBackgroundPlaywrightDriver(page)
           ))
+          : new FviaInboxesProvider(new FviaInboxesPlaywrightDriver(page))
+
+        return {
+          providerId,
+          page,
+          provider
         }
       } catch {
         return null
