@@ -1,5 +1,4 @@
 import type { Locator, Page } from 'playwright-core'
-import { classifyMicrosoftMailboxMessage } from './browserMailboxProvider'
 import type { MailMessageSnapshot } from './verificationCodeParser'
 import { normalizeMailboxAddress } from './mailProvider'
 import { mailDomainFromAddress } from './mailProviderRegistry'
@@ -11,7 +10,6 @@ import type {
 
 const FVIA_INBOXES_URL = 'https://fviainboxes.com/'
 const RELATIVE_TIME = /\b(?:just now|now|(?:a|few|a few)\s+seconds?\s+ago|\d+\s*(?:sec|secs|second|seconds|min|mins|minute|minutes|hour|hours|day|days)\s+ago)\b/i
-const RELATIVE_TIME_GLOBAL = /\b(?:just now|now|(?:a|few|a few)\s+seconds?\s+ago|\d+\s*(?:sec|secs|second|seconds|min|mins|minute|minutes|hour|hours|day|days)\s+ago)\b/gi
 
 export type FviaInboxesSurface =
   | 'mailbox_form'
@@ -105,53 +103,6 @@ function looksLikeUiChrome(textInput: string): boolean {
     || /free temporary email|free, fast, private|emails will appear here automatically|enter your username/.test(text)
 }
 
-/**
- * Fvia's inbox is built from nested generic div/span/p nodes. A parent container
- * can contain two visible message rows at once. Treating that parent as one mail
- * summary lets the security-code words from the new row be paired with the click
- * target of the older unusual-sign-in row. Reject only those composite containers;
- * the individual row/subject candidates remain available to the shared Microsoft
- * message classifier.
- */
-export function isAmbiguousFviaMessageContainerText(textInput: string): boolean {
-  const text = normalizeText(textInput).toLowerCase()
-  if (!text) return false
-
-  const relativeTimeCount = [...text.matchAll(RELATIVE_TIME_GLOBAL)].length
-  const senderCount = (text.match(/account-security-noreply/g) ?? []).length
-  const hasSecurityCode = /(?:personal\s+)?microsoft account[^.\n]{0,80}security code|\bsecurity code\b/.test(text)
-  const hasUnusualSignIn = /microsoft account[^.\n]{0,80}unusual sign-in|unusual sign-in activity/.test(text)
-
-  return relativeTimeCount > 1
-    || senderCount > 1
-    || (hasSecurityCode && hasUnusualSignIn)
-}
-
-/**
- * Fvia shortens the inbox-row subject but the opened Microsoft template can use
- * a shorter canonical heading (live: "Personal Microsoft account security code"
- * -> "Security code"). Validate the semantic Microsoft message kind instead of
- * requiring the detail pane to repeat the row subject verbatim.
- */
-export function fviaMessageDetailMatchesSummary(
-  message: FviaInboxesMessageSummary,
-  bodyTextInput: string
-): boolean {
-  const bodyText = normalizeText(bodyTextInput).toLowerCase()
-  if (!bodyText) return false
-
-  const kind = classifyMicrosoftMailboxMessage(message)
-  if (kind === 'microsoft_security_code') {
-    return /microsoft account/.test(bodyText) && /\bsecurity code\b/.test(bodyText)
-  }
-  if (kind === 'microsoft_unusual_signin_notification') {
-    return /microsoft account/.test(bodyText) && /unusual\s+sign[ -]?in(?:\s+activity)?/.test(bodyText)
-  }
-
-  const subject = normalizeText(message.subject).toLowerCase()
-  return Boolean(subject) && bodyText.includes(subject)
-}
-
 function messageKey(
   href: string | null,
   dataId: string | null,
@@ -230,7 +181,7 @@ export class FviaInboxesPlaywrightDriver implements FviaInboxesMailboxDriver {
       const candidate = candidates.nth(index)
       if (!await candidate.isVisible().catch(() => false)) continue
       const text = normalizeText(await candidate.innerText().catch(() => ''))
-      if (looksLikeUiChrome(text) || isAmbiguousFviaMessageContainerText(text)) continue
+      if (looksLikeUiChrome(text)) continue
 
       const href = await candidate.getAttribute('href').catch(() => null)
       const dataId = await candidate.getAttribute('data-message-id').catch(() => null)
@@ -269,7 +220,7 @@ export class FviaInboxesPlaywrightDriver implements FviaInboxesMailboxDriver {
     await this.waitForUiChange()
 
     const bodyText = normalizeText(await this.page.locator('body').innerText({ timeout: 5_000 }).catch(() => ''))
-    if (!bodyText || bodyText === beforeText || !fviaMessageDetailMatchesSummary(message, bodyText)) {
+    if (!bodyText || bodyText === beforeText || !bodyText.toLowerCase().includes(message.subject.toLowerCase())) {
       return null
     }
 

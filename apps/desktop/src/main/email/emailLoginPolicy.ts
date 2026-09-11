@@ -168,31 +168,23 @@ export function classifyMicrosoftLoginSurface(snapshot: MicrosoftLoginSnapshot):
   const recoveryCodeEmailEvidence = /matches\s+the\s+email\s+address\s+on\s+your\s+account|we(?:'|’)ll\s+send\s+you\s+a\s+code|we\s+will\s+send\s+you\s+a\s+code|we\s+sent[^.\n]*code[^.\n]*email|sent[^.\n]*to\s+your\s+email|email\s+address/.test(text)
   const auditedRecoveryCode = recoveryCodeHeading && recoveryCodeEmailEvidence
   const hasRecoveryProofEvidence = proofEmailInputCount > 0 || sendCodeControlCount > 0 || recoveryEmailProofCopy
-  const fullRecoveryEmailConfirmation = hasMaskedRecoveryEmail
-    && proofEmailInputCount > 0
-    && sendCodeControlCount > 0
-    && fullEmailConfirmationCopy
-  const hiddenPartRecoveryEmailConfirmation = helpProtectRecovery
-    && hasMaskedRecoveryEmail
-    && completeHiddenPart
-    && (proofEmailInputCount > 0 || sendCodeControlCount > 0)
 
   // A code page is already past method selection. Keep it in the recovery-code
   // branch even when Microsoft also renders a "Use your password" fallback link.
   if (auditedRecoveryCode) return 'recovery_code'
 
-  // Live Fvia login regression: an actionable Verify-your-email form can render
-  // "Other ways to sign in" / password fallback controls at the same time. Once
-  // Microsoft exposes the audited masked-email field + Send code form, that form
-  // is authoritative. Do not leave it just because a password fallback exists.
-  if (fullRecoveryEmailConfirmation || hiddenPartRecoveryEmailConfirmation) {
-    return 'recovery_email_confirmation'
-  }
-
-  // Password remains preferred only on a real method-choice surface, not on an
-  // already hydrated recovery-email confirmation form.
+  // On the pre-code Verify-email surface, password is the canonical credential
+  // path whenever Microsoft explicitly offers it. This prevents a fresh login
+  // from needlessly starting recovery-mail verification before PassEmail is tried.
   if (usePasswordControlCount > 0 && hasRecoveryProofEvidence) {
     return 'password_method_choice'
+  }
+
+  // Some Microsoft consumer/OAuth variants ask for the *full* recovery email,
+  // while the older account.live variant asks only for the hidden local part.
+  // Both are safe only with a masked recovery hint plus a structured proof field.
+  if (hasMaskedRecoveryEmail && proofEmailInputCount > 0 && sendCodeControlCount > 0 && fullEmailConfirmationCopy) {
+    return 'recovery_email_confirmation'
   }
 
   // The observed Microsoft consumer-account flow first shows a masked recovery
@@ -200,6 +192,9 @@ export function classifyMicrosoftLoginSurface(snapshot: MicrosoftLoginSnapshot):
   // Keep these as separate re-entrant states so the worker re-reads the page after
   // every click instead of assuming a linear sequence.
   if (helpProtectRecovery && hasMaskedRecoveryEmail) {
+    if (completeHiddenPart && (proofEmailInputCount > 0 || sendCodeControlCount > 0)) {
+      return 'recovery_email_confirmation'
+    }
     return 'recovery_method_choice'
   }
 
