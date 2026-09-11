@@ -3,6 +3,7 @@ import type { Page } from 'playwright-core'
 import type { InboxesMailboxDriver } from './inboxesProvider'
 import {
   createInboxesStableFallbackMessageKey,
+  createInboxesStableOccurrenceKeys,
   InboxesVisibleCodeFallbackDriver,
   parseInboxesVisibleCodeRow
 } from './inboxesVisibleCodeFallbackDriver'
@@ -46,6 +47,31 @@ describe('Inboxes visible-code row fallback', () => {
     expect(nextCode).not.toBe(first)
     expect(first).not.toContain('481726')
     expect(nextCode).not.toContain('912345')
+  })
+
+  it('keeps existing row identities stable when Inboxes prepends a new row with the same DOM base key', () => {
+    const shared = 'href:/shared-message-target'
+    const other = 'href:/other-target'
+    const baseline = createInboxesStableOccurrenceKeys([shared, other, shared])
+    const afterNewDelivery = createInboxesStableOccurrenceKeys([shared, shared, other, shared])
+
+    expect(afterNewDelivery.slice(1)).toEqual(baseline)
+    expect(afterNewDelivery[0]).not.toBe(baseline[0])
+    expect(new Set(afterNewDelivery).size).toBe(afterNewDelivery.length)
+  })
+
+  it('does not collapse duplicate provider row ids into the same message identity', () => {
+    const keys = createInboxesStableOccurrenceKeys([
+      'id:message-row',
+      'id:message-row',
+      'id:message-row'
+    ])
+
+    expect(keys).toEqual([
+      'id:message-row:occ:3',
+      'id:message-row:occ:2',
+      'id:message-row:occ:1'
+    ])
   })
 
   it('rejects a numeric row without a verification signal', () => {
