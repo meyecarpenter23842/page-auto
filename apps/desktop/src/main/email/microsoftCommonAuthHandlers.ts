@@ -43,6 +43,8 @@ export interface MicrosoftCommonAuthUi {
   clickPrimarySubmit(): Promise<boolean>
   chooseAccount(canonicalEmail: string): Promise<MicrosoftAccountPickerChoice>
   clickStaySignedIn(): Promise<boolean>
+  /** Present only on adapters that audited the Microsoft DOM passkey Cancel control. */
+  clickPasskeyCancel?(): Promise<boolean>
 }
 
 export interface MicrosoftCommonAuthHandlerOutcome {
@@ -181,11 +183,27 @@ export function createPlaywrightMicrosoftCommonAuthUi(
     async clickStaySignedIn() {
       const submit = await firstVisible([
         page.locator('#idSIButton9:visible').first(),
+        page.getByRole('button', { name: /^yes$/i }).first(),
         page.getByRole('button', { name: /yes|continue|có|tiếp tục/i }).last(),
         page.locator('input[type="submit"]:visible').last()
       ])
       if (!submit) return false
       await submit.click()
+      await waitForStep(page)
+      return true
+    },
+
+    async clickPasskeyCancel() {
+      const cancel = await firstVisible([
+        page.getByRole('button', { name: /^cancel$/i }).first(),
+        page.locator('button:visible').filter({ hasText: /^cancel$/i }).first()
+      ])
+      if (!cancel) return false
+      try {
+        await cancel.click({ timeout: 8_000 })
+      } catch (error) {
+        if (!isExpectedNavigationInterruption(error, page.url())) throw error
+      }
       await waitForStep(page)
       return true
     }
@@ -211,11 +229,12 @@ function retryable(reason: string): MicrosoftCommonAuthHandlerOutcome {
 /**
  * Batch 2 credential/common handler set.
  *
- * The object is per auto-login attempt so Username retry state stays bounded
+ * The object is per auto-login attempt so Username/passkey retry state stays bounded
  * across re-detection while each handler still owns only one Microsoft surface.
  */
 export class MicrosoftCommonAuthHandlers {
   private usernameSubmitAttempts = 0
+  private passkeyCancelAttempts = 0
 
   constructor(private readonly credentials: MicrosoftCommonAuthCredentials) {}
 
@@ -238,10 +257,7 @@ export class MicrosoftCommonAuthHandlers {
       case 'stay_signed_in':
         return await this.handleStaySignedIn(ui)
       case 'passkey_prompt':
-        return needsLogin(
-          'passkey_live_evidence_required',
-          'Microsoft đang ở bước Passkey nhưng PAGE-AUTO chưa có bằng chứng live xác định prompt thuộc DOM Microsoft hay Chromium/WebAuthn. PAGE-AUTO không tự đoán thao tác Cancel.'
-        )
+        return await this.handlePasskeyPrompt(ui)
       case 'sign_in_continue':
         return needsLogin(
           'sign_in_continue_live_evidence_required',
@@ -339,6 +355,27 @@ export class MicrosoftCommonAuthHandlers {
 
   private async handleStaySignedIn(ui: MicrosoftCommonAuthUi): Promise<MicrosoftCommonAuthHandlerOutcome> {
     if (!await ui.clickStaySignedIn()) return retryable('stay_signed_in_not_ready')
+    return {
+      result: { kind: 'handled' },
+      attempted: true
+    }
+  }
+
+  private async handlePasskeyPrompt(ui: MicrosoftCommonAuthUi): Promise<MicrosoftCommonAuthHandlerOutcome> {
+    if (!ui.clickPasskeyCancel) {
+      return needsLogin(
+        'passkey_live_evidence_required',
+        'Microsoft đang ở bước Passkey nhưng adapter hiện tại chưa có capability Cancel đã audit. PAGE-AUTO giữ phiên để xử lý thủ công.'
+      )
+    }
+    if (this.passkeyCancelAttempts >= 2) {
+      return needsLogin(
+        'passkey_cancel_retry_budget_exhausted',
+        'Microsoft tiếp tục trả lại màn Passkey sau hai lần Cancel đã xác nhận. PAGE-AUTO dừng để tránh lặp vô hạn.'
+      )
+    }
+    if (!await ui.clickPasskeyCancel()) return retryable('passkey_cancel_not_ready')
+    this.passkeyCancelAttempts += 1
     return {
       result: { kind: 'handled' },
       attempted: true

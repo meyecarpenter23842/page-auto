@@ -3,6 +3,7 @@ import type { HotmailActionStatus, HotmailNeedsAttentionReason } from '../../sha
 export type MicrosoftLoginSurface =
   | 'authenticated'
   | 'stay_signed_in'
+  | 'passkey_prompt'
   | 'outlook_landing'
   | 'outlook_transition'
   | 'login_transition'
@@ -99,6 +100,16 @@ function microsoftAccountPath(value: string): string | null {
   }
 }
 
+function isAuditedMicrosoftPasskeyCreatePath(value: string): boolean {
+  try {
+    const url = new URL(value)
+    return url.hostname.toLowerCase() === 'login.microsoft.com'
+      && /^\/consumers\/fido\/create(?:\/|$)/.test(url.pathname.toLowerCase())
+  } catch {
+    return false
+  }
+}
+
 function isIdentityConfirmPath(path: string | null): boolean {
   return path !== null && /^\/identity\/confirm(?:\/|$)/.test(path)
 }
@@ -110,6 +121,7 @@ function isKnownSafeAuthenticatedAccountPath(path: string | null): boolean {
 export function classifyMicrosoftLoginSurface(snapshot: MicrosoftLoginSnapshot): MicrosoftLoginSurface {
   const route = classifyMicrosoftRoute(snapshot.url)
   const accountPath = microsoftAccountPath(snapshot.url)
+  const passkeyCreatePath = isAuditedMicrosoftPasskeyCreatePath(snapshot.url)
   const url = snapshot.url.toLowerCase()
   const text = snapshot.text.toLowerCase()
   const usernameInputCount = snapshot.usernameInputCount ?? snapshot.emailInputCount
@@ -118,6 +130,15 @@ export function classifyMicrosoftLoginSurface(snapshot: MicrosoftLoginSnapshot):
   const useAnotherAccountControlCount = snapshot.useAnotherAccountControlCount ?? 0
   const sendCodeControlCount = snapshot.sendCodeControlCount ?? 0
   const usePasswordControlCount = snapshot.usePasswordControlCount ?? 0
+
+  // Live 2026-09-11: Microsoft consumer auth renders the passkey setup prompt as
+  // normal DOM at login.microsoft.com/consumers/fido/create with a visible Cancel
+  // button. Keep the exact audited route + copy as authority; an arbitrary page
+  // mentioning passkeys must never gain an automatic Cancel action.
+  if (passkeyCreatePath) {
+    if (/setting up your passkey/.test(text) && /\bcancel\b/.test(text)) return 'passkey_prompt'
+    return 'login_transition'
+  }
 
   if (/verify your identity|confirm your identity|identity verification|xác minh danh tính/.test(text)) {
     return 'identity_review'
