@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { request } from 'node:http'
 import { join } from 'node:path'
-import { chromium, type Browser, type BrowserContext, type Page } from 'playwright-core'
+import { chromium, type Browser, type BrowserContext } from 'playwright-core'
 
 export interface MailboxProviderProxyConfig {
   server: string
@@ -30,15 +30,9 @@ interface MailboxProviderBrowserRuntime {
   context: BrowserContext
 }
 
-type RuntimeContextShape = {
-  pages?: () => Page[]
-  on?: BrowserContext['on']
-}
-
 const configs = new WeakMap<BrowserContext, MailboxProviderBrowserConfig>()
 const runtimes = new WeakMap<BrowserContext, Promise<MailboxProviderBrowserRuntime | null>>()
 const cleanupBound = new WeakSet<BrowserContext>()
-const PROVIDER_FOREGROUND_RESTORE_DELAY_MS = 120
 
 async function readCdpEndpoint(profileDirectory: string): Promise<string | null> {
   try {
@@ -87,44 +81,6 @@ async function externalProxyBoundaryIsUnknown(config: MailboxProviderBrowserConf
   if (!profileDirectory) return false
   const hasLiveCdpEndpoint = config.hasLiveCdpEndpoint ?? hasLiveEmailCdpEndpoint
   return await hasLiveCdpEndpoint(profileDirectory)
-}
-
-function newestOpenOperatorPage(operatorContext: BrowserContext): Page | null {
-  const candidate = operatorContext as unknown as RuntimeContextShape
-  if (typeof candidate.pages !== 'function') return null
-  const pages = candidate.pages()
-  for (let index = pages.length - 1; index >= 0; index -= 1) {
-    const page = pages[index]
-    if (page && !page.isClosed()) return page
-  }
-  return null
-}
-
-function restoreOperatorForeground(operatorContext: BrowserContext): void {
-  const page = newestOpenOperatorPage(operatorContext)
-  if (!page) return
-  void page.bringToFront().catch(() => undefined)
-}
-
-/**
- * The isolated mailbox browser is intentionally headed for live diagnostics, but
- * its new window must not replace Microsoft as the operator-facing foreground.
- * Provider pages remain fully usable by Playwright in the background. Restore the
- * newest operator page immediately and once more after Chromium finishes showing
- * the newly created provider window.
- */
-export function bindMailboxProviderForegroundGuard(
-  operatorContext: BrowserContext,
-  providerContext: BrowserContext
-): void {
-  const provider = providerContext as unknown as RuntimeContextShape
-  if (typeof provider.on !== 'function') return
-
-  provider.on('page', () => {
-    restoreOperatorForeground(operatorContext)
-    const timer = setTimeout(() => restoreOperatorForeground(operatorContext), PROVIDER_FOREGROUND_RESTORE_DELAY_MS)
-    timer.unref?.()
-  })
 }
 
 /**
@@ -182,7 +138,6 @@ async function launchMailboxProviderRuntime(
       ...(config.proxy ? { proxy: config.proxy } : {})
     })
     const context = await browser.newContext()
-    bindMailboxProviderForegroundGuard(operatorContext, context)
     browser.once('disconnected', () => {
       runtimes.delete(operatorContext)
     })
