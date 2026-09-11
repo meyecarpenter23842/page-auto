@@ -100,7 +100,7 @@ describe('Microsoft recovery email challenge policy', () => {
     })).toBe('recovery_email_confirmation')
   })
 
-  it('prefers PassEmail when the pre-code Verify your email surface offers Use your password', () => {
+  it('keeps the actionable Verify your email recovery form authoritative even when Use your password is visible', () => {
     expect(classifyMicrosoftLoginSurface({
       url: 'https://login.live.com/oauth20_authorize.srf',
       text: "Verify your email We'll send a code to ra*****@fviainboxes.com. To verify this is your email, enter it here. Send code Already received a code? Use your password",
@@ -111,7 +111,7 @@ describe('Microsoft recovery email challenge policy', () => {
       passwordInputCount: 0,
       sendCodeControlCount: 1,
       usePasswordControlCount: 1
-    })).toBe('password_method_choice')
+    })).toBe('recovery_email_confirmation')
   })
 
   it('keeps Verify your email in recovery when Microsoft does not offer the password path', () => {
