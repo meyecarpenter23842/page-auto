@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { MailProviderCodeRequest } from './mailProvider'
-import { effectiveInboxesCodeTimeoutMs } from './inboxesProvider'
+import { effectiveInboxesCodePollMs, effectiveInboxesCodeTimeoutMs } from './inboxesProvider'
 import { shouldReverifyInboxesAfterPollRecovery } from './inboxesVisibleCodeFallbackDriver'
 
 function request(overrides: Partial<MailProviderCodeRequest> = {}): MailProviderCodeRequest {
@@ -20,6 +20,15 @@ describe('Inboxes live code wait policy', () => {
 
   it('also keeps rejected-code retries long enough for a newly delivered message', () => {
     expect(effectiveInboxesCodeTimeoutMs(request({ timeoutMs: 4_000 }))).toBe(60_000)
+  })
+
+  it('keeps the provider-owned 500ms Microsoft recovery polling policy when the router does not specify one', () => {
+    expect(effectiveInboxesCodePollMs(request())).toBe(500)
+    expect(effectiveInboxesCodePollMs(request({ pollIntervalMs: 750 }))).toBe(750)
+    expect(effectiveInboxesCodePollMs(request({
+      role: 'primary',
+      purpose: 'generic_verification'
+    }))).toBeUndefined()
   })
 
   it('preserves zero-timeout warm probes and unrelated verification timeouts', () => {

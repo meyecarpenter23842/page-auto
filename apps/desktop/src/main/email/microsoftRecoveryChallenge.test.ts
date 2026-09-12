@@ -3,7 +3,6 @@ import type { EmailRecoveryRoundContract } from './emailAuthV2Contracts'
 import { classifyMicrosoftLoginSurface } from './emailLoginPolicy'
 import {
   createMicrosoftRecoveryRound,
-  microsoftRecoveryBrowserProviderId,
   microsoftRecoveryCodeChallengeMatchesBackupEmail,
   microsoftRecoveryCodeInputParts,
   microsoftRecoveryCodeWasRejected,
@@ -11,7 +10,6 @@ import {
   microsoftRecoveryHintMatchesBackupEmail,
   microsoftRecoveryLocalPart,
   microsoftRecoveryRecordSubmittedCode,
-  microsoftRecoveryRequiresResumeMailboxBaseline,
   parseMicrosoftRecoveryEmailHints
 } from './microsoftRecoveryChallenge'
 
@@ -56,20 +54,6 @@ describe('Microsoft recovery email challenge policy', () => {
       'Verify your email To verify this is your email, enter it here. Send code to xx*****@fviainboxes.com',
       'random-owner@fviainboxes.com'
     )).toBeNull()
-  })
-
-  it('routes recovery mail through the central browser-provider registry instead of hard-coding Inboxes', () => {
-    expect(microsoftRecoveryBrowserProviderId('owner@getnada.com')).toBe('inboxes')
-    expect(microsoftRecoveryBrowserProviderId('owner@fviainboxes.com')).toBe('fvia_inboxes')
-    expect(microsoftRecoveryBrowserProviderId('owner@mailto.plus')).toBe('mailto_plus')
-    expect(microsoftRecoveryBrowserProviderId('owner@hotmail.com')).toBeNull()
-    expect(microsoftRecoveryBrowserProviderId('owner@unknown.example')).toBeNull()
-  })
-
-  it('baselines timestamp-less providers before accepting mail on a resumed code screen', () => {
-    expect(microsoftRecoveryRequiresResumeMailboxBaseline('fvia_inboxes')).toBe(true)
-    expect(microsoftRecoveryRequiresResumeMailboxBaseline('mailto_plus')).toBe(true)
-    expect(microsoftRecoveryRequiresResumeMailboxBaseline('inboxes')).toBe(false)
   })
 
   it('classifies the unselected Help us protect surface as recovery method choice', () => {

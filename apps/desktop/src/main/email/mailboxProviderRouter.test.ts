@@ -112,4 +112,149 @@ describe('MailboxProviderRouter', () => {
       { providerId: 'inboxes', resolve: async () => provider('inboxes') }
     ])).toThrow(/Duplicate mailbox provider registration: inboxes/)
   })
+
+  it('prepares a challenge baseline through the resolved provider without leaking provider implementation to the caller', async () => {
+    const snapshotMessageKeys = vi.fn(async (value: { mailbox: string }) => ({
+      providerId: 'inboxes' as const,
+      mailbox: value.mailbox,
+      status: 'success' as const,
+      messageKeys: ['before-send', 'before-send'],
+      message: 'baseline ok'
+    }))
+    const inboxes: MailProvider = {
+      id: 'inboxes',
+      snapshotMessageKeys,
+      getVerificationCode: async () => ({
+        providerId: 'inboxes',
+        mailbox: 'owner@fivermail.com',
+        status: 'message_not_found',
+        code: null,
+        sender: null,
+        messageKey: null,
+        message: 'not ready'
+      })
+    }
+    const router = new MailboxProviderRouter([
+      { providerId: 'inboxes', resolve: async () => inboxes }
+    ])
+
+    const result = await router.prepareChallenge(request({ challengeId: 'baseline-challenge' }))
+
+    expect(result).toMatchObject({
+      status: 'success',
+      providerId: 'inboxes',
+      mailbox: 'owner@fivermail.com',
+      challengeId: 'baseline-challenge',
+      messageKeys: ['before-send']
+    })
+    expect(snapshotMessageKeys).toHaveBeenCalledTimes(1)
+  })
+
+  it('lets provider-owned resume freshness choose baseline-current versus bounded lookback', async () => {
+    const baselineProvider: MailProvider = {
+      id: 'fvia_inboxes',
+      resumeFreshness: 'baseline_current',
+      snapshotMessageKeys: async (value) => ({
+        providerId: 'fvia_inboxes',
+        mailbox: value.mailbox,
+        status: 'success',
+        messageKeys: ['existing-fvia'],
+        message: 'baseline'
+      }),
+      getVerificationCode: async () => ({
+        providerId: 'fvia_inboxes',
+        mailbox: 'owner@fviainboxes.com',
+        status: 'message_not_found',
+        code: null,
+        sender: null,
+        messageKey: null,
+        message: 'not ready'
+      })
+    }
+    const lookbackProvider: MailProvider = {
+      id: 'inboxes',
+      resumeFreshness: 'lookback',
+      snapshotMessageKeys: vi.fn(),
+      getVerificationCode: async () => ({
+        providerId: 'inboxes',
+        mailbox: 'owner@fivermail.com',
+        status: 'message_not_found',
+        code: null,
+        sender: null,
+        messageKey: null,
+        message: 'not ready'
+      })
+    }
+    const router = new MailboxProviderRouter([
+      { providerId: 'fvia_inboxes', resolve: async () => baselineProvider },
+      { providerId: 'inboxes', resolve: async () => lookbackProvider }
+    ])
+
+    const fvia = await router.prepareResumeChallenge(
+      request({ mailbox: 'owner@fviainboxes.com', challengeId: 'resume-fvia' }),
+      { lookbackMs: 600_000, now: 1_000_000 }
+    )
+    const inboxes = await router.prepareResumeChallenge(
+      request({ mailbox: 'owner@fivermail.com', challengeId: 'resume-inboxes' }),
+      { lookbackMs: 600_000, now: 1_000_000 }
+    )
+
+    expect(fvia).toMatchObject({
+      status: 'success',
+      providerId: 'fvia_inboxes',
+      challengeId: 'resume-fvia',
+      messageKeys: ['existing-fvia'],
+      notBefore: 1_000_000
+    })
+    expect(inboxes).toMatchObject({
+      status: 'success',
+      providerId: 'inboxes',
+      challengeId: 'resume-inboxes',
+      messageKeys: [],
+      notBefore: 400_000
+    })
+    expect(lookbackProvider.snapshotMessageKeys).not.toHaveBeenCalled()
+  })
+
+  it('routes fresh-code requests with baseline and consumed identity while preserving challenge identity', async () => {
+    const getVerificationCode = vi.fn(async (value: MailProviderCodeRequest): Promise<MailProviderCodeResult> => ({
+      providerId: 'inboxes',
+      mailbox: value.mailbox,
+      status: 'success',
+      code: '654321',
+      sender: 'account-security-noreply@accountprotection.microsoft.com',
+      messageKey: 'fresh-mail',
+      message: 'ok'
+    }))
+    const router = new MailboxProviderRouter([
+      {
+        providerId: 'inboxes',
+        resolve: async () => ({
+          id: 'inboxes',
+          getVerificationCode
+        })
+      }
+    ])
+
+    const result = await router.getFreshCode(request({
+      challengeId: 'round-2',
+      baselineMessageKeys: ['before-send'],
+      consumedMessageKeys: ['submitted-1'],
+      notBefore: 900_000,
+      timeoutMs: 25_000
+    }))
+
+    expect(result).toMatchObject({
+      status: 'success',
+      providerId: 'inboxes',
+      challengeId: 'round-2',
+      code: '654321',
+      messageKey: 'fresh-mail'
+    })
+    expect(getVerificationCode).toHaveBeenCalledWith(expect.objectContaining({
+      excludedMessageKeys: expect.arrayContaining(['before-send', 'submitted-1']),
+      notBefore: 900_000,
+      timeoutMs: 25_000
+    }))
+  })
 })

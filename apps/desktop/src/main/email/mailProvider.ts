@@ -81,8 +81,17 @@ export interface MailProviderMessageKeySnapshotResult {
   message: string
 }
 
+export type MailProviderResumeFreshness = 'lookback' | 'baseline_current'
+
 export interface MailProvider {
   readonly id: MailProviderId
+  /**
+   * Provider-owned resume semantics for a Microsoft recovery code screen that
+   * already existed before PAGE-AUTO attached. Timestamp-capable providers can
+   * use a bounded lookback; first-seen providers must baseline current message
+   * identity before waiting for anything new.
+   */
+  readonly resumeFreshness?: MailProviderResumeFreshness
   getVerificationCode(request: MailProviderCodeRequest): Promise<MailProviderCodeResult>
   /** Optional browser-provider capability used to baseline message identity before a new challenge is sent. */
   snapshotMessageKeys?(request: MailProviderMessageKeySnapshotRequest): Promise<MailProviderMessageKeySnapshotResult>

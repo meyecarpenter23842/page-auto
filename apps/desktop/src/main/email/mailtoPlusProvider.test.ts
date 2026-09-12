@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { MailMessageSnapshot } from './verificationCodeParser'
 import {
+  effectiveMailtoPlusCodeTimeoutMs,
   MailtoPlusProvider,
   type MailtoPlusMailboxDriver
 } from './mailtoPlusProvider'
@@ -29,6 +30,29 @@ function snapshot(message: BrowserMailboxMessageSummary, code: string): MailMess
 }
 
 describe('MailtoPlusProvider', () => {
+  it('owns resume freshness and preserves the legacy 25-second Microsoft recovery wait', () => {
+    const provider = new MailtoPlusProvider({
+      ensureMailbox: async (mailbox) => ({ status: 'ready', activeMailbox: mailbox }),
+      listMessages: async () => [],
+      readMessage: async () => null,
+      refreshMailbox: async () => undefined
+    })
+
+    expect(provider.resumeFreshness).toBe('baseline_current')
+    expect(effectiveMailtoPlusCodeTimeoutMs({
+      mailbox: 'owner@mailto.plus',
+      role: 'recovery',
+      purpose: 'microsoft_security',
+      timeoutMs: 10_000
+    })).toBe(25_000)
+    expect(effectiveMailtoPlusCodeTimeoutMs({
+      mailbox: 'owner@mailto.plus',
+      role: 'recovery',
+      purpose: 'microsoft_security',
+      timeoutMs: 0
+    })).toBe(0)
+  })
+
   it('supports the audited mailto.plus domain for PRIMARY role', async () => {
     const mail = summary('mailto-plus:1')
     const driver: MailtoPlusMailboxDriver = {

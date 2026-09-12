@@ -21,6 +21,8 @@ export type FviaInboxesProviderOptions = BrowserMailboxProviderOptions
  * baseline so only a newly appearing message can satisfy the post-Send request.
  */
 export class FviaInboxesProvider extends BrowserMailboxProvider<'fvia_inboxes'> {
+  readonly resumeFreshness = 'baseline_current' as const
+
   constructor(driver: FviaInboxesMailboxDriver, options: FviaInboxesProviderOptions = {}) {
     super(driver, {
       ...options,

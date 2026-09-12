@@ -11,6 +11,7 @@ import type { MailProviderCodeRequest, MailProviderCodeResult } from './mailProv
 import { resolveMailProviderId } from './mailProviderRegistry'
 
 const INBOXES_SECURITY_CODE_MIN_WAIT_MS = 60_000
+const INBOXES_SECURITY_CODE_POLL_MS = 500
 const INBOXES_CROSS_REFRESH_MAX_WAIT_MS = 60_000
 const INBOXES_TRANSIENT_REFRESH_RETRY_DELAY_MS = 500
 
@@ -88,6 +89,11 @@ export function effectiveInboxesCodeTimeoutMs(request: MailProviderCodeRequest):
   return Math.max(INBOXES_SECURITY_CODE_MIN_WAIT_MS, request.timeoutMs ?? 0)
 }
 
+export function effectiveInboxesCodePollMs(request: MailProviderCodeRequest): number | undefined {
+  if (request.role !== 'recovery' || request.purpose !== 'microsoft_security') return request.pollIntervalMs
+  return request.pollIntervalMs ?? INBOXES_SECURITY_CODE_POLL_MS
+}
+
 /**
  * BrowserMailboxProvider returns a structured provider_unavailable result when
  * refreshMailbox() throws. That failure is transient on live Inboxes: the same
@@ -132,9 +138,11 @@ export class InboxesProvider extends BrowserMailboxProvider<'inboxes'> {
     }
 
     const timeoutMs = effectiveInboxesCodeTimeoutMs(request)
+    const pollIntervalMs = effectiveInboxesCodePollMs(request)
     const effectiveRequest = {
       ...request,
-      ...(timeoutMs === undefined ? {} : { timeoutMs })
+      ...(timeoutMs === undefined ? {} : { timeoutMs }),
+      ...(pollIntervalMs === undefined ? {} : { pollIntervalMs })
     }
 
     // Only the real Microsoft recovery wait owns the 60s cross-refresh budget.
@@ -159,7 +167,7 @@ export class InboxesProvider extends BrowserMailboxProvider<'inboxes'> {
     while (true) {
       const remainingMs = Math.max(0, deadline - this.retryNow())
       const result = await super.getVerificationCode({
-        ...request,
+        ...effectiveRequest,
         timeoutMs: remainingMs
       })
 
