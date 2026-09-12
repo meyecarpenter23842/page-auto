@@ -1,4 +1,5 @@
 import type { BrowserContext } from 'playwright-core'
+import { emailDiagnostic } from './emailRuntimeDiagnostic'
 import { EmailPageRegistry } from './emailPageRegistry'
 import {
   createMailboxCodeService,
@@ -38,10 +39,22 @@ class MailboxCodeServiceProviderAdapter implements MailProvider {
   async snapshotMessageKeys(
     request: MailProviderMessageKeySnapshotRequest
   ): Promise<MailProviderMessageKeySnapshotResult> {
+    if (this.id === 'fvia_inboxes') {
+      emailDiagnostic('mailbox-provider', 'fvia-snapshot-start', {
+        role: request.role,
+        purpose: request.purpose
+      })
+    }
     const result = await this.service.prepareChallengeBaseline({
       mailbox: request.mailbox,
       providerId: this.id
     })
+    if (this.id === 'fvia_inboxes') {
+      emailDiagnostic('mailbox-provider', 'fvia-snapshot-result', {
+        status: result.status,
+        messageKeyCount: result.messageKeys.length
+      })
+    }
     return {
       providerId: result.providerId,
       mailbox: result.mailbox,
@@ -52,6 +65,13 @@ class MailboxCodeServiceProviderAdapter implements MailProvider {
   }
 
   async getVerificationCode(request: MailProviderCodeRequest): Promise<MailProviderCodeResult> {
+    if (this.id === 'fvia_inboxes') {
+      emailDiagnostic('mailbox-provider', 'fvia-code-start', {
+        role: request.role,
+        purpose: request.purpose,
+        excludedMessageKeyCount: request.excludedMessageKeys?.length ?? 0
+      })
+    }
     const result = await this.service.getFreshCode({
       mailbox: request.mailbox,
       providerId: this.id,
@@ -61,6 +81,13 @@ class MailboxCodeServiceProviderAdapter implements MailProvider {
       ...(request.timeoutMs === undefined ? {} : { timeoutMs: request.timeoutMs }),
       ...(request.pollIntervalMs === undefined ? {} : { pollIntervalMs: request.pollIntervalMs })
     })
+    if (this.id === 'fvia_inboxes') {
+      emailDiagnostic('mailbox-provider', 'fvia-code-result', {
+        status: result.status,
+        hasCode: Boolean(result.code),
+        hasMessageKey: Boolean(result.messageKey)
+      })
+    }
     return {
       providerId: result.providerId,
       mailbox: result.mailbox,
@@ -121,13 +148,26 @@ export function createMailboxProviderRouter(operatorContext: BrowserContext): Ma
     return mailtoRuntime?.provider ?? null
   }
 
+  emailDiagnostic('mailbox-router', 'created', {
+    operatorPageCount: operatorContext.pages().length
+  })
+
   return new MailboxProviderRouter([
     {
       providerId: 'microsoft',
       resolve: async (request) => mainRpc?.createProvider('microsoft', request.accountId, 'lookback') ?? null
     },
     { providerId: 'inboxes', resolve: async () => inboxes },
-    { providerId: 'fvia_inboxes', resolve: async () => fvia },
+    {
+      providerId: 'fvia_inboxes',
+      resolve: async (request) => {
+        emailDiagnostic('mailbox-router', 'fvia-resolve', {
+          accountId: request.accountId,
+          operatorPageCount: operatorContext.pages().length
+        })
+        return fvia
+      }
+    },
     { providerId: 'mailto_plus', resolve: async () => await resolveMailtoPlus() }
   ])
 }

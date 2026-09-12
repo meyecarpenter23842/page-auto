@@ -1,4 +1,5 @@
 import type { Page } from 'playwright-core'
+import { emailDiagnostic } from './emailRuntimeDiagnostic'
 import { FviaInboxesPlaywrightDriver } from './fviaInboxesPlaywrightDriver'
 import { FviaInboxesProvider } from './fviaInboxesProvider'
 import {
@@ -45,6 +46,21 @@ export function isFviaInboxesProviderPageUrl(value: string): boolean {
     return hostname === 'fviainboxes.com' || hostname.endsWith('.fviainboxes.com')
   } catch {
     return false
+  }
+}
+
+function fviaPageState(page: Page): 'provider' | 'blank' | 'other' {
+  if (isFviaInboxesProviderPageUrl(page.url())) return 'provider'
+  return page.url() === 'about:blank' ? 'blank' : 'other'
+}
+
+function safeFrameCount(page: Page): number | null {
+  const frameReader = (page as unknown as { frames?: () => readonly unknown[] }).frames
+  if (typeof frameReader !== 'function') return null
+  try {
+    return frameReader.call(page).length
+  } catch {
+    return null
   }
 }
 
@@ -106,14 +122,29 @@ export class FviaInboxesLifecycleProvider implements MailProvider {
 export async function createFviaInboxesMailboxRuntime(
   options: CreateFviaInboxesMailboxRuntimeOptions
 ): Promise<FviaInboxesMailboxRuntime | null> {
-  const page = ownedOrNewestOpenFviaInboxesProviderPage(options.preferredPage, options.pages)
-    ?? await options.createPage()
+  const preferredPage = options.preferredPage && !options.preferredPage.isClosed()
+    ? options.preferredPage
+    : null
+  const adoptedPage = preferredPage ?? newestOpenFviaInboxesProviderPage(options.pages)
+  const page = adoptedPage ?? await options.createPage()
   if (page.isClosed()) return null
+
+  emailDiagnostic('mailbox-provider', 'fvia-runtime-page', {
+    source: preferredPage ? 'preferred' : adoptedPage ? 'adopted' : 'created',
+    pageState: fviaPageState(page),
+    candidatePageCount: options.pages.length,
+    frameCount: safeFrameCount(page)
+  })
 
   const provider = new FviaInboxesLifecycleProvider(
     page,
     new FviaInboxesProvider(new FviaInboxesPlaywrightDriver(page))
   )
+
+  emailDiagnostic('mailbox-provider', 'fvia-runtime-ready', {
+    pageState: fviaPageState(page),
+    frameCount: safeFrameCount(page)
+  })
 
   return {
     page,
