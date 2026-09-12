@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { classifyFviaInboxesSurface, parseFviaReceivedAtLabel } from './fviaInboxesPlaywrightDriver'
+import {
+  classifyFviaInboxesSurface,
+  isFviaDomainControlValue,
+  parseFviaReceivedAtLabel
+} from './fviaInboxesPlaywrightDriver'
 
 describe('classifyFviaInboxesSurface', () => {
   it('recognizes the audited username/domain/Get Email form before a mailbox is activated', () => {
@@ -80,6 +84,24 @@ describe('classifyFviaInboxesSurface', () => {
       getEmailButtonVisible: false,
       inboxVisible: false
     })).toBe('provider_unavailable')
+  })
+})
+
+describe('isFviaDomainControlValue', () => {
+  it('recognizes the live Fvia domain values exposed by the custom listbox trigger', () => {
+    for (const domain of [
+      'fviainboxes.com',
+      'fviadropinbox.com',
+      'fviamail.work',
+      'dropinboxes.com',
+      'titanads.email'
+    ]) {
+      expect(isFviaDomainControlValue(domain)).toBe(true)
+    }
+
+    expect(isFviaDomainControlValue('@fviadropinbox.com')).toBe(true)
+    expect(isFviaDomainControlValue('gmail.com')).toBe(false)
+    expect(isFviaDomainControlValue('')).toBe(false)
   })
 })
 
