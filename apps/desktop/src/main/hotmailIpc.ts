@@ -21,6 +21,7 @@ import { HotmailComboService } from './email/hotmailComboService'
 import { testEmailBrowserExecutable } from './email/emailProxyTester'
 import { ElectronEmailSecretCipher } from './email/emailSecretStore'
 import { HotmailService } from './email/hotmailService'
+import { createMicrosoftMailboxRuntime } from './email/microsoftMailboxRuntime'
 import { clearEmailCodeProvider, setEmailCodeProvider } from './services/emailCodeProviderRegistry'
 
 export interface HotmailIpcRuntime {
@@ -94,7 +95,11 @@ export function registerHotmailIpcHandlers(database: Database.Database): Hotmail
   }
 
   const cipher = new ElectronEmailSecretCipher()
-  const runtime = new EmailCommonRuntime(() => repository.getProxySettings())
+  const microsoftMailboxRuntime = createMicrosoftMailboxRuntime(accounts, repository, cipher)
+  const runtime = new EmailCommonRuntime(
+    () => repository.getProxySettings(),
+    microsoftMailboxRuntime.handleWorkerRequest
+  )
   const service = new HotmailService(
     accounts,
     repository,
@@ -250,6 +255,7 @@ export function registerHotmailIpcHandlers(database: Database.Database): Hotmail
       clearEmailCodeProvider(codeRuntime.provider)
       codeRuntime.dispose()
       service.dispose()
+      microsoftMailboxRuntime.dispose()
       browserEngine.closeAll()
     }
   }

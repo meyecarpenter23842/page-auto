@@ -16,6 +16,10 @@ import type {
 import { MailboxProviderRouter } from './mailboxProviderRouter'
 import { resolveMailboxProviderContext } from './mailboxProviderBrowserRuntime'
 import {
+  createMailboxProviderWorkerRpc,
+  type MailboxProviderWorkerRpc
+} from './mailboxProviderWorkerRpc'
+import {
   createMailtoPlusMailboxRuntime,
   type MailtoPlusMailboxRuntime
 } from './mailtoPlusMailboxRuntime'
@@ -69,17 +73,34 @@ class MailboxCodeServiceProviderAdapter implements MailProvider {
   }
 }
 
+let mainMailboxProviderRpc: MailboxProviderWorkerRpc | null | undefined
+
+function resolveMainMailboxProviderRpc(): MailboxProviderWorkerRpc | null {
+  if (mainMailboxProviderRpc !== undefined) return mainMailboxProviderRpc
+  const parentPort = process.parentPort
+  if (!parentPort) {
+    mainMailboxProviderRpc = null
+    return null
+  }
+
+  const rpc = createMailboxProviderWorkerRpc((message) => parentPort.postMessage(message))
+  parentPort.on('message', (event) => { rpc.handleMessage(event) })
+  mainMailboxProviderRpc = rpc
+  return rpc
+}
+
 /**
  * Production mailbox composition root used by Microsoft Auth.
  *
  * The router sees only MailProvider contracts. Concrete provider/page lifecycle
  * remains behind the registered module adapters. Microsoft/Hotmail mailbox is
- * intentionally not registered until E-MOD-5.
+ * represented by a provider-neutral worker RPC adapter; OAuth/Graph stays Main-owned.
  */
 export function createMailboxProviderRouter(operatorContext: BrowserContext): MailboxProviderRouter {
   const service = createMailboxCodeService(operatorContext)
   const inboxes = new MailboxCodeServiceProviderAdapter('inboxes', service, 'lookback')
   const fvia = new MailboxCodeServiceProviderAdapter('fvia_inboxes', service, 'baseline_current')
+  const mainRpc = resolveMainMailboxProviderRpc()
   let mailtoRuntime: MailtoPlusMailboxRuntime | null = null
 
   const resolveMailtoPlus = async (): Promise<MailProvider | null> => {
@@ -101,6 +122,10 @@ export function createMailboxProviderRouter(operatorContext: BrowserContext): Ma
   }
 
   return new MailboxProviderRouter([
+    {
+      providerId: 'microsoft',
+      resolve: async (request) => mainRpc?.createProvider('microsoft', request.accountId, 'lookback') ?? null
+    },
     { providerId: 'inboxes', resolve: async () => inboxes },
     { providerId: 'fvia_inboxes', resolve: async () => fvia },
     { providerId: 'mailto_plus', resolve: async () => await resolveMailtoPlus() }

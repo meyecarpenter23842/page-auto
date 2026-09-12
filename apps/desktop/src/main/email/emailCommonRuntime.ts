@@ -6,6 +6,7 @@ import type {
   HotmailRecoveryOperation
 } from '../../shared/hotmail'
 import { EmailBrowserManager } from './emailBrowserManager'
+import type { MailboxProviderWorkerRequestHandler } from './mailboxProviderWorkerRpc'
 import { EmailProxyPool, type EmailProxyCandidate, type EmailProxySettingsRaw } from './emailProxyPool'
 import { EmailRuntimeOwnership, type EmailRuntimeOwner } from './emailRuntimeOwnership'
 
@@ -69,7 +70,10 @@ export class EmailCommonRuntime {
   private readonly managers = new Map<number, EmailBrowserManager>()
   private readonly ownership = new EmailRuntimeOwnership()
 
-  constructor(getProxySettings: () => EmailProxySettingsRaw) {
+  constructor(
+    getProxySettings: () => EmailProxySettingsRaw,
+    private readonly mailboxProviderRequestHandler?: MailboxProviderWorkerRequestHandler
+  ) {
     this.proxyPool = new EmailProxyPool(getProxySettings)
   }
 
@@ -264,7 +268,7 @@ export class EmailCommonRuntime {
       this.proxyPool.release(closedAccountId)
       this.ownership.clear(closedAccountId)
       if (this.managers.get(closedAccountId) === manager) this.managers.delete(closedAccountId)
-    })
+    }, this.mailboxProviderRequestHandler)
     this.managers.set(accountId, manager)
     return manager
   }
