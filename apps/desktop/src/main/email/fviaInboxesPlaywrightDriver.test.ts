@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   classifyFviaInboxesSurface,
   fviaDomainControlReadMode,
+  fviaMessageKeys,
   fviaVerificationDetailReady,
   isFviaDomainControlValue,
   parseFviaReceivedAtLabel,
@@ -159,6 +160,50 @@ describe('pickFviaVerificationDetail', () => {
       { source: 'root', text: `${before} Message opened` },
       { source: 'frame', text: 'Microsoft account protection message' }
     ])).toBeNull()
+  })
+})
+
+describe('fviaMessageKeys', () => {
+  const fallbackRow = (text: string) => ({ href: null, dataId: null, id: null, text })
+
+  it('keeps the first code mail key stable when its relative time changes and a second identical code mail is prepended', () => {
+    const firstRound = fviaMessageKeys([
+      fallbackRow('Personal Microsoft account security code just now')
+    ])
+    const secondRound = fviaMessageKeys([
+      fallbackRow('Personal Microsoft account security code just now'),
+      fallbackRow('Personal Microsoft account security code 1 minute ago')
+    ])
+
+    expect(firstRound[0]).toContain('|slot:0')
+    expect(secondRound[1]).toBe(firstRound[0])
+    expect(secondRound[0]).not.toBe(firstRound[0])
+    expect(secondRound[0]).toContain('|slot:1')
+  })
+
+  it('keeps older duplicate slots stable across three consecutive Microsoft code mails', () => {
+    const roundTwo = fviaMessageKeys([
+      fallbackRow('Personal Microsoft account security code just now'),
+      fallbackRow('Personal Microsoft account security code 1 minute ago')
+    ])
+    const roundThree = fviaMessageKeys([
+      fallbackRow('Personal Microsoft account security code just now'),
+      fallbackRow('Personal Microsoft account security code 1 minute ago'),
+      fallbackRow('Personal Microsoft account security code 2 minutes ago')
+    ])
+
+    expect(roundThree[2]).toBe(roundTwo[1])
+    expect(roundThree[1]).toBe(roundTwo[0])
+    expect(roundThree[0]).toContain('|slot:2')
+  })
+
+  it('prefers a stable provider DOM identity over the text fallback', () => {
+    expect(fviaMessageKeys([{
+      href: '/message/abc123',
+      dataId: null,
+      id: null,
+      text: 'Personal Microsoft account security code just now'
+    }])).toEqual(['href:/message/abc123'])
   })
 })
 

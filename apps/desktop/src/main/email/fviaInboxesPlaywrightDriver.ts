@@ -154,16 +154,53 @@ function looksLikeUiChrome(textInput: string): boolean {
     || /free temporary email|free, fast, private|emails will appear here automatically|enter your username/.test(text)
 }
 
-function messageKey(
-  href: string | null,
-  dataId: string | null,
-  id: string | null,
+export interface FviaMessageIdentityInput {
+  href: string | null
+  dataId: string | null
+  id: string | null
   text: string
-): string {
-  if (href) return `href:${href}`
-  if (dataId) return `data:${dataId}`
-  if (id) return `id:${id}`
-  return `text:${normalizeText(text).toLowerCase()}`
+}
+
+function stableMessageKey(row: FviaMessageIdentityInput): string | null {
+  if (row.href) return `href:${row.href}`
+  if (row.dataId) return `data:${row.dataId}`
+  if (row.id) return `id:${row.id}`
+  return null
+}
+
+function fallbackMessageIdentityBase(textInput: string): string {
+  const withoutRelativeTime = textInput.replace(new RegExp(RELATIVE_TIME.source, 'gi'), ' ')
+  const normalized = normalizeText(withoutRelativeTime).toLowerCase()
+  return normalized || normalizeText(textInput).toLowerCase()
+}
+
+/**
+ * Fvia often exposes no stable DOM id/href for a message row. In that fallback
+ * case the visible relative-time label cannot be part of message identity because
+ * the same row mutates from "just now" to "1 minute ago" between recovery rounds.
+ *
+ * Live Fvia prepends newer rows. Number identical fallback rows from the oldest
+ * end so existing rows keep their slot when a new same-subject Microsoft code
+ * mail is prepended: [new, old] => [slot:1, slot:0]. This keeps baseline/consumed
+ * identity stable while still distinguishing consecutive identical code mails.
+ */
+export function fviaMessageKeys(rows: readonly FviaMessageIdentityInput[]): string[] {
+  const remainingByBase = new Map<string, number>()
+  for (const row of rows) {
+    if (stableMessageKey(row)) continue
+    const base = fallbackMessageIdentityBase(row.text)
+    remainingByBase.set(base, (remainingByBase.get(base) ?? 0) + 1)
+  }
+
+  return rows.map((row) => {
+    const stable = stableMessageKey(row)
+    if (stable) return stable
+
+    const base = fallbackMessageIdentityBase(row.text)
+    const slot = Math.max(0, (remainingByBase.get(base) ?? 1) - 1)
+    remainingByBase.set(base, slot)
+    return `text:${base}|slot:${slot}`
+  })
 }
 
 /**
@@ -249,6 +286,15 @@ export class FviaInboxesPlaywrightDriver implements FviaInboxesMailboxDriver {
       'tr:visible, [role="row"]:visible, [role="listitem"]:visible, li:visible, a:visible, button:visible, [role="button"]:visible'
     )
     const count = Math.min(await candidates.count(), 300)
+    const rows: Array<{
+      locator: Locator
+      text: string
+      href: string | null
+      dataId: string | null
+      id: string | null
+      receivedLabel: string
+      receivedAt: number | null
+    }> = []
 
     for (let index = 0; index < count; index += 1) {
       const candidate = candidates.nth(index)
@@ -256,25 +302,54 @@ export class FviaInboxesPlaywrightDriver implements FviaInboxesMailboxDriver {
       const text = normalizeText(await candidate.innerText().catch(() => ''))
       if (looksLikeUiChrome(text)) continue
 
-      const href = await candidate.getAttribute('href').catch(() => null)
+      const directHref = await candidate.getAttribute('href').catch(() => null)
+      const href = directHref
+        ?? await candidate.locator('a[href]').first().getAttribute('href').catch(() => null)
       const dataId = await candidate.getAttribute('data-message-id').catch(() => null)
         ?? await candidate.getAttribute('data-id').catch(() => null)
       const id = await candidate.getAttribute('id').catch(() => null)
-      const key = messageKey(href, dataId, id, text)
-      if (seen.has(key)) continue
+      const receivedLabel = text.match(RELATIVE_TIME)?.[0] ?? ''
+      rows.push({
+        locator: candidate,
+        text,
+        href,
+        dataId,
+        id,
+        receivedLabel,
+        receivedAt: parseFviaReceivedAtLabel(receivedLabel, now)
+      })
+    }
+
+    const keys = fviaMessageKeys(rows)
+    const fallbackBases = rows
+      .filter((row) => stableMessageKey(row) === null)
+      .map((row) => fallbackMessageIdentityBase(row.text))
+    const fallbackCounts = new Map<string, number>()
+    for (const base of fallbackBases) fallbackCounts.set(base, (fallbackCounts.get(base) ?? 0) + 1)
+    const duplicateFallbackGroups = [...fallbackCounts.values()].filter((value) => value > 1).length
+    if (fallbackBases.length > 0) {
+      emailDiagnostic('fvia-dom', 'message-identity', {
+        rows: rows.length,
+        fallbackRows: fallbackBases.length,
+        duplicateFallbackGroups
+      })
+    }
+
+    for (let index = 0; index < rows.length; index += 1) {
+      const row = rows[index]
+      const key = keys[index]
+      if (!row || !key || seen.has(key)) continue
       seen.add(key)
 
-      const receivedLabel = text.match(RELATIVE_TIME)?.[0] ?? ''
-      const receivedAt = parseFviaReceivedAtLabel(receivedLabel, now)
       messages.push({
         key,
         sender: '',
-        subject: text,
-        preview: text,
-        receivedLabel,
-        receivedAt
+        subject: row.text,
+        preview: row.text,
+        receivedLabel: row.receivedLabel,
+        receivedAt: row.receivedAt
       })
-      this.messageLocators.set(key, candidate)
+      this.messageLocators.set(key, row.locator)
     }
 
     return messages
