@@ -3,9 +3,7 @@ import type { Page } from 'playwright-core'
 import type { MailProvider, MailProviderCodeRequest, MailProviderCodeResult } from './mailProvider'
 import {
   isMailboxCodeServiceProviderId,
-  MailboxCodeService,
-  newestOpenFviaInboxesProviderPage,
-  ownedOrNewestOpenFviaInboxesProviderPage
+  MailboxCodeService
 } from './mailboxCodeService'
 
 type FakePage = Page & {
@@ -114,13 +112,4 @@ describe('MailboxCodeService FviaInboxes migration', () => {
     expect(resolveProviderSession).toHaveBeenCalledTimes(1)
   })
 
-  it('keeps Fvia provider page ownership on Fvia tabs without adopting Inboxes', () => {
-    const inboxes = fakePage('https://inboxes.com/')
-    const fviaOlder = fakePage('https://fviainboxes.com/')
-    const fviaNewest = fakePage('https://www.fviainboxes.com/inbox')
-    const ownedBlank = fakePage('about:blank')
-
-    expect(newestOpenFviaInboxesProviderPage([fviaOlder, inboxes, fviaNewest])).toBe(fviaNewest)
-    expect(ownedOrNewestOpenFviaInboxesProviderPage(ownedBlank, [inboxes, fviaNewest])).toBe(ownedBlank)
-  })
 })

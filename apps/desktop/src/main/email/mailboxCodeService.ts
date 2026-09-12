@@ -1,7 +1,6 @@
 import type { BrowserContext, Page } from 'playwright-core'
 import { EmailPageRegistry } from './emailPageRegistry'
-import { FviaInboxesPlaywrightDriver } from './fviaInboxesPlaywrightDriver'
-import { FviaInboxesProvider } from './fviaInboxesProvider'
+import { createFviaInboxesMailboxRuntime } from './fviaInboxesMailboxRuntime'
 import { createInboxesMailboxRuntime } from './inboxesMailboxRuntime'
 import {
   normalizeMailboxAddress,
@@ -145,15 +144,6 @@ function baselineFailure(
   }
 }
 
-export function isFviaInboxesProviderPageUrl(value: string): boolean {
-  try {
-    const hostname = new URL(value).hostname.toLowerCase()
-    return hostname === 'fviainboxes.com' || hostname.endsWith('.fviainboxes.com')
-  } catch {
-    return false
-  }
-}
-
 /**
  * Auth V2 mailbox-code boundary.
  *
@@ -222,15 +212,6 @@ export class MailboxCodeService {
         'provider_unavailable',
         `Không snapshot được message identity từ ${providerLabel(request.providerId)} trước Send code.`
       )
-    }
-
-
-    if (
-      request.providerId === 'fvia_inboxes'
-      && (session.page.isClosed() || !isFviaInboxesProviderPageUrl(session.page.url()))
-    ) {
-      this.sessions.delete(request.providerId)
-      return baselineFailure(request, mailbox, 'provider_unavailable', 'FviaInboxes đổi/đóng provider page trong lúc baseline trước Send code.')
     }
 
     if (result.providerId !== request.providerId || normalizeMailboxAddress(result.mailbox) !== mailbox) {
@@ -418,27 +399,10 @@ export class MailboxCodeService {
     const url = session.page.url()
     if (url === 'about:blank') return true
     if (session.isReusablePageUrl) return session.isReusablePageUrl(url)
-    if (session.providerId === 'fvia_inboxes') return isFviaInboxesProviderPageUrl(url)
     // Direct/test sessions expose only the provider-neutral contract. Production
-    // Inboxes sessions provide their own URL classifier from the Inboxes module.
+    // provider sessions supply their own URL classifier from the owning module.
     return true
   }
-}
-
-export function newestOpenFviaInboxesProviderPage(pages: readonly Page[]): Page | null {
-  for (let index = pages.length - 1; index >= 0; index -= 1) {
-    const page = pages[index]
-    if (page && !page.isClosed() && isFviaInboxesProviderPageUrl(page.url())) return page
-  }
-  return null
-}
-
-export function ownedOrNewestOpenFviaInboxesProviderPage(
-  ownedPage: Page | null | undefined,
-  pages: readonly Page[]
-): Page | null {
-  if (ownedPage && !ownedPage.isClosed()) return ownedPage
-  return newestOpenFviaInboxesProviderPage(pages)
 }
 
 export interface CreateMailboxCodeServiceOptions {
@@ -480,17 +444,17 @@ export function createMailboxCodeService(
           }
         }
 
-        const page = ownedOrNewestOpenFviaInboxesProviderPage(
+        const runtime = await createFviaInboxesMailboxRuntime({
           preferredPage,
-          registry.pages('mailbox_provider')
-        ) ?? await providerContext.newPage()
-        if (page.isClosed()) return null
-
+          pages: registry.pages('mailbox_provider'),
+          createPage: async () => await providerContext.newPage()
+        })
+        if (!runtime) return null
         return {
           providerId,
-          page,
-          provider: new FviaInboxesProvider(new FviaInboxesPlaywrightDriver(page)),
-          isReusablePageUrl: isFviaInboxesProviderPageUrl
+          page: runtime.page,
+          provider: runtime.provider,
+          isReusablePageUrl: runtime.isReusablePageUrl
         }
       } catch {
         return null
