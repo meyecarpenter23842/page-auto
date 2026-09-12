@@ -1,10 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { Page } from 'playwright-core'
 import type { MailProvider, MailProviderCodeRequest, MailProviderCodeResult } from './mailProvider'
-import {
-  isMailboxCodeServiceProviderId,
-  MailboxCodeService
-} from './mailboxCodeService'
+import { MailboxCodeService } from './mailboxCodeService'
 
 type FakePage = Page & {
   reload: ReturnType<typeof vi.fn>
@@ -34,23 +31,31 @@ function fviaResult(
   }
 }
 
-describe('MailboxCodeService FviaInboxes migration', () => {
-  it('keeps direct callers Inboxes-only unless Fvia is explicitly enabled', async () => {
-    const resolveProviderSession = vi.fn()
+describe('MailboxCodeService provider-neutral Fvia coverage', () => {
+  it('delegates Fvia through the injected provider resolver without a provider whitelist in Common', async () => {
+    const page = fakePage('https://fviainboxes.com/')
+    const provider: MailProvider = {
+      id: 'fvia_inboxes',
+      getVerificationCode: async () => fviaResult('success', { messageKey: 'fresh-fvia', code: '333333' })
+    }
+    const resolveProviderSession = vi.fn(async () => ({
+      providerId: 'fvia_inboxes' as const,
+      page,
+      provider
+    }))
     const service = new MailboxCodeService({ resolveProviderSession })
 
     const response = await service.getFreshCode({
       mailbox: 'owner@fviainboxes.com',
       providerId: 'fvia_inboxes',
-      challengeId: 'legacy-default',
+      challengeId: 'provider-neutral-fvia',
       consumedMessageKeys: [],
       timeoutMs: 0
     })
 
-    expect(response.status).toBe('unsupported_mailbox')
-    expect(resolveProviderSession).not.toHaveBeenCalled()
-    expect(isMailboxCodeServiceProviderId('fvia_inboxes')).toBe(true)
-    expect(isMailboxCodeServiceProviderId('mailto_plus')).toBe(false)
+    expect(response.status).toBe('success')
+    expect(response.messageKey).toBe('fresh-fvia')
+    expect(resolveProviderSession).toHaveBeenCalledWith('fvia_inboxes', null)
   })
 
   it('baselines Fvia message identity and rejects baseline/consumed keys before returning the fresh code', async () => {
@@ -82,7 +87,6 @@ describe('MailboxCodeService FviaInboxes migration', () => {
     }))
     const service = new MailboxCodeService({
       resolveProviderSession,
-      enabledProviderIds: ['inboxes', 'fvia_inboxes'],
       now: () => 900_000
     })
 
@@ -111,5 +115,4 @@ describe('MailboxCodeService FviaInboxes migration', () => {
     expect(page.reload).not.toHaveBeenCalled()
     expect(resolveProviderSession).toHaveBeenCalledTimes(1)
   })
-
 })

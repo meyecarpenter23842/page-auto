@@ -75,8 +75,8 @@ describe('MailboxCodeService', () => {
     expect(resolveProviderSession).not.toHaveBeenCalled()
   })
 
-  it('keeps non-Inboxes providers out of the new background boundary', async () => {
-    const resolveProviderSession = vi.fn()
+  it('keeps provider availability at the injected composition boundary instead of a Common whitelist', async () => {
+    const resolveProviderSession = vi.fn(async () => null)
     const service = new MailboxCodeService({ resolveProviderSession })
 
     const response = await service.getFreshCode({
@@ -87,8 +87,8 @@ describe('MailboxCodeService', () => {
       timeoutMs: 0
     })
 
-    expect(response.status).toBe('unsupported_mailbox')
-    expect(resolveProviderSession).not.toHaveBeenCalled()
+    expect(response.status).toBe('provider_unavailable')
+    expect(resolveProviderSession).toHaveBeenCalledWith('fvia_inboxes', null)
   })
 
   it('converts provider-session resolver rejection into provider_unavailable', async () => {

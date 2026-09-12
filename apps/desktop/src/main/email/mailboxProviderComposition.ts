@@ -1,10 +1,11 @@
 import type { BrowserContext } from 'playwright-core'
 import { emailDiagnostic } from './emailRuntimeDiagnostic'
 import { EmailPageRegistry } from './emailPageRegistry'
+import { createFviaInboxesMailboxRuntime } from './fviaInboxesMailboxRuntime'
+import { createInboxesMailboxRuntime } from './inboxesMailboxRuntime'
 import {
-  createMailboxCodeService,
-  type MailboxCodeService,
-  type MailboxCodeServiceProviderId
+  MailboxCodeService,
+  type MailboxCodeProviderSession
 } from './mailboxCodeService'
 import type {
   MailProvider,
@@ -25,11 +26,13 @@ import {
   type MailtoPlusMailboxRuntime
 } from './mailtoPlusMailboxRuntime'
 
+type BrowserServiceProviderId = 'inboxes' | 'fvia_inboxes'
+
 class MailboxCodeServiceProviderAdapter implements MailProvider {
   readonly resumeFreshness: MailProviderResumeFreshness
 
   constructor(
-    readonly id: MailboxCodeServiceProviderId,
+    readonly id: BrowserServiceProviderId,
     private readonly service: MailboxCodeService,
     resumeFreshness: MailProviderResumeFreshness
   ) {
@@ -116,15 +119,60 @@ function resolveMainMailboxProviderRpc(): MailboxProviderWorkerRpc | null {
   return rpc
 }
 
+function createBrowserMailboxCodeService(operatorContext: BrowserContext): MailboxCodeService {
+  return new MailboxCodeService({
+    resolveProviderSession: async (providerId, preferredPage): Promise<MailboxCodeProviderSession | null> => {
+      if (providerId !== 'inboxes' && providerId !== 'fvia_inboxes') return null
+
+      try {
+        const providerContext = await resolveMailboxProviderContext(operatorContext)
+        if (!providerContext) return null
+        const registry = new EmailPageRegistry(providerContext)
+
+        if (providerId === 'inboxes') {
+          const runtime = await createInboxesMailboxRuntime({
+            preferredPage,
+            pages: registry.pages('mailbox_provider'),
+            createPage: async () => await providerContext.newPage()
+          })
+          if (!runtime) return null
+          return {
+            providerId,
+            page: runtime.page,
+            provider: runtime.provider,
+            isReusablePageUrl: runtime.isReusablePageUrl
+          }
+        }
+
+        const runtime = await createFviaInboxesMailboxRuntime({
+          preferredPage,
+          pages: registry.pages('mailbox_provider'),
+          createPage: async () => await providerContext.newPage()
+        })
+        if (!runtime) return null
+        return {
+          providerId,
+          page: runtime.page,
+          provider: runtime.provider,
+          isReusablePageUrl: runtime.isReusablePageUrl
+        }
+      } catch {
+        return null
+      }
+    }
+  })
+}
+
 /**
  * Production mailbox composition root used by Microsoft Auth.
  *
- * The router sees only MailProvider contracts. Concrete provider/page lifecycle
- * remains behind the registered module adapters. Microsoft/Hotmail mailbox is
- * represented by a provider-neutral worker RPC adapter; OAuth/Graph stays Main-owned.
+ * This is the only layer allowed to know provider implementations. The router
+ * and MailboxCodeService see provider-neutral contracts; concrete DOM/page
+ * lifecycle stays in each provider runtime. Microsoft/Hotmail mailbox remains
+ * behind the provider-neutral worker RPC because OAuth/Graph is Main-owned.
  */
 export function createMailboxProviderRouter(operatorContext: BrowserContext): MailboxProviderRouter {
-  const service = createMailboxCodeService(operatorContext)
+  const service = createBrowserMailboxCodeService(operatorContext)
   const inboxes = new MailboxCodeServiceProviderAdapter('inboxes', service, 'lookback')
   const fvia = new MailboxCodeServiceProviderAdapter('fvia_inboxes', service, 'baseline_current')
   const mainRpc = resolveMainMailboxProviderRpc()
