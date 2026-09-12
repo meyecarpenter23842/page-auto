@@ -24,11 +24,19 @@ describe('mailProviderRegistry', () => {
     expect(resolveMailProviderId('A@FIVERMAIL.COM')).toBe(resolveMailProviderId('b@getnada.com'))
   })
 
-  it('maps the audited Fvia domain family to one fvia_inboxes provider', () => {
+  it('maps the live Fvia domain family to one fvia_inboxes provider', () => {
+    expect(FVIA_INBOXES_DOMAINS).toEqual([
+      'fviainboxes.com',
+      'fviadropinbox.com',
+      'fviamail.work',
+      'dropinboxes.com',
+      'titanads.email'
+    ])
     for (const domain of FVIA_INBOXES_DOMAINS) {
       expect(resolveMailProviderId(`owner@${domain}`)).toBe('fvia_inboxes')
       expect(isKnownFviaInboxesMailbox(`owner@${domain}`)).toBe(true)
     }
+    expect(resolveMailProviderId('owner@titanads.email')).toBe('fvia_inboxes')
     expect(mailProviderDomains('fvia_inboxes')).toEqual(FVIA_INBOXES_DOMAINS)
   })
 
