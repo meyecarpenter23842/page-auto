@@ -4,7 +4,8 @@ import {
   fviaDomainControlReadMode,
   fviaVerificationDetailReady,
   isFviaDomainControlValue,
-  parseFviaReceivedAtLabel
+  parseFviaReceivedAtLabel,
+  pickFviaVerificationDetail
 } from './fviaInboxesPlaywrightDriver'
 
 describe('classifyFviaInboxesSurface', () => {
@@ -137,6 +138,27 @@ describe('fviaVerificationDetailReady', () => {
     const before = 'Inbox Personal Microsoft account security code just now'
     expect(fviaVerificationDetailReady(before, before)).toBe(false)
     expect(fviaVerificationDetailReady(before, `${before} Sponsored content changed`)).toBe(false)
+  })
+})
+
+describe('pickFviaVerificationDetail', () => {
+  it('uses the child-frame detail when the root page changes but does not contain the code', () => {
+    const before = 'Inbox Personal Microsoft account security code just now'
+    const root = `${before} Message opened`
+    const frame = 'Microsoft account Security code: 654321 Use this code to finish verification.'
+
+    expect(pickFviaVerificationDetail(before, [
+      { source: 'root', text: root },
+      { source: 'frame', text: frame }
+    ])).toEqual({ source: 'frame', text: frame })
+  })
+
+  it('returns null when neither the root nor frames contain a labelled numeric code', () => {
+    const before = 'Inbox Personal Microsoft account security code just now'
+    expect(pickFviaVerificationDetail(before, [
+      { source: 'root', text: `${before} Message opened` },
+      { source: 'frame', text: 'Microsoft account protection message' }
+    ])).toBeNull()
   })
 })
 
