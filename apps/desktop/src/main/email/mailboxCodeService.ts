@@ -1,7 +1,4 @@
-import type { BrowserContext, Page } from 'playwright-core'
-import { EmailPageRegistry } from './emailPageRegistry'
-import { createFviaInboxesMailboxRuntime } from './fviaInboxesMailboxRuntime'
-import { createInboxesMailboxRuntime } from './inboxesMailboxRuntime'
+import type { Page } from 'playwright-core'
 import {
   normalizeMailboxAddress,
   type MailProvider,
@@ -10,19 +7,11 @@ import {
   type MailProviderResultStatus
 } from './mailProvider'
 import { resolveMailProviderId } from './mailProviderRegistry'
-import { resolveMailboxProviderContext } from './mailboxProviderBrowserRuntime'
 
 const DEFAULT_TIMEOUT_MS = 20_000
 const MAX_TIMEOUT_MS = 60_000
 const MAX_CONSUMED_SKIPS = 100
 const MAX_CLOSED_PAGE_RECOVERIES = 1
-const MAILBOX_CODE_SERVICE_PROVIDER_IDS = new Set<MailProviderId>(['inboxes', 'fvia_inboxes'])
-
-export type MailboxCodeServiceProviderId = 'inboxes' | 'fvia_inboxes'
-
-export function isMailboxCodeServiceProviderId(providerId: MailProviderId): providerId is MailboxCodeServiceProviderId {
-  return MAILBOX_CODE_SERVICE_PROVIDER_IDS.has(providerId)
-}
 
 export interface MailboxCodeServiceRequest {
   mailbox: string
@@ -69,8 +58,6 @@ export interface MailboxCodeServiceDependencies {
     preferredPage?: Page | null
   ) => Promise<MailboxCodeProviderSession | null>
   now?: () => number
-  /** Direct callers stay Inboxes-only unless they explicitly opt into another audited service provider. */
-  enabledProviderIds?: readonly MailboxCodeServiceProviderId[]
 }
 
 function boundedTimeout(value: number | undefined): number {
@@ -89,12 +76,6 @@ function unionMessageKeys(...sets: readonly Set<string>[]): Set<string> {
     for (const key of set) result.add(key)
   }
   return result
-}
-
-function providerLabel(providerId: MailProviderId): string {
-  if (providerId === 'inboxes') return 'Inboxes'
-  if (providerId === 'fvia_inboxes') return 'FviaInboxes'
-  return providerId
 }
 
 function withServiceMetadata(
@@ -145,37 +126,29 @@ function baselineFailure(
 }
 
 /**
- * Auth V2 mailbox-code boundary.
+ * Provider-neutral mailbox-code coordinator.
  *
- * It owns provider page/provider instance reuse, cross-round consumed-message
- * identity, and pre-Send baseline filtering. It intentionally knows nothing
- * about Microsoft DOM, Microsoft Next, authentication success, or round cleanup.
+ * Concrete provider composition/page recovery is injected by the composition root.
+ * This service owns only provider-neutral session reuse, durable message identity,
+ * pre-challenge baselining and bounded closed-page re-resolution. It knows nothing
+ * about provider DOM/URLs or Microsoft UI/state transitions.
  */
 export class MailboxCodeService {
   private readonly now: () => number
-  private readonly enabledProviderIds: ReadonlySet<MailboxCodeServiceProviderId>
   private readonly sessions = new Map<MailProviderId, MailboxCodeProviderSession>()
   private readonly ownedProviderPages = new Map<MailProviderId, Page>()
   private readonly sessionConsumedMessageKeys = new Map<string, Set<string>>()
 
   constructor(private readonly dependencies: MailboxCodeServiceDependencies) {
     this.now = dependencies.now ?? Date.now
-    this.enabledProviderIds = new Set(dependencies.enabledProviderIds ?? ['inboxes'])
   }
 
-  private providerEnabled(providerId: MailProviderId): providerId is MailboxCodeServiceProviderId {
-    return isMailboxCodeServiceProviderId(providerId) && this.enabledProviderIds.has(providerId)
-  }
-
-  /** Snapshot message identity before Microsoft Send code without opening message detail. */
+  /** Snapshot message identity before a challenge without opening message detail. */
   async prepareChallengeBaseline(request: MailboxCodeChallengeBaselineRequest): Promise<MailboxCodeChallengeBaselineResult> {
     const mailbox = normalizeMailboxAddress(request.mailbox) ?? request.mailbox.trim().toLowerCase()
     const resolvedProviderId = resolveMailProviderId(mailbox)
     if (!mailbox || resolvedProviderId !== request.providerId) {
       return baselineFailure(request, mailbox, 'unsupported_mailbox', 'Mailbox/provider không khớp canonical provider đã resolve.')
-    }
-    if (!this.providerEnabled(request.providerId)) {
-      return baselineFailure(request, mailbox, 'unsupported_mailbox', `Baseline challenge chưa migrate provider ${request.providerId}.`)
     }
 
     const session = await this.resolveSession(request.providerId)
@@ -184,7 +157,7 @@ export class MailboxCodeService {
         request,
         mailbox,
         'provider_unavailable',
-        `Không resolve/adopt được provider page cho ${providerLabel(request.providerId)} trước Send code.`
+        `Không resolve/adopt được provider page cho ${request.providerId} trước challenge.`
       )
     }
 
@@ -194,7 +167,7 @@ export class MailboxCodeService {
         request,
         mailbox,
         'provider_unavailable',
-        `Provider ${providerLabel(request.providerId)} hiện tại không hỗ trợ baseline message identity.`
+        `Provider ${request.providerId} hiện tại không hỗ trợ baseline message identity.`
       )
     }
 
@@ -210,7 +183,7 @@ export class MailboxCodeService {
         request,
         mailbox,
         'provider_unavailable',
-        `Không snapshot được message identity từ ${providerLabel(request.providerId)} trước Send code.`
+        `Không snapshot được message identity từ ${request.providerId} trước challenge.`
       )
     }
 
@@ -243,16 +216,6 @@ export class MailboxCodeService {
       )
     }
 
-    if (!this.providerEnabled(request.providerId)) {
-      return failureResult(
-        request,
-        mailbox,
-        'unsupported_mailbox',
-        `MailboxCodeService chưa migrate provider ${request.providerId}.`,
-        suppliedConsumed
-      )
-    }
-
     const consumed = this.sessionConsumedMessageKeys.get(mailbox) ?? new Set<string>()
     for (const key of suppliedConsumed) consumed.add(key)
     this.sessionConsumedMessageKeys.set(mailbox, consumed)
@@ -270,24 +233,33 @@ export class MailboxCodeService {
           request,
           mailbox,
           'provider_unavailable',
-          `Không resolve/adopt được provider page cho ${providerLabel(request.providerId)}.`,
+          `Không resolve/adopt được provider page cho ${request.providerId}.`,
           consumed
         )
       }
 
-
       const remainingMs = Math.max(0, deadline - this.now())
       const excludedMessageKeys = [...unionMessageKeys(consumed, baseline)]
-      const providerResult = await session.provider.getVerificationCode({
-        mailbox,
-        role: 'recovery',
-        purpose: 'microsoft_security',
-        ...(request.notBefore === undefined ? {} : { notBefore: request.notBefore }),
-        excludedMessageKeys,
-        timeoutMs: timeoutMs === 0 ? 0 : remainingMs,
-        ...(request.pollIntervalMs === undefined ? {} : { pollIntervalMs: request.pollIntervalMs })
-      })
-
+      let providerResult: MailProviderCodeResult
+      try {
+        providerResult = await session.provider.getVerificationCode({
+          mailbox,
+          role: 'recovery',
+          purpose: 'microsoft_security',
+          ...(request.notBefore === undefined ? {} : { notBefore: request.notBefore }),
+          excludedMessageKeys,
+          timeoutMs: timeoutMs === 0 ? 0 : remainingMs,
+          ...(request.pollIntervalMs === undefined ? {} : { pollIntervalMs: request.pollIntervalMs })
+        })
+      } catch {
+        return failureResult(
+          request,
+          mailbox,
+          'provider_unavailable',
+          `Provider ${request.providerId} lỗi trong lúc đọc verification message.`,
+          consumed
+        )
+      }
 
       if (
         providerResult.providerId !== request.providerId
@@ -302,10 +274,9 @@ export class MailboxCodeService {
         )
       }
 
-      // A browser page can disappear between listMessages() and readMessage().
-      // BrowserMailboxProvider may then surface message_not_found instead of
-      // provider_unavailable, so page ownership is the authoritative signal for
-      // the one bounded re-adopt/recreate attempt.
+      // The composition root/provider module owns how a replacement page is found.
+      // This boundary only notices that the injected session disappeared and makes
+      // one bounded request for a fresh provider-neutral session.
       if (providerResult.status !== 'success' && session.page.isClosed()) {
         this.sessions.delete(request.providerId)
         if (closedPageRecoveries < MAX_CLOSED_PAGE_RECOVERIES) {
@@ -320,7 +291,7 @@ export class MailboxCodeService {
           request,
           mailbox,
           'provider_unavailable',
-          `Provider page ${providerLabel(request.providerId)} đã đóng trong lúc đọc mail và không phục hồi được.`,
+          `Provider page ${request.providerId} đã đóng trong lúc đọc mail và không phục hồi được.`,
           consumed
         )
       }
@@ -345,9 +316,8 @@ export class MailboxCodeService {
         return withServiceMetadata(request, providerResult, consumed)
       }
 
-      // A provider adapter that does not understand excludedMessageKeys can still
-      // return an old key. Keep the service boundary authoritative and retry the
-      // same request; recreated adapters receive the same durable exclusion set.
+      // Keep the generic boundary authoritative even if an adapter ignores the
+      // exclusion list. A re-resolved adapter receives the same durable keys.
       consumedSkips += 1
       if (consumedSkips >= MAX_CONSUMED_SKIPS || (timeoutMs > 0 && this.now() >= deadline)) {
         return failureResult(
@@ -379,8 +349,6 @@ export class MailboxCodeService {
     try {
       resolved = await this.dependencies.resolveProviderSession(providerId, preferredPage)
     } catch {
-      // A closed/crashed Playwright context can reject context.newPage(). Keep
-      // this boundary structured so Auth V2 can handle provider unavailability.
       return null
     }
     if (
@@ -395,70 +363,10 @@ export class MailboxCodeService {
   }
 
   private isSessionReusable(session: MailboxCodeProviderSession): boolean {
-    if (session.page.isClosed() || !isMailboxCodeServiceProviderId(session.providerId)) return false
+    if (session.page.isClosed()) return false
     const url = session.page.url()
     if (url === 'about:blank') return true
     if (session.isReusablePageUrl) return session.isReusablePageUrl(url)
-    // Direct/test sessions expose only the provider-neutral contract. Production
-    // provider sessions supply their own URL classifier from the owning module.
     return true
   }
-}
-
-export interface CreateMailboxCodeServiceOptions {
-  now?: () => number
-}
-
-/**
- * Production owner: resolve the mailbox provider into the isolated provider
- * context configured by Microsoft Auth V2. Direct/unit callers without that
- * configuration keep legacy context semantics. Provider page ownership/reuse is
- * unchanged, but automatic recovery no longer adds a tab to visible Chrome.
- */
-export function createMailboxCodeService(
-  context: BrowserContext,
-  options: CreateMailboxCodeServiceOptions = {}
-): MailboxCodeService {
-  return new MailboxCodeService({
-    ...(options.now ? { now: options.now } : {}),
-    enabledProviderIds: ['inboxes', 'fvia_inboxes'],
-    resolveProviderSession: async (providerId, preferredPage) => {
-      if (!isMailboxCodeServiceProviderId(providerId)) return null
-
-      try {
-        const providerContext = await resolveMailboxProviderContext(context)
-        if (!providerContext) return null
-        const registry = new EmailPageRegistry(providerContext)
-        if (providerId === 'inboxes') {
-          const runtime = await createInboxesMailboxRuntime({
-            preferredPage,
-            pages: registry.pages('mailbox_provider'),
-            createPage: async () => await providerContext.newPage()
-          })
-          if (!runtime) return null
-          return {
-            providerId,
-            page: runtime.page,
-            provider: runtime.provider,
-            isReusablePageUrl: runtime.isReusablePageUrl
-          }
-        }
-
-        const runtime = await createFviaInboxesMailboxRuntime({
-          preferredPage,
-          pages: registry.pages('mailbox_provider'),
-          createPage: async () => await providerContext.newPage()
-        })
-        if (!runtime) return null
-        return {
-          providerId,
-          page: runtime.page,
-          provider: runtime.provider,
-          isReusablePageUrl: runtime.isReusablePageUrl
-        }
-      } catch {
-        return null
-      }
-    }
-  })
 }
