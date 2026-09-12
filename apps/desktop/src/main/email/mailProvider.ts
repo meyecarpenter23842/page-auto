@@ -17,6 +17,29 @@ export const MAIL_PROVIDER_RESULT_STATUSES = [
 ] as const
 export type MailProviderResultStatus = (typeof MAIL_PROVIDER_RESULT_STATUSES)[number]
 
+/**
+ * Provider-neutral mailbox-code request used at the Mailbox Router/coordinator boundary.
+ *
+ * accountId is the canonical account handle required by mailbox implementations that
+ * resolve credentials/state from account-scoped storage (for example Microsoft OAuth).
+ * Provider-specific DOM, page lifecycle and retry behavior must not leak into this type.
+ */
+export interface MailboxCodeRequest {
+  accountId: number
+  mailbox: string
+  role: MailboxRole
+  purpose: MailCodePurpose
+  challengeId: string
+  /** Earliest acceptable provider message timestamp for this challenge. */
+  notBefore?: number
+  /** Message identities present before the current challenge was requested. */
+  baselineMessageKeys?: readonly string[]
+  /** Message identities already submitted/consumed by the durable auth session. */
+  consumedMessageKeys?: readonly string[]
+  timeoutMs?: number
+  pollIntervalMs?: number
+}
+
 export interface MailProviderCodeRequest {
   mailbox: string
   role: MailboxRole
@@ -37,6 +60,11 @@ export interface MailProviderCodeResult {
   sender: string | null
   messageKey: string | null
   message: string
+}
+
+/** Provider-neutral result keeps the challenge identity across module boundaries. */
+export interface MailboxCodeResult extends MailProviderCodeResult {
+  challengeId: string
 }
 
 export interface MailProviderMessageKeySnapshotRequest {
