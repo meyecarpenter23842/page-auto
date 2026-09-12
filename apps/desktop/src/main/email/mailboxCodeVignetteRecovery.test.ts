@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { BrowserContext, Page } from 'playwright-core'
-import { MailboxCodeService, type MailboxCodeProviderSession } from './mailboxCodeService'
+import { InboxesLifecycleProvider } from './inboxesMailboxRuntime'
 import {
   closeUnexpectedInboxesPopupPages,
   hasInboxesProviderEscaped,
@@ -70,7 +70,7 @@ describe('unexpected Inboxes popup cleanup', () => {
   })
 })
 
-describe('MailboxCodeService vignette recovery', () => {
+describe('InboxesLifecycleProvider vignette recovery', () => {
   it('discards a result from an ad-intercepted click, closes the ad tab, reloads Inboxes, and retries', async () => {
     let providerUrl = 'https://inboxes.com/'
     const pages: Page[] = []
@@ -105,13 +105,11 @@ describe('MailboxCodeService vignette recovery', () => {
       })
     }
 
-    const session: MailboxCodeProviderSession = { providerId: 'inboxes', page: providerPage, provider }
-    const service = new MailboxCodeService({ resolveProviderSession: async () => session })
-    const result = await service.getFreshCode({
+    const runtimeProvider = new InboxesLifecycleProvider(providerPage, provider)
+    const result = await runtimeProvider.getVerificationCode({
       mailbox: 'owner@getnada.com',
-      providerId: 'inboxes',
-      challengeId: 'challenge-1',
-      consumedMessageKeys: [],
+      role: 'recovery',
+      purpose: 'microsoft_security',
       timeoutMs: 5_000
     })
 
@@ -146,13 +144,11 @@ describe('MailboxCodeService vignette recovery', () => {
       })
     }
 
-    const session: MailboxCodeProviderSession = { providerId: 'inboxes', page: providerPage, provider }
-    const service = new MailboxCodeService({ resolveProviderSession: async () => session })
-    const result = await service.getFreshCode({
+    const runtimeProvider = new InboxesLifecycleProvider(providerPage, provider)
+    const result = await runtimeProvider.getVerificationCode({
       mailbox: 'owner@getnada.com',
-      providerId: 'inboxes',
-      challengeId: 'challenge-2',
-      consumedMessageKeys: [],
+      role: 'recovery',
+      purpose: 'microsoft_security',
       timeoutMs: 5_000
     })
 
