@@ -187,3 +187,17 @@ Checkpoint invariant:
 - Multi-account workflow chỉ tiếp tục bằng account khác theo business policy; account checkpoint không được giữ chết slot/lease/claim/browser.
 - Pause/Resume/restart không được tin session snapshot cũ. Trước khi account quay lại pool phải chạy Common Session Gate bằng canonical credential mới nhất và chỉ tiếp tục khi xác nhận `VALID`.
 - Selector/detection checkpoint, login chain và account identity verification thuộc Common Runtime; business runner chỉ consume typed result và áp dụng orchestration policy.
+
+## 5. Email/Mailbox Module Isolation
+
+Mọi Email/Microsoft implementation phải tuân theo ownership trong `EMAIL_ARCHITECTURE.md` và `ARCHITECTURE.md` §28.
+
+Invariant bắt buộc:
+
+- **Mỗi loại mail/provider là một module độc lập.** Inboxes, FviaInboxes, MailtoPlus và Hotmail/Outlook Mailbox không chia sẻ DOM/selector/recovery implementation chỉ vì cùng phục vụ việc lấy code.
+- **Microsoft Auth và Hotmail/Outlook Mailbox là hai module khác nhau.** Microsoft Auth sở hữu surface/state đăng nhập Microsoft; Hotmail/Outlook Mailbox sở hữu việc đọc mailbox.
+- Microsoft Auth chỉ được yêu cầu code qua typed mailbox contract/router; không được import concrete provider driver/provider hoặc branch theo DOM/URL/poll/reload riêng của provider.
+- Router/Common chỉ được resolve provider, giữ contract/challenge identity và chuyển typed request/result. Provider-specific DOM, URL, popup/vignette, reload/recovery, polling policy và browser lifecycle phải nằm trong module provider tương ứng.
+- Provider không được quyết định Microsoft Auth đã authenticated; Microsoft Auth không được điều khiển internals của provider.
+- Recovery nhiều vòng phải giữ durable challenge/message identity; `messageKey` đã submit trong auth/recovery session không được dùng lại.
+- Source hiện tại mâu thuẫn với invariant này là technical debt cần migrate theo E-MOD-1..E-MOD-6; không được dùng coupling legacy làm mẫu cho provider mới hoặc bugfix mới.
