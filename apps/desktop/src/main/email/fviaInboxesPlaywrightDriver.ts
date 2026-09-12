@@ -1,7 +1,8 @@
 import type { Locator, Page } from 'playwright-core'
 import type { MailMessageSnapshot } from './verificationCodeParser'
+import { emailDiagnostic } from './emailRuntimeDiagnostic'
 import { normalizeMailboxAddress } from './mailProvider'
-import { mailDomainFromAddress } from './mailProviderRegistry'
+import { resolveMailProviderId } from './mailProviderRegistry'
 import type {
   FviaInboxesEnsureMailboxResult,
   FviaInboxesMailboxDriver,
@@ -9,9 +10,12 @@ import type {
 } from './fviaInboxesProvider'
 
 const FVIA_INBOXES_URL = 'https://fviainboxes.com/'
+const FVIA_SURFACE_READY_TIMEOUT_MS = 12_000
+const FVIA_SURFACE_POLL_MS = 500
 const RELATIVE_TIME = /\b(?:just now|now|(?:a|few|a few)\s+seconds?\s+ago|\d+\s*(?:sec|secs|second|seconds|min|mins|minute|minutes|hour|hours|day|days)\s+ago)\b/i
 
 export type FviaInboxesSurface =
+  | 'loading'
   | 'mailbox_form'
   | 'mailbox_ready'
   | 'provider_unavailable'
@@ -46,6 +50,8 @@ export function classifyFviaInboxesSurface(snapshot: FviaInboxesSurfaceSnapshot)
   const text = snapshot.bodyText.replace(/\s+/g, ' ').trim().toLowerCase()
   const hardUnavailable = /service unavailable|temporarily unavailable|bad gateway|gateway timeout|access denied/.test(text)
 
+  if (hardUnavailable) return 'provider_unavailable'
+
   if (
     expected
     && activated === normalizeMailboxAddress(snapshot.expectedMailbox)
@@ -60,8 +66,10 @@ export function classifyFviaInboxesSurface(snapshot: FviaInboxesSurfaceSnapshot)
     return 'mailbox_form'
   }
 
-  if (hardUnavailable || !snapshot.inboxVisible) return 'provider_unavailable'
-  return 'provider_unavailable'
+  // Live Fvia can remain blank/partially hydrated for several seconds after
+  // domcontentloaded. Treat missing form controls as transient until the bounded
+  // ensureMailbox readiness window expires; otherwise we return before username.fill().
+  return 'loading'
 }
 
 export function parseFviaReceivedAtLabel(labelInput: string, now = Date.now()): number | null {
@@ -132,7 +140,7 @@ export class FviaInboxesPlaywrightDriver implements FviaInboxesMailboxDriver {
   async ensureMailbox(mailboxInput: string): Promise<FviaInboxesEnsureMailboxResult> {
     const mailbox = normalizeMailboxAddress(mailboxInput)
     const parts = mailbox ? splitMailbox(mailbox) : null
-    if (!mailbox || !parts || mailDomainFromAddress(mailbox) !== parts.domain) {
+    if (!mailbox || !parts || resolveMailProviderId(mailbox) !== 'fvia_inboxes') {
       return { status: 'mailbox_not_found', message: 'Địa chỉ FviaInboxes không hợp lệ.' }
     }
 
@@ -140,20 +148,39 @@ export class FviaInboxesPlaywrightDriver implements FviaInboxesMailboxDriver {
       return { status: 'provider_unavailable', message: 'Tab FviaInboxes đã đóng.' }
     }
 
+    emailDiagnostic('fvia-dom', 'ensure-start', {
+      domain: parts.domain,
+      pageState: /^https:\/\/([^/]+\.)?fviainboxes\.com\//i.test(this.page.url()) ? 'provider' : 'other'
+    })
+
     if (!/^https:\/\/([^/]+\.)?fviainboxes\.com\//i.test(this.page.url())) {
       try {
         await this.page.goto(FVIA_INBOXES_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 })
         this.activeMailbox = null
       } catch {
+        emailDiagnostic('fvia-dom', 'navigate-error', { domain: parts.domain })
         return { status: 'provider_unavailable', message: 'Không tải được FviaInboxes.' }
       }
     }
 
-    for (let step = 0; step < 8; step += 1) {
+    const readinessDeadline = Date.now() + FVIA_SURFACE_READY_TIMEOUT_MS
+    for (let step = 0; step < 32; step += 1) {
       const surface = await this.readSurface(mailbox)
-      if (surface === 'mailbox_ready') return { status: 'ready', activeMailbox: mailbox }
+      if (surface === 'mailbox_ready') {
+        emailDiagnostic('fvia-dom', 'ensure-result', { status: 'ready', domain: parts.domain })
+        return { status: 'ready', activeMailbox: mailbox }
+      }
       if (surface === 'provider_unavailable') {
+        emailDiagnostic('fvia-dom', 'ensure-result', { status: 'provider_unavailable', domain: parts.domain })
         return { status: 'provider_unavailable', message: 'FviaInboxes đang không ở surface có thể thao tác an toàn.' }
+      }
+      if (surface === 'loading') {
+        if (Date.now() >= readinessDeadline) {
+          emailDiagnostic('fvia-dom', 'hydrate-timeout', { domain: parts.domain })
+          return { status: 'provider_unavailable', message: 'FviaInboxes chưa render form mailbox trong thời gian chờ an toàn.' }
+        }
+        await this.page.waitForTimeout(FVIA_SURFACE_POLL_MS)
+        continue
       }
 
       const submitted = await this.submitMailbox(parts.local, parts.domain)
@@ -258,8 +285,7 @@ export class FviaInboxesPlaywrightDriver implements FviaInboxesMailboxDriver {
     const domain = await this.domainControl()
     const getEmail = this.page.getByRole('button', { name: /^get email$/i }).first()
     const inbox = this.page.getByText(/^inbox$/i).first()
-
-    return classifyFviaInboxesSurface({
+    const snapshot: FviaInboxesSurfaceSnapshot = {
       bodyText,
       expectedMailbox,
       activatedMailbox: this.activeMailbox,
@@ -269,14 +295,40 @@ export class FviaInboxesPlaywrightDriver implements FviaInboxesMailboxDriver {
       domainControlVisible: domain !== null && await visible(domain),
       getEmailButtonVisible: await visible(getEmail),
       inboxVisible: await visible(inbox)
+    }
+    const surface = classifyFviaInboxesSurface(snapshot)
+    emailDiagnostic('fvia-dom', 'surface', {
+      surface,
+      usernameInputVisible: snapshot.usernameInputVisible,
+      domainControlVisible: snapshot.domainControlVisible,
+      getEmailButtonVisible: snapshot.getEmailButtonVisible,
+      inboxVisible: snapshot.inboxVisible,
+      selectedDomain: snapshot.selectedDomain
     })
+    return surface
   }
 
   private async domainControl(): Promise<Locator | null> {
-    const nativeSelect = this.page.locator('select:visible').first()
-    if (await visible(nativeSelect)) return nativeSelect
-    const combobox = this.page.getByRole('combobox').first()
-    return await visible(combobox) ? combobox : null
+    const nativeSelects = this.page.locator('select:visible')
+    const selectCount = Math.min(await nativeSelects.count(), 20)
+    for (let index = 0; index < selectCount; index += 1) {
+      const candidate = nativeSelects.nth(index)
+      const optionTexts = await candidate.locator('option').allTextContents().catch(() => [] as string[])
+      if (optionTexts.some((text) => resolveMailProviderId(`owner@${normalizeText(text).toLowerCase().replace(/^@/, '')}`) === 'fvia_inboxes')) {
+        return candidate
+      }
+    }
+
+    const comboboxes = this.page.getByRole('combobox')
+    const comboCount = Math.min(await comboboxes.count(), 20)
+    for (let index = 0; index < comboCount; index += 1) {
+      const candidate = comboboxes.nth(index)
+      if (!await candidate.isVisible().catch(() => false)) continue
+      const selected = await this.selectedDomain(candidate)
+      if (selected && resolveMailProviderId(`owner@${selected}`) === 'fvia_inboxes') return candidate
+    }
+
+    return null
   }
 
   private async selectedDomain(control: Locator): Promise<string | null> {
@@ -293,12 +345,33 @@ export class FviaInboxesPlaywrightDriver implements FviaInboxesMailboxDriver {
 
   private async submitMailbox(local: string, domainValue: string): Promise<boolean> {
     const username = this.page.getByPlaceholder(/enter your username/i).first()
-    if (!await visible(username)) return false
-    await username.fill(local)
-    if ((await username.inputValue().catch(() => '')).trim().toLowerCase() !== local) return false
+    if (!await visible(username)) {
+      emailDiagnostic('fvia-dom', 'submit-missing-username', { domain: domainValue })
+      return false
+    }
+
+    try {
+      await username.fill(local)
+    } catch {
+      emailDiagnostic('fvia-dom', 'submit-username-fill-error', { domain: domainValue })
+      return false
+    }
+    const usernameValue = (await username.inputValue().catch(() => '')).trim().toLowerCase()
+    if (usernameValue !== local) {
+      emailDiagnostic('fvia-dom', 'submit-username-mismatch', {
+        domain: domainValue,
+        expectedLength: local.length,
+        actualLength: usernameValue.length
+      })
+      return false
+    }
+    emailDiagnostic('fvia-dom', 'username-filled', { domain: domainValue, localLength: local.length })
 
     const domain = await this.domainControl()
-    if (!domain) return false
+    if (!domain) {
+      emailDiagnostic('fvia-dom', 'submit-missing-domain-control', { domain: domainValue })
+      return false
+    }
 
     if ((await domain.evaluate((element) => element.tagName.toLowerCase()).catch(() => '')) === 'select') {
       try {
@@ -313,16 +386,36 @@ export class FviaInboxesPlaywrightDriver implements FviaInboxesMailboxDriver {
         await option.click()
       } else {
         const domainText = this.page.getByText(domainValue, { exact: true }).last()
-        if (!await visible(domainText)) return false
+        if (!await visible(domainText)) {
+          emailDiagnostic('fvia-dom', 'submit-domain-option-missing', { domain: domainValue })
+          return false
+        }
         await domainText.click()
       }
     }
 
-    if ((await this.selectedDomain(domain)) !== domainValue) return false
+    const selectedDomain = await this.selectedDomain(domain)
+    if (selectedDomain !== domainValue) {
+      emailDiagnostic('fvia-dom', 'submit-domain-mismatch', {
+        expectedDomain: domainValue,
+        selectedDomain
+      })
+      return false
+    }
+    emailDiagnostic('fvia-dom', 'domain-selected', { domain: domainValue })
 
     const getEmail = this.page.getByRole('button', { name: /^get email$/i }).first()
-    if (!await visible(getEmail) || !await getEmail.isEnabled().catch(() => true)) return false
-    await getEmail.click({ timeout: 8_000 })
+    if (!await visible(getEmail) || !await getEmail.isEnabled().catch(() => true)) {
+      emailDiagnostic('fvia-dom', 'submit-get-email-unavailable', { domain: domainValue })
+      return false
+    }
+    try {
+      await getEmail.click({ timeout: 8_000 })
+    } catch {
+      emailDiagnostic('fvia-dom', 'submit-get-email-click-error', { domain: domainValue })
+      return false
+    }
+    emailDiagnostic('fvia-dom', 'submit-clicked', { domain: domainValue })
     return true
   }
 

@@ -25,7 +25,8 @@ export const FVIA_INBOXES_DOMAINS = [
   'fviainboxes.com',
   'fviadropinbox.com',
   'fviamail.work',
-  'dropinboxes.com'
+  'dropinboxes.com',
+  'titanads.email'
 ] as const
 
 /**

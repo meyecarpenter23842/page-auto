@@ -16,6 +16,32 @@ describe('classifyFviaInboxesSurface', () => {
     })).toBe('mailbox_form')
   })
 
+  it('treats the blank live Fvia shell as loading while the mailbox form hydrates', () => {
+    expect(classifyFviaInboxesSurface({
+      bodyText: '',
+      expectedMailbox: 'owner@fviadropinbox.com',
+      activatedMailbox: null,
+      usernameValue: '',
+      selectedDomain: null,
+      usernameInputVisible: false,
+      domainControlVisible: false,
+      getEmailButtonVisible: false,
+      inboxVisible: false
+    })).toBe('loading')
+
+    expect(classifyFviaInboxesSurface({
+      bodyText: 'FREE Temporary Email Inbox',
+      expectedMailbox: 'owner@fviadropinbox.com',
+      activatedMailbox: null,
+      usernameValue: '',
+      selectedDomain: null,
+      usernameInputVisible: false,
+      domainControlVisible: false,
+      getEmailButtonVisible: false,
+      inboxVisible: true
+    })).toBe('loading')
+  })
+
   it('requires the exact activated local part and domain before treating the inbox as ready', () => {
     expect(classifyFviaInboxesSurface({
       bodyText: 'Inbox Emails will appear here automatically',
@@ -42,7 +68,7 @@ describe('classifyFviaInboxesSurface', () => {
     })).toBe('mailbox_form')
   })
 
-  it('fails closed when the expected form/inbox surface disappears', () => {
+  it('fails closed when Fvia explicitly reports a provider failure', () => {
     expect(classifyFviaInboxesSurface({
       bodyText: 'Service unavailable',
       expectedMailbox: 'owner@dropinboxes.com',
