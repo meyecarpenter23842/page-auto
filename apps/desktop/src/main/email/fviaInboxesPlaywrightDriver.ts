@@ -104,6 +104,11 @@ function normalizeText(value: string): string {
   return value.replace(/\s+/g, ' ').trim()
 }
 
+export function isFviaDomainControlValue(value: string): boolean {
+  const domain = normalizeText(value).toLowerCase().replace(/^@/, '')
+  return Boolean(domain) && resolveMailProviderId(`owner@${domain}`) === 'fvia_inboxes'
+}
+
 function looksLikeUiChrome(textInput: string): boolean {
   const text = normalizeText(textInput).toLowerCase()
   if (!text || text.length > 260) return true
@@ -314,7 +319,7 @@ export class FviaInboxesPlaywrightDriver implements FviaInboxesMailboxDriver {
     for (let index = 0; index < selectCount; index += 1) {
       const candidate = nativeSelects.nth(index)
       const optionTexts = await candidate.locator('option').allTextContents().catch(() => [] as string[])
-      if (optionTexts.some((text) => resolveMailProviderId(`owner@${normalizeText(text).toLowerCase().replace(/^@/, '')}`) === 'fvia_inboxes')) {
+      if (optionTexts.some((text) => isFviaDomainControlValue(text))) {
         return candidate
       }
     }
@@ -325,7 +330,19 @@ export class FviaInboxesPlaywrightDriver implements FviaInboxesMailboxDriver {
       const candidate = comboboxes.nth(index)
       if (!await candidate.isVisible().catch(() => false)) continue
       const selected = await this.selectedDomain(candidate)
-      if (selected && resolveMailProviderId(`owner@${selected}`) === 'fvia_inboxes') return candidate
+      if (selected && isFviaDomainControlValue(selected)) return candidate
+    }
+
+    // Live Fvia currently renders the domain picker as a listbox trigger rather
+    // than a native select/ARIA combobox. Keep this provider-local and only accept
+    // a visible trigger whose current text is itself a registered Fvia domain.
+    const listboxTriggers = this.page.locator('[aria-haspopup="listbox"]:visible')
+    const listboxCount = Math.min(await listboxTriggers.count(), 20)
+    for (let index = 0; index < listboxCount; index += 1) {
+      const candidate = listboxTriggers.nth(index)
+      if (!await candidate.isVisible().catch(() => false)) continue
+      const selected = await this.selectedDomain(candidate)
+      if (selected && isFviaDomainControlValue(selected)) return candidate
     }
 
     return null
