@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   classifyFviaInboxesSurface,
+  fviaDomainControlReadMode,
   isFviaDomainControlValue,
   parseFviaReceivedAtLabel
 } from './fviaInboxesPlaywrightDriver'
@@ -102,6 +103,16 @@ describe('isFviaDomainControlValue', () => {
     expect(isFviaDomainControlValue('@fviadropinbox.com')).toBe(true)
     expect(isFviaDomainControlValue('gmail.com')).toBe(false)
     expect(isFviaDomainControlValue('')).toBe(false)
+  })
+})
+
+describe('fviaDomainControlReadMode', () => {
+  it('never treats custom button/div listbox triggers as native selects', () => {
+    expect(fviaDomainControlReadMode('select')).toBe('select')
+    expect(fviaDomainControlReadMode('input')).toBe('value')
+    expect(fviaDomainControlReadMode('textarea')).toBe('value')
+    expect(fviaDomainControlReadMode('button')).toBe('text')
+    expect(fviaDomainControlReadMode('div')).toBe('text')
   })
 })
 

@@ -109,6 +109,15 @@ export function isFviaDomainControlValue(value: string): boolean {
   return Boolean(domain) && resolveMailProviderId(`owner@${domain}`) === 'fvia_inboxes'
 }
 
+export type FviaDomainControlReadMode = 'select' | 'value' | 'text'
+
+export function fviaDomainControlReadMode(tagNameInput: string): FviaDomainControlReadMode {
+  const tagName = tagNameInput.trim().toLowerCase()
+  if (tagName === 'select') return 'select'
+  if (tagName === 'input' || tagName === 'textarea') return 'value'
+  return 'text'
+}
+
 function looksLikeUiChrome(textInput: string): boolean {
   const text = normalizeText(textInput).toLowerCase()
   if (!text || text.length > 260) return true
@@ -349,13 +358,25 @@ export class FviaInboxesPlaywrightDriver implements FviaInboxesMailboxDriver {
   }
 
   private async selectedDomain(control: Locator): Promise<string | null> {
-    const value = (await control.inputValue().catch(() => '')).trim()
-    if (value) return value.toLowerCase().replace(/^@/, '')
+    const tagName = await control.evaluate((element) => element.tagName.toLowerCase()).catch(() => '')
+    const readMode = fviaDomainControlReadMode(tagName)
 
-    const selectedOption = control.locator('option:checked').first()
-    const selectedText = normalizeText(await selectedOption.innerText().catch(() => ''))
-    if (selectedText) return selectedText.toLowerCase().replace(/^@/, '')
+    if (readMode === 'value') {
+      const value = normalizeText(await control.inputValue().catch(() => ''))
+      return value ? value.toLowerCase().replace(/^@/, '') : null
+    }
 
+    if (readMode === 'select') {
+      const value = normalizeText(await control.inputValue().catch(() => ''))
+      if (value) return value.toLowerCase().replace(/^@/, '')
+
+      const selectedText = normalizeText(await control.locator('option:checked').first().innerText({ timeout: 1_000 }).catch(() => ''))
+      if (selectedText) return selectedText.toLowerCase().replace(/^@/, '')
+    }
+
+    // Custom Fvia listbox/combobox triggers are buttons/divs. Read their visible
+    // label directly; never query option:checked on these controls because that
+    // locator waits for a native option that can never exist and stalls the flow.
     const text = normalizeText(await control.innerText().catch(() => ''))
     return text ? text.toLowerCase().replace(/^@/, '') : null
   }
