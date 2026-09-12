@@ -4,8 +4,8 @@ import type { MailProvider, MailProviderCodeRequest, MailProviderCodeResult } fr
 import {
   isMailboxCodeServiceProviderId,
   MailboxCodeService,
-  newestOpenMailboxProviderPage,
-  ownedOrNewestOpenMailboxProviderPage
+  newestOpenFviaInboxesProviderPage,
+  ownedOrNewestOpenFviaInboxesProviderPage
 } from './mailboxCodeService'
 
 type FakePage = Page & {
@@ -114,14 +114,13 @@ describe('MailboxCodeService FviaInboxes migration', () => {
     expect(resolveProviderSession).toHaveBeenCalledTimes(1)
   })
 
-  it('keeps provider page ownership separated between Inboxes and FviaInboxes', () => {
+  it('keeps Fvia provider page ownership on Fvia tabs without adopting Inboxes', () => {
     const inboxes = fakePage('https://inboxes.com/')
     const fviaOlder = fakePage('https://fviainboxes.com/')
     const fviaNewest = fakePage('https://www.fviainboxes.com/inbox')
     const ownedBlank = fakePage('about:blank')
 
-    expect(newestOpenMailboxProviderPage('inboxes', [fviaOlder, inboxes, fviaNewest])).toBe(inboxes)
-    expect(newestOpenMailboxProviderPage('fvia_inboxes', [inboxes, fviaOlder, fviaNewest])).toBe(fviaNewest)
-    expect(ownedOrNewestOpenMailboxProviderPage('fvia_inboxes', ownedBlank, [inboxes, fviaNewest])).toBe(ownedBlank)
+    expect(newestOpenFviaInboxesProviderPage([fviaOlder, inboxes, fviaNewest])).toBe(fviaNewest)
+    expect(ownedOrNewestOpenFviaInboxesProviderPage(ownedBlank, [inboxes, fviaNewest])).toBe(ownedBlank)
   })
 })
