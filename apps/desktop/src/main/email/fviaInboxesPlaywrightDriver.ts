@@ -12,7 +12,10 @@ import type {
 const FVIA_INBOXES_URL = 'https://fviainboxes.com/'
 const FVIA_SURFACE_READY_TIMEOUT_MS = 12_000
 const FVIA_SURFACE_POLL_MS = 500
+const FVIA_DETAIL_READY_TIMEOUT_MS = 2_500
+const FVIA_DETAIL_POLL_MS = 100
 const RELATIVE_TIME = /\b(?:just now|now|(?:a|few|a few)\s+seconds?\s+ago|\d+\s*(?:sec|secs|second|seconds|min|mins|minute|minutes|hour|hours|day|days)\s+ago)\b/i
+const VERIFICATION_DETAIL_CODE = /(?:verification|security|one[- ]?time|single[- ]?use)\s+code(?:\s+is)?\s*[:#-]?\s*[a-z0-9]{4,8}|mã\s+(?:xác minh|bảo mật|đăng nhập)(?:\s+là)?\s*[:#-]?\s*[a-z0-9]{4,8}/i
 
 export type FviaInboxesSurface =
   | 'loading'
@@ -118,6 +121,13 @@ export function fviaDomainControlReadMode(tagNameInput: string): FviaDomainContr
   return 'text'
 }
 
+export function fviaVerificationDetailReady(beforeTextInput: string, bodyTextInput: string): boolean {
+  const beforeText = normalizeText(beforeTextInput)
+  const bodyText = normalizeText(bodyTextInput)
+  if (!bodyText || bodyText === beforeText) return false
+  return VERIFICATION_DETAIL_CODE.test(bodyText)
+}
+
 function looksLikeUiChrome(textInput: string): boolean {
   const text = normalizeText(textInput).toLowerCase()
   if (!text || text.length > 260) return true
@@ -213,8 +223,11 @@ export class FviaInboxesPlaywrightDriver implements FviaInboxesMailboxDriver {
     const messages: FviaInboxesMessageSummary[] = []
     const seen = new Set<string>()
 
+    // Only keep actionable message-row shapes. The live Fvia DOM also renders
+    // nested p/span copies of the same row text; treating those as separate
+    // messages creates duplicate keys and click targets that cannot open detail.
     const candidates = this.page.locator(
-      'tr:visible, [role="row"]:visible, [role="listitem"]:visible, li:visible, a:visible, button:visible, [role="button"]:visible, p:visible, span:visible'
+      'tr:visible, [role="row"]:visible, [role="listitem"]:visible, li:visible, a:visible, button:visible, [role="button"]:visible'
     )
     const count = Math.min(await candidates.count(), 300)
 
@@ -256,14 +269,18 @@ export class FviaInboxesPlaywrightDriver implements FviaInboxesMailboxDriver {
     try {
       await locator.click({ timeout: 8_000 })
     } catch {
+      emailDiagnostic('fvia-dom', 'read-click-error', {})
       return null
     }
-    await this.waitForUiChange()
 
-    const bodyText = normalizeText(await this.page.locator('body').innerText({ timeout: 5_000 }).catch(() => ''))
-    if (!bodyText || bodyText === beforeText || !bodyText.toLowerCase().includes(message.subject.toLowerCase())) {
-      return null
-    }
+    const bodyText = await this.waitForVerificationDetail(beforeText)
+    const detailReady = fviaVerificationDetailReady(beforeText, bodyText)
+    emailDiagnostic('fvia-dom', 'read-detail', {
+      detailReady,
+      bodyChanged: Boolean(bodyText) && bodyText !== beforeText,
+      bodyLength: bodyText.length
+    })
+    if (!detailReady) return null
 
     const snapshot: MailMessageSnapshot = {
       id: message.key,
@@ -455,6 +472,19 @@ export class FviaInboxesPlaywrightDriver implements FviaInboxesMailboxDriver {
     }
     emailDiagnostic('fvia-dom', 'submit-clicked', { domain: domainValue })
     return true
+  }
+
+  private async waitForVerificationDetail(beforeText: string): Promise<string> {
+    const deadline = Date.now() + FVIA_DETAIL_READY_TIMEOUT_MS
+    let bodyText = ''
+
+    while (Date.now() < deadline) {
+      bodyText = normalizeText(await this.page.locator('body').innerText({ timeout: 1_000 }).catch(() => ''))
+      if (fviaVerificationDetailReady(beforeText, bodyText)) return bodyText
+      await this.page.waitForTimeout(FVIA_DETAIL_POLL_MS)
+    }
+
+    return bodyText
   }
 
   private async waitForUiChange(): Promise<void> {
