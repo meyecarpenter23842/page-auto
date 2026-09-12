@@ -302,9 +302,14 @@ export class FviaInboxesPlaywrightDriver implements FviaInboxesMailboxDriver {
       const text = normalizeText(await candidate.innerText().catch(() => ''))
       if (looksLikeUiChrome(text)) continue
 
-      const directHref = await candidate.getAttribute('href').catch(() => null)
-      const href = directHref
-        ?? await candidate.locator('a[href]').first().getAttribute('href').catch(() => null)
+      // Read any direct/descendant href synchronously from the resolved row.
+      // A locator for a missing descendant waits for Playwright's default timeout
+      // and blocks the baseline that must finish before Microsoft Send code.
+      const href = await candidate.evaluate((element) => {
+        const direct = element.getAttribute('href')
+        if (direct) return direct
+        return element.querySelector('a[href]')?.getAttribute('href') ?? null
+      }).catch(() => null)
       const dataId = await candidate.getAttribute('data-message-id').catch(() => null)
         ?? await candidate.getAttribute('data-id').catch(() => null)
       const id = await candidate.getAttribute('id').catch(() => null)
