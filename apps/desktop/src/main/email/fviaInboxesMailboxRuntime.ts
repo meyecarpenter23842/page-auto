@@ -54,6 +54,16 @@ function fviaPageState(page: Page): 'provider' | 'blank' | 'other' {
   return page.url() === 'about:blank' ? 'blank' : 'other'
 }
 
+function safeFrameCount(page: Page): number | null {
+  const frameReader = (page as unknown as { frames?: () => readonly unknown[] }).frames
+  if (typeof frameReader !== 'function') return null
+  try {
+    return frameReader.call(page).length
+  } catch {
+    return null
+  }
+}
+
 export function newestOpenFviaInboxesProviderPage(pages: readonly Page[]): Page | null {
   for (let index = pages.length - 1; index >= 0; index -= 1) {
     const page = pages[index]
@@ -123,7 +133,7 @@ export async function createFviaInboxesMailboxRuntime(
     source: preferredPage ? 'preferred' : adoptedPage ? 'adopted' : 'created',
     pageState: fviaPageState(page),
     candidatePageCount: options.pages.length,
-    frameCount: page.frames().length
+    frameCount: safeFrameCount(page)
   })
 
   const provider = new FviaInboxesLifecycleProvider(
@@ -133,7 +143,7 @@ export async function createFviaInboxesMailboxRuntime(
 
   emailDiagnostic('mailbox-provider', 'fvia-runtime-ready', {
     pageState: fviaPageState(page),
-    frameCount: page.frames().length
+    frameCount: safeFrameCount(page)
   })
 
   return {
