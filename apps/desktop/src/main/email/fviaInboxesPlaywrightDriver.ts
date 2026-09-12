@@ -15,7 +15,7 @@ const FVIA_SURFACE_POLL_MS = 500
 const FVIA_DETAIL_READY_TIMEOUT_MS = 2_500
 const FVIA_DETAIL_POLL_MS = 100
 const RELATIVE_TIME = /\b(?:just now|now|(?:a|few|a few)\s+seconds?\s+ago|\d+\s*(?:sec|secs|second|seconds|min|mins|minute|minutes|hour|hours|day|days)\s+ago)\b/i
-const VERIFICATION_DETAIL_CODE = /(?:verification|security|one[- ]?time|single[- ]?use)\s+code(?:\s+is)?\s*[:#-]?\s*[a-z0-9]{4,8}|mã\s+(?:xác minh|bảo mật|đăng nhập)(?:\s+là)?\s*[:#-]?\s*[a-z0-9]{4,8}/i
+const VERIFICATION_DETAIL_CODE = /(?:(?:verification|security|one[- ]?time|single[- ]?use)\s+code|mã\s+(?:xác minh|bảo mật|đăng nhập))(?:\s+is|\s+là)?\s*[:#-]?\s*\d{4,8}\b/i
 
 export type FviaInboxesSurface =
   | 'loading'
