@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   classifyFviaInboxesSurface,
   fviaDomainControlReadMode,
+  fviaVerificationDetailReady,
   isFviaDomainControlValue,
   parseFviaReceivedAtLabel
 } from './fviaInboxesPlaywrightDriver'
@@ -113,6 +114,29 @@ describe('fviaDomainControlReadMode', () => {
     expect(fviaDomainControlReadMode('textarea')).toBe('value')
     expect(fviaDomainControlReadMode('button')).toBe('text')
     expect(fviaDomainControlReadMode('div')).toBe('text')
+  })
+})
+
+describe('fviaVerificationDetailReady', () => {
+  it('accepts the live detail once a labelled numeric verification code renders even when row text is truncated', () => {
+    const before = 'Inbox account-security-noreply just now Personal Microsoft account securit...'
+    const detail = 'Personal Microsoft account security code noreply@accountprotection.microsoft.com Security code: 654321 Thanks'
+
+    expect(detail.toLowerCase().includes(before.toLowerCase())).toBe(false)
+    expect(fviaVerificationDetailReady(before, detail)).toBe(true)
+  })
+
+  it('does not treat sender text after security-code wording as the code itself', () => {
+    const before = 'Inbox Microsoft account security code just now'
+    const senderOnly = 'Personal Microsoft account security code noreply@accountprotection.microsoft.com'
+
+    expect(fviaVerificationDetailReady(before, senderOnly)).toBe(false)
+  })
+
+  it('does not treat inbox-list text or unrelated page changes as message detail', () => {
+    const before = 'Inbox Personal Microsoft account security code just now'
+    expect(fviaVerificationDetailReady(before, before)).toBe(false)
+    expect(fviaVerificationDetailReady(before, `${before} Sponsored content changed`)).toBe(false)
   })
 })
 
