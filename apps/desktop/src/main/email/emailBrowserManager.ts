@@ -18,6 +18,12 @@ import {
   type EmailAuthResumeKind
 } from './emailLoginPolicy'
 import type { EmailProxyCandidate } from './emailProxyPool'
+import {
+  isMailboxProviderWorkerRequestMessage,
+  mailboxProviderUnavailableResponse,
+  type MailboxProviderWorkerRequestHandler,
+  type MailboxProviderWorkerRequestMessage
+} from './mailboxProviderWorkerRpc'
 
 interface WorkerOpenResult {
   type: 'open-result'
@@ -140,7 +146,10 @@ function routedProxy(proxy: EmailProxyCandidate | null, bridge: EmailProxyAuthBr
 export class EmailBrowserManager {
   private readonly workers = new Map<number, WorkerEntry>()
 
-  constructor(private readonly onClosed?: (accountId: number) => void) {}
+  constructor(
+    private readonly onClosed?: (accountId: number) => void,
+    private readonly mailboxProviderRequestHandler?: MailboxProviderWorkerRequestHandler
+  ) {}
 
   async open(
     account: AccountRecord,
@@ -377,6 +386,10 @@ export class EmailBrowserManager {
 
     process.once('spawn', () => resolveSpawn?.())
     process.on('message', (message) => {
+      if (isMailboxProviderWorkerRequestMessage(message)) {
+        void this.handleMailboxProviderRequest(entry, message)
+        return
+      }
       if (!isWorkerResponse(message) || message.accountId !== account.id) return
       const pending = entry.pending
       if (!pending || pending.kind !== message.type) return
@@ -403,6 +416,26 @@ export class EmailBrowserManager {
     })
 
     return { entry, created: true }
+  }
+
+  private async handleMailboxProviderRequest(
+    entry: WorkerEntry,
+    request: MailboxProviderWorkerRequestMessage
+  ): Promise<void> {
+    let response
+    try {
+      response = this.mailboxProviderRequestHandler
+        ? await this.mailboxProviderRequestHandler(request)
+        : mailboxProviderUnavailableResponse(request, 'Main chưa đăng ký mailbox provider handler cho Email worker.')
+    } catch {
+      response = mailboxProviderUnavailableResponse(request, 'Main mailbox provider handler gặp lỗi khi xử lý request.')
+    }
+
+    try {
+      entry.process.postMessage(response)
+    } catch {
+      // Worker/action lifecycle will return its own typed failure if the utility process disappeared.
+    }
   }
 
   private async prepareProxy(entry: WorkerEntry, proxy: EmailProxyCandidate | null): Promise<EmailProxyCandidate | null> {
