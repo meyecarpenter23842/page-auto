@@ -1,4 +1,4 @@
-import type { Locator, Page } from 'playwright-core'
+import type { Frame, Locator, Page } from 'playwright-core'
 import type { MailMessageSnapshot } from './verificationCodeParser'
 import { emailDiagnostic } from './emailRuntimeDiagnostic'
 import { normalizeMailboxAddress } from './mailProvider'
@@ -126,6 +126,25 @@ export function fviaVerificationDetailReady(beforeTextInput: string, bodyTextInp
   const bodyText = normalizeText(bodyTextInput)
   if (!bodyText || bodyText === beforeText) return false
   return VERIFICATION_DETAIL_CODE.test(bodyText)
+}
+
+export type FviaVerificationDetailSource = 'root' | 'frame'
+
+export interface FviaVerificationDetailSurface {
+  source: FviaVerificationDetailSource
+  text: string
+}
+
+export function pickFviaVerificationDetail(
+  beforeTextInput: string,
+  surfaces: readonly FviaVerificationDetailSurface[]
+): FviaVerificationDetailSurface | null {
+  for (const surface of surfaces) {
+    const text = normalizeText(surface.text)
+    if (!fviaVerificationDetailReady(beforeTextInput, text)) continue
+    return { source: surface.source, text }
+  }
+  return null
 }
 
 function looksLikeUiChrome(textInput: string): boolean {
@@ -273,12 +292,14 @@ export class FviaInboxesPlaywrightDriver implements FviaInboxesMailboxDriver {
       return null
     }
 
-    const bodyText = await this.waitForVerificationDetail(beforeText)
-    const detailReady = fviaVerificationDetailReady(beforeText, bodyText)
+    const detail = await this.waitForVerificationDetail(beforeText)
+    const detailReady = detail.source !== null
     emailDiagnostic('fvia-dom', 'read-detail', {
       detailReady,
-      bodyChanged: Boolean(bodyText) && bodyText !== beforeText,
-      bodyLength: bodyText.length
+      detailSource: detail.source ?? 'none',
+      surfaceCount: detail.surfaceCount,
+      bodyChanged: Boolean(detail.bodyText) && detail.bodyText !== beforeText,
+      bodyLength: detail.bodyText.length
     })
     if (!detailReady) return null
 
@@ -288,7 +309,7 @@ export class FviaInboxesPlaywrightDriver implements FviaInboxesMailboxDriver {
       sender: message.sender,
       subject: message.subject,
       bodyPreview: message.preview,
-      bodyText
+      bodyText: detail.bodyText
     }
 
     await this.page.goto(FVIA_INBOXES_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 }).catch(() => undefined)
@@ -474,17 +495,53 @@ export class FviaInboxesPlaywrightDriver implements FviaInboxesMailboxDriver {
     return true
   }
 
-  private async waitForVerificationDetail(beforeText: string): Promise<string> {
+  private async verificationDetailSurfaces(): Promise<FviaVerificationDetailSurface[]> {
+    const rootText = normalizeText(await this.page.locator('body').innerText({ timeout: 1_000 }).catch(() => ''))
+    const surfaces: FviaVerificationDetailSurface[] = [{ source: 'root', text: rootText }]
+    const frameReader = (this.page as unknown as { frames?: () => readonly Frame[] }).frames
+    if (typeof frameReader !== 'function') return surfaces
+
+    let frames: readonly Frame[]
+    try {
+      frames = frameReader.call(this.page)
+    } catch {
+      return surfaces
+    }
+
+    for (const frame of frames) {
+      const frameText = normalizeText(await frame.locator('body').innerText({ timeout: 1_000 }).catch(() => ''))
+      if (!frameText || frameText === rootText) continue
+      surfaces.push({ source: 'frame', text: frameText })
+    }
+    return surfaces
+  }
+
+  private async waitForVerificationDetail(beforeText: string): Promise<{
+    bodyText: string
+    source: FviaVerificationDetailSource | null
+    surfaceCount: number
+  }> {
     const deadline = Date.now() + FVIA_DETAIL_READY_TIMEOUT_MS
-    let bodyText = ''
+    let latestSurfaces: FviaVerificationDetailSurface[] = []
 
     while (Date.now() < deadline) {
-      bodyText = normalizeText(await this.page.locator('body').innerText({ timeout: 1_000 }).catch(() => ''))
-      if (fviaVerificationDetailReady(beforeText, bodyText)) return bodyText
+      latestSurfaces = await this.verificationDetailSurfaces()
+      const detail = pickFviaVerificationDetail(beforeText, latestSurfaces)
+      if (detail) {
+        return {
+          bodyText: detail.text,
+          source: detail.source,
+          surfaceCount: latestSurfaces.length
+        }
+      }
       await this.page.waitForTimeout(FVIA_DETAIL_POLL_MS)
     }
 
-    return bodyText
+    return {
+      bodyText: latestSurfaces[0]?.text ?? '',
+      source: null,
+      surfaceCount: latestSurfaces.length
+    }
   }
 
   private async waitForUiChange(): Promise<void> {
