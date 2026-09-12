@@ -18,10 +18,7 @@ import {
   microsoftRouteLogLabel,
   waitForMicrosoftOwnedPage
 } from './emailMicrosoftPageOwnership'
-import {
-  handleMicrosoftRecoveryChallenge,
-  isMicrosoftRecoverySurface
-} from './microsoftRecoveryChallenge'
+import { isMicrosoftRecoverySurface } from './microsoftRecoveryChallenge'
 import { runMicrosoftAuthV2WorkerController } from './microsoftAuthV2WorkerController'
 
 interface ProxyConfig {

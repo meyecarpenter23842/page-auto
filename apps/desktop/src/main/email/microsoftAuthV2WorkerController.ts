@@ -303,7 +303,7 @@ export async function runMicrosoftAuthV2WorkerController(
   const recovery = async (surface: MicrosoftRecoveryV2Surface): Promise<EmailAuthV2HandlerResult> => {
     const result = await keepMicrosoftForegroundDuring(
       page,
-      async () => await handleMicrosoftRecoveryChallenge(page, surface, credentials.backupEmail)
+      async () => await handleMicrosoftRecoveryChallenge(page, surface, credentials.backupEmail, credentials.accountId)
     )
 
     if (result.status === 'needs_attention') {

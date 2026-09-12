@@ -29,6 +29,16 @@ function snapshot(message: FviaInboxesMessageSummary, code: string): MailMessage
 }
 
 describe('FviaInboxesProvider', () => {
+  it('declares baseline-current freshness for resumed Microsoft recovery challenges', () => {
+    const provider = new FviaInboxesProvider({
+      ensureMailbox: async (mailbox) => ({ status: 'ready', activeMailbox: mailbox }),
+      listMessages: async () => [],
+      readMessage: async () => null,
+      refreshMailbox: async () => undefined
+    })
+    expect(provider.resumeFreshness).toBe('baseline_current')
+  })
+
   it('uses one provider for all audited Fvia domains and supports PRIMARY role', async () => {
     const mail = summary('mail-1', 1_000_000)
     const driver: FviaInboxesMailboxDriver = {
