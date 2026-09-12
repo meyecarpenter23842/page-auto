@@ -201,17 +201,20 @@ Router không click DOM và không sửa state Microsoft Auth.
 
 ## 6. Contract ráp module
 
-Contract tối thiểu phải giữ identity của challenge và message:
+Contract tối thiểu phải giữ identity của **account + challenge + message**. `accountId` là canonical handle bắt buộc ở boundary cấp cao vì Hotmail/Outlook Mailbox về sau phải resolve đúng OAuth state theo account, không được chọn token chỉ bằng địa chỉ mailbox.
 
 ```ts
 interface MailboxCodeRequest {
+  accountId: number
   mailbox: string
+  role: 'primary' | 'recovery'
   purpose: 'microsoft_security' | 'generic_verification'
   challengeId: string
   notBefore?: number
   baselineMessageKeys?: readonly string[]
   consumedMessageKeys?: readonly string[]
   timeoutMs?: number
+  pollIntervalMs?: number
 }
 
 interface MailboxCodeResult {
@@ -357,10 +360,11 @@ Hiện vẫn biết:
 
 ### Batch E-MOD-1 — Contracts + composition root
 
-- khóa contract mailbox;
+- khóa contract mailbox, gồm canonical `accountId` + challenge/message identity;
 - tạo provider registration/router;
+- router E-MOD-1 **chưa được wire vào Microsoft Auth production flow**;
 - không đổi selector/behavior provider;
-- regression mapping domain/provider.
+- regression mapping domain/provider + fail-closed khi provider chưa đăng ký.
 
 ### Batch E-MOD-2 — Tách Inboxes khỏi Common
 
@@ -399,12 +403,15 @@ Mỗi batch là một PR review được; không gom selector fixes không liên
 
 ## 12. Regression bắt buộc trước merge từng batch
 
+Mỗi batch chạy **phần ma trận đã tồn tại ở batch đó**; không ép E-MOD-1..4 phải giả lập module Hotmail/Outlook chưa được tạo. Dòng Hotmail/Outlook bắt buộc từ **E-MOD-5 trở đi**.
+
 ### Contract/module tests
 
 - domain -> đúng provider;
 - provider A không gọi implementation provider B;
 - Common không chứa provider-specific behavior mới;
 - Microsoft Auth không import concrete mailbox provider;
+- typed account/challenge/message identity được bảo toàn;
 - typed result được bảo toàn.
 
 ### Integration matrix
@@ -414,7 +421,7 @@ Microsoft Auth + Inboxes          code 1 vòng
 Microsoft Auth + Inboxes          code 2 vòng / mail mới lần 2
 Microsoft Auth + Fvia             code mới đúng provider
 Microsoft Auth + MailtoPlus       provider contract
-Microsoft Auth + Hotmail mailbox  OAuth/Graph mailbox provider
+Microsoft Auth + Hotmail mailbox  OAuth/Graph mailbox provider   [E-MOD-5+]
 ```
 
 ### Failure matrix
