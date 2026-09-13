@@ -1,100 +1,106 @@
-import { type Dispatch, type PointerEvent as ReactPointerEvent, type SetStateAction, useRef } from 'react'
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type PointerEvent as ReactPointerEvent
+} from 'react'
 
-export const ACCOUNT_TABLE_INTERACTIVE_SELECTOR =
-  'input,button,select,a,textarea,[contenteditable="true"],[data-row-interactive="true"]'
+export interface ExcelRowRangeState {
+  ids: Set<number>
+  anchorId: number | null
+}
 
-export type AccountTableSelectionInteraction = {
-  shiftKey?: boolean
+export interface ExcelRowRangeModifiers {
   ctrlKey?: boolean
   metaKey?: boolean
+  shiftKey?: boolean
 }
 
-export type AccountTableSelectionState = {
-  rangeIds: Set<number>
-  anchorId: number | null
-  focusId: number | null
-}
+const INTERACTIVE_SELECTOR = 'input,button,select,a,textarea,[contenteditable="true"]'
 
-type UseExcelRowRangeOptions = {
-  orderedIds: number[]
-  state: AccountTableSelectionState
-  setState: Dispatch<SetStateAction<AccountTableSelectionState>>
-  interactiveSelector?: string
-}
-
-function interactiveTarget(target: EventTarget | null, selector: string) {
-  return target instanceof Element ? target.closest(selector) : null
-}
-
-export function selectContiguousAccountRange(
-  orderedIds: number[],
-  anchorId: number,
-  focusId: number
-) {
-  const anchorIndex = orderedIds.indexOf(anchorId)
-  const focusIndex = orderedIds.indexOf(focusId)
-  if (anchorIndex < 0 || focusIndex < 0) return new Set<number>([focusId])
-  const [start, end] = anchorIndex <= focusIndex ? [anchorIndex, focusIndex] : [focusIndex, anchorIndex]
-  return new Set(orderedIds.slice(start, end + 1))
+export function rowIdsBetween(orderedIds: readonly number[], startId: number, endId: number): number[] {
+  const start = orderedIds.indexOf(startId)
+  const end = orderedIds.indexOf(endId)
+  if (start < 0 || end < 0) return [endId]
+  return orderedIds.slice(Math.min(start, end), Math.max(start, end) + 1)
 }
 
 export function nextExcelRowRange(
-  state: AccountTableSelectionState,
-  orderedIds: number[],
-  rowId: number,
-  event: AccountTableSelectionInteraction
-): AccountTableSelectionState {
-  const rowIndex = orderedIds.indexOf(rowId)
-  if (rowIndex < 0) return state
-
-  if (event.shiftKey) {
-    const anchorId =
-      state.anchorId != null && orderedIds.includes(state.anchorId) ? state.anchorId : rowId
-    const next = new Set(state.rangeIds)
-    for (const id of selectContiguousAccountRange(orderedIds, anchorId, rowId)) next.add(id)
-    return {
-      rangeIds: next,
-      anchorId,
-      focusId: rowId
-    }
+  orderedIds: readonly number[],
+  currentIds: ReadonlySet<number>,
+  anchorId: number | null,
+  targetId: number,
+  modifiers: ExcelRowRangeModifiers = {}
+): ExcelRowRangeState {
+  if (modifiers.shiftKey && anchorId !== null && orderedIds.includes(anchorId)) {
+    const next = new Set(currentIds)
+    for (const id of rowIdsBetween(orderedIds, anchorId, targetId)) next.add(id)
+    return { ids: next, anchorId }
   }
 
-  const next = new Set(state.rangeIds)
-  if (next.has(rowId)) next.delete(rowId)
-  else next.add(rowId)
+  const next = new Set(currentIds)
+  if (next.has(targetId)) next.delete(targetId)
+  else next.add(targetId)
+  return { ids: next, anchorId: targetId }
+}
+
+export function clampContextMenuPoint(
+  x: number,
+  y: number,
+  menuWidth: number,
+  menuHeight: number,
+  viewportWidth: number,
+  viewportHeight: number,
+  padding = 8
+): { x: number; y: number } {
+  const maxX = Math.max(padding, viewportWidth - menuWidth - padding)
+  const maxY = Math.max(padding, viewportHeight - menuHeight - padding)
   return {
-    rangeIds: next,
-    anchorId: rowId,
-    focusId: rowId
+    x: Math.max(padding, Math.min(x, maxX)),
+    y: Math.max(padding, Math.min(y, maxY))
   }
 }
 
-export function useExcelRowRange({
-  orderedIds,
-  state,
-  setState,
-  interactiveSelector = ACCOUNT_TABLE_INTERACTIVE_SELECTOR
-}: UseExcelRowRangeOptions) {
-  const orderedIdsRef = useRef(orderedIds)
-  const stateRef = useRef(state)
+export function useExcelRowRange(orderedIds: readonly number[]) {
+  const [rangeIds, setRangeIds] = useState<Set<number>>(() => new Set())
+  const [anchorId, setAnchorId] = useState<number | null>(null)
+  const orderedKey = useMemo(() => orderedIds.join('|'), [orderedIds])
 
-  orderedIdsRef.current = orderedIds
-  stateRef.current = state
+  useEffect(() => {
+    const valid = new Set(orderedIds)
+    setRangeIds((current) => new Set([...current].filter((id) => valid.has(id))))
+    setAnchorId((current) => current !== null && valid.has(current) ? current : null)
+  }, [orderedKey])
 
-  const apply = (next: AccountTableSelectionState) => {
-    stateRef.current = next
-    setState(next)
+  const onRowPointerDown = (event: ReactPointerEvent<HTMLElement>, accountId: number) => {
+    if (event.button !== 0 || event.detail > 1) return
+    const target = event.target as HTMLElement
+    if (target.closest(INTERACTIVE_SELECTOR)) return
+
+    const next = nextExcelRowRange(orderedIds, rangeIds, anchorId, accountId, event)
+    setRangeIds(next.ids)
+    setAnchorId(next.anchorId)
   }
 
-  const onRowPointerDown = (rowId: number, event: ReactPointerEvent<HTMLElement>) => {
-    if (event.button !== 0 || interactiveTarget(event.target, interactiveSelector)) return
-    apply(nextExcelRowRange(stateRef.current, orderedIdsRef.current, rowId, event))
+  const onRowPointerEnter = (_accountId: number) => {}
+
+  const ensureContextRow = (accountId: number) => {
+    if (rangeIds.has(accountId)) return
+    setRangeIds(new Set([accountId]))
+    setAnchorId(accountId)
   }
 
-  const onRowPointerEnter = (_rowId: number, _event: ReactPointerEvent<HTMLElement>) => {}
+  const clearRange = () => {
+    setRangeIds(new Set())
+    setAnchorId(null)
+  }
 
   return {
+    rangeIds,
+    anchorId,
     onRowPointerDown,
-    onRowPointerEnter
+    onRowPointerEnter,
+    ensureContextRow,
+    clearRange
   }
 }
