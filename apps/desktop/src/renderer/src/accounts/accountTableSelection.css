@@ -1,18 +1,39 @@
 .account-grid tbody tr,
 .email-grid tbody tr,
-.pt-account-picker-grid tbody tr {
+.pt-account-picker-grid tbody tr,
+.pt-account-grid tbody tr,
+.page-join-account-table tbody tr,
+.page-wall-account-table tbody tr,
+.page-wall-schedule-account-table tbody tr,
+.page-join-account-picker-list > label {
   user-select: none;
 }
 
 .account-grid tbody tr.range-row > td,
 .email-grid tbody tr.range-row > td,
-.pt-account-picker-grid tbody tr.range-row > td {
+.pt-account-picker-grid tbody tr.range-row > td,
+.pt-account-grid tbody tr.range-row > td,
+.page-join-account-table tbody tr.range-row > td,
+.page-wall-account-table tbody tr.range-row > td,
+.page-wall-schedule-account-table tbody tr.range-row > td {
+  background: #e7f0fb !important;
+}
+
+.page-join-account-picker-list > label.range-row {
   background: #e7f0fb !important;
 }
 
 .account-grid tbody tr.range-row:hover > td,
 .email-grid tbody tr.range-row:hover > td,
-.pt-account-picker-grid tbody tr.range-row:hover > td {
+.pt-account-picker-grid tbody tr.range-row:hover > td,
+.pt-account-grid tbody tr.range-row:hover > td,
+.page-join-account-table tbody tr.range-row:hover > td,
+.page-wall-account-table tbody tr.range-row:hover > td,
+.page-wall-schedule-account-table tbody tr.range-row:hover > td {
+  background: #dce9f7 !important;
+}
+
+.page-join-account-picker-list > label.range-row:hover {
   background: #dce9f7 !important;
 }
 
@@ -138,14 +159,30 @@
 
 html[data-theme='dark'] .account-grid tbody tr.range-row > td,
 html[data-theme='dark'] .email-grid tbody tr.range-row > td,
-html[data-theme='dark'] .pt-account-picker-grid tbody tr.range-row > td {
-  background: #1d3224 !important;
+html[data-theme='dark'] .pt-account-picker-grid tbody tr.range-row > td,
+html[data-theme='dark'] .pt-account-grid tbody tr.range-row > td,
+html[data-theme='dark'] .page-join-account-table tbody tr.range-row > td,
+html[data-theme='dark'] .page-wall-account-table tbody tr.range-row > td,
+html[data-theme='dark'] .page-wall-schedule-account-table tbody tr.range-row > td {
+  background: #1b2938 !important;
+}
+
+html[data-theme='dark'] .page-join-account-picker-list > label.range-row {
+  background: #1b2938 !important;
 }
 
 html[data-theme='dark'] .account-grid tbody tr.range-row:hover > td,
 html[data-theme='dark'] .email-grid tbody tr.range-row:hover > td,
-html[data-theme='dark'] .pt-account-picker-grid tbody tr.range-row:hover > td {
-  background: #23402d !important;
+html[data-theme='dark'] .pt-account-picker-grid tbody tr.range-row:hover > td,
+html[data-theme='dark'] .pt-account-grid tbody tr.range-row:hover > td,
+html[data-theme='dark'] .page-join-account-table tbody tr.range-row:hover > td,
+html[data-theme='dark'] .page-wall-account-table tbody tr.range-row:hover > td,
+html[data-theme='dark'] .page-wall-schedule-account-table tbody tr.range-row:hover > td {
+  background: #203449 !important;
+}
+
+html[data-theme='dark'] .page-join-account-picker-list > label.range-row:hover {
+  background: #203449 !important;
 }
 
 html[data-theme='dark'] .account-grid tbody tr.checked-row > td:first-child,

@@ -32,21 +32,16 @@ export function nextExcelRowRange(
   targetId: number,
   modifiers: ExcelRowRangeModifiers = {}
 ): ExcelRowRangeState {
-  const additive = Boolean(modifiers.ctrlKey || modifiers.metaKey)
   if (modifiers.shiftKey && anchorId !== null && orderedIds.includes(anchorId)) {
-    const next = new Set(additive ? currentIds : [])
+    const next = new Set(currentIds)
     for (const id of rowIdsBetween(orderedIds, anchorId, targetId)) next.add(id)
     return { ids: next, anchorId }
   }
 
-  if (additive) {
-    const next = new Set(currentIds)
-    if (next.has(targetId)) next.delete(targetId)
-    else next.add(targetId)
-    return { ids: next, anchorId: targetId }
-  }
-
-  return { ids: new Set([targetId]), anchorId: targetId }
+  const next = new Set(currentIds)
+  if (next.has(targetId)) next.delete(targetId)
+  else next.add(targetId)
+  return { ids: next, anchorId: targetId }
 }
 
 export function clampContextMenuPoint(
@@ -69,69 +64,35 @@ export function clampContextMenuPoint(
 export function useExcelRowRange(orderedIds: readonly number[]) {
   const [rangeIds, setRangeIds] = useState<Set<number>>(() => new Set())
   const [anchorId, setAnchorId] = useState<number | null>(null)
-  const [dragAnchorId, setDragAnchorId] = useState<number | null>(null)
-  const [dragging, setDragging] = useState(false)
   const orderedKey = useMemo(() => orderedIds.join('|'), [orderedIds])
 
   useEffect(() => {
     const valid = new Set(orderedIds)
     setRangeIds((current) => new Set([...current].filter((id) => valid.has(id))))
     setAnchorId((current) => current !== null && valid.has(current) ? current : null)
-    setDragAnchorId((current) => current !== null && valid.has(current) ? current : null)
   }, [orderedKey])
-
-  useEffect(() => {
-    const stopDrag = () => {
-      setDragging(false)
-      setDragAnchorId(null)
-    }
-    window.addEventListener('pointerup', stopDrag)
-    window.addEventListener('pointercancel', stopDrag)
-    window.addEventListener('blur', stopDrag)
-    return () => {
-      window.removeEventListener('pointerup', stopDrag)
-      window.removeEventListener('pointercancel', stopDrag)
-      window.removeEventListener('blur', stopDrag)
-    }
-  }, [])
 
   const onRowPointerDown = (event: ReactPointerEvent<HTMLElement>, accountId: number) => {
     if (event.button !== 0 || event.detail > 1) return
     const target = event.target as HTMLElement
     if (target.closest(INTERACTIVE_SELECTOR)) return
-    event.preventDefault()
 
     const next = nextExcelRowRange(orderedIds, rangeIds, anchorId, accountId, event)
     setRangeIds(next.ids)
     setAnchorId(next.anchorId)
-
-    if (!event.ctrlKey && !event.metaKey && !event.shiftKey) {
-      setDragging(true)
-      setDragAnchorId(accountId)
-    } else {
-      setDragging(false)
-      setDragAnchorId(null)
-    }
   }
 
-  const onRowPointerEnter = (accountId: number) => {
-    if (!dragging || dragAnchorId === null) return
-    setRangeIds(new Set(rowIdsBetween(orderedIds, dragAnchorId, accountId)))
-  }
+  const onRowPointerEnter = (_accountId: number) => {}
 
   const ensureContextRow = (accountId: number) => {
     if (rangeIds.has(accountId)) return
     setRangeIds(new Set([accountId]))
     setAnchorId(accountId)
-    setDragging(false)
-    setDragAnchorId(null)
   }
 
   const clearRange = () => {
     setRangeIds(new Set())
     setAnchorId(null)
-    setDragging(false)
-    setDragAnchorId(null)
   }
 
   return {

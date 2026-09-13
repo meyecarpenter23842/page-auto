@@ -58,8 +58,10 @@ describe('Page business binding regression', () => {
 
   it('makes the account grid actually selectable by row and checkbox with visible selected state', () => {
     expect(wallSource).toContain('data-account-id={account.accountId}')
-    expect(wallSource).toContain("selected ? 'selected' : ''")
-    expect(wallSource).toContain('if (runnable && !busy) toggleAccount(account.accountId)')
+    expect(wallSource).toContain("selected ? 'selected ' : ''")
+    expect(wallSource).toContain("ranged ? 'range-row ' : ''")
+    expect(wallSource).toContain('accountRange.onRowPointerDown(event, account.accountId)')
+    expect(wallSource).toContain('onChange={() => toggleAccount(account.accountId)}')
     expect(wallSource).toContain('event.stopPropagation()')
     expect(wallCssSource).toContain('.page-wall-account-table tbody tr.selected')
     expect(wallCssSource).toMatch(/\.page-wall-account-table tbody tr\s*\{[^}]*cursor:\s*pointer;/s)

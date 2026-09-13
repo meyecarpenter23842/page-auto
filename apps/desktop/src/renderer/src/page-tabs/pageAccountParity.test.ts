@@ -5,16 +5,22 @@ const pageSource = readFileSync(new URL('./PageTabsManagerV2.tsx', import.meta.u
 const parityCss = readFileSync(new URL('./pageAccountParity.css', import.meta.url), 'utf8')
 
 describe('Page account grid parity with Account Manager', () => {
-  it('keeps one visible run-state checkbox without relying on the removed global paint controller', () => {
+  it('uses Bật as the only run-state checkbox and range highlight as a separate concept', () => {
     expect(pageSource).toContain('checked={account.enabled}')
-    expect(parityCss).toMatch(/\.pt-account-grid \.pt-account-select\s*\{[^}]*display:\s*none !important;/s)
-    expect(parityCss).not.toContain('.pt-account-grid tbody tr.selected-row')
+    expect(pageSource).toContain('useExcelRowRange')
+    expect(pageSource).toContain('AccountSelectionMenu')
+    expect(pageSource).not.toContain('selectedAccountIds')
+    expect(pageSource).not.toContain('pt-account-select')
+    expect(pageSource).not.toContain('beginPageAccountPaint')
+    expect(parityCss).not.toContain('.pt-account-grid .pt-account-select')
   })
 
-  it('keeps temporary selection only inside the account-picker modal', () => {
+  it('keeps picker checked state separate from range highlight', () => {
     expect(pageSource).toContain('pt-account-picker-grid')
+    expect(pageSource).toContain("checked-row '")
+    expect(pageSource).toContain("range-row")
     expect(pageSource).toContain('Đã chọn {selected.size}/{accounts.length}')
-    expect(parityCss).toContain('.pt-account-picker-grid tbody tr.selected td')
+    expect(parityCss).not.toContain('#d7eaff')
   })
 
   it('uses the live Account Manager status source and presentation labels', () => {

@@ -10,6 +10,7 @@ const mainEntry = readFileSync(new URL('../main.tsx', import.meta.url), 'utf8')
 const accountManager = readFileSync(new URL('./AccountManager.tsx', import.meta.url), 'utf8')
 const emailGrid = readFileSync(new URL('../hotmail/HotmailAuto.tsx', import.meta.url), 'utf8')
 const sharedPicker = readFileSync(new URL('../actions/AccountBindingPickerModal.tsx', import.meta.url), 'utf8')
+const selectionHelper = readFileSync(new URL('./accountTableSelection.ts', import.meta.url), 'utf8')
 const menu = readFileSync(new URL('./AccountSelectionMenu.tsx', import.meta.url), 'utf8')
 
 function sorted(set: ReadonlySet<number>): number[] {
@@ -17,18 +18,31 @@ function sorted(set: ReadonlySet<number>): number[] {
 }
 
 describe('Excel-style account table selection', () => {
-  it('builds contiguous ranges and preserves Ctrl additive selection', () => {
+  it('toggles rows without Ctrl and adds Shift ranges without clearing earlier rows', () => {
     expect(rowIdsBetween([10, 20, 30, 40], 20, 40)).toEqual([20, 30, 40])
 
     const first = nextExcelRowRange([10, 20, 30, 40], new Set(), null, 20)
     expect(sorted(first.ids)).toEqual([20])
     expect(first.anchorId).toBe(20)
 
-    const ctrl = nextExcelRowRange([10, 20, 30, 40], first.ids, first.anchorId, 40, { ctrlKey: true })
-    expect(sorted(ctrl.ids)).toEqual([20, 40])
+    const second = nextExcelRowRange([10, 20, 30, 40], first.ids, first.anchorId, 40)
+    expect(sorted(second.ids)).toEqual([20, 40])
 
-    const shift = nextExcelRowRange([10, 20, 30, 40], ctrl.ids, ctrl.anchorId, 20, { shiftKey: true })
-    expect(sorted(shift.ids)).toEqual([20, 30, 40])
+    const toggledOff = nextExcelRowRange([10, 20, 30, 40], second.ids, second.anchorId, 20)
+    expect(sorted(toggledOff.ids)).toEqual([40])
+
+    const ctrl = nextExcelRowRange([10, 20, 30, 40], toggledOff.ids, toggledOff.anchorId, 30, { ctrlKey: true })
+    expect(sorted(ctrl.ids)).toEqual([30, 40])
+
+    const shift = nextExcelRowRange([10, 20, 30, 40], new Set([10, 30]), 30, 40, { shiftKey: true })
+    expect(sorted(shift.ids)).toEqual([10, 30, 40])
+  })
+
+  it('does not mutate row selection from hover/drag paint', () => {
+    expect(selectionHelper).toContain('const onRowPointerEnter = (_accountId: number) => {}')
+    expect(selectionHelper).not.toContain('dragging')
+    expect(selectionHelper).not.toContain('dragAnchorId')
+    expect(selectionHelper).not.toContain("window.addEventListener('pointerup'")
   })
 
   it('clamps a measured context menu inside the current viewport', () => {
