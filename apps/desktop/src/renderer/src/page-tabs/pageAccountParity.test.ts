@@ -3,15 +3,10 @@ import { describe, expect, it } from 'vitest'
 
 const pageSource = readFileSync(new URL('./PageTabsManagerV2.tsx', import.meta.url), 'utf8')
 const parityCss = readFileSync(new URL('./pageAccountParity.css', import.meta.url), 'utf8')
-const globalSelection = readFileSync(new URL('../recordRowPaintSelection.ts', import.meta.url), 'utf8')
 
 describe('Page account grid parity with Account Manager', () => {
-  it('exposes one visible run-state checkbox and paints directly onto Bật/Tắt', () => {
+  it('keeps one visible run-state checkbox without relying on the removed global paint controller', () => {
     expect(pageSource).toContain('checked={account.enabled}')
-    expect(globalSelection).toContain("table.pt-account-grid")
-    expect(globalSelection).toContain("header.textContent?.trim() === 'Bật'")
-    expect(globalSelection).toContain('checkbox.click()')
-    expect(globalSelection).toContain('const summary = `${enabled}/${rows.length} bật`')
     expect(parityCss).toMatch(/\.pt-account-grid \.pt-account-select\s*\{[^}]*display:\s*none !important;/s)
     expect(parityCss).not.toContain('.pt-account-grid tbody tr.selected-row')
   })
