@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { AccountRecord } from '../../../shared/accounts'
 import type { ActionWorkspaceRecord } from '../../../shared/actionWorkspaces'
 import {
@@ -18,6 +18,8 @@ import {
   serializePageJoinGroupWorkspaceConfig
 } from '../../../shared/pageJoinGroup'
 import type { PageTabAccountInput, PageTabConfig, PageTabSummary } from '../../../shared/pageTabs'
+import { AccountSelectionMenu } from '../accounts/AccountSelectionMenu'
+import { useExcelRowRange } from '../accounts/accountTableSelection'
 import { accountInputsForSelection, buildSharedPageSaveInput } from './pageSharedState'
 import './pageJoinGroup.css'
 import '../actions/groupWorkspace.css'
@@ -89,25 +91,15 @@ function AccountPicker({ accounts, selectedIds, onClose, onApply }: {
 }) {
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState(() => new Set(selectedIds))
-  const [paintValue, setPaintValue] = useState<boolean | null>(null)
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [busy, setBusy] = useState(false)
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase()
     return accounts.filter((account) => !query || [account.uid, account.username, account.name, account.email, account.category, account.note]
       .some((value) => value?.toLowerCase().includes(query)))
   }, [accounts, search])
-
-  useEffect(() => {
-    const stopPaint = () => setPaintValue(null)
-    window.addEventListener('pointerup', stopPaint)
-    window.addEventListener('pointercancel', stopPaint)
-    window.addEventListener('blur', stopPaint)
-    return () => {
-      window.removeEventListener('pointerup', stopPaint)
-      window.removeEventListener('pointercancel', stopPaint)
-      window.removeEventListener('blur', stopPaint)
-    }
-  }, [])
+  const range = useExcelRowRange(filtered.map((account) => account.id))
+  const checkedFilteredCount = filtered.filter((account) => selected.has(account.id)).length
 
   const toggle = (accountId: number, value: boolean) => setSelected((current) => {
     const next = new Set(current)
@@ -116,18 +108,6 @@ function AccountPicker({ accounts, selectedIds, onClose, onApply }: {
     return next
   })
 
-  const beginPaint = (event: ReactPointerEvent<HTMLElement>, accountId: number) => {
-    if (event.button !== 0 || event.detail > 1) return
-    event.preventDefault()
-    const value = !selected.has(accountId)
-    toggle(accountId, value)
-    setPaintValue(value)
-  }
-
-  const paintRow = (accountId: number) => {
-    if (paintValue === null) return
-    toggle(accountId, paintValue)
-  }
 
   const allFilteredSelected = filtered.length > 0 && filtered.every((account) => selected.has(account.id))
 
@@ -150,20 +130,22 @@ function AccountPicker({ accounts, selectedIds, onClose, onApply }: {
       </div>
       <div className="page-join-picker-list page-join-account-picker-list">
         {filtered.map((account) => <label
-          key={account.id}
-          className={selected.has(account.id) ? 'selected' : ''}
-          onPointerDown={(event) => {
-            const target = event.target as HTMLElement
-            if (target.closest('input,button,select,a')) return
-            beginPaint(event, account.id)
-          }}
-          onPointerEnter={() => paintRow(account.id)}
+key={account.id}
+className={`${selected.has(account.id) ? 'selected ' : ''}${range.rangeIds.has(account.id) ? 'range-row' : ''}`.trim()}
+onPointerDown={(event) => range.onRowPointerDown(event, account.id)}
+onPointerEnter={() => range.onRowPointerEnter(account.id)}
+onContextMenu={(event) => {
+  event.preventDefault()
+  range.ensureContextRow(account.id)
+  setContextMenu({ x: event.clientX, y: event.clientY })
+}}
         >
-          <input type="checkbox" checked={selected.has(account.id)} onChange={(event) => toggle(account.id, event.target.checked)} />
-          <b>{account.uid}{account.username ? ` / ${account.username}` : ''}</b><small>{account.name ?? '—'}</small><span>{account.status}</span>
+<input type="checkbox" checked={selected.has(account.id)} onPointerDown={(event) => event.stopPropagation()} onChange={(event) => toggle(account.id, event.target.checked)} />
+<b>{account.uid}{account.username ? ` / ${account.username}` : ''}</b><small>{account.name ?? '—'}</small><span>{account.status}</span>
         </label>)}
         {!filtered.length ? <div className="page-join-empty-row">Không có tài khoản phù hợp.</div> : null}
       </div>
+      {contextMenu ? <AccountSelectionMenu x={contextMenu.x} y={contextMenu.y} checkedCount={checkedFilteredCount} rangeCount={range.rangeIds.size} totalCount={filtered.length} onCheckRange={() => { setSelected((current) => new Set([...current, ...range.rangeIds])); setContextMenu(null) }} onCheckAll={() => { setSelected((current) => new Set([...current, ...filtered.map((account) => account.id)])); setContextMenu(null) }} onClearChecked={() => { setSelected(new Set()); setContextMenu(null) }} onDismiss={() => setContextMenu(null)} /> : null}
       <footer><span className="page-join-picker-count">Đã chọn {selected.size}/{accounts.length}</span><button type="button" onClick={onClose}>Hủy</button><button className="primary" type="button" disabled={busy} onClick={() => {
         setBusy(true)
         void onApply(accounts.filter((account) => selected.has(account.id)).map((account) => account.id)).finally(() => setBusy(false))
@@ -184,7 +166,7 @@ export function PageJoinGroupWorkspace() {
   const [pickerOpen, setPickerOpen] = useState(false)
   const [accountPickerOpen, setAccountPickerOpen] = useState(false)
   const [selectedAccountIds, setSelectedAccountIds] = useState<Set<number>>(() => new Set())
-  const [accountPaintValue, setAccountPaintValue] = useState<boolean | null>(null)
+  const [accountContextMenu, setAccountContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -207,7 +189,7 @@ export function PageJoinGroupWorkspace() {
 
   useEffect(() => {
     if (!activeBinding) {
-      setPage(null); setDraft(null); setSavedConfig(''); setRuntime(null); setSelectedAccountIds(new Set()); setAccountPaintValue(null)
+      setPage(null); setDraft(null); setSavedConfig(''); setRuntime(null); setSelectedAccountIds(new Set())
       return
     }
     let disposed = false
@@ -227,7 +209,6 @@ export function PageJoinGroupWorkspace() {
       setSavedConfig(serializePageJoinGroupWorkspaceConfig(parsed.pageTabId, parsed.draft))
       setRuntime(nextRuntime)
       setSelectedAccountIds(new Set())
-      setAccountPaintValue(null)
       setError(null)
     }
     void load().catch((cause) => { if (!disposed) setError(cause instanceof Error ? cause.message : String(cause)) })
@@ -251,17 +232,6 @@ export function PageJoinGroupWorkspace() {
     return () => { disposed = true; window.clearInterval(timer) }
   }, [activeBinding?.workspace.id, activeBinding?.pageTabId])
 
-  useEffect(() => {
-    const stopPaint = () => setAccountPaintValue(null)
-    window.addEventListener('pointerup', stopPaint)
-    window.addEventListener('pointercancel', stopPaint)
-    window.addEventListener('blur', stopPaint)
-    return () => {
-      window.removeEventListener('pointerup', stopPaint)
-      window.removeEventListener('pointercancel', stopPaint)
-      window.removeEventListener('blur', stopPaint)
-    }
-  }, [])
 
   useEffect(() => {
     const validIds = new Set(page?.accounts.map((item) => item.accountId) ?? [])
@@ -273,6 +243,7 @@ export function PageJoinGroupWorkspace() {
     const byId = new Map(accounts.map((account) => [account.id, account]))
     return [...page.accounts].sort((a, b) => a.sortOrder - b.sortOrder).map((binding) => ({ binding, account: byId.get(binding.accountId) }))
   }, [accounts, page])
+  const pageAccountRange = useExcelRowRange(pageAccounts.map((item) => item.binding.accountId))
   const enabledCount = pageAccounts.filter((item) => item.binding.enabled).length
   const validationErrors = draft ? validateGroupWorkspaceDraft(draft, enabledCount) : []
   const configJson = draft && page ? serializePageJoinGroupWorkspaceConfig(page.id, draft) : ''
@@ -295,18 +266,6 @@ export function PageJoinGroupWorkspace() {
     })
   }
 
-  const beginPageAccountPaint = (event: ReactPointerEvent<HTMLElement>, accountId: number) => {
-    if (event.button !== 0 || event.detail > 1) return
-    event.preventDefault()
-    const value = !selectedAccountIds.has(accountId)
-    setPageAccountSelected(accountId, value)
-    setAccountPaintValue(value)
-  }
-
-  const paintPageAccountRow = (accountId: number) => {
-    if (accountPaintValue === null) return
-    setPageAccountSelected(accountId, accountPaintValue)
-  }
 
   const addPage = async (selectedPage: PageTabSummary) => {
     const created = await window.pageAuto.createActionWorkspace({
@@ -457,17 +416,19 @@ export function PageJoinGroupWorkspace() {
               const selected = selectedAccountIds.has(binding.accountId)
               return <tr
                 key={binding.accountId}
-                className={`${selected ? 'page-join-account-selected ' : ''}${binding.enabled ? '' : 'disabled'}`}
-                onPointerDown={(event) => {
-                  const target = event.target as HTMLElement
-                  if (target.closest('input,button,select,a')) return
-                  beginPageAccountPaint(event, binding.accountId)
+                className={`${selected ? 'page-join-account-selected ' : ''}${pageAccountRange.rangeIds.has(binding.accountId) ? 'range-row ' : ''}${binding.enabled ? '' : 'disabled'}`}
+                onPointerDown={(event) => pageAccountRange.onRowPointerDown(event, binding.accountId)}
+                onPointerEnter={() => pageAccountRange.onRowPointerEnter(binding.accountId)}
+                onContextMenu={(event) => {
+                  event.preventDefault()
+                  pageAccountRange.ensureContextRow(binding.accountId)
+                  setAccountContextMenu({ x: event.clientX, y: event.clientY })
                 }}
-                onPointerEnter={() => paintPageAccountRow(binding.accountId)}
-              ><td className="check"><input type="checkbox" checked={selected} onChange={() => undefined} onPointerDown={(event) => { event.stopPropagation(); beginPageAccountPaint(event, binding.accountId) }} /></td><td className="check"><input type="checkbox" aria-label={`Bật ${account?.uid ?? binding.uid}`} checked={binding.enabled} disabled={busy || activeRun} onChange={(event) => void togglePageAccount(binding.accountId, event.target.checked)} /></td><td><strong>{account?.uid ?? binding.uid}</strong><small>{account?.username ?? binding.name ?? '—'}</small></td><td>{account?.status ?? binding.status}</td><td><span className={`group-runtime-state state-${row?.state ?? 'idle'}`}>{runtimeStateLabel(row?.state)}</span></td><td className="number">{row?.attempted ?? 0}</td><td className="number">{row?.success ?? 0}</td></tr>
+              ><td className="check"><input type="checkbox" checked={selected} onChange={(event) => setPageAccountSelected(binding.accountId, event.target.checked)} onPointerDown={(event) => event.stopPropagation()} /></td><td className="check"><input type="checkbox" aria-label={`Bật ${account?.uid ?? binding.uid}`} checked={binding.enabled} disabled={busy || activeRun} onChange={(event) => void togglePageAccount(binding.accountId, event.target.checked)} /></td><td><strong>{account?.uid ?? binding.uid}</strong><small>{account?.username ?? binding.name ?? '—'}</small></td><td>{account?.status ?? binding.status}</td><td><span className={`group-runtime-state state-${row?.state ?? 'idle'}`}>{runtimeStateLabel(row?.state)}</span></td><td className="number">{row?.attempted ?? 0}</td><td className="number">{row?.success ?? 0}</td></tr>
             })}
             {!pageAccounts.length ? <tr><td colSpan={7} className="empty">Page chưa có account. Bấm “Chọn tài khoản” để thêm từ Account Manager.</td></tr> : null}
           </tbody></table></div>
+          {accountContextMenu ? <AccountSelectionMenu x={accountContextMenu.x} y={accountContextMenu.y} checkedCount={selectedAccountIds.size} rangeCount={pageAccountRange.rangeIds.size} totalCount={pageAccounts.length} onCheckRange={() => { setSelectedAccountIds((current) => new Set([...current, ...pageAccountRange.rangeIds])); setAccountContextMenu(null) }} onCheckAll={() => { setSelectedAccountIds(new Set(pageAccounts.map((item) => item.binding.accountId))); setAccountContextMenu(null) }} onClearChecked={() => { setSelectedAccountIds(new Set()); setAccountContextMenu(null) }} onDismiss={() => setAccountContextMenu(null)} /> : null}
           <div className="group-account-summary"><span>Đang bật: <strong>{enabledCount}</strong></span><span>Tổng: <strong>{pageAccounts.length}</strong></span><span>Đã chọn: <strong>{selectedAccountIds.size}</strong></span><span>Nguồn: <strong>Page canonical</strong></span></div>
         </section>
 

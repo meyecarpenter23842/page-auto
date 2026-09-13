@@ -1,4 +1,5 @@
 import {
+  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -15,6 +16,7 @@ interface AccountSelectionMenuProps {
   onCheckRange: () => void
   onCheckAll: () => void
   onClearChecked: () => void
+  onDismiss?: () => void
   children?: ReactNode
 }
 
@@ -27,6 +29,7 @@ export function AccountSelectionMenu({
   onCheckRange,
   onCheckAll,
   onClearChecked,
+  onDismiss,
   children
 }: AccountSelectionMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null)
@@ -41,6 +44,28 @@ export function AccountSelectionMenu({
     setPosition(next)
     setSubmenuSide(next.x + rect.width + 220 + 8 > window.innerWidth ? 'left' : 'right')
   }, [x, y, checkedCount, rangeCount, totalCount])
+
+  useEffect(() => {
+    if (!onDismiss) return
+    const dismissOutside = (event: PointerEvent) => {
+      if (menuRef.current?.contains(event.target as Node)) return
+      onDismiss()
+    }
+    const dismissEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') onDismiss() }
+    const dismiss = () => onDismiss()
+    document.addEventListener('pointerdown', dismissOutside, true)
+    window.addEventListener('keydown', dismissEscape)
+    window.addEventListener('blur', dismiss)
+    window.addEventListener('resize', dismiss)
+    window.addEventListener('scroll', dismiss, true)
+    return () => {
+      document.removeEventListener('pointerdown', dismissOutside, true)
+      window.removeEventListener('keydown', dismissEscape)
+      window.removeEventListener('blur', dismiss)
+      window.removeEventListener('resize', dismiss)
+      window.removeEventListener('scroll', dismiss, true)
+    }
+  }, [onDismiss])
 
   return (
     <div

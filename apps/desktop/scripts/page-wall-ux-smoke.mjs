@@ -150,9 +150,12 @@ try {
   invariant(!(await firstCheckbox.isChecked()) && !(await secondCheckbox.isChecked()), 'Bỏ chọn không bỏ hết account Wall.')
 
   await rows.nth(0).locator('td').nth(2).click()
-  invariant(await firstCheckbox.isChecked(), 'Click dòng account Wall không chọn được account đầu tiên.')
-  invariant(!(await secondCheckbox.isChecked()), 'Click dòng account Wall chọn nhầm account khác.')
+  invariant((await rows.nth(0).getAttribute('class') ?? '').includes('range-row'), 'Click dòng account Wall không tạo vùng phủ khối.')
+  invariant(!(await firstCheckbox.isChecked()), 'Click dòng account Wall không được tự tick account đầu tiên.')
+  invariant(!(await secondCheckbox.isChecked()), 'Click dòng account Wall không được tick nhầm account khác.')
 
+  await firstCheckbox.click()
+  invariant(await firstCheckbox.isChecked(), 'Click checkbox account Wall không chọn được account đầu tiên.')
   await secondCheckbox.click()
   invariant(await secondCheckbox.isChecked(), 'Click checkbox account Wall không chọn được account thứ hai.')
   const accountCount = await wallRoot.locator('[data-testid="page-wall-region-accounts"] .page-wall-region-head > span').innerText()
@@ -249,7 +252,10 @@ try {
   const scheduleFirstCheckbox = scheduleRows.nth(0).locator('input[type="checkbox"]')
   invariant(!(await scheduleFirstCheckbox.isDisabled()), 'Popup lịch vẫn disable account vì Page-level enabled=false.')
   await scheduleRows.nth(0).locator('td').nth(1).click()
-  invariant(await scheduleFirstCheckbox.isChecked(), 'Click dòng account trong popup lịch không chọn được.')
+  invariant((await scheduleRows.nth(0).getAttribute('class') ?? '').includes('range-row'), 'Click dòng account trong popup lịch không tạo vùng phủ khối.')
+  invariant(!(await scheduleFirstCheckbox.isChecked()), 'Click dòng account trong popup lịch không được tự tick.')
+  await scheduleFirstCheckbox.click()
+  invariant(await scheduleFirstCheckbox.isChecked(), 'Click checkbox account trong popup lịch không chọn được.')
 
   await windowPage.screenshot({ path: modalScreenshotPath, fullPage: true })
   await scheduleDialog.getByRole('button', { name: 'Lưu lịch', exact: true }).click()
@@ -289,6 +295,7 @@ try {
   console.log('Page Wall UX smoke passed:', {
     pageId: setup.pageId,
     accountSelectionReal: true,
+    rowHighlightSeparateFromCheckedState: true,
     pageRotationDisabledAccountsSelectable: true,
     canonicalImageCountPersistence: true,
     immediateDelayControl: true,
