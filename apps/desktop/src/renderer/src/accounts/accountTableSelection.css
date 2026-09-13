@@ -1,0 +1,190 @@
+.account-grid tbody tr,
+.email-grid tbody tr,
+.pt-account-picker-grid tbody tr {
+  user-select: none;
+}
+
+.account-grid tbody tr.range-row > td,
+.email-grid tbody tr.range-row > td,
+.pt-account-picker-grid tbody tr.range-row > td {
+  background: #e7f0fb !important;
+}
+
+.account-grid tbody tr.range-row:hover > td,
+.email-grid tbody tr.range-row:hover > td,
+.pt-account-picker-grid tbody tr.range-row:hover > td {
+  background: #dce9f7 !important;
+}
+
+.account-grid tbody tr.checked-row > td:first-child,
+.email-grid tbody tr.checked-row > td:first-child,
+.pt-account-picker-grid tbody tr.checked-row > td:first-child {
+  box-shadow: inset 3px 0 #175cd3 !important;
+}
+
+.account-selection-menu {
+  position: fixed;
+  z-index: 2200;
+  width: 230px;
+  padding: 5px;
+  color: #27364a;
+  background: rgba(255, 255, 255, .985);
+  border: 1px solid #cfd8e3;
+  border-radius: 8px;
+  box-shadow: 0 18px 44px rgba(16, 24, 40, .24);
+  backdrop-filter: blur(10px);
+}
+
+.account-selection-menu-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 8px 7px;
+  color: #667085;
+  font-size: 9.5px;
+  font-weight: 700;
+}
+
+.account-selection-menu-meta strong {
+  color: #344054;
+}
+
+.account-selection-menu-actions {
+  display: grid;
+}
+
+.account-selection-menu button {
+  display: flex;
+  width: 100%;
+  min-height: 29px;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 5px 8px;
+  color: #27364a;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 650;
+}
+
+.account-selection-menu button:hover:not(:disabled),
+.account-selection-submenu:focus-within > .account-selection-submenu-trigger {
+  background: #eef3f8;
+}
+
+.account-selection-menu button:disabled {
+  cursor: not-allowed;
+  opacity: .42;
+}
+
+.account-selection-menu .context-danger {
+  color: #b42318;
+}
+
+.account-selection-menu-separator,
+.account-selection-menu .context-menu-separator,
+.account-selection-menu .email-context-separator {
+  height: 1px;
+  margin: 4px 3px;
+  background: #e3e8ef;
+}
+
+.account-selection-submenu {
+  position: relative;
+}
+
+.account-selection-submenu-trigger {
+  justify-content: space-between !important;
+}
+
+.account-selection-submenu-panel {
+  position: absolute;
+  z-index: 1;
+  top: -5px;
+  left: calc(100% + 5px);
+  width: 220px;
+  padding: 5px;
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  color: #27364a;
+  background: rgba(255, 255, 255, .99);
+  border: 1px solid #cfd8e3;
+  border-radius: 8px;
+  box-shadow: 0 18px 44px rgba(16, 24, 40, .2);
+  transform: translateX(-3px);
+  transition: opacity 80ms ease, transform 80ms ease;
+}
+
+.account-selection-submenu-panel.open-left {
+  right: calc(100% + 5px);
+  left: auto;
+  transform: translateX(3px);
+}
+
+.account-selection-submenu:hover > .account-selection-submenu-panel,
+.account-selection-submenu:focus-within > .account-selection-submenu-panel {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(0);
+}
+
+html[data-theme='dark'] .account-grid tbody tr.range-row > td,
+html[data-theme='dark'] .email-grid tbody tr.range-row > td,
+html[data-theme='dark'] .pt-account-picker-grid tbody tr.range-row > td {
+  background: #1d3224 !important;
+}
+
+html[data-theme='dark'] .account-grid tbody tr.range-row:hover > td,
+html[data-theme='dark'] .email-grid tbody tr.range-row:hover > td,
+html[data-theme='dark'] .pt-account-picker-grid tbody tr.range-row:hover > td {
+  background: #23402d !important;
+}
+
+html[data-theme='dark'] .account-grid tbody tr.checked-row > td:first-child,
+html[data-theme='dark'] .email-grid tbody tr.checked-row > td:first-child,
+html[data-theme='dark'] .pt-account-picker-grid tbody tr.checked-row > td:first-child {
+  box-shadow: inset 3px 0 var(--pa-dark-green) !important;
+}
+
+html[data-theme='dark'] .account-selection-menu,
+html[data-theme='dark'] .account-selection-submenu-panel {
+  color: var(--pa-dark-text-soft);
+  background: rgba(23, 23, 23, .99);
+  border-color: var(--pa-dark-border-strong);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, .5);
+}
+
+html[data-theme='dark'] .account-selection-menu-meta {
+  color: var(--pa-dark-muted);
+}
+
+html[data-theme='dark'] .account-selection-menu-meta strong {
+  color: var(--pa-dark-text);
+}
+
+html[data-theme='dark'] .account-selection-menu button {
+  color: var(--pa-dark-text-soft);
+}
+
+html[data-theme='dark'] .account-selection-menu button:hover:not(:disabled),
+html[data-theme='dark'] .account-selection-submenu:focus-within > .account-selection-submenu-trigger {
+  background: var(--pa-dark-surface-3);
+}
+
+html[data-theme='dark'] .account-selection-menu-separator,
+html[data-theme='dark'] .account-selection-menu .context-menu-separator,
+html[data-theme='dark'] .account-selection-menu .email-context-separator {
+  background: var(--pa-dark-border);
+}
+
+html[data-theme='dark'] .account-selection-menu .context-danger {
+  color: #fca5a5;
+}

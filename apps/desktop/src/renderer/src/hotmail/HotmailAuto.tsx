@@ -12,6 +12,8 @@ import type {
   HotmailSettingsView,
   SaveHotmailSettingsInput
 } from '../../../shared/hotmail'
+import { AccountSelectionMenu } from '../accounts/AccountSelectionMenu'
+import { useExcelRowRange } from '../accounts/accountTableSelection'
 import {
   EMAIL_CATEGORY_ALL,
   filterHotmailRows,
@@ -139,7 +141,6 @@ export function HotmailAuto() {
   const [settings, setSettings] = useState<HotmailSettingsView | null>(null)
   const [draft, setDraft] = useState<SettingsDraft | null>(null)
   const [selection, setSelection] = useState<Set<number>>(new Set())
-  const [lastSelectedId, setLastSelectedId] = useState<number | null>(null)
   const [proxyDirty, setProxyDirty] = useState(false)
   const [busyActions, setBusyActions] = useState<Set<ActionKey>>(new Set())
   const [message, setMessage] = useState('Email dùng chung accountId, Tên TK và Nhóm TK với Account Manager; trạng thái Email tách riêng Facebook.')
@@ -162,6 +163,7 @@ export function HotmailAuto() {
     () => filterHotmailRows(rows, query, quickFilter, categoryFilter),
     [rows, query, quickFilter, categoryFilter]
   )
+  const excelRange = useExcelRowRange(visibleRows.map((row) => row.accountId))
   const selectedIds = useMemo(() => [...selection], [selection])
   const selectedRows = useMemo(() => rows.filter((row) => selection.has(row.accountId)), [rows, selection])
   const rowsWithErrors = useMemo(() => rows.filter((row) => row.lastError), [rows])
@@ -191,12 +193,19 @@ export function HotmailAuto() {
   useEffect(() => {
     if (!contextMenu) return
     const close = () => setContextMenu(null)
-    window.addEventListener('mousedown', close)
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') close()
+    }
+    window.addEventListener('pointerdown', close)
+    window.addEventListener('keydown', closeOnEscape)
     window.addEventListener('blur', close)
+    window.addEventListener('resize', close)
     window.addEventListener('scroll', close, true)
     return () => {
-      window.removeEventListener('mousedown', close)
+      window.removeEventListener('pointerdown', close)
+      window.removeEventListener('keydown', closeOnEscape)
       window.removeEventListener('blur', close)
+      window.removeEventListener('resize', close)
       window.removeEventListener('scroll', close, true)
     }
   }, [contextMenu])
@@ -232,41 +241,23 @@ export function HotmailAuto() {
     setContextMenu(null)
   }
 
+  const selectRange = () => {
+    setSelection((current) => new Set([...current, ...excelRange.rangeIds]))
+    setContextMenu(null)
+  }
+
   const clearSelection = () => {
     setSelection(new Set())
-    setLastSelectedId(null)
     setContextMenu(null)
   }
 
   const toggleOne = (accountId: number) => {
-    setLastSelectedId(accountId)
     setSelection((current) => {
       const next = new Set(current)
       if (next.has(accountId)) next.delete(accountId)
       else next.add(accountId)
       return next
     })
-  }
-
-  const selectRow = (event: MouseEvent<HTMLTableRowElement>, accountId: number) => {
-    if (event.shiftKey && lastSelectedId !== null) {
-      const start = visibleRows.findIndex((row) => row.accountId === lastSelectedId)
-      const end = visibleRows.findIndex((row) => row.accountId === accountId)
-      if (start >= 0 && end >= 0) {
-        const from = Math.min(start, end)
-        const to = Math.max(start, end)
-        setSelection((current) => {
-          const next = new Set(event.ctrlKey || event.metaKey ? current : [])
-          visibleRows.slice(from, to + 1).forEach((row) => next.add(row.accountId))
-          return next
-        })
-      }
-    } else if (event.ctrlKey || event.metaKey) {
-      toggleOne(accountId)
-    } else {
-      setSelection(new Set([accountId]))
-      setLastSelectedId(accountId)
-    }
   }
 
   const requireSelection = (): number[] => {
@@ -392,14 +383,12 @@ export function HotmailAuto() {
 
   const openContextMenu = (event: MouseEvent<HTMLTableRowElement>, accountId: number) => {
     event.preventDefault()
-    if (!selection.has(accountId)) {
-      setSelection(new Set([accountId]))
-      setLastSelectedId(accountId)
-    }
+    event.stopPropagation()
+    excelRange.ensureContextRow(accountId)
     setContextMenu({ x: event.clientX, y: event.clientY, accountId })
   }
 
-  const contextIds = contextMenu && selection.has(contextMenu.accountId) ? selectedIds : contextMenu ? [contextMenu.accountId] : []
+  const contextIds = selectedIds
   const contextRow = contextMenu ? rows.find((row) => row.accountId === contextMenu.accountId) ?? null : null
   const panelRows = selectedRows.length > 0 ? selectedRows : rows
   const logRows = selectedRows.length > 0 ? selectedRows : rowsWithErrors
@@ -432,7 +421,7 @@ export function HotmailAuto() {
         {categoryOptions.map((option) => <option key={option.value} value={option.value}>{option.label} ({option.count})</option>)}
       </select>
       <div className="email-filter-pills">{QUICK_FILTERS.map((filter) => <button key={filter.id} className={quickFilter === filter.id ? 'active' : ''} onClick={() => setQuickFilter(filter.id)}>{filter.label}</button>)}</div>
-      <div className="email-grid-meta"><strong>{selectedRows.length}</strong> đã chọn<span>{visibleRows.length}/{rows.length} đang hiện</span>{selectedRows.length ? <button onClick={clearSelection}>Bỏ chọn</button> : null}</div>
+      <div className="email-grid-meta"><strong>{selectedRows.length}</strong> đã tích<span>phủ {excelRange.rangeIds.size} · {visibleRows.length}/{rows.length} đang hiện</span>{selectedRows.length ? <button onClick={clearSelection}>Bỏ chọn</button> : null}</div>
     </div>
 
     <div className="email-health-strip">
@@ -452,8 +441,17 @@ export function HotmailAuto() {
     </tr></thead><tbody>
       {visibleRows.map((row, index) => {
         const recovery = detectRecoveryMailProvider(row.backupEmail)
-        return <tr key={row.accountId} className={selection.has(row.accountId) ? 'selected' : ''} onClick={(event) => selectRow(event, row.accountId)} onDoubleClick={() => void openMail([row.accountId])} onContextMenu={(event) => openContextMenu(event, row.accountId)}>
-          <td className="check" onClick={(event) => event.stopPropagation()}><input type="checkbox" checked={selection.has(row.accountId)} onChange={() => toggleOne(row.accountId)} /></td>
+        const checked = selection.has(row.accountId)
+        const ranged = excelRange.rangeIds.has(row.accountId)
+        return <tr
+          key={row.accountId}
+          className={`${checked ? 'checked-row ' : ''}${ranged ? 'range-row' : ''}`.trim()}
+          onPointerDown={(event) => excelRange.onRowPointerDown(event, row.accountId)}
+          onPointerEnter={() => excelRange.onRowPointerEnter(row.accountId)}
+          onDoubleClick={() => void openMail([row.accountId])}
+          onContextMenu={(event) => openContextMenu(event, row.accountId)}
+        >
+          <td className="check" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}><input type="checkbox" checked={checked} onChange={() => toggleOne(row.accountId)} /></td>
           <td>{index + 1}</td><td className="mono uid-cell">{row.uid}</td><td title={row.accountName ?? ''}>{row.accountName ?? '—'}</td><td>{row.accountCategory ?? '—'}</td>
           <td><span className={`email-chip ${row.facebookStatus}`}>{facebookStatusLabel(row.facebookStatus)}</span></td><td>{row.email ?? '—'}</td><td className="secret">{row.emailPasswordMasked ?? '—'}</td>
           <td className="recovery-cell"><span>{row.backupEmail ?? '—'}</span>{row.backupEmail ? <span className={`recovery-chip ${recovery.kind}`}>{recovery.label}</span> : null}</td>
@@ -467,7 +465,7 @@ export function HotmailAuto() {
       {visibleRows.length === 0 ? <tr><td className="empty" colSpan={21}>{rows.length === 0 ? 'Chưa có tài khoản. Thêm tài khoản ở mục Tài khoản trước.' : 'Không có tài khoản phù hợp bộ lọc hiện tại.'}</td></tr> : null}
     </tbody></table></div>
 
-    <footer className="email-selection-footer"><div><strong>{visibleSelected}</strong> dòng đang hiện được chọn · <strong>{selectedRows.length}</strong> tổng selection</div><span>Double-click: Mở mail · Ctrl/Shift: chọn nhiều · Chuột phải: thao tác trên selection</span></footer>
+    <footer className="email-selection-footer"><div><strong>{visibleSelected}</strong> dòng đang hiện được tích · <strong>{excelRange.rangeIds.size}</strong> dòng đang phủ khối</div><span>Click/Ctrl/Shift/kéo: phủ khối · Checkbox hoặc Chuột phải › Chọn: tích · Double-click: mở mail</span></footer>
 
     {panel ? <div className="email-panel-backdrop" onMouseDown={() => setPanel(null)}><aside className="email-side-panel" onMouseDown={(event) => event.stopPropagation()}>
       <div className="email-panel-header"><div><span>EMAIL</span><h2>{panel === 'network' ? 'Proxy / IP' : panel === 'logs' ? 'Nhật ký gần nhất' : panel === 'recovery' ? 'Mail khôi phục' : panel === 'password' ? 'Đổi Password Email' : panel === 'combo' ? 'Combo Email' : 'Cài đặt'}</h2></div><button className="email-panel-close" onClick={() => setPanel(null)}>×</button></div>
@@ -525,21 +523,27 @@ export function HotmailAuto() {
       </> : <div className="email-panel-empty">Đang tải cài đặt Email...</div>}</div> : null}
     </aside></div> : null}
 
-    {contextMenu ? <div className="email-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onMouseDown={(event) => event.stopPropagation()}>
-      <div className="email-context-title"><strong>{contextIds.length} tài khoản trong selection</strong><span className="email-context-identity">{contextRow?.accountName ?? contextRow?.uid ?? 'Tài khoản'} · {contextRow?.accountCategory?.trim() || 'Chưa gán nhóm'}</span></div>
-      <button onClick={() => { setContextMenu(null); void openMail(contextIds) }}>Mở mail</button>
-      <button onClick={() => { setContextMenu(null); void getCodes(contextIds) }}>Lấy mã</button>
-      <button onClick={() => { setContextMenu(null); void checkMail(contextIds) }}>Check Live Mail</button>
+    {contextMenu ? <AccountSelectionMenu
+      x={contextMenu.x}
+      y={contextMenu.y}
+      checkedCount={selection.size}
+      rangeCount={excelRange.rangeIds.size}
+      totalCount={visibleRows.length}
+      onCheckRange={selectRange}
+      onCheckAll={selectAllVisible}
+      onClearChecked={clearSelection}
+    >
+      <div className="email-context-title"><strong>{contextIds.length} tài khoản đã tích</strong><span className="email-context-identity">{contextRow?.accountName ?? contextRow?.uid ?? 'Tài khoản'} · {contextRow?.accountCategory?.trim() || 'Chưa gán nhóm'}</span></div>
+      <button disabled={contextIds.length === 0} onClick={() => { setContextMenu(null); void openMail(contextIds) }}>Mở mail</button>
+      <button disabled={contextIds.length === 0} onClick={() => { setContextMenu(null); void getCodes(contextIds) }}>Lấy mã</button>
+      <button disabled={contextIds.length === 0} onClick={() => { setContextMenu(null); void checkMail(contextIds) }}>Check Live Mail</button>
       <button disabled={contextIds.length !== 1} onClick={() => { setContextMenu(null); void connectMailbox(contextIds[0]) }}>Lấy / cập nhật OAuth</button>
       <div className="email-context-separator" />
-      <button onClick={() => { setContextMenu(null); void copyEmails(contextIds) }}>Copy Email</button>
+      <button disabled={contextIds.length === 0} onClick={() => { setContextMenu(null); void copyEmails(contextIds) }}>Copy Email</button>
       <button onClick={() => { setContextMenu(null); setPanel('combo') }}>Combo Email</button>
       <button onClick={() => { setContextMenu(null); setPanel('password') }}>Đổi Password Email</button>
       <button onClick={() => { setContextMenu(null); setPanel('recovery') }}>Thao tác Mail khôi phục</button>
       <button onClick={() => { setContextMenu(null); setPanel('logs') }}>Xem trạng thái / lỗi</button>
-      <div className="email-context-separator" />
-      <button disabled={visibleRows.length === 0} onClick={selectAllVisible}>Chọn tất cả đang lọc ({visibleRows.length})</button>
-      <button disabled={selection.size === 0} onClick={clearSelection}>Bỏ chọn tất cả</button>
-    </div> : null}
+    </AccountSelectionMenu> : null}
   </section>
 }

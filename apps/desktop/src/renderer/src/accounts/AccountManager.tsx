@@ -3,8 +3,7 @@ import {
   useEffect,
   useMemo,
   useState,
-  type MouseEvent as ReactMouseEvent,
-  type PointerEvent as ReactPointerEvent
+  type MouseEvent as ReactMouseEvent
 } from 'react'
 import {
   ACCOUNT_STATUSES,
@@ -21,6 +20,8 @@ import { AccountColumnManager as ColumnManager } from './AccountColumnManager'
 import { AccountEditor } from './AccountEditor'
 import { AccountGroupManagerDialog, AccountGroupPicker } from './AccountGroupDialogs'
 import { AccountImportDialog as ImportDialog } from './AccountImportDialog'
+import { AccountSelectionMenu } from './AccountSelectionMenu'
+import { useExcelRowRange } from './accountTableSelection'
 import {
   ACCOUNT_RUNTIME_REFRESH_MS,
   EMPTY_GROUP_OVERVIEW,
@@ -55,7 +56,6 @@ export function AccountManager({ onOpenChangeInfoWorkspace }: AccountManagerProp
   const [groupManagerOpen, setGroupManagerOpen] = useState(false)
   const [groupPickerOpen, setGroupPickerOpen] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
-  const [paintValue, setPaintValue] = useState<boolean | null>(null)
   const [layout, setLayout] = useState<AccountColumnLayout>(defaultLayout)
   const [columnManagerOpen, setColumnManagerOpen] = useState(false)
   const [editorAccount, setEditorAccount] = useState<AccountRecord | null | undefined>(undefined)
@@ -127,18 +127,6 @@ export function AccountManager({ onOpenChangeInfoWorkspace }: AccountManagerProp
   }, [categoryFilter, groupOverview.groups])
 
   useEffect(() => {
-    const stopPaint = () => setPaintValue(null)
-    window.addEventListener('pointerup', stopPaint)
-    window.addEventListener('pointercancel', stopPaint)
-    window.addEventListener('blur', stopPaint)
-    return () => {
-      window.removeEventListener('pointerup', stopPaint)
-      window.removeEventListener('pointercancel', stopPaint)
-      window.removeEventListener('blur', stopPaint)
-    }
-  }, [])
-
-  useEffect(() => {
     if (!contextMenu) return
     const close = () => setContextMenu(null)
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -179,6 +167,7 @@ export function AccountManager({ onOpenChangeInfoWorkspace }: AccountManagerProp
       : String(a).localeCompare(String(b), 'vi', { numeric: true, sensitivity: 'base' })
     return sort.direction === 'asc' ? result : -result
   }), [accounts, sort])
+  const excelRange = useExcelRowRange(sortedAccounts.map((account) => account.id))
 
   const selected = accounts.filter((account) => selectedIds.has(account.id))
   const selectedGroupName = useMemo(() => {
@@ -200,22 +189,13 @@ export function AccountManager({ onOpenChangeInfoWorkspace }: AccountManagerProp
     })
   }
 
-  const beginPaint = (event: ReactPointerEvent<HTMLElement>, accountId: number) => {
-    if (event.button !== 0 || event.detail > 1) return
-    event.preventDefault()
-    const value = !selectedIds.has(accountId)
-    setAccountSelected(accountId, value)
-    setPaintValue(value)
+  const selectAllFiltered = () => {
+    setSelectedIds(new Set(sortedAccounts.map((account) => account.id)))
     setContextMenu(null)
   }
 
-  const paintRow = (accountId: number) => {
-    if (paintValue === null) return
-    setAccountSelected(accountId, paintValue)
-  }
-
-  const selectAllFiltered = () => {
-    setSelectedIds(new Set(sortedAccounts.map((account) => account.id)))
+  const selectRange = () => {
+    setSelectedIds((current) => new Set([...current, ...excelRange.rangeIds]))
     setContextMenu(null)
   }
 
@@ -380,14 +360,8 @@ export function AccountManager({ onOpenChangeInfoWorkspace }: AccountManagerProp
   const openContextMenu = (account: AccountRecord, event: ReactMouseEvent<HTMLTableRowElement>) => {
     event.preventDefault()
     event.stopPropagation()
-    setPaintValue(null)
-    setSelectedIds((current) => current.has(account.id) ? current : new Set([account.id]))
-    const menuWidth = 220
-    const menuHeight = 430
-    setContextMenu({
-      x: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
-      y: Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8))
-    })
+    excelRange.ensureContextRow(account.id)
+    setContextMenu({ x: event.clientX, y: event.clientY })
   }
 
   return (
@@ -422,7 +396,7 @@ export function AccountManager({ onOpenChangeInfoWorkspace }: AccountManagerProp
             <option value={UNGROUPED_CATEGORY_FILTER}>Chưa gán nhóm ({groupOverview.ungroupedCount})</option>
             {groupOverview.groups.map((group) => <option key={group.id} value={group.name}>{group.name} ({group.accountCount})</option>)}
           </select>
-          <span className="grid-state">{loading ? 'Đang tải…' : `${sortedAccounts.length}/${groupOverview.totalAccounts} tài khoản · ${groupOverview.groups.length} nhóm · đã chọn ${selectedIds.size}`}</span>
+          <span className="grid-state">{loading ? 'Đang tải…' : `${sortedAccounts.length}/${groupOverview.totalAccounts} tài khoản · tích ${selectedIds.size} · phủ ${excelRange.rangeIds.size}`}</span>
         </div>
 
         {notice ? <div className="notice-bar"><span>{notice}</span><button type="button" onClick={() => setNotice(null)}>×</button></div> : null}
@@ -434,33 +408,30 @@ export function AccountManager({ onOpenChangeInfoWorkspace }: AccountManagerProp
               {visibleColumns.map((column) => <th key={column.id} style={{ width: layout.widths[column.id], minWidth: layout.widths[column.id] }}><button type="button" onClick={() => toggleSort(column.id)}>{column.label}<span>{sort.id === column.id ? (sort.direction === 'asc' ? ' ↑' : ' ↓') : ''}</span></button></th>)}
             </tr></thead>
             <tbody>
-              {sortedAccounts.map((account) => (
-                <tr
-                  key={account.id}
-                  className={selectedIds.has(account.id) ? 'selected-row' : ''}
-                  onPointerDown={(event) => {
-                    const target = event.target as HTMLElement
-                    if (target.closest('input,button,select,a')) return
-                    beginPaint(event, account.id)
-                  }}
-                  onPointerEnter={() => paintRow(account.id)}
-                  onContextMenu={(event) => openContextMenu(account, event)}
-                  onDoubleClick={() => { setPaintValue(null); setEditorAccount(account) }}
-                >
-                  <td className="select-column">
-                    <input
-                      type="checkbox"
-                      checked={selectedIds.has(account.id)}
-                      onChange={() => undefined}
-                      onPointerDown={(event) => {
-                        event.stopPropagation()
-                        beginPaint(event, account.id)
-                      }}
-                    />
-                  </td>
-                  {visibleColumns.map((column) => <td key={column.id} style={{ width: layout.widths[column.id], maxWidth: layout.widths[column.id] }}>{renderCell(account, column)}</td>)}
-                </tr>
-              ))}
+              {sortedAccounts.map((account) => {
+                const checked = selectedIds.has(account.id)
+                const ranged = excelRange.rangeIds.has(account.id)
+                return (
+                  <tr
+                    key={account.id}
+                    className={`${checked ? 'checked-row ' : ''}${ranged ? 'range-row' : ''}`.trim()}
+                    onPointerDown={(event) => excelRange.onRowPointerDown(event, account.id)}
+                    onPointerEnter={() => excelRange.onRowPointerEnter(account.id)}
+                    onContextMenu={(event) => openContextMenu(account, event)}
+                    onDoubleClick={() => setEditorAccount(account)}
+                  >
+                    <td className="select-column">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(event) => setAccountSelected(account.id, event.target.checked)}
+                        onPointerDown={(event) => event.stopPropagation()}
+                      />
+                    </td>
+                    {visibleColumns.map((column) => <td key={column.id} style={{ width: layout.widths[column.id], maxWidth: layout.widths[column.id] }}>{renderCell(account, column)}</td>)}
+                  </tr>
+                )
+              })}
               {!loading && sortedAccounts.length === 0 ? <tr><td className="empty-grid" colSpan={visibleColumns.length + 1}>Chưa có tài khoản phù hợp bộ lọc. Hãy nhập hoặc thêm tài khoản để bắt đầu.</td></tr> : null}
             </tbody>
           </table>
@@ -468,8 +439,16 @@ export function AccountManager({ onOpenChangeInfoWorkspace }: AccountManagerProp
       </div>
 
       {contextMenu ? (
-        <div className="account-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onPointerDown={(event) => event.stopPropagation()}>
-          <div className="context-menu-meta">Đã chọn {selected.length} tài khoản</div>
+        <AccountSelectionMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          checkedCount={selectedIds.size}
+          rangeCount={excelRange.rangeIds.size}
+          totalCount={sortedAccounts.length}
+          onCheckRange={selectRange}
+          onCheckAll={selectAllFiltered}
+          onClearChecked={clearSelection}
+        >
           <button type="button" disabled={selected.length !== 1} onClick={() => { setEditorAccount(selected[0] ?? null); setContextMenu(null) }}>Sửa tài khoản</button>
           <button type="button" disabled={selectedIds.size === 0} onClick={() => void openChangeInfo()}>Sửa thông tin…</button>
           <button type="button" disabled={selectedIds.size === 0 || openingProfiles || checkingLive} onClick={() => void openProfile()}>{openingProfiles ? 'Đang mở…' : selected.length > 1 ? `Mở ${selected.length} Chrome` : 'Mở Chrome'}</button>
@@ -487,11 +466,8 @@ export function AccountManager({ onOpenChangeInfoWorkspace }: AccountManagerProp
           <button type="button" disabled={selectedIds.size === 0} onClick={openGroupPicker}>Gán / chuyển / bỏ nhóm…</button>
           <button type="button" disabled={selectedIds.size === 0} onClick={() => void copySelectedUids()}>Sao chép UID</button>
           <div className="context-menu-separator" />
-          <button type="button" disabled={sortedAccounts.length === 0} onClick={selectAllFiltered}>Chọn tất cả đang lọc</button>
-          <button type="button" disabled={selectedIds.size === 0} onClick={clearSelection}>Bỏ chọn tất cả</button>
-          <div className="context-menu-separator" />
           <button className="context-danger" type="button" disabled={selectedIds.size === 0} onClick={() => void deleteSelected()}>Xóa tài khoản</button>
-        </div>
+        </AccountSelectionMenu>
       ) : null}
 
       {groupPickerOpen ? (
