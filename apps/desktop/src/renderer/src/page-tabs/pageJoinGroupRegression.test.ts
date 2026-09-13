@@ -43,8 +43,9 @@ describe('Page Tham gia nhóm business binding', () => {
 
   it('restores standard account selection paint and shared Page account editing', () => {
     expect(workspace).toContain('selectedAccountIds')
-    expect(workspace).toContain('beginPageAccountPaint')
-    expect(workspace).toContain('onPointerEnter={() => paintPageAccountRow(binding.accountId)}')
+    expect(workspace).toContain('pageAccountRange')
+    expect(workspace).toContain('pageAccountRange.onRowPointerDown(event, binding.accountId)')
+    expect(workspace).toContain('pageAccountRange.onRowPointerEnter(binding.accountId)')
     expect(workspace).toContain('page-join-account-selected')
     expect(workspace).toContain('buildSharedPageSaveInput(latest, { accounts: nextAccounts })')
     expect(workspace).toContain('accountInputsForSelection(page, selectedIds)')
