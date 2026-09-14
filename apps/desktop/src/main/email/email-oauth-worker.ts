@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { chromium, type Browser, type BrowserContext, type Page, type Request } from 'playwright-core'
 import type { HotmailNeedsAttentionReason } from '../../shared/hotmail'
 import { friendlyEmailBrowserError, isEmailProfileInUseError } from './emailBrowserLifecycle'
+import { emailOAuthWorkerErrorMessage } from './emailOAuthWorkerError'
 import { adoptNewestMicrosoftFlowPage } from './emailMicrosoftPageOwnership'
 import { runMicrosoftAuthV2WorkerController } from './microsoftAuthV2WorkerController'
 import { parseMicrosoftOAuthLoopbackUrl, type MicrosoftOAuthLoopbackResult } from './microsoftOAuthAuthorization'
@@ -213,11 +214,6 @@ async function runOAuthAuthorize(
 
       if (isMicrosoftPageUrl(page.url())) {
         const auth = await runMicrosoftAuthV2WorkerController(page, command, { maxSteps: 8 })
-        page = await adoptNewestMicrosoftFlowPage(page, new Set<Page>())
-        if (await clickConsentAccept(page)) {
-          await page.waitForTimeout(1_000)
-          continue
-        }
         if (auth.status === 'needs_attention') {
           return {
             type: 'oauth-result',
@@ -227,6 +223,11 @@ async function runOAuthAuthorize(
             proxyManagedExternally: false,
             message: auth.message ?? 'Microsoft OAuth cần xử lý thủ công trong Email profile đang mở.'
           }
+        }
+        page = await adoptNewestMicrosoftFlowPage(page, new Set<Page>())
+        if (await clickConsentAccept(page)) {
+          await page.waitForTimeout(1_000)
+          continue
         }
       }
       await page.waitForTimeout(1_000)
@@ -298,8 +299,10 @@ async function run(): Promise<void> {
 
     void (async () => {
       let result: OAuthWorkerResult
+      let browserReady = false
       try {
         const context = await resolveContext(command)
+        browserReady = true
         const page = await openOutlookForAuth(context)
         const auth = await runMicrosoftAuthV2WorkerController(page, command)
         if (auth.status === 'needs_attention') {
@@ -321,7 +324,7 @@ async function run(): Promise<void> {
           accountId: command.accountId,
           status: isEmailProfileInUseError(error) ? 'profile_in_use' : 'error',
           proxyManagedExternally: attachedExternally,
-          message: friendlyEmailBrowserError(error)
+          message: emailOAuthWorkerErrorMessage(error, browserReady)
         }
       }
 
