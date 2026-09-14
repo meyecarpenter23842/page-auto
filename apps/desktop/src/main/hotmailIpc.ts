@@ -1,4 +1,4 @@
-import { dialog, ipcMain, shell } from 'electron'
+import { dialog, ipcMain } from 'electron'
 import type Database from 'better-sqlite3'
 import { IPC_CHANNELS } from '../ipc/channels'
 import { EMAIL_CODE_DB_RETENTION_MS, type EmailCodeProvider } from '../shared/emailCode'
@@ -22,6 +22,7 @@ import { testEmailBrowserExecutable } from './email/emailProxyTester'
 import { ElectronEmailSecretCipher } from './email/emailSecretStore'
 import { HotmailService } from './email/hotmailService'
 import { createMicrosoftMailboxRuntime } from './email/microsoftMailboxRuntime'
+import { MicrosoftOAuthProfileService } from './email/microsoftOAuthProfileService'
 import { clearEmailCodeProvider, setEmailCodeProvider } from './services/emailCodeProviderRegistry'
 
 export interface HotmailIpcRuntime {
@@ -107,9 +108,23 @@ export function registerHotmailIpcHandlers(database: Database.Database): Hotmail
     resolveBrowserExecutable,
     runtime
   )
+  const oauthProfileService = new MicrosoftOAuthProfileService(
+    accounts,
+    repository,
+    cipher,
+    resolveBrowserExecutable,
+    runtime,
+    microsoftMailboxRuntime.handleWorkerRequest
+  )
   const comboService = new HotmailComboService(accounts, repository, resolveBrowserExecutable, runtime)
   const codeRuntime = createCanonicalEmailCodeRuntime(accounts, repository, cipher)
   setEmailCodeProvider(codeRuntime.provider)
+
+  const assertOAuthIdle = (accountIds: number[]): void => {
+    if (oauthProfileService.hasAnyActive(accountIds)) {
+      throw new Error('Account Email đang chạy Microsoft OAuth; hoàn tất OAuth trước khi mở thao tác browser Email khác.')
+    }
+  }
 
   const listDashboard = async () => {
     let rows = await service.listDashboard()
@@ -145,16 +160,18 @@ export function registerHotmailIpcHandlers(database: Database.Database): Hotmail
     })
     return result.canceled ? null : (result.filePaths[0] ?? null)
   })
-  ipcMain.handle(IPC_CHANNELS.hotmailOAuthStart, async (_event, payload: HotmailAccountPayload) => {
-    const result = await service.startOAuth(payload.accountId)
-    if (result.verificationUri) void shell.openExternal(result.verificationUri).catch(() => undefined)
-    return result
+  ipcMain.handle(IPC_CHANNELS.hotmailOAuthStart, (_event, payload: HotmailAccountPayload) => {
+    return oauthProfileService.startOAuth(payload.accountId)
   })
   ipcMain.handle(IPC_CHANNELS.hotmailCodesGet, (_event, payload: HotmailBatchPayload) => getManualCodes(codeRuntime.provider, payload))
   ipcMain.handle(IPC_CHANNELS.hotmailCheck, (_event, payload: HotmailBatchPayload) => service.checkMail(payload))
-  ipcMain.handle(IPC_CHANNELS.hotmailOpen, (_event, payload: HotmailAccountPayload) => service.openMail(payload.accountId))
+  ipcMain.handle(IPC_CHANNELS.hotmailOpen, (_event, payload: HotmailAccountPayload) => {
+    assertOAuthIdle([payload.accountId])
+    return service.openMail(payload.accountId)
+  })
 
   ipcMain.handle(IPC_CHANNELS.hotmailRecoveryAction, async (_event, payload: HotmailRecoveryActionPayload) => {
+    assertOAuthIdle(payload.accountIds)
     if (payload.confirmCompleted) {
       if (!pendingRecoveryPayload) {
         throw new Error('Không có flow Mail khôi phục nào đang chờ xác nhận. Hãy mở lại flow trước.')
@@ -197,6 +214,7 @@ export function registerHotmailIpcHandlers(database: Database.Database): Hotmail
   })
 
   ipcMain.handle(IPC_CHANNELS.hotmailPasswordAction, async (_event, payload: HotmailPasswordActionPayload) => {
+    assertOAuthIdle(payload.accountIds)
     if (payload.confirmCompleted) {
       const confirmedPassword = pendingPasswordPayload?.newPassword
       if (!confirmedPassword || !pendingPasswordPayload) {
@@ -237,6 +255,7 @@ export function registerHotmailIpcHandlers(database: Database.Database): Hotmail
   })
 
   ipcMain.handle(IPC_CHANNELS.hotmailComboAction, async (_event, payload: HotmailComboActionPayload) => {
+    assertOAuthIdle(payload.accountIds)
     if (pendingRecoveryPayload || pendingPasswordPayload) {
       throw new Error('Đang có một flow bảo mật Email đơn lẻ chờ xác nhận. Hoàn tất flow đó trước khi chạy Combo Email.')
     }
@@ -251,6 +270,7 @@ export function registerHotmailIpcHandlers(database: Database.Database): Hotmail
     dispose: () => {
       pendingRecoveryPayload = null
       pendingPasswordPayload = null
+      oauthProfileService.dispose()
       comboService.dispose()
       clearEmailCodeProvider(codeRuntime.provider)
       codeRuntime.dispose()
