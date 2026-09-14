@@ -15,6 +15,7 @@ export default defineConfig({
           'scenario-action-worker': resolve('src/main/browser/scenario-action-worker.ts'),
           'change-info-audit-worker': resolve('src/main/browser/change-info-audit-worker.ts'),
           'email-browser-worker': resolve('src/main/email/email-browser-worker.ts'),
+          'email-oauth-worker': resolve('src/main/email/email-oauth-worker.ts'),
           'email-proxy-test-worker': resolve('src/main/email/email-proxy-test-worker.ts')
         }
       }
