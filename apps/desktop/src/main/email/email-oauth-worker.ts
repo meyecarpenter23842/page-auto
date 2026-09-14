@@ -158,15 +158,17 @@ async function runOAuthAuthorize(
   page: Page,
   command: OAuthCommand
 ): Promise<OAuthWorkerResult> {
-  let callback: MicrosoftOAuthLoopbackResult | null = null
-  let callbackError: string | null = null
+  const callbackState: {
+    result: MicrosoftOAuthLoopbackResult | null
+    error: string | null
+  } = { result: null, error: null }
   const onRequest = (requestValue: Request): void => {
-    if (callback || callbackError) return
+    if (callbackState.result || callbackState.error) return
     try {
       const parsed = parseMicrosoftOAuthLoopbackUrl(requestValue.url(), command.state)
-      if (parsed) callback = parsed
+      if (parsed) callbackState.result = parsed
     } catch (error) {
-      callbackError = error instanceof Error ? error.message : 'Microsoft OAuth callback không hợp lệ.'
+      callbackState.error = error instanceof Error ? error.message : 'Microsoft OAuth callback không hợp lệ.'
     }
   }
   context.on('request', onRequest)
@@ -175,17 +177,18 @@ async function runOAuthAuthorize(
     try {
       await page.goto(command.authorizationUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
     } catch (error) {
-      if (!callback && !callbackError && !isMicrosoftPageUrl(page.url())) {
+      if (!callbackState.result && !callbackState.error && !isMicrosoftPageUrl(page.url())) {
         const message = error instanceof Error ? error.message : String(error)
         if (!/err_connection_refused|localhost/i.test(message)) throw error
       }
     }
 
     for (let step = 0; step < 8; step += 1) {
-      if (callbackError) {
+      const callback = callbackState.result
+      if (callbackState.error) {
         return {
           type: 'oauth-result', accountId: command.accountId, status: 'error',
-          proxyManagedExternally: false, message: callbackError
+          proxyManagedExternally: false, message: callbackState.error
         }
       }
       if (callback?.kind === 'error') {
@@ -201,7 +204,7 @@ async function runOAuthAuthorize(
         }
       }
 
-      page = await adoptNewestMicrosoftFlowPage(page, new Set())
+      page = await adoptNewestMicrosoftFlowPage(page, new Set<Page>())
       await page.bringToFront().catch(() => undefined)
       if (await clickConsentAccept(page)) {
         await page.waitForTimeout(1_000)
@@ -210,7 +213,7 @@ async function runOAuthAuthorize(
 
       if (isMicrosoftPageUrl(page.url())) {
         const auth = await runMicrosoftAuthV2WorkerController(page, command, { maxSteps: 8 })
-        page = await adoptNewestMicrosoftFlowPage(page, new Set())
+        page = await adoptNewestMicrosoftFlowPage(page, new Set<Page>())
         if (await clickConsentAccept(page)) {
           await page.waitForTimeout(1_000)
           continue
@@ -229,6 +232,7 @@ async function runOAuthAuthorize(
       await page.waitForTimeout(1_000)
     }
 
+    const callback = callbackState.result
     if (callback?.kind === 'code') {
       return {
         type: 'oauth-result', accountId: command.accountId, status: 'success', code: callback.code,
