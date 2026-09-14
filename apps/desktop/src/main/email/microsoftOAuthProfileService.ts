@@ -9,6 +9,7 @@ import {
   createMicrosoftAuthorizationRequest,
   exchangeMicrosoftAuthorizationCode
 } from './microsoftOAuthAuthorization'
+import { resolveMicrosoftOAuthClientConfig } from './microsoftOAuthClientConfig'
 import { MicrosoftOAuthProfileManager } from './microsoftOAuthProfileManager'
 import type { MailboxProviderWorkerRequestHandler } from './mailboxProviderWorkerRpc'
 
@@ -58,8 +59,7 @@ export class MicrosoftOAuthProfileService {
     }
 
     const settings = this.repository.getProfileSettings()
-    const clientId = settings.oauthClientId.trim()
-    if (!clientId) throw new Error('Chưa cấu hình Microsoft OAuth Client ID cho Hotmail Auto.')
+    const oauth = resolveMicrosoftOAuthClientConfig(settings)
 
     let inspection = await inspectEmailProfile(settings.profileRoot, account.uid)
     if (inspection.status === 'not_configured') throw new Error('Chưa cấu hình Email Profile Root.')
@@ -77,12 +77,12 @@ export class MicrosoftOAuthProfileService {
       ? null
       : (this.runtime.proxyPool.assignment(accountId) ?? this.runtime.proxyPool.acquire(accountId))
     const authorization = createMicrosoftAuthorizationRequest({
-      clientId,
-      tenant: settings.oauthTenant
+      clientId: oauth.clientId,
+      tenant: oauth.tenant
     })
 
     this.repository.updateEmailState(accountId, {
-      oauthClientId: clientId,
+      oauthClientId: oauth.clientId,
       oauthStatus: 'pending',
       lastError: null
     })
@@ -100,7 +100,7 @@ export class MicrosoftOAuthProfileService {
 
       if (profileResult.status === 'needs_attention') {
         this.repository.updateEmailState(accountId, {
-          oauthClientId: clientId,
+          oauthClientId: oauth.clientId,
           oauthStatus: 'pending',
           mailStatus: 'needs_login',
           lastError: profileResult.message
@@ -113,7 +113,7 @@ export class MicrosoftOAuthProfileService {
       }
 
       const token = await exchangeMicrosoftAuthorizationCode(
-        { clientId, tenant: settings.oauthTenant },
+        { clientId: oauth.clientId, tenant: oauth.tenant },
         {
           code: profileResult.code,
           codeVerifier: authorization.codeVerifier,
@@ -122,7 +122,7 @@ export class MicrosoftOAuthProfileService {
       )
       const now = Date.now()
       this.repository.updateEmailState(accountId, {
-        oauthClientId: clientId,
+        oauthClientId: oauth.clientId,
         refreshTokenCiphertext: this.cipher.encrypt(token.refreshToken),
         oauthStatus: 'valid',
         oauthUpdatedAt: now,
@@ -137,7 +137,7 @@ export class MicrosoftOAuthProfileService {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       this.repository.updateEmailState(accountId, {
-        oauthClientId: clientId,
+        oauthClientId: oauth.clientId,
         oauthStatus: 'error',
         mailStatus: /login|identity|security|profile/i.test(message) ? 'needs_login' : 'error',
         lastError: message
