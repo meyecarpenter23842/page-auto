@@ -42,9 +42,9 @@ describe('Email manual open batch', () => {
     expect(opened.sort((a, b) => a - b)).toEqual([7, 8])
   })
 
-  it('keeps the concurrency control outside settings and uses the bounded helper', () => {
+  it('keeps the concurrency control outside settings and delegates the bounded batch to main', () => {
     expect(hotmailUi).toContain('Mở đồng thời')
-    expect(hotmailUi).toContain('runEmailOpenBatch(ids, openConcurrency')
+    expect(hotmailUi).toContain('window.pageAutoEmailBrowser.openBatch({ accountIds: ids, concurrency: openConcurrency })')
     expect(hotmailUi).toContain('email-open-concurrency')
   })
 
