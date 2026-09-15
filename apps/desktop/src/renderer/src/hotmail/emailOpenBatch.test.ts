@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { normalizeEmailOpenConcurrency, runEmailOpenBatch } from './emailOpenBatch'
 
 const hotmailUi = readFileSync(new URL('./HotmailAuto.tsx', import.meta.url), 'utf8')
+const compactControls = readFileSync(new URL('./EmailBrowserCompactControls.tsx', import.meta.url), 'utf8')
 const compactCss = readFileSync(new URL('./hotmailCompactUx.css', import.meta.url), 'utf8')
 const selectionMenu = readFileSync(new URL('../accounts/AccountSelectionMenu.tsx', import.meta.url), 'utf8')
 
@@ -46,6 +47,11 @@ describe('Email manual open batch', () => {
     expect(hotmailUi).toContain('Mở đồng thời')
     expect(hotmailUi).toContain('window.pageAutoEmailBrowser.openBatch({ accountIds: ids, concurrency: openConcurrency })')
     expect(hotmailUi).toContain('email-open-concurrency')
+  })
+
+  it('keeps Email compact presets on whole-Chrome auto fit like Facebook', () => {
+    expect(compactControls).toContain('onClick={() => setSize(preset.width, preset.height, true)}')
+    expect(compactControls).toContain('Dùng cùng whole-Chrome scale của Facebook')
   })
 
   it('renders Email statuses as text-only and portals the context menu to the viewport', () => {

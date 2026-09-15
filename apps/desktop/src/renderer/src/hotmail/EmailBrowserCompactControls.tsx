@@ -101,7 +101,7 @@ export function EmailBrowserCompactControls({
         type="button"
         className="email-button secondary"
         disabled={disabled}
-        onClick={() => setSize(preset.width, preset.height, false)}
+        onClick={() => setSize(preset.width, preset.height, true)}
       >{preset.label} {preset.width}×{preset.height}</button>)}
     </div>
 

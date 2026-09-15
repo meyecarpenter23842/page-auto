@@ -27,6 +27,13 @@ import { parseEmailProxyLine } from '../email/emailProxyPool'
 const EMAIL_BROWSER_WINDOW_WIDTH_KEY = 'email_browser_window_width'
 const EMAIL_BROWSER_WINDOW_HEIGHT_KEY = 'email_browser_window_height'
 const EMAIL_BROWSER_WINDOW_LAYOUT_KEY = 'email_browser_window_layout'
+const EMAIL_BROWSER_WINDOW_LAYOUT_VERSION_KEY = 'email_browser_window_layout_version'
+const EMAIL_BROWSER_WINDOW_LAYOUT_VERSION = 2
+const LEGACY_EMAIL_COMPACT_PRESETS = [
+  { width: 500, height: 350 },
+  { width: 600, height: 450 },
+  { width: 800, height: 600 }
+] as const
 
 export interface EmailStateRecord {
   accountId: number
@@ -85,13 +92,29 @@ function defaultEmailBrowserWindowLayout(width: number, height: number): Browser
   }
 }
 
+function shouldMigrateLegacyEmailCompactLayout(
+  layout: BrowserWindowLayoutSettings,
+  versionRaw: string | undefined
+): boolean {
+  const version = Number(versionRaw)
+  if (Number.isInteger(version) && version >= EMAIL_BROWSER_WINDOW_LAYOUT_VERSION) return false
+  if (!layout.enabled || layout.autoFit === true) return false
+  return LEGACY_EMAIL_COMPACT_PRESETS.some((preset) => (
+    layout.tileWidthPx === preset.width && layout.tileHeightPx === preset.height
+  ))
+}
+
 function readEmailBrowserWindowLayout(
   raw: string | undefined,
   width: number,
-  height: number
+  height: number,
+  versionRaw?: string
 ): BrowserWindowLayoutSettings {
   if (!raw) return defaultEmailBrowserWindowLayout(width, height)
-  return parseStoredBrowserWindowLayout(raw)
+  const layout = parseStoredBrowserWindowLayout(raw)
+  return shouldMigrateLegacyEmailCompactLayout(layout, versionRaw)
+    ? { ...layout, autoFit: true }
+    : layout
 }
 
 export class HotmailRepository {
@@ -242,8 +265,13 @@ export class HotmailRepository {
     `).get() as Record<string, unknown> | undefined
     const browserSettings = this.client.prepare(`
       SELECT key, value FROM app_settings
-      WHERE key IN (?, ?, ?)
-    `).all(EMAIL_BROWSER_WINDOW_WIDTH_KEY, EMAIL_BROWSER_WINDOW_HEIGHT_KEY, EMAIL_BROWSER_WINDOW_LAYOUT_KEY) as Array<{ key: string; value: string }>
+      WHERE key IN (?, ?, ?, ?)
+    `).all(
+      EMAIL_BROWSER_WINDOW_WIDTH_KEY,
+      EMAIL_BROWSER_WINDOW_HEIGHT_KEY,
+      EMAIL_BROWSER_WINDOW_LAYOUT_KEY,
+      EMAIL_BROWSER_WINDOW_LAYOUT_VERSION_KEY
+    ) as Array<{ key: string; value: string }>
     const values = new Map(browserSettings.map((setting) => [setting.key, setting.value]))
     const browserWindowWidth = browserWindowDimension(
       values.get(EMAIL_BROWSER_WINDOW_WIDTH_KEY),
@@ -265,7 +293,8 @@ export class HotmailRepository {
       browserWindowLayout: readEmailBrowserWindowLayout(
         values.get(EMAIL_BROWSER_WINDOW_LAYOUT_KEY),
         browserWindowWidth,
-        browserWindowHeight
+        browserWindowHeight,
+        values.get(EMAIL_BROWSER_WINDOW_LAYOUT_VERSION_KEY)
       ),
       oauthClientId: text(row?.oauthClientId) ?? '',
       oauthTenant: text(row?.oauthTenant) ?? 'consumers'
@@ -354,6 +383,7 @@ export class HotmailRepository {
     saveAppSetting.run(EMAIL_BROWSER_WINDOW_WIDTH_KEY, String(browserWindowWidth), now)
     saveAppSetting.run(EMAIL_BROWSER_WINDOW_HEIGHT_KEY, String(browserWindowHeight), now)
     saveAppSetting.run(EMAIL_BROWSER_WINDOW_LAYOUT_KEY, JSON.stringify(browserWindowLayout), now)
+    saveAppSetting.run(EMAIL_BROWSER_WINDOW_LAYOUT_VERSION_KEY, String(EMAIL_BROWSER_WINDOW_LAYOUT_VERSION), now)
 
     const current = this.getProxySettings()
     const entries = normalizedProxyEntries ?? current.entries

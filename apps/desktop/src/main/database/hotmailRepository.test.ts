@@ -155,6 +155,38 @@ describe('HotmailRepository canonical Account binding', () => {
       })
       const facebookLayout = db.prepare('SELECT value FROM app_settings WHERE key = ?').get(BROWSER_WINDOW_LAYOUT_STORAGE_KEY)
       expect(facebookLayout).toBeUndefined()
+
+      const legacyFixedPreset = withCompactBrowserTileSize(repository.getProfileSettings().browserWindowLayout, 600, 450, false)
+      db.prepare('UPDATE app_settings SET value = ? WHERE key = ?').run(
+        JSON.stringify(legacyFixedPreset),
+        'email_browser_window_layout'
+      )
+      db.prepare('DELETE FROM app_settings WHERE key = ?').run('email_browser_window_layout_version')
+
+      expect(repository.getProfileSettings().browserWindowLayout).toMatchObject({
+        tileWidthPx: 600,
+        tileHeightPx: 450,
+        autoFit: true
+      })
+
+      repository.saveSettings({
+        profileRoot: 'C:\\EmailProfiles',
+        browserExecutable: 'C:\\Chrome\\chrome.exe',
+        browserWindowLayout: legacyFixedPreset,
+        oauthClientId: 'client-id',
+        oauthTenant: 'consumers',
+        proxyMode: 'direct'
+      })
+
+      expect(repository.getProfileSettings().browserWindowLayout).toMatchObject({
+        tileWidthPx: 600,
+        tileHeightPx: 450,
+        autoFit: false
+      })
+      const layoutVersion = db.prepare('SELECT value FROM app_settings WHERE key = ?').get(
+        'email_browser_window_layout_version'
+      ) as { value: string } | undefined
+      expect(layoutVersion?.value).toBe('2')
     } finally {
       db.close()
     }
