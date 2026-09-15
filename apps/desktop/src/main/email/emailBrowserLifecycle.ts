@@ -53,11 +53,14 @@ export function configuredEmailBrowserWindowSize(): EmailBrowserWindowSize {
   )
 }
 
+/**
+ * Preserve an explicit Compact `--window-size` supplied by an Email worker.
+ * The environment size is only the non-Compact fallback for OAuth/manual workers.
+ */
 function withEmailBrowserWindowArg(args: readonly string[] | undefined, size: EmailBrowserWindowSize): string[] {
-  return [
-    ...(args ?? []).filter((arg) => !arg.startsWith('--window-size=')),
-    `--window-size=${size.width},${size.height}`
-  ]
+  const current = [...(args ?? [])]
+  if (current.some((arg) => arg.startsWith('--window-size='))) return current
+  return [...current, `--window-size=${size.width},${size.height}`]
 }
 
 export async function applyConfiguredEmailBrowserWindowSize(context: BrowserContext): Promise<void> {
@@ -91,20 +94,16 @@ function installEmailBrowserWindowPolicy(): void {
 
   const launchPersistentContextWithEmailSize: typeof chromium.launchPersistentContext = async (userDataDir, options) => {
     const size = configuredEmailBrowserWindowSize()
-    const context = await originalLaunchPersistentContext(userDataDir, {
+    return await originalLaunchPersistentContext(userDataDir, {
       ...options,
       args: withEmailBrowserWindowArg(options?.args, size)
     })
-    await applyConfiguredEmailBrowserWindowSize(context).catch(() => undefined)
-    return context
   }
 
-  const connectOverCDPWithEmailSize = (async (...args: unknown[]) => {
-    const browser = await originalConnectOverCDP(...args)
-    for (const context of browser.contexts()) {
-      await applyConfiguredEmailBrowserWindowSize(context).catch(() => undefined)
-    }
-    return browser
+  // CDP attach must not resize the browser implicitly: a live Email Compact slot is
+  // owned by Main and the worker will explicitly re-apply its placement after attach.
+  const connectOverCDPWithoutImplicitResize = (async (...args: unknown[]) => {
+    return await originalConnectOverCDP(...args)
   }) as unknown as typeof chromium.connectOverCDP
 
   Object.defineProperty(chromium, 'launchPersistentContext', {
@@ -113,7 +112,7 @@ function installEmailBrowserWindowPolicy(): void {
   })
   Object.defineProperty(chromium, 'connectOverCDP', {
     configurable: true,
-    value: connectOverCDPWithEmailSize
+    value: connectOverCDPWithoutImplicitResize
   })
 }
 
