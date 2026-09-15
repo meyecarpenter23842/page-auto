@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 
-import type { AppUpdaterPreloadApi, ChangeInfoPreloadApi, PageAutoApi, PageScenarioSchedulePreloadApi, PageWallFinitePreloadApi } from '../../preload'
+import type { AppUpdaterPreloadApi, ChangeInfoPreloadApi, EmailBrowserLayoutPreloadApi, PageAutoApi, PageScenarioSchedulePreloadApi, PageWallFinitePreloadApi } from '../../preload'
 
 declare global {
   interface Window {
@@ -9,6 +9,7 @@ declare global {
     pageScenarioSchedule: PageScenarioSchedulePreloadApi
     pageWallFinite: PageWallFinitePreloadApi
     pageAutoChangeInfo: ChangeInfoPreloadApi
+    pageAutoEmailBrowser: EmailBrowserLayoutPreloadApi
   }
 }
 

@@ -1,8 +1,10 @@
 import { utilityProcess, type UtilityProcess } from 'electron'
 import { join } from 'node:path'
 import type { AccountRecord } from '../../shared/accounts'
+import type { BrowserWindowPlacement } from '../../shared/browserWindowLayout'
 import type { HotmailBrowserOpenResult } from '../../shared/hotmail'
 import { setBrowserLaunchAwareTimeout } from '../browser/browserLaunchBroker'
+import { isEmailWindowDetachedMessage } from './emailBrowserLifecycle'
 import { ensureEmailProfileDirectory, inspectEmailProfile } from './emailProfileResolver'
 import type { EmailProxyCandidate } from './emailProxyPool'
 
@@ -46,7 +48,10 @@ function openResult(
 export class PrimaryMailboxBrowserManager {
   private readonly workers = new Map<number, WorkerEntry>()
 
-  constructor(private readonly onClosed?: (accountId: number) => void) {}
+  constructor(
+    private readonly onClosed?: (accountId: number) => void,
+    private readonly onDetached?: (accountId: number) => void
+  ) {}
 
   isOpen(accountId: number): boolean {
     return this.workers.has(accountId)
@@ -56,7 +61,8 @@ export class PrimaryMailboxBrowserManager {
     account: AccountRecord,
     profileRoot: string,
     browserExecutable: string,
-    proxy: EmailProxyCandidate | null
+    proxy: EmailProxyCandidate | null,
+    placement: BrowserWindowPlacement | null = null
   ): Promise<HotmailBrowserOpenResult> {
     const mailbox = account.email?.trim()
     if (!mailbox) return openResult(account.id, 'error', null, 'Account chưa có Email chính để mở mailbox.')
@@ -88,6 +94,7 @@ export class PrimaryMailboxBrowserManager {
 
     try {
       await entry.spawned
+      entry.process.postMessage({ type: 'email-window-placement', accountId: account.id, placement })
     } catch {
       return openResult(account.id, 'error', entry.profileDirectory, 'Primary mailbox browser worker không khởi động được.')
     }
@@ -142,6 +149,18 @@ export class PrimaryMailboxBrowserManager {
         resolve(openResult(account.id, 'error', entry.profileDirectory, 'Không gửi được lệnh tới primary mailbox browser worker.'))
       }
     })
+  }
+
+  async applyPlacement(accountId: number, placement: BrowserWindowPlacement | null): Promise<boolean> {
+    const entry = this.workers.get(accountId)
+    if (!entry) return false
+    try {
+      await entry.spawned
+      entry.process.postMessage({ type: 'email-window-placement', accountId, placement })
+      return true
+    } catch {
+      return false
+    }
   }
 
   closeAll(): void {
@@ -201,6 +220,10 @@ export class PrimaryMailboxBrowserManager {
 
     process.once('spawn', () => resolveSpawn?.())
     process.on('message', (message) => {
+      if (isEmailWindowDetachedMessage(message)) {
+        if (message.accountId === account.id) this.onDetached?.(account.id)
+        return
+      }
       if (!isWorkerOpenResult(message) || message.accountId !== account.id) return
       entry.pending?.(message)
     })

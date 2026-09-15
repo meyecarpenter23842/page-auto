@@ -95,6 +95,7 @@ export const IPC_CHANNELS = {
   hotmailCheck: 'hotmail:check',
   hotmailOpen: 'hotmail:open',
   hotmailOpenBatch: 'hotmail:open-batch',
+  hotmailRetile: 'hotmail:browser-retile',
   hotmailRecoveryAction: 'hotmail:recovery:action',
   hotmailPasswordAction: 'hotmail:password:action',
   hotmailComboAction: 'hotmail:combo:action',
@@ -189,6 +190,7 @@ export interface PageAutoIpcContract {
   checkHotmail: (payload: HotmailBatchPayload) => Promise<HotmailBatchResult>
   openHotmail: (payload: HotmailAccountPayload) => Promise<HotmailBrowserOpenResult>
   openHotmailBatch: (payload: HotmailOpenBatchPayload) => Promise<HotmailOpenBatchResult>
+  retileHotmailWindows: () => Promise<BrowserRetileResult>
   updateHotmailRecovery: (payload: HotmailRecoveryActionPayload) => Promise<HotmailRecoveryBatchResult>
   updateHotmailPassword: (payload: HotmailPasswordActionPayload) => Promise<HotmailPasswordBatchResult>
   runHotmailCombo: (payload: HotmailComboActionPayload) => Promise<HotmailComboBatchResult>

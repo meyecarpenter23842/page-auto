@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3'
 import { describe, expect, it } from 'vitest'
+import { BROWSER_WINDOW_LAYOUT_STORAGE_KEY, withCompactBrowserTileSize } from '../../shared/browserWindowLayout'
 import { HotmailRepository } from './hotmailRepository'
 
 describe('HotmailRepository canonical Account binding', () => {
@@ -79,7 +80,7 @@ describe('HotmailRepository canonical Account binding', () => {
     }
   })
 
-  it('persists Email-owned browser window size without coupling to Facebook settings', () => {
+  it('persists Email-owned browser size and Compact layout without coupling to Facebook layout', () => {
     const db = new Database(':memory:')
     try {
       db.exec(`
@@ -105,16 +106,20 @@ describe('HotmailRepository canonical Account binding', () => {
       `)
 
       const repository = new HotmailRepository(db)
-      expect(repository.getProfileSettings()).toMatchObject({
+      const defaults = repository.getProfileSettings()
+      expect(defaults).toMatchObject({
         browserWindowWidth: 1280,
-        browserWindowHeight: 800
+        browserWindowHeight: 800,
+        browserWindowLayout: { enabled: true, autoFit: true }
       })
 
+      const compact = withCompactBrowserTileSize(defaults.browserWindowLayout, 600, 450, true)
       repository.saveSettings({
         profileRoot: 'C:\\EmailProfiles',
         browserExecutable: 'C:\\Chrome\\chrome.exe',
         browserWindowWidth: 1440,
         browserWindowHeight: 900,
+        browserWindowLayout: compact,
         oauthClientId: 'client-id',
         oauthTenant: 'consumers',
         proxyMode: 'direct'
@@ -122,7 +127,13 @@ describe('HotmailRepository canonical Account binding', () => {
 
       expect(repository.getSettingsView()).toMatchObject({
         browserWindowWidth: 1440,
-        browserWindowHeight: 900
+        browserWindowHeight: 900,
+        browserWindowLayout: {
+          enabled: true,
+          tileWidthPx: 600,
+          tileHeightPx: 450,
+          autoFit: true
+        }
       })
 
       repository.saveSettings({
@@ -135,8 +146,15 @@ describe('HotmailRepository canonical Account binding', () => {
 
       expect(repository.getProfileSettings()).toMatchObject({
         browserWindowWidth: 1440,
-        browserWindowHeight: 900
+        browserWindowHeight: 900,
+        browserWindowLayout: {
+          tileWidthPx: 600,
+          tileHeightPx: 450,
+          autoFit: true
+        }
       })
+      const facebookLayout = db.prepare('SELECT value FROM app_settings WHERE key = ?').get(BROWSER_WINDOW_LAYOUT_STORAGE_KEY)
+      expect(facebookLayout).toBeUndefined()
     } finally {
       db.close()
     }
