@@ -9,6 +9,8 @@ import { EmailBrowserManager } from './emailBrowserManager'
 import type { MailboxProviderWorkerRequestHandler } from './mailboxProviderWorkerRpc'
 import { EmailProxyPool, type EmailProxyCandidate, type EmailProxySettingsRaw } from './emailProxyPool'
 import { EmailRuntimeOwnership, type EmailRuntimeOwner } from './emailRuntimeOwnership'
+import { PrimaryMailboxBrowserManager } from './primaryMailboxBrowserManager'
+import { primaryMailboxProviderLabel, resolvePrimaryMailboxOpenRoute } from './primaryMailboxOpenPolicy'
 
 export type EmailRuntimeWorkflowOwner = Extract<EmailRuntimeOwner, 'combo'>
 
@@ -63,11 +65,13 @@ function recoveryError(
  *
  * Owns Email browser workers, Email proxy assignments and per-account workflow
  * ownership. Microsoft surface classification/login remains inside the existing
- * worker/state-machine path; business tasks only choose which typed action to run.
+ * worker/state-machine path; manual primary-mailbox open may route to an audited
+ * provider browser without changing recovery-mail/code routing.
  */
 export class EmailCommonRuntime {
   readonly proxyPool: EmailProxyPool
   private readonly managers = new Map<number, EmailBrowserManager>()
+  private readonly primaryMailboxManagers = new Map<number, PrimaryMailboxBrowserManager>()
   private readonly ownership = new EmailRuntimeOwnership()
 
   constructor(
@@ -82,7 +86,8 @@ export class EmailCommonRuntime {
   }
 
   isOpen(accountId: number): boolean {
-    return this.managers.get(accountId)?.isOpen(accountId) ?? false
+    return (this.managers.get(accountId)?.isOpen(accountId) ?? false)
+      || (this.primaryMailboxManagers.get(accountId)?.isOpen(accountId) ?? false)
   }
 
   async open(
@@ -93,7 +98,20 @@ export class EmailCommonRuntime {
   ): Promise<HotmailBrowserOpenResult> {
     const owner = this.ownership.current(account.id)
     if (owner) return openError(account.id, runtimeBusyMessage(owner))
-    return await this.managerFor(account.id).open(account, profileRoot, browserExecutable, proxy)
+
+    const route = resolvePrimaryMailboxOpenRoute(account.email)
+    if (route.kind === 'microsoft') {
+      return await this.managerFor(account.id).open(account, profileRoot, browserExecutable, proxy)
+    }
+    if (route.kind === 'browser_provider') {
+      return await this.primaryMailboxManagerFor(account.id).open(account, profileRoot, browserExecutable, proxy)
+    }
+
+    const mailbox = account.email?.trim() || 'chưa có Email'
+    return openError(
+      account.id,
+      `Không mở Outlook thay cho mail chính ${mailbox}. ${primaryMailboxProviderLabel(route.providerId)} chưa có surface Mở mail được audit.`
+    )
   }
 
   async runRecoveryAction(
@@ -245,19 +263,28 @@ export class EmailCommonRuntime {
 
   closeAccount(accountId: number): void {
     const manager = this.managers.get(accountId)
+    const primaryMailboxManager = this.primaryMailboxManagers.get(accountId)
     this.managers.delete(accountId)
+    this.primaryMailboxManagers.delete(accountId)
     this.ownership.clear(accountId)
     this.proxyPool.release(accountId)
     manager?.closeAll()
+    primaryMailboxManager?.closeAll()
   }
 
   closeAll(): void {
-    const accountIds = [...this.managers.keys()]
+    const accountIds = [...new Set([
+      ...this.managers.keys(),
+      ...this.primaryMailboxManagers.keys()
+    ])]
     const managers = [...new Set(this.managers.values())]
+    const primaryMailboxManagers = [...new Set(this.primaryMailboxManagers.values())]
     this.managers.clear()
+    this.primaryMailboxManagers.clear()
     this.ownership.clearAll()
     for (const accountId of accountIds) this.proxyPool.release(accountId)
     for (const manager of managers) manager.closeAll()
+    for (const manager of primaryMailboxManagers) manager.closeAll()
   }
 
   private managerFor(accountId: number): EmailBrowserManager {
@@ -270,6 +297,20 @@ export class EmailCommonRuntime {
       if (this.managers.get(closedAccountId) === manager) this.managers.delete(closedAccountId)
     }, this.mailboxProviderRequestHandler)
     this.managers.set(accountId, manager)
+    return manager
+  }
+
+  private primaryMailboxManagerFor(accountId: number): PrimaryMailboxBrowserManager {
+    const existing = this.primaryMailboxManagers.get(accountId)
+    if (existing) return existing
+
+    const manager = new PrimaryMailboxBrowserManager((closedAccountId) => {
+      this.proxyPool.release(closedAccountId)
+      if (this.primaryMailboxManagers.get(closedAccountId) === manager) {
+        this.primaryMailboxManagers.delete(closedAccountId)
+      }
+    })
+    this.primaryMailboxManagers.set(accountId, manager)
     return manager
   }
 }
