@@ -1,4 +1,5 @@
 import type { AccountStatus } from './accounts'
+import type { BrowserWindowLayoutSettings } from './browserWindowLayout'
 
 export const HOTMAIL_OAUTH_STATUSES = ['missing', 'pending', 'valid', 'expired', 'error'] as const
 export type HotmailOAuthStatus = (typeof HOTMAIL_OAUTH_STATUSES)[number]
@@ -61,8 +62,11 @@ export interface HotmailDashboardRow {
 export interface HotmailSettingsView {
   profileRoot: string
   browserExecutable: string
+  /** Logical desktop baseline used by Email Auto Fit/whole-Chrome scaling. */
   browserWindowWidth: number
   browserWindowHeight: number
+  /** Email-only Compact/grid config. Never reads or writes Facebook layout settings. */
+  browserWindowLayout: BrowserWindowLayoutSettings
   /** Default public-client ID used only when starting/renewing OAuth. */
   oauthClientId: string
   oauthTenant: string
@@ -75,10 +79,12 @@ export interface HotmailSettingsView {
 export interface SaveHotmailSettingsInput {
   profileRoot: string
   browserExecutable: string
-  /** Omit to preserve the current Email browser width. */
+  /** Omit to preserve the current Email browser logical width. */
   browserWindowWidth?: number
-  /** Omit to preserve the current Email browser height. */
+  /** Omit to preserve the current Email browser logical height. */
   browserWindowHeight?: number
+  /** Omit to preserve the current Email-only Compact/grid settings. */
+  browserWindowLayout?: BrowserWindowLayoutSettings
   oauthClientId: string
   oauthTenant: string
   proxyMode: EmailProxyMode
