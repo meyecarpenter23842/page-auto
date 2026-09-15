@@ -1,4 +1,4 @@
-import type { BrowserSettings } from '../../shared/appSettings'
+import { DEFAULT_APP_SETTINGS, type BrowserSettings } from '../../shared/appSettings'
 import type {
   BrowserDisplayInfo,
   BrowserRetileResult,
@@ -32,7 +32,7 @@ export class EmailBrowserWindowLayoutRuntime {
   }
 
   placementFor(accountId: number): BrowserWindowPlacement | null {
-    return this.manager.placementFor(accountId, this.getLayoutSettings(), this.getBrowserSettings())
+    return this.manager.placementFor(accountId, this.getLayoutSettings(), this.browserSettings())
   }
 
   release(accountId: number): void {
@@ -72,7 +72,7 @@ export class EmailBrowserWindowLayoutRuntime {
       }
     }
 
-    const snapshot = this.manager.snapshot(layout, this.getBrowserSettings())
+    const snapshot = this.manager.snapshot(layout, this.browserSettings())
     return {
       placements: snapshot.placements,
       result: {
@@ -83,6 +83,15 @@ export class EmailBrowserWindowLayoutRuntime {
           ? `Đã sắp xếp ${snapshot.placements.size} Chrome Email; ${snapshot.overflowCount} cửa sổ nằm ở lớp tràn.`
           : `Đã sắp xếp ${snapshot.placements.size} Chrome Email theo grid hiện tại.`
       }
+    }
+  }
+
+  private browserSettings(): BrowserSettings {
+    const browser = this.getBrowserSettings()
+    return {
+      ...browser,
+      windowWidth: Math.max(DEFAULT_APP_SETTINGS.browser.windowWidth, browser.windowWidth),
+      windowHeight: Math.max(DEFAULT_APP_SETTINGS.browser.windowHeight, browser.windowHeight)
     }
   }
 }
