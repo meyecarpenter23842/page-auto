@@ -15,6 +15,7 @@ import { BrowserEngineService } from './browser/browserEngineService'
 import { AccountRepository } from './database/accountRepository'
 import { HotmailRepository } from './database/hotmailRepository'
 import { createCanonicalEmailCodeRuntime } from './email/canonicalEmailCodeProvider'
+import { syncEmailBrowserWindowEnvironment } from './email/emailBrowserLifecycle'
 import { emailBrowserExecutableCandidates } from './email/emailBrowserExecutable'
 import { EmailCommonRuntime } from './email/emailCommonRuntime'
 import { HotmailComboService } from './email/hotmailComboService'
@@ -57,6 +58,11 @@ async function getManualCodes(provider: EmailCodeProvider, payload: HotmailBatch
 export function registerHotmailIpcHandlers(database: Database.Database): HotmailIpcRuntime {
   const accounts = new AccountRepository(database)
   const repository = new HotmailRepository(database)
+  const initialBrowserSettings = repository.getProfileSettings()
+  syncEmailBrowserWindowEnvironment({
+    width: initialBrowserSettings.browserWindowWidth,
+    height: initialBrowserSettings.browserWindowHeight
+  })
   const browserEngine = new BrowserEngineService()
   const validatedExecutables = new Set<string>()
   let pendingRecoveryPayload: HotmailRecoveryActionPayload | null = null
@@ -142,7 +148,22 @@ export function registerHotmailIpcHandlers(database: Database.Database): Hotmail
 
   ipcMain.handle(IPC_CHANNELS.hotmailDashboardList, () => listDashboard())
   ipcMain.handle(IPC_CHANNELS.hotmailSettingsGet, () => service.getSettings())
-  ipcMain.handle(IPC_CHANNELS.hotmailSettingsSave, (_event, input: SaveHotmailSettingsInput) => service.saveSettings(input))
+  ipcMain.handle(IPC_CHANNELS.hotmailSettingsSave, async (_event, input: SaveHotmailSettingsInput) => {
+    const previous = service.getSettings()
+    const saved = await service.saveSettings(input)
+    syncEmailBrowserWindowEnvironment({
+      width: saved.browserWindowWidth,
+      height: saved.browserWindowHeight
+    })
+    if (
+      previous.browserWindowWidth !== saved.browserWindowWidth
+      || previous.browserWindowHeight !== saved.browserWindowHeight
+    ) {
+      runtime.closeAll()
+      oauthProfileService.dispose()
+    }
+    return saved
+  })
   ipcMain.handle(IPC_CHANNELS.hotmailPickProfileRoot, async () => {
     const savedRoot = repository.getProfileSettings().profileRoot
     const result = await dialog.showOpenDialog({

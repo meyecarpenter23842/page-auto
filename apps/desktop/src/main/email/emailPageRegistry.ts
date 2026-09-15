@@ -1,5 +1,6 @@
 import type { BrowserContext, Page } from 'playwright-core'
 import type { EmailPageRole } from './emailAuthV2Contracts'
+import { applyConfiguredEmailBrowserWindowSize } from './emailBrowserLifecycle'
 import { classifyMicrosoftRoute } from './emailLoginPolicy'
 
 const MAILBOX_PROVIDER_HOSTS = new Set([
@@ -103,6 +104,7 @@ export class EmailPageRegistry {
   }
 
   async resolveOrCreate(role: 'microsoft_auth' | 'outlook_mail', predicate?: (page: Page) => boolean): Promise<Page> {
+    await applyConfiguredEmailBrowserWindowSize(this.context).catch(() => undefined)
     return this.newest(role, predicate)
       ?? this.newestMicrosoft()
       ?? soleInitialBlankPage(this.context.pages())
@@ -110,6 +112,7 @@ export class EmailPageRegistry {
   }
 
   async resolveMicrosoftActionPage(predicate?: (page: Page) => boolean): Promise<Page> {
+    await applyConfiguredEmailBrowserWindowSize(this.context).catch(() => undefined)
     return this.newestMicrosoft(predicate)
       ?? this.newestMicrosoft()
       ?? soleInitialBlankPage(this.context.pages())

@@ -15,6 +15,13 @@ export type HotmailRuntimeStatus = (typeof HOTMAIL_RUNTIME_STATUSES)[number]
 export const EMAIL_PROXY_MODES = ['direct', 'random_ipv4'] as const
 export type EmailProxyMode = (typeof EMAIL_PROXY_MODES)[number]
 
+export const DEFAULT_EMAIL_BROWSER_WINDOW_WIDTH = 1280
+export const DEFAULT_EMAIL_BROWSER_WINDOW_HEIGHT = 800
+export const MIN_EMAIL_BROWSER_WINDOW_WIDTH = 640
+export const MAX_EMAIL_BROWSER_WINDOW_WIDTH = 7680
+export const MIN_EMAIL_BROWSER_WINDOW_HEIGHT = 480
+export const MAX_EMAIL_BROWSER_WINDOW_HEIGHT = 4320
+
 export const HOTMAIL_RECOVERY_OPERATIONS = ['add', 'remove', 'replace'] as const
 export type HotmailRecoveryOperation = (typeof HOTMAIL_RECOVERY_OPERATIONS)[number]
 
@@ -53,6 +60,8 @@ export interface HotmailDashboardRow {
 export interface HotmailSettingsView {
   profileRoot: string
   browserExecutable: string
+  browserWindowWidth: number
+  browserWindowHeight: number
   /** Default public-client ID used only when starting/renewing OAuth. */
   oauthClientId: string
   oauthTenant: string
@@ -65,6 +74,10 @@ export interface HotmailSettingsView {
 export interface SaveHotmailSettingsInput {
   profileRoot: string
   browserExecutable: string
+  /** Omit to preserve the current Email browser width. */
+  browserWindowWidth?: number
+  /** Omit to preserve the current Email browser height. */
+  browserWindowHeight?: number
   oauthClientId: string
   oauthTenant: string
   proxyMode: EmailProxyMode

@@ -1,15 +1,24 @@
 import type Database from 'better-sqlite3'
-import type {
-  HotmailDashboardRow,
-  HotmailMailStatus,
-  HotmailOAuthStatus,
-  HotmailRuntimeStatus,
-  HotmailSettingsView,
-  SaveHotmailSettingsInput
+import {
+  DEFAULT_EMAIL_BROWSER_WINDOW_HEIGHT,
+  DEFAULT_EMAIL_BROWSER_WINDOW_WIDTH,
+  MAX_EMAIL_BROWSER_WINDOW_HEIGHT,
+  MAX_EMAIL_BROWSER_WINDOW_WIDTH,
+  MIN_EMAIL_BROWSER_WINDOW_HEIGHT,
+  MIN_EMAIL_BROWSER_WINDOW_WIDTH,
+  type HotmailDashboardRow,
+  type HotmailMailStatus,
+  type HotmailOAuthStatus,
+  type HotmailRuntimeStatus,
+  type HotmailSettingsView,
+  type SaveHotmailSettingsInput
 } from '../../shared/hotmail'
 import type { AccountStatus } from '../../shared/accounts'
 import type { EmailProxySettingsRaw } from '../email/emailProxyPool'
 import { parseEmailProxyLine } from '../email/emailProxyPool'
+
+const EMAIL_BROWSER_WINDOW_WIDTH_KEY = 'email_browser_window_width'
+const EMAIL_BROWSER_WINDOW_HEIGHT_KEY = 'email_browser_window_height'
 
 export interface EmailStateRecord {
   accountId: number
@@ -30,6 +39,8 @@ export interface EmailStateRecord {
 export interface EmailProfileSettingsRecord {
   profileRoot: string
   browserExecutable: string
+  browserWindowWidth: number
+  browserWindowHeight: number
   oauthClientId: string
   oauthTenant: string
 }
@@ -49,6 +60,11 @@ function maskPassword(value: unknown): string | null {
 function normalizeTenant(value: string): string {
   const normalized = value.trim()
   return normalized || 'consumers'
+}
+
+function browserWindowDimension(value: unknown, fallback: number, minimum: number, maximum: number): number {
+  const parsed = Number(value)
+  return Number.isInteger(parsed) && parsed >= minimum && parsed <= maximum ? parsed : fallback
 }
 
 export class HotmailRepository {
@@ -197,9 +213,26 @@ export class HotmailRepository {
              oauth_client_id AS oauthClientId, oauth_tenant AS oauthTenant
       FROM email_profile_settings WHERE id = 1
     `).get() as Record<string, unknown> | undefined
+    const browserSettings = this.client.prepare(`
+      SELECT key, value FROM app_settings
+      WHERE key IN (?, ?)
+    `).all(EMAIL_BROWSER_WINDOW_WIDTH_KEY, EMAIL_BROWSER_WINDOW_HEIGHT_KEY) as Array<{ key: string; value: string }>
+    const values = new Map(browserSettings.map((setting) => [setting.key, setting.value]))
     return {
       profileRoot: text(row?.profileRoot) ?? '',
       browserExecutable: text(row?.browserExecutable) ?? '',
+      browserWindowWidth: browserWindowDimension(
+        values.get(EMAIL_BROWSER_WINDOW_WIDTH_KEY),
+        DEFAULT_EMAIL_BROWSER_WINDOW_WIDTH,
+        MIN_EMAIL_BROWSER_WINDOW_WIDTH,
+        MAX_EMAIL_BROWSER_WINDOW_WIDTH
+      ),
+      browserWindowHeight: browserWindowDimension(
+        values.get(EMAIL_BROWSER_WINDOW_HEIGHT_KEY),
+        DEFAULT_EMAIL_BROWSER_WINDOW_HEIGHT,
+        MIN_EMAIL_BROWSER_WINDOW_HEIGHT,
+        MAX_EMAIL_BROWSER_WINDOW_HEIGHT
+      ),
       oauthClientId: text(row?.oauthClientId) ?? '',
       oauthTenant: text(row?.oauthTenant) ?? 'consumers'
     }
@@ -237,6 +270,20 @@ export class HotmailRepository {
 
   saveSettings(input: SaveHotmailSettingsInput, normalizedProxyEntries?: string[]): void {
     const now = Date.now()
+    const currentProfile = this.getProfileSettings()
+    const browserWindowWidth = browserWindowDimension(
+      input.browserWindowWidth,
+      currentProfile.browserWindowWidth,
+      MIN_EMAIL_BROWSER_WINDOW_WIDTH,
+      MAX_EMAIL_BROWSER_WINDOW_WIDTH
+    )
+    const browserWindowHeight = browserWindowDimension(
+      input.browserWindowHeight,
+      currentProfile.browserWindowHeight,
+      MIN_EMAIL_BROWSER_WINDOW_HEIGHT,
+      MAX_EMAIL_BROWSER_WINDOW_HEIGHT
+    )
+
     this.client.prepare(`
       INSERT INTO email_profile_settings (id, external_root, browser_executable, oauth_client_id, oauth_tenant, updated_at)
       VALUES (1, @profileRoot, @browserExecutable, @oauthClientId, @oauthTenant, @updatedAt)
@@ -253,6 +300,14 @@ export class HotmailRepository {
       oauthTenant: normalizeTenant(input.oauthTenant),
       updatedAt: now
     })
+
+    const saveAppSetting = this.client.prepare(`
+      INSERT INTO app_settings (key, value, updated_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+    `)
+    saveAppSetting.run(EMAIL_BROWSER_WINDOW_WIDTH_KEY, String(browserWindowWidth), now)
+    saveAppSetting.run(EMAIL_BROWSER_WINDOW_HEIGHT_KEY, String(browserWindowHeight), now)
 
     const current = this.getProxySettings()
     const entries = normalizedProxyEntries ?? current.entries
