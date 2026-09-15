@@ -1,4 +1,123 @@
 import '../browser/browserRuntime'
+import { chromium, type Browser, type BrowserContext } from 'playwright-core'
+import {
+  DEFAULT_EMAIL_BROWSER_WINDOW_HEIGHT,
+  DEFAULT_EMAIL_BROWSER_WINDOW_WIDTH,
+  MAX_EMAIL_BROWSER_WINDOW_HEIGHT,
+  MAX_EMAIL_BROWSER_WINDOW_WIDTH,
+  MIN_EMAIL_BROWSER_WINDOW_HEIGHT,
+  MIN_EMAIL_BROWSER_WINDOW_WIDTH
+} from '../../shared/hotmail'
+
+const EMAIL_BROWSER_WINDOW_WIDTH_ENV = 'PAGE_AUTO_EMAIL_BROWSER_WINDOW_WIDTH'
+const EMAIL_BROWSER_WINDOW_HEIGHT_ENV = 'PAGE_AUTO_EMAIL_BROWSER_WINDOW_HEIGHT'
+
+export interface EmailBrowserWindowSize {
+  width: number
+  height: number
+}
+
+function normalizeDimension(value: unknown, fallback: number, minimum: number, maximum: number): number {
+  const parsed = Number(value)
+  return Number.isInteger(parsed) && parsed >= minimum && parsed <= maximum ? parsed : fallback
+}
+
+export function normalizeEmailBrowserWindowSize(width: unknown, height: unknown): EmailBrowserWindowSize {
+  return {
+    width: normalizeDimension(
+      width,
+      DEFAULT_EMAIL_BROWSER_WINDOW_WIDTH,
+      MIN_EMAIL_BROWSER_WINDOW_WIDTH,
+      MAX_EMAIL_BROWSER_WINDOW_WIDTH
+    ),
+    height: normalizeDimension(
+      height,
+      DEFAULT_EMAIL_BROWSER_WINDOW_HEIGHT,
+      MIN_EMAIL_BROWSER_WINDOW_HEIGHT,
+      MAX_EMAIL_BROWSER_WINDOW_HEIGHT
+    )
+  }
+}
+
+export function syncEmailBrowserWindowEnvironment(size: EmailBrowserWindowSize): EmailBrowserWindowSize {
+  const normalized = normalizeEmailBrowserWindowSize(size.width, size.height)
+  process.env[EMAIL_BROWSER_WINDOW_WIDTH_ENV] = String(normalized.width)
+  process.env[EMAIL_BROWSER_WINDOW_HEIGHT_ENV] = String(normalized.height)
+  return normalized
+}
+
+export function configuredEmailBrowserWindowSize(): EmailBrowserWindowSize {
+  return normalizeEmailBrowserWindowSize(
+    process.env[EMAIL_BROWSER_WINDOW_WIDTH_ENV],
+    process.env[EMAIL_BROWSER_WINDOW_HEIGHT_ENV]
+  )
+}
+
+function withEmailBrowserWindowArg(args: readonly string[] | undefined, size: EmailBrowserWindowSize): string[] {
+  return [
+    ...(args ?? []).filter((arg) => !arg.startsWith('--window-size=')),
+    `--window-size=${size.width},${size.height}`
+  ]
+}
+
+export async function applyConfiguredEmailBrowserWindowSize(context: BrowserContext): Promise<void> {
+  const size = configuredEmailBrowserWindowSize()
+  const page = context.pages().find((candidate) => !candidate.isClosed())
+  if (!page) return
+
+  const session = await context.newCDPSession(page).catch(() => null)
+  if (!session) return
+  try {
+    const targetWindow = await session.send('Browser.getWindowForTarget').catch(() => null) as { windowId?: number } | null
+    if (targetWindow?.windowId === undefined) return
+    await session.send('Browser.setWindowBounds', {
+      windowId: targetWindow.windowId,
+      bounds: {
+        width: size.width,
+        height: size.height,
+        windowState: 'normal'
+      }
+    }).catch(() => undefined)
+  } finally {
+    await session.detach().catch(() => undefined)
+  }
+}
+
+function installEmailBrowserWindowPolicy(): void {
+  if (!process.parentPort) return
+
+  const originalLaunchPersistentContext = chromium.launchPersistentContext.bind(chromium)
+  const originalConnectOverCDP = chromium.connectOverCDP.bind(chromium) as unknown as (...args: unknown[]) => Promise<Browser>
+
+  const launchPersistentContextWithEmailSize: typeof chromium.launchPersistentContext = async (userDataDir, options) => {
+    const size = configuredEmailBrowserWindowSize()
+    const context = await originalLaunchPersistentContext(userDataDir, {
+      ...options,
+      args: withEmailBrowserWindowArg(options?.args, size)
+    })
+    await applyConfiguredEmailBrowserWindowSize(context).catch(() => undefined)
+    return context
+  }
+
+  const connectOverCDPWithEmailSize = (async (...args: unknown[]) => {
+    const browser = await originalConnectOverCDP(...args)
+    for (const context of browser.contexts()) {
+      await applyConfiguredEmailBrowserWindowSize(context).catch(() => undefined)
+    }
+    return browser
+  }) as unknown as typeof chromium.connectOverCDP
+
+  Object.defineProperty(chromium, 'launchPersistentContext', {
+    configurable: true,
+    value: launchPersistentContextWithEmailSize
+  })
+  Object.defineProperty(chromium, 'connectOverCDP', {
+    configurable: true,
+    value: connectOverCDPWithEmailSize
+  })
+}
+
+installEmailBrowserWindowPolicy()
 
 export function isEmailProfileInUseError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error)

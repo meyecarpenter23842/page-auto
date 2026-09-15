@@ -45,7 +45,7 @@ describe('mailbox provider browser isolation', () => {
     expect(await resolveMailboxProviderContext(operator)).toBe(operator)
   })
 
-  it('reuses one visible provider context and never falls back to the Microsoft operator context', async () => {
+  it('reuses one headless provider context and never falls back to the Microsoft operator context', async () => {
     const operator = fakeContext()
     const providerContext = fakeContext()
     const browser = fakeBrowser(providerContext)
@@ -66,7 +66,7 @@ describe('mailbox provider browser isolation', () => {
     expect(launchBrowser).toHaveBeenCalledTimes(1)
     expect(launchBrowser).toHaveBeenCalledWith({
       executablePath: 'C:\\Chrome\\chrome.exe',
-      headless: false,
+      headless: true,
       proxy: { server: 'http://127.0.0.1:8080' }
     })
   })
@@ -118,12 +118,12 @@ describe('mailbox provider browser isolation', () => {
     expect(hasLiveCdpEndpoint).not.toHaveBeenCalled()
     expect(launchBrowser).toHaveBeenCalledWith({
       executablePath: 'C:\\Chrome\\chrome.exe',
-      headless: false,
+      headless: true,
       proxy: { server: 'http://127.0.0.1:8080' }
     })
   })
 
-  it('closes the visible provider browser when the Microsoft operator context closes', async () => {
+  it('closes the headless provider browser when the Microsoft operator context closes', async () => {
     const operator = fakeContext()
     const providerContext = fakeContext()
     const browser = fakeBrowser(providerContext)

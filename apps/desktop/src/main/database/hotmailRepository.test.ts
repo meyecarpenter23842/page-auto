@@ -78,4 +78,67 @@ describe('HotmailRepository canonical Account binding', () => {
       db.close()
     }
   })
+
+  it('persists Email-owned browser window size without coupling to Facebook settings', () => {
+    const db = new Database(':memory:')
+    try {
+      db.exec(`
+        CREATE TABLE app_settings (
+          key TEXT PRIMARY KEY NOT NULL,
+          value TEXT NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+        CREATE TABLE email_profile_settings (
+          id INTEGER PRIMARY KEY NOT NULL CHECK (id = 1),
+          external_root TEXT NOT NULL DEFAULT '',
+          browser_executable TEXT NOT NULL DEFAULT '',
+          oauth_client_id TEXT NOT NULL DEFAULT '',
+          oauth_tenant TEXT NOT NULL DEFAULT 'consumers',
+          updated_at INTEGER NOT NULL
+        );
+        CREATE TABLE email_proxy_settings (
+          id INTEGER PRIMARY KEY NOT NULL CHECK (id = 1),
+          mode TEXT NOT NULL DEFAULT 'direct',
+          proxy_list_json TEXT NOT NULL DEFAULT '[]',
+          updated_at INTEGER NOT NULL
+        );
+      `)
+
+      const repository = new HotmailRepository(db)
+      expect(repository.getProfileSettings()).toMatchObject({
+        browserWindowWidth: 1280,
+        browserWindowHeight: 800
+      })
+
+      repository.saveSettings({
+        profileRoot: 'C:\\EmailProfiles',
+        browserExecutable: 'C:\\Chrome\\chrome.exe',
+        browserWindowWidth: 1440,
+        browserWindowHeight: 900,
+        oauthClientId: 'client-id',
+        oauthTenant: 'consumers',
+        proxyMode: 'direct'
+      })
+
+      expect(repository.getSettingsView()).toMatchObject({
+        browserWindowWidth: 1440,
+        browserWindowHeight: 900
+      })
+
+      repository.saveSettings({
+        profileRoot: 'C:\\EmailProfiles',
+        browserExecutable: 'C:\\Chrome\\chrome.exe',
+        oauthClientId: 'client-id',
+        oauthTenant: 'consumers',
+        proxyMode: 'direct'
+      })
+
+      expect(repository.getProfileSettings()).toMatchObject({
+        browserWindowWidth: 1440,
+        browserWindowHeight: 900
+      })
+    } finally {
+      db.close()
+    }
+  })
 })

@@ -84,10 +84,9 @@ async function externalProxyBoundaryIsUnknown(config: MailboxProviderBrowserConf
 }
 
 /**
- * Bind mailbox browsing to an isolated headed Chromium process owned by the
- * visible Email operator context. The provider remains outside the Microsoft
- * Chrome window, but its own window is visible so live Inboxes failures can be
- * inspected directly instead of being hidden inside a headless worker.
+ * Automatic mailbox-code browsing runs in an isolated headless Chromium process.
+ * Microsoft/operator Chrome remains the only visible Email browser; provider
+ * failures surface through typed runtime status instead of opening a helper window.
  */
 export function configureMailboxProviderBrowser(
   operatorContext: BrowserContext,
@@ -134,7 +133,7 @@ async function launchMailboxProviderRuntime(
   try {
     browser = await launch({
       executablePath,
-      headless: false,
+      headless: true,
       ...(config.proxy ? { proxy: config.proxy } : {})
     })
     const context = await browser.newContext()
