@@ -1,6 +1,7 @@
 import { dialog, ipcMain } from 'electron'
 import type Database from 'better-sqlite3'
 import { IPC_CHANNELS } from '../ipc/channels'
+import { DEFAULT_APP_SETTINGS } from '../shared/appSettings'
 import { EMAIL_CODE_DB_RETENTION_MS, type EmailCodeProvider } from '../shared/emailCode'
 import type { HotmailComboActionPayload } from '../shared/emailCombo'
 import type {
@@ -19,6 +20,7 @@ import { createCanonicalEmailCodeRuntime } from './email/canonicalEmailCodeProvi
 import { syncEmailBrowserWindowEnvironment } from './email/emailBrowserLifecycle'
 import { emailBrowserExecutableCandidates } from './email/emailBrowserExecutable'
 import { EmailCommonRuntime } from './email/emailCommonRuntime'
+import { EmailBrowserWindowLayoutRuntime } from './email/emailBrowserWindowLayout'
 import { runHotmailOpenBatch } from './email/emailOpenBatch'
 import { HotmailComboService } from './email/hotmailComboService'
 import { testEmailBrowserExecutable } from './email/emailProxyTester'
@@ -105,9 +107,23 @@ export function registerHotmailIpcHandlers(database: Database.Database): Hotmail
 
   const cipher = new ElectronEmailSecretCipher()
   const microsoftMailboxRuntime = createMicrosoftMailboxRuntime(accounts, repository, cipher)
+  const emailWindowLayout = new EmailBrowserWindowLayoutRuntime(
+    () => repository.getProfileSettings().browserWindowLayout,
+    () => {
+      const settings = repository.getProfileSettings()
+      return {
+        ...DEFAULT_APP_SETTINGS.browser,
+        executablePath: settings.browserExecutable.trim() || null,
+        mode: 'visible',
+        windowWidth: settings.browserWindowWidth,
+        windowHeight: settings.browserWindowHeight
+      }
+    }
+  )
   const runtime = new EmailCommonRuntime(
     () => repository.getProxySettings(),
-    microsoftMailboxRuntime.handleWorkerRequest
+    microsoftMailboxRuntime.handleWorkerRequest,
+    emailWindowLayout
   )
   const service = new HotmailService(
     accounts,
@@ -157,12 +173,14 @@ export function registerHotmailIpcHandlers(database: Database.Database): Hotmail
       width: saved.browserWindowWidth,
       height: saved.browserWindowHeight
     })
-    if (
-      previous.browserWindowWidth !== saved.browserWindowWidth
+    const browserBaselineChanged = previous.browserWindowWidth !== saved.browserWindowWidth
       || previous.browserWindowHeight !== saved.browserWindowHeight
-    ) {
+    const compactLayoutChanged = JSON.stringify(previous.browserWindowLayout) !== JSON.stringify(saved.browserWindowLayout)
+    if (browserBaselineChanged) {
       runtime.closeAll()
       oauthProfileService.dispose()
+    } else if (compactLayoutChanged) {
+      await runtime.retileWindows()
     }
     return saved
   })
@@ -202,6 +220,7 @@ export function registerHotmailIpcHandlers(database: Database.Database): Hotmail
     )
     return { results }
   })
+  ipcMain.handle(IPC_CHANNELS.hotmailRetile, () => runtime.retileWindows())
 
   ipcMain.handle(IPC_CHANNELS.hotmailRecoveryAction, async (_event, payload: HotmailRecoveryActionPayload) => {
     assertOAuthIdle(payload.accountIds)
