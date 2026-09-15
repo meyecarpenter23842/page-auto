@@ -1,10 +1,6 @@
 import { useEffect, useMemo, useState, type ChangeEvent, type MouseEvent } from 'react'
 import { EMAIL_RECOVERY_PROVIDERS, detectRecoveryMailProvider } from '../../../shared/emailRecoveryProviders'
 import {
-  MAX_EMAIL_BROWSER_WINDOW_HEIGHT,
-  MAX_EMAIL_BROWSER_WINDOW_WIDTH,
-  MIN_EMAIL_BROWSER_WINDOW_HEIGHT,
-  MIN_EMAIL_BROWSER_WINDOW_WIDTH,
   type EmailProxyMode,
   type HotmailBatchResult,
   type HotmailBrowserOpenResult,
@@ -19,7 +15,7 @@ import {
 } from '../../../shared/hotmail'
 import { AccountSelectionMenu } from '../accounts/AccountSelectionMenu'
 import { useExcelRowRange } from '../accounts/accountTableSelection'
-import { runEmailOpenBatch } from './emailOpenBatch'
+import { EmailBrowserCompactControls } from './EmailBrowserCompactControls'
 import {
   EMAIL_CATEGORY_ALL,
   filterHotmailRows,
@@ -38,6 +34,7 @@ interface SettingsDraft {
   browserExecutable: string
   browserWindowWidth: number
   browserWindowHeight: number
+  browserWindowLayout: HotmailSettingsView['browserWindowLayout']
   oauthClientId: string
   oauthTenant: string
   proxyMode: EmailProxyMode
@@ -63,6 +60,7 @@ function settingsDraft(settings: HotmailSettingsView): SettingsDraft {
     browserExecutable: settings.browserExecutable,
     browserWindowWidth: settings.browserWindowWidth,
     browserWindowHeight: settings.browserWindowHeight,
+    browserWindowLayout: { ...settings.browserWindowLayout },
     oauthClientId: settings.oauthClientId,
     oauthTenant: settings.oauthTenant,
     proxyMode: settings.proxyMode,
@@ -297,8 +295,8 @@ export function HotmailAuto() {
   const checkMail = (accountIds?: number[]) => runAction('check', async () => resultSummary(await window.pageAuto.checkHotmail({ accountIds: accountIds ?? requireSelection() })))
   const openMail = (accountIds?: number[]) => runAction('open', async () => {
     const ids = accountIds ?? requireSelection()
-    const results = await runEmailOpenBatch(ids, openConcurrency, (accountId) => window.pageAuto.openHotmail({ accountId }))
-    return openSummary(results)
+    const result = await window.pageAutoEmailBrowser.openBatch({ accountIds: ids, concurrency: openConcurrency })
+    return openSummary(result.results)
   })
 
   const runRecovery = (operation: HotmailRecoveryOperation, confirmCompleted = false) => runAction('recovery', async () => {
@@ -383,6 +381,7 @@ export function HotmailAuto() {
       browserExecutable: draft.browserExecutable,
       browserWindowWidth: draft.browserWindowWidth,
       browserWindowHeight: draft.browserWindowHeight,
+      browserWindowLayout: draft.browserWindowLayout,
       oauthClientId: draft.oauthClientId,
       oauthTenant: draft.oauthTenant,
       proxyMode: draft.proxyMode,
@@ -392,7 +391,7 @@ export function HotmailAuto() {
     setSettings(saved)
     setDraft(settingsDraft(saved))
     setProxyDirty(false)
-    return 'Đã lưu cài đặt Email.'
+    return 'Đã lưu cài đặt Email và áp dụng layout Chrome Email.'
   }, 'settings')
 
   const copyEmails = (accountIds?: number[]) => runAction('copy', async () => {
@@ -535,10 +534,16 @@ export function HotmailAuto() {
       {panel === 'settings' ? <div className="email-panel-content settings-panel">{draft ? <>
         <section className="email-settings-card"><div className="email-settings-heading"><div><span>PROFILE EMAIL</span><h3>Profile và trình duyệt</h3></div><span className="email-settings-badge">Tách riêng Facebook</span></div><div className="email-settings-grid">
           <label className="wide"><span>Thư mục profile Email</span><div className="input-action"><input value={draft.profileRoot} onChange={(event: ChangeEvent<HTMLInputElement>) => setDraft({ ...draft, profileRoot: event.target.value })} placeholder="F:\\...\\profiles" /><button className="email-button secondary" onClick={() => void pickProfileRoot()}>Chọn thư mục</button></div><small>Mỗi UID dùng đúng root\UID. Không fallback profile Facebook.</small></label>
-          <label className="wide"><span>Trình duyệt Email</span><div className="input-action"><input value={draft.browserExecutable} onChange={(event: ChangeEvent<HTMLInputElement>) => setDraft({ ...draft, browserExecutable: event.target.value })} placeholder="Để trống = Tự động" /><button className="email-button secondary" onClick={() => void pickBrowser()}>Chọn file</button></div></label>
-          <label><span>Rộng Chrome Email</span><input type="number" min={MIN_EMAIL_BROWSER_WINDOW_WIDTH} max={MAX_EMAIL_BROWSER_WINDOW_WIDTH} value={draft.browserWindowWidth} onChange={(event: ChangeEvent<HTMLInputElement>) => setDraft({ ...draft, browserWindowWidth: Number(event.target.value) })} /><small>Chỉ áp dụng browser Email.</small></label>
-          <label><span>Cao Chrome Email</span><input type="number" min={MIN_EMAIL_BROWSER_WINDOW_HEIGHT} max={MAX_EMAIL_BROWSER_WINDOW_HEIGHT} value={draft.browserWindowHeight} onChange={(event: ChangeEvent<HTMLInputElement>) => setDraft({ ...draft, browserWindowHeight: Number(event.target.value) })} /><small>Facebook giữ size riêng.</small></label>
+          <label className="wide"><span>Trình duyệt Email</span><div className="input-action"><input value={draft.browserExecutable} onChange={(event: ChangeEvent<HTMLInputElement>) => setDraft({ ...draft, browserExecutable: event.target.value })} placeholder="Để trống = Tự động" /><button className="email-button secondary" onClick={() => void pickBrowser()}>Chọn file</button></div><small>Kích thước/xếp cửa sổ dùng Compact Email bên dưới, cùng engine Facebook.</small></label>
         </div></section>
+        <EmailBrowserCompactControls
+          layout={draft.browserWindowLayout}
+          browserWindowWidth={draft.browserWindowWidth}
+          browserWindowHeight={draft.browserWindowHeight}
+          disabled={isBusy('save')}
+          onChange={(browserWindowLayout) => setDraft({ ...draft, browserWindowLayout })}
+          onMessage={setMessage}
+        />
         <section className="email-settings-card"><div className="email-settings-heading"><div><span>MẠNG EMAIL</span><h3>IPv4 / Proxy riêng</h3></div><span className="email-settings-badge">Không dùng proxy Facebook</span></div><div className="email-settings-grid">
           <label><span>Chế độ</span><select value={draft.proxyMode} onChange={(event: ChangeEvent<HTMLSelectElement>) => setDraft({ ...draft, proxyMode: event.target.value as EmailProxyMode })}><option value="direct">Trực tiếp</option><option value="random_ipv4">IPv4 ngẫu nhiên</option></select></label><label><span>Pool hiện tại</span><input value={`${settings?.proxyCount ?? 0} proxy`} readOnly /></label>
           <label className="wide"><span>Danh sách proxy IPv4</span><textarea value={draft.proxyListText} onChange={(event: ChangeEvent<HTMLTextAreaElement>) => { setDraft({ ...draft, proxyListText: event.target.value }); setProxyDirty(true) }} placeholder={'Mỗi dòng một proxy\nKhông sửa = giữ pool hiện tại'} /></label>
