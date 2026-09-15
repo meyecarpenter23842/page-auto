@@ -112,6 +112,16 @@ export interface ScanDatasetDetails extends ScanDatasetSummary {
 
 export interface ScanDatasetIdPayload { datasetId: number }
 
+export interface ExportScanDatasetCsvInput {
+  datasetId: number
+}
+
+export interface ExportScanDatasetCsvResult {
+  canceled: boolean
+  filePath: string | null
+  recordCount: number
+}
+
 export const SCANNER_IPC = {
   startJob: 'scanner:job:start',
   getJob: 'scanner:job:get',
@@ -120,7 +130,8 @@ export const SCANNER_IPC = {
   stopJob: 'scanner:job:stop',
   listDatasets: 'scanner:dataset:list',
   getDataset: 'scanner:dataset:get',
-  saveDataset: 'scanner:dataset:save'
+  saveDataset: 'scanner:dataset:save',
+  exportDatasetCsv: 'scanner:dataset:export-csv'
 } as const
 
 export function datasetTypeForScanType(scanType: ScanType): ScanDatasetType {

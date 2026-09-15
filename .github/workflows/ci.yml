@@ -80,6 +80,17 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Scanner UI smoke
+        run: node apps/desktop/scripts/scanner-ui-smoke.mjs
+
+      - name: Upload Scanner UI evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: PageAuto-scanner-ui-${{ github.sha }}
+          path: dist/scanner-ui-smoke.png
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Verify Windows installer configuration
         run: npm run verify:installer-config
 
