@@ -7,6 +7,7 @@ import {
   MIN_EMAIL_BROWSER_WINDOW_WIDTH,
   type EmailProxyMode,
   type HotmailBatchResult,
+  type HotmailBrowserOpenResult,
   type HotmailDashboardRow,
   type HotmailOAuthStartResult,
   type HotmailPasswordBatchResult,
@@ -18,6 +19,7 @@ import {
 } from '../../../shared/hotmail'
 import { AccountSelectionMenu } from '../accounts/AccountSelectionMenu'
 import { useExcelRowRange } from '../accounts/accountTableSelection'
+import { runEmailOpenBatch } from './emailOpenBatch'
 import {
   EMAIL_CATEGORY_ALL,
   filterHotmailRows,
@@ -29,6 +31,7 @@ import {
 import { HotmailComboPanel } from './HotmailComboPanel'
 import './hotmailAuto.css'
 import './hotmailCanonicalGrid.css'
+import './hotmailCompactUx.css'
 
 interface SettingsDraft {
   profileRoot: string
@@ -52,6 +55,7 @@ const QUICK_FILTERS: Array<{ id: EmailQuickFilter; label: string }> = [
   { id: 'oauth_missing', label: 'Thiếu OAuth' },
   { id: 'recovery', label: 'Có mail khôi phục' }
 ]
+const EMAIL_OPEN_CONCURRENCY_OPTIONS = [1, 2, 3, 5, 10, 20] as const
 
 function settingsDraft(settings: HotmailSettingsView): SettingsDraft {
   return {
@@ -124,6 +128,13 @@ function resultSummary(result: HotmailBatchResult): string {
   return `Hoàn tất ${result.results.length} tài khoản · ${success} thành công · ${failed} lỗi${detail ? ` · ${detail}` : ''}.`
 }
 
+function openSummary(results: HotmailBrowserOpenResult[]): string {
+  const opened = results.filter((item) => item.status === 'started' || item.status === 'already_open' || item.status === 'needs_attention').length
+  const failed = results.length - opened
+  const detail = results.find((item) => item.status !== 'started' && item.status !== 'already_open' && item.status !== 'needs_attention')?.message
+  return `Mở ${results.length} tài khoản · ${opened} phiên sẵn sàng · ${failed} lỗi${detail ? ` · ${detail}` : ''}.`
+}
+
 function recoverySummary(result: HotmailRecoveryBatchResult): string {
   const success = result.results.filter((item) => item.status === 'success').length
   const attention = result.results.filter((item) => item.status === 'needs_attention').length
@@ -159,6 +170,7 @@ export function HotmailAuto() {
   const [query, setQuery] = useState('')
   const [quickFilter, setQuickFilter] = useState<EmailQuickFilter>('all')
   const [categoryFilter, setCategoryFilter] = useState<EmailCategoryFilter>(EMAIL_CATEGORY_ALL)
+  const [openConcurrency, setOpenConcurrency] = useState(1)
   const [recoveryEmail, setRecoveryEmail] = useState('')
   const [recoveryOperation, setRecoveryOperation] = useState<HotmailRecoveryOperation>('add')
   const [recoveryAwaitingConfirmation, setRecoveryAwaitingConfirmation] = useState(false)
@@ -284,9 +296,9 @@ export function HotmailAuto() {
   const getCodes = (accountIds?: number[]) => runAction('codes', async () => resultSummary(await window.pageAuto.getHotmailCodes({ accountIds: accountIds ?? requireSelection() })))
   const checkMail = (accountIds?: number[]) => runAction('check', async () => resultSummary(await window.pageAuto.checkHotmail({ accountIds: accountIds ?? requireSelection() })))
   const openMail = (accountIds?: number[]) => runAction('open', async () => {
-    const messages: string[] = []
-    for (const accountId of accountIds ?? requireSelection()) messages.push((await window.pageAuto.openHotmail({ accountId })).message)
-    return messages.join(' · ')
+    const ids = accountIds ?? requireSelection()
+    const results = await runEmailOpenBatch(ids, openConcurrency, (accountId) => window.pageAuto.openHotmail({ accountId }))
+    return openSummary(results)
   })
 
   const runRecovery = (operation: HotmailRecoveryOperation, confirmCompleted = false) => runAction('recovery', async () => {
@@ -408,6 +420,7 @@ export function HotmailAuto() {
     <header className="email-commandbar">
       <div className="email-command-primary">
         <button className="email-button primary" disabled={isBusy('open')} onClick={() => void openMail()}>{isBusy('open') && <Spinner />}Mở mail</button>
+        <label className="email-open-concurrency" title="Số tài khoản Email gửi lệnh mở cùng lúc. Browser Launch Gate toàn app vẫn giữ khoảng cách launch."><span>Mở đồng thời</span><select value={openConcurrency} disabled={isBusy('open')} onChange={(event: ChangeEvent<HTMLSelectElement>) => setOpenConcurrency(Number(event.target.value))}>{EMAIL_OPEN_CONCURRENCY_OPTIONS.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
         <button className="email-button success" disabled={isBusy('codes')} onClick={() => void getCodes()}>{isBusy('codes') && <Spinner />}Lấy mã</button>
         <button className="email-button primary" disabled={isBusy('check')} onClick={() => void checkMail()}>{isBusy('check') && <Spinner />}Check Live Mail</button>
         <button className="email-button secondary" disabled={isBusy('oauth') || selectedRows.length !== 1} onClick={() => void connectMailbox()}>{isBusy('oauth') && <Spinner />}Lấy / cập nhật OAuth</button>
@@ -455,7 +468,7 @@ export function HotmailAuto() {
         const ranged = excelRange.rangeIds.has(row.accountId)
         return <tr
           key={row.accountId}
-          className={`${checked ? 'checked-row ' : ''}${ranged ? 'range-row' : ''}`.trim()}
+          className={`${checked ? 'checked-row ' : ''}${ranged ? 'range-row ' : ''}`.trim()}
           onPointerDown={(event) => excelRange.onRowPointerDown(event, row.accountId)}
           onPointerEnter={() => excelRange.onRowPointerEnter(row.accountId)}
           onDoubleClick={() => void openMail([row.accountId])}
@@ -544,6 +557,8 @@ export function HotmailAuto() {
       onCheckRange={selectRange}
       onCheckAll={selectAllVisible}
       onClearChecked={clearSelection}
+      onDismiss={() => setContextMenu(null)}
+      className="email-account-context-menu"
     >
       <div className="email-context-title"><strong>{contextIds.length} tài khoản đã tích</strong><span className="email-context-identity">{contextRow?.accountName ?? contextRow?.uid ?? 'Tài khoản'} · {contextRow?.accountCategory?.trim() || 'Chưa gán nhóm'}</span></div>
       <button disabled={contextIds.length === 0} onClick={() => { setContextMenu(null); void openMail(contextIds) }}>Mở mail</button>
