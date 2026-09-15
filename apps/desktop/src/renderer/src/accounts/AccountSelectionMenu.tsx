@@ -5,6 +5,7 @@ import {
   useState,
   type ReactNode
 } from 'react'
+import { createPortal } from 'react-dom'
 import { clampContextMenuPoint } from './accountTableSelection'
 
 interface AccountSelectionMenuProps {
@@ -17,6 +18,7 @@ interface AccountSelectionMenuProps {
   onCheckAll: () => void
   onClearChecked: () => void
   onDismiss?: () => void
+  className?: string
   children?: ReactNode
 }
 
@@ -30,6 +32,7 @@ export function AccountSelectionMenu({
   onCheckAll,
   onClearChecked,
   onDismiss,
+  className,
   children
 }: AccountSelectionMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null)
@@ -67,10 +70,10 @@ export function AccountSelectionMenu({
     }
   }, [onDismiss])
 
-  return (
+  const menu = (
     <div
       ref={menuRef}
-      className="account-selection-menu"
+      className={`account-selection-menu${className ? ` ${className}` : ''}`}
       style={{ left: position.x, top: position.y }}
       onPointerDown={(event) => event.stopPropagation()}
       onMouseDown={(event) => event.stopPropagation()}
@@ -92,4 +95,6 @@ export function AccountSelectionMenu({
       <button type="button" disabled={checkedCount === 0} onClick={onClearChecked}>Bỏ chọn tất cả</button>
     </div>
   )
+
+  return createPortal(menu, document.body)
 }

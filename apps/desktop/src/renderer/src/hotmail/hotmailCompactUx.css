@@ -1,0 +1,184 @@
+.email-shell { gap:4px; }
+
+.email-commandbar {
+  gap:6px;
+  padding:4px 6px;
+  border-radius:8px;
+}
+.email-command-primary,.email-command-secondary { gap:4px; }
+.email-button {
+  min-height:27px;
+  padding:3px 8px;
+  border-radius:6px;
+  font-size:10.5px;
+  box-shadow:none;
+}
+.email-icon-button { width:27px; height:27px; border-radius:6px; font-size:16px; }
+.email-open-concurrency {
+  display:inline-flex;
+  align-items:center;
+  gap:5px;
+  min-height:27px;
+  padding:0 6px;
+  border:1px solid #d6e0e8;
+  border-radius:6px;
+  background:#fff;
+  color:#667085;
+  font-size:9.5px;
+  font-weight:700;
+  white-space:nowrap;
+}
+.email-open-concurrency select {
+  height:23px;
+  min-width:45px;
+  padding:0 3px;
+  border:0;
+  outline:0;
+  background:transparent;
+  color:#344054;
+  font:inherit;
+  font-size:10.5px;
+  font-weight:800;
+}
+
+.email-grid-tools {
+  gap:5px;
+  padding:4px 6px;
+  border-radius:8px;
+}
+.email-search-box { height:27px; padding:0 7px; border-radius:6px; }
+.email-category-filter { height:27px; border-radius:6px; }
+.email-filter-pills { gap:3px; }
+.email-filter-pills button { min-height:23px; padding:2px 7px; }
+.email-grid-meta { gap:6px; }
+
+.email-health-strip {
+  display:flex;
+  align-items:center;
+  gap:0;
+  min-height:24px;
+  padding:0 4px;
+  border:1px solid #e2e8f0;
+  border-radius:7px;
+  background:#f8fafc;
+  overflow:hidden;
+}
+.email-health-strip > div,
+.email-health-strip .network-health {
+  flex:0 1 auto;
+  display:flex;
+  align-items:center;
+  gap:5px;
+  min-width:0;
+  padding:2px 10px;
+  border:0;
+  border-right:1px solid #e2e8f0;
+  border-radius:0;
+  background:transparent;
+}
+.email-health-strip > div:last-child { border-right:0; }
+.email-health-strip span {
+  display:inline;
+  font-size:8px;
+  letter-spacing:.03em;
+  white-space:nowrap;
+}
+.email-health-strip strong {
+  display:inline;
+  margin:0;
+  font-size:10px;
+}
+
+.email-connect-banner,.email-status-line {
+  min-height:24px;
+  padding:3px 6px;
+  border-radius:6px;
+  font-size:10.5px;
+}
+.email-status-dot { width:5px; height:5px; flex-basis:5px; box-shadow:none; }
+.email-selection-footer { min-height:20px; }
+
+/* Match Account Manager: status is color + a small dot, never a filled pill. */
+.email-chip,.recovery-chip {
+  display:inline-flex;
+  align-items:center;
+  gap:4px;
+  min-height:0;
+  padding:0;
+  border-radius:0;
+  background:transparent !important;
+  color:#667085;
+  font-size:9.5px;
+  font-weight:700;
+}
+.email-chip::before,.recovery-chip::before {
+  content:'';
+  width:5px;
+  height:5px;
+  flex:0 0 5px;
+  border-radius:50%;
+  background:currentColor;
+}
+.email-chip.valid,.email-chip.ready,.email-chip.available,.email-chip.running,.email-chip.idle { color:#067647; }
+.email-chip.pending,.email-chip.connecting,.email-chip.reading,.email-chip.opening,
+.email-chip.needs_login,.email-chip.needs_attention,.email-chip.in_use,
+.email-chip.two_factor_required,.email-chip.email_code_required { color:#b54708; }
+.email-chip.error,.email-chip.expired,.email-chip.missing,.email-chip.login_failed,
+.email-chip.disabled,.email-chip.locked,.email-chip.two_factor_failed,
+.email-chip.identity_verification_required,.email-chip.security_review_required,
+.email-chip[class*='checkpoint_'] { color:#b42318; }
+.email-chip.not_configured,.email-chip.unknown { color:#667085; }
+.recovery-chip.temporary { color:#b54708; }
+.recovery-chip.standard { color:#175cd3; }
+.recovery-chip.unknown { color:#667085; }
+
+.email-context-title { padding:3px 6px 5px; }
+.email-account-context-menu { max-height:calc(100vh - 16px); overflow-y:auto; }
+.email-account-context-menu button { min-height:25px; padding:4px 7px; }
+
+html[data-theme='dark'] .email-open-concurrency {
+  border-color:var(--pa-dark-border-strong);
+  background:var(--pa-dark-surface-2);
+  color:var(--pa-dark-muted);
+}
+html[data-theme='dark'] .email-open-concurrency select { color:var(--pa-dark-text-soft); }
+html[data-theme='dark'] .email-health-strip {
+  border-color:var(--pa-dark-border);
+  background:var(--pa-dark-surface-2);
+}
+html[data-theme='dark'] .email-health-strip > div,
+html[data-theme='dark'] .email-health-strip .network-health { border-color:var(--pa-dark-border); }
+html[data-theme='dark'] .email-chip.valid,
+html[data-theme='dark'] .email-chip.ready,
+html[data-theme='dark'] .email-chip.available,
+html[data-theme='dark'] .email-chip.running,
+html[data-theme='dark'] .email-chip.idle { color:#6ce9a6; }
+html[data-theme='dark'] .email-chip.pending,
+html[data-theme='dark'] .email-chip.connecting,
+html[data-theme='dark'] .email-chip.reading,
+html[data-theme='dark'] .email-chip.opening,
+html[data-theme='dark'] .email-chip.needs_login,
+html[data-theme='dark'] .email-chip.needs_attention,
+html[data-theme='dark'] .email-chip.in_use,
+html[data-theme='dark'] .email-chip.two_factor_required,
+html[data-theme='dark'] .email-chip.email_code_required { color:#fdb022; }
+html[data-theme='dark'] .email-chip.error,
+html[data-theme='dark'] .email-chip.expired,
+html[data-theme='dark'] .email-chip.missing,
+html[data-theme='dark'] .email-chip.login_failed,
+html[data-theme='dark'] .email-chip.disabled,
+html[data-theme='dark'] .email-chip.locked,
+html[data-theme='dark'] .email-chip.two_factor_failed,
+html[data-theme='dark'] .email-chip.identity_verification_required,
+html[data-theme='dark'] .email-chip.security_review_required,
+html[data-theme='dark'] .email-chip[class*='checkpoint_'] { color:#f97066; }
+html[data-theme='dark'] .email-chip.not_configured,
+html[data-theme='dark'] .email-chip.unknown,
+html[data-theme='dark'] .recovery-chip.unknown { color:#98a2b3; }
+html[data-theme='dark'] .recovery-chip.temporary { color:#fdb022; }
+html[data-theme='dark'] .recovery-chip.standard { color:#53b1fd; }
+
+@media (max-width:1320px) {
+  .email-health-strip { flex-wrap:wrap; }
+  .email-health-strip > div,.email-health-strip .network-health { flex:1 1 auto; }
+}
