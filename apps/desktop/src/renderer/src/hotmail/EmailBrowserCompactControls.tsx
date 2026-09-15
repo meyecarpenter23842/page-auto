@@ -44,10 +44,13 @@ export function EmailBrowserCompactControls({
       .catch(() => setDisplays([]))
   }, [])
 
+  // Older Email builds stored the visible outer window in these two fields. Compact
+  // Auto Fit needs a desktop-width logical baseline like Facebook, so migration must
+  // not shrink the logical surface below the canonical 1280×800 baseline.
   const browser = useMemo(() => ({
     ...DEFAULT_APP_SETTINGS.browser,
-    windowWidth: browserWindowWidth,
-    windowHeight: browserWindowHeight
+    windowWidth: Math.max(DEFAULT_APP_SETTINGS.browser.windowWidth, browserWindowWidth),
+    windowHeight: Math.max(DEFAULT_APP_SETTINGS.browser.windowHeight, browserWindowHeight)
   }), [browserWindowHeight, browserWindowWidth])
 
   const selectedDisplay = useMemo(() => {
