@@ -8,6 +8,7 @@ import type {
   HotmailAccountPayload,
   HotmailBatchPayload,
   HotmailBatchResult,
+  HotmailOpenBatchPayload,
   HotmailPasswordActionPayload,
   HotmailRecoveryActionPayload
 } from '../shared/hotmail'
@@ -18,6 +19,7 @@ import { createCanonicalEmailCodeRuntime } from './email/canonicalEmailCodeProvi
 import { syncEmailBrowserWindowEnvironment } from './email/emailBrowserLifecycle'
 import { emailBrowserExecutableCandidates } from './email/emailBrowserExecutable'
 import { EmailCommonRuntime } from './email/emailCommonRuntime'
+import { runHotmailOpenBatch } from './email/emailOpenBatch'
 import { HotmailComboService } from './email/hotmailComboService'
 import { testEmailBrowserExecutable } from './email/emailProxyTester'
 import { ElectronEmailSecretCipher } from './email/emailSecretStore'
@@ -189,6 +191,16 @@ export function registerHotmailIpcHandlers(database: Database.Database): Hotmail
   ipcMain.handle(IPC_CHANNELS.hotmailOpen, (_event, payload: HotmailAccountPayload) => {
     assertOAuthIdle([payload.accountId])
     return service.openMail(payload.accountId)
+  })
+  ipcMain.handle(IPC_CHANNELS.hotmailOpenBatch, async (_event, payload: HotmailOpenBatchPayload) => {
+    const accountIds = uniqueAccountIds(payload)
+    assertOAuthIdle(accountIds)
+    const results = await runHotmailOpenBatch(
+      accountIds,
+      payload.concurrency,
+      (accountId) => service.openMail(accountId)
+    )
+    return { results }
   })
 
   ipcMain.handle(IPC_CHANNELS.hotmailRecoveryAction, async (_event, payload: HotmailRecoveryActionPayload) => {
