@@ -13,6 +13,7 @@ export default defineConfig({
           'browser-test-worker': resolve('src/main/browser/browser-test-worker.ts'),
           'posting-worker': resolve('src/main/browser/posting-worker.ts'),
           'scenario-action-worker': resolve('src/main/browser/scenario-action-worker.ts'),
+          'scanner-group-worker': resolve('src/main/browser/scanner-group-worker.ts'),
           'change-info-audit-worker': resolve('src/main/browser/change-info-audit-worker.ts'),
           'email-browser-worker': resolve('src/main/email/email-browser-worker.ts'),
           'primary-mailbox-browser-worker': resolve('src/main/email/primary-mailbox-browser-worker.ts'),

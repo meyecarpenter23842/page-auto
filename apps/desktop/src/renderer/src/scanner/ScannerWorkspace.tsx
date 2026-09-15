@@ -9,7 +9,7 @@ import type {
 import './scanner.css'
 
 const TABS: Array<{ id: ScanType; label: string; hint: string }> = [
-  { id: 'group', label: 'Quét Nhóm', hint: 'Từ khóa, Group UID hoặc danh sách Group' },
+  { id: 'group', label: 'Quét Nhóm', hint: 'Từ khóa, Group UID/URL hoặc nhiều UID/URL (mỗi dòng một Group)' },
   { id: 'page', label: 'Quét Page', hint: 'Từ khóa, Page UID hoặc URL Page' },
   { id: 'user', label: 'Quét Người dùng', hint: 'UID hoặc URL Profile' },
   { id: 'group_members', label: 'Thành viên nhóm', hint: 'Group UID hoặc nguồn Group Dataset' }
@@ -96,6 +96,7 @@ export function ScannerWorkspace() {
   const [query, setQuery] = useState('')
   const [limit, setLimit] = useState(100)
   const [membersMin, setMembersMin] = useState(0)
+  const [membersMax, setMembersMax] = useState(0)
   const [privacy, setPrivacy] = useState('all')
   const [location, setLocation] = useState('')
   const [job, setJob] = useState<ScanJobDetails | null>(null)
@@ -103,6 +104,7 @@ export function ScannerWorkspace() {
   const [notice, setNotice] = useState<string | null>(null)
   const [datasetName, setDatasetName] = useState(defaultDatasetName('group'))
   const [datasetCount, setDatasetCount] = useState(0)
+  const [lastDatasetId, setLastDatasetId] = useState<number | null>(null)
 
   const activeTab = useMemo(() => TABS.find((tab) => tab.id === activeType) ?? TABS[0]!, [activeType])
   const columns = COLUMNS[activeType]
@@ -115,6 +117,7 @@ export function ScannerWorkspace() {
       setAccounts(nextAccounts)
       setAccountId((current) => current ?? nextAccounts[0]?.id ?? null)
       setDatasetCount(datasets.length)
+      setLastDatasetId(datasets[0]?.id ?? null)
     }).catch((error) => setNotice(error instanceof Error ? error.message : String(error)))
   }, [])
 
@@ -135,11 +138,20 @@ export function ScannerWorkspace() {
   }, [job?.id, job?.status])
 
   const buildFilters = (): ScanFieldMap => activeType === 'group'
-    ? { membersMin, privacy, location: location.trim() || null }
+    ? {
+        membersMin,
+        membersMax,
+        privacy,
+        location: location.trim() || null
+      }
     : {}
 
   const start = async () => {
     if (busy) return
+    if (activeType === 'group' && accountId === null) {
+      setNotice('Quét Nhóm production cần chọn một Account Page-Auto.')
+      return
+    }
     setBusy(true)
     setNotice(null)
     try {
@@ -178,6 +190,7 @@ export function ScannerWorkspace() {
       const created = await window.pageAutoScanner.saveDataset({ jobId: job.id, name: datasetName })
       const datasets = await window.pageAutoScanner.listDatasets()
       setDatasetCount(datasets.length)
+      setLastDatasetId(created.id)
       setNotice(`Đã lưu Dataset “${created.name}” với ${created.recordCount} record.`)
     } catch (error) {
       setNotice(error instanceof Error ? error.message : String(error))
@@ -186,8 +199,21 @@ export function ScannerWorkspace() {
     }
   }
 
+  const exportCsv = async () => {
+    if (lastDatasetId === null || busy) return
+    setBusy(true)
+    try {
+      const result = await window.pageAutoScanner.exportDatasetCsv({ datasetId: lastDatasetId })
+      if (!result.canceled) setNotice(`Đã xuất CSV ${result.recordCount} record${result.filePath ? ` · ${result.filePath}` : ''}.`)
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
-    <section className="scanner-shell">
+    <section className="scanner-shell" data-testid="scanner-workspace">
       <div className="scanner-tabs" role="tablist" aria-label="Loại dữ liệu quét">
         {TABS.map((tab) => (
           <button
@@ -205,18 +231,18 @@ export function ScannerWorkspace() {
         <div>
           <span className="scanner-section-kicker">NGUỒN QUÉT DÙNG CHUNG</span>
           <strong>Account / session Page-Auto</strong>
-          <small>Batch 1 dùng canonical Account. Access Token sẽ được harden ở Batch 3.</small>
+          <small>{activeType === 'group' ? 'Quét Nhóm chạy production qua Facebook Common Runtime; không có login/browser riêng.' : 'Adapter nghiệp vụ này vẫn ở foundation cho tới batch production riêng.'}</small>
         </div>
         <label>
           Account
           <select value={accountId ?? ''} onChange={(event) => setAccountId(event.currentTarget.value ? Number(event.currentTarget.value) : null)}>
-            <option value="">Không chọn · mock foundation</option>
+            <option value="">Không chọn</option>
             {accounts.map((account) => <option key={account.id} value={account.id}>{account.uid} · {account.name ?? account.username ?? 'Chưa có tên'}</option>)}
           </select>
         </label>
         <label className="scanner-token-disabled">
           Access Token
-          <input value="Batch 3 · chưa bật" disabled readOnly />
+          <input value="Chưa có production path được hỗ trợ" disabled readOnly />
         </label>
       </div>
 
@@ -237,9 +263,11 @@ export function ScannerWorkspace() {
           <span className="scanner-section-kicker">BỘ LỌC</span>
           {activeType === 'group' ? <>
             <label>Members tối thiểu<input type="number" min={0} value={membersMin} onChange={(event) => setMembersMin(Math.max(0, Number(event.currentTarget.value) || 0))} /></label>
+            <label>Members tối đa<input type="number" min={0} value={membersMax} onChange={(event) => setMembersMax(Math.max(0, Number(event.currentTarget.value) || 0))} /></label>
             <label>Privacy<select value={privacy} onChange={(event) => setPrivacy(event.currentTarget.value)}><option value="all">Tất cả</option><option value="public">Public</option><option value="private">Private</option></select></label>
             <label>Location<input value={location} onChange={(event) => setLocation(event.currentTarget.value)} placeholder="Tất cả" /></label>
-          </> : <p className="scanner-placeholder-copy">Filter riêng của {activeTab.label} sẽ được mở khi adapter production của nghiệp vụ đó được audit. Batch 1 chỉ khóa common framework.</p>}
+            <p className="scanner-placeholder-copy">Members / Privacy / Location là filter client-side trên metadata/text Facebook đã tải; không giả là filter server-side.</p>
+          </> : <p className="scanner-placeholder-copy">Filter riêng của {activeTab.label} sẽ được mở khi adapter production của nghiệp vụ đó được audit. Foundation hiện chỉ giữ common framework.</p>}
         </div>
       </div>
 
@@ -253,7 +281,7 @@ export function ScannerWorkspace() {
             <thead><tr>{columns.map((column) => <th key={column.key}>{column.label}</th>)}</tr></thead>
             <tbody>
               {job?.results.map((result) => <tr key={result.id}>{columns.map((column) => <td key={column.key}>{resultValue(result, column.key)}</td>)}</tr>)}
-              {!job?.results.length ? <tr><td colSpan={columns.length} className="scanner-empty">Chưa có kết quả. Adapter hiện tại là mock/test foundation; chưa chạy selector Facebook production.</td></tr> : null}
+              {!job?.results.length ? <tr><td colSpan={columns.length} className="scanner-empty">{activeType === 'group' ? 'Chưa có kết quả Quét Nhóm.' : `Chưa có kết quả. ${activeTab.label} vẫn dùng adapter foundation cho tới batch production riêng.`}</td></tr> : null}
             </tbody>
           </table>
         </div>
@@ -261,7 +289,7 @@ export function ScannerWorkspace() {
 
       <div className="scanner-footer">
         <div className="scanner-actions">
-          <button className="button primary" type="button" disabled={busy || Boolean(job && !terminal(job))} onClick={() => void start()}>Bắt đầu</button>
+          <button className="button primary" type="button" disabled={busy || Boolean(job && !terminal(job)) || (activeType === 'group' && accountId === null)} onClick={() => void start()}>Bắt đầu</button>
           <button className="button secondary" type="button" disabled={busy || job?.status !== 'running'} onClick={() => void runCommand('pauseJob')}>Pause</button>
           <button className="button secondary" type="button" disabled={busy || job?.status !== 'paused'} onClick={() => void runCommand('resumeJob')}>Resume</button>
           <button className="button secondary" type="button" disabled={busy || !job || terminal(job)} onClick={() => void runCommand('stopJob')}>Dừng</button>
@@ -270,6 +298,7 @@ export function ScannerWorkspace() {
           <span>{datasetCount} Dataset đã lưu</span>
           <input value={datasetName} onChange={(event) => setDatasetName(event.currentTarget.value)} aria-label="Tên Dataset" />
           <button className="button secondary" type="button" disabled={busy || !job?.results.length} onClick={() => void saveDataset()}>Lưu Dataset</button>
+          <button className="button secondary" type="button" disabled={busy || lastDatasetId === null} onClick={() => void exportCsv()}>Xuất CSV</button>
         </div>
       </div>
 

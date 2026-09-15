@@ -1,6 +1,8 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import {
   SCANNER_IPC,
+  type ExportScanDatasetCsvInput,
+  type ExportScanDatasetCsvResult,
   type SaveScanDatasetInput,
   type ScanDatasetDetails,
   type ScanDatasetIdPayload,
@@ -18,7 +20,8 @@ const api = {
   stopJob: (payload: ScanJobIdPayload): Promise<ScanJobDetails | null> => ipcRenderer.invoke(SCANNER_IPC.stopJob, payload) as Promise<ScanJobDetails | null>,
   listDatasets: (): Promise<ScanDatasetSummary[]> => ipcRenderer.invoke(SCANNER_IPC.listDatasets) as Promise<ScanDatasetSummary[]>,
   getDataset: (payload: ScanDatasetIdPayload): Promise<ScanDatasetDetails | null> => ipcRenderer.invoke(SCANNER_IPC.getDataset, payload) as Promise<ScanDatasetDetails | null>,
-  saveDataset: (input: SaveScanDatasetInput): Promise<ScanDatasetDetails> => ipcRenderer.invoke(SCANNER_IPC.saveDataset, input) as Promise<ScanDatasetDetails>
+  saveDataset: (input: SaveScanDatasetInput): Promise<ScanDatasetDetails> => ipcRenderer.invoke(SCANNER_IPC.saveDataset, input) as Promise<ScanDatasetDetails>,
+  exportDatasetCsv: (input: ExportScanDatasetCsvInput): Promise<ExportScanDatasetCsvResult> => ipcRenderer.invoke(SCANNER_IPC.exportDatasetCsv, input) as Promise<ExportScanDatasetCsvResult>
 }
 
 contextBridge.exposeInMainWorld('pageAutoScanner', api)
