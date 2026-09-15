@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import {
   SCANNER_IPC,
+  type CreateScannerTokenCredentialInput,
   type ExportScanDatasetCsvInput,
   type ExportScanDatasetCsvResult,
   type SaveScanDatasetInput,
@@ -9,6 +10,9 @@ import {
   type ScanDatasetSummary,
   type ScanJobDetails,
   type ScanJobIdPayload,
+  type ScannerSourceCapabilities,
+  type ScannerTokenCredentialIdPayload,
+  type ScannerTokenCredentialSummary,
   type StartScanJobInput
 } from '../shared/scanner'
 
@@ -21,7 +25,11 @@ const api = {
   listDatasets: (): Promise<ScanDatasetSummary[]> => ipcRenderer.invoke(SCANNER_IPC.listDatasets) as Promise<ScanDatasetSummary[]>,
   getDataset: (payload: ScanDatasetIdPayload): Promise<ScanDatasetDetails | null> => ipcRenderer.invoke(SCANNER_IPC.getDataset, payload) as Promise<ScanDatasetDetails | null>,
   saveDataset: (input: SaveScanDatasetInput): Promise<ScanDatasetDetails> => ipcRenderer.invoke(SCANNER_IPC.saveDataset, input) as Promise<ScanDatasetDetails>,
-  exportDatasetCsv: (input: ExportScanDatasetCsvInput): Promise<ExportScanDatasetCsvResult> => ipcRenderer.invoke(SCANNER_IPC.exportDatasetCsv, input) as Promise<ExportScanDatasetCsvResult>
+  exportDatasetCsv: (input: ExportScanDatasetCsvInput): Promise<ExportScanDatasetCsvResult> => ipcRenderer.invoke(SCANNER_IPC.exportDatasetCsv, input) as Promise<ExportScanDatasetCsvResult>,
+  getSourceCapabilities: (): Promise<ScannerSourceCapabilities> => ipcRenderer.invoke(SCANNER_IPC.getSourceCapabilities) as Promise<ScannerSourceCapabilities>,
+  listTokenCredentials: (): Promise<ScannerTokenCredentialSummary[]> => ipcRenderer.invoke(SCANNER_IPC.listTokenCredentials) as Promise<ScannerTokenCredentialSummary[]>,
+  createTokenCredential: (input: CreateScannerTokenCredentialInput): Promise<ScannerTokenCredentialSummary> => ipcRenderer.invoke(SCANNER_IPC.createTokenCredential, input) as Promise<ScannerTokenCredentialSummary>,
+  validateTokenCredential: (payload: ScannerTokenCredentialIdPayload): Promise<ScannerTokenCredentialSummary> => ipcRenderer.invoke(SCANNER_IPC.validateTokenCredential, payload) as Promise<ScannerTokenCredentialSummary>
 }
 
 contextBridge.exposeInMainWorld('pageAutoScanner', api)

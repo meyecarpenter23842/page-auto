@@ -122,6 +122,46 @@ export interface ExportScanDatasetCsvResult {
   recordCount: number
 }
 
+export const SCANNER_TOKEN_VALIDATION_STATES = [
+  'unverified',
+  'valid',
+  'expired',
+  'permission_limited',
+  'invalid',
+  'needs_reauth'
+] as const
+export type ScannerTokenValidationState = (typeof SCANNER_TOKEN_VALIDATION_STATES)[number]
+
+export interface ScannerTokenCredentialSummary {
+  id: string
+  label: string
+  maskedToken: string
+  fingerprint: string
+  validationState: ScannerTokenValidationState
+  validationMessage: string | null
+  subjectId: string | null
+  subjectName: string | null
+  validatedAt: number | null
+  createdAt: number
+  updatedAt: number
+}
+
+export interface CreateScannerTokenCredentialInput {
+  label: string
+  accessToken: string
+}
+
+export interface ScannerTokenCredentialIdPayload {
+  credentialId: string
+}
+
+export interface ScannerSourceCapabilities {
+  tokenStorageAvailable: boolean
+  tokenScanningSupported: boolean
+  autoAcquireTokenSupported: boolean
+  graphApiVersion: string
+}
+
 export const SCANNER_IPC = {
   startJob: 'scanner:job:start',
   getJob: 'scanner:job:get',
@@ -131,7 +171,11 @@ export const SCANNER_IPC = {
   listDatasets: 'scanner:dataset:list',
   getDataset: 'scanner:dataset:get',
   saveDataset: 'scanner:dataset:save',
-  exportDatasetCsv: 'scanner:dataset:export-csv'
+  exportDatasetCsv: 'scanner:dataset:export-csv',
+  getSourceCapabilities: 'scanner:source:capabilities',
+  listTokenCredentials: 'scanner:token:list',
+  createTokenCredential: 'scanner:token:create',
+  validateTokenCredential: 'scanner:token:validate'
 } as const
 
 export function datasetTypeForScanType(scanType: ScanType): ScanDatasetType {

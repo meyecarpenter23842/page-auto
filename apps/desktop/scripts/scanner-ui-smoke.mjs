@@ -42,7 +42,7 @@ try {
 
   const text = await root.innerText()
   for (const expected of [
-    'Account / session Page-Auto',
+    'Account / session hoặc Access Token',
     'BỘ LỌC',
     'KẾT QUẢ DATA-GRID',
     'Lưu Dataset',
@@ -53,6 +53,18 @@ try {
   }
   invariant(!text.includes('mock foundation'), 'Quét Nhóm vẫn hiển thị nhãn mock foundation.')
 
+  await root.getByRole('button', { name: 'Access Token', exact: true }).click()
+  const tokenManager = root.locator('[data-testid="scanner-token-manager"]')
+  await tokenManager.waitFor({ state: 'visible' })
+  const secretInput = tokenManager.locator('[data-testid="scanner-token-secret"]')
+  invariant(await secretInput.getAttribute('type') === 'password', 'Access Token input không được mask bằng password field.')
+  const tokenText = await tokenManager.innerText()
+  invariant(tokenText.includes('Quét bằng token:'), 'Token source thiếu trạng thái adapter production.')
+  invariant(tokenText.includes('Tự lấy token từ phiên Facebook:'), 'Token source thiếu contract auto-acquire.')
+  invariant(await root.getByRole('button', { name: 'Bắt đầu', exact: true }).isDisabled(), 'Scanner vẫn cho chạy adapter bằng token ở Batch 3.')
+  invariant(await root.getByRole('button', { name: /Lấy token/i }).count() === 0, 'Scanner xuất hiện nút tự lấy token ngoài contract.')
+
+  await root.getByRole('button', { name: 'Account/session', exact: true }).click()
   await root.getByRole('tab', { name: 'Quét Page', exact: true }).click()
   invariant((await root.innerText()).includes('foundation'), 'Tab Quét Page chưa phân biệt rõ adapter chưa production.')
 
