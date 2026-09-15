@@ -36,6 +36,8 @@ import type {
   HotmailBrowserOpenResult,
   HotmailDashboardRow,
   HotmailOAuthStartResult,
+  HotmailOpenBatchPayload,
+  HotmailOpenBatchResult,
   HotmailPasswordActionPayload,
   HotmailPasswordBatchResult,
   HotmailProxyStatus,
@@ -92,6 +94,7 @@ export const IPC_CHANNELS = {
   hotmailCodesGet: 'hotmail:codes:get',
   hotmailCheck: 'hotmail:check',
   hotmailOpen: 'hotmail:open',
+  hotmailOpenBatch: 'hotmail:open-batch',
   hotmailRecoveryAction: 'hotmail:recovery:action',
   hotmailPasswordAction: 'hotmail:password:action',
   hotmailComboAction: 'hotmail:combo:action',
@@ -185,6 +188,7 @@ export interface PageAutoIpcContract {
   getHotmailCodes: (payload: HotmailBatchPayload) => Promise<HotmailBatchResult>
   checkHotmail: (payload: HotmailBatchPayload) => Promise<HotmailBatchResult>
   openHotmail: (payload: HotmailAccountPayload) => Promise<HotmailBrowserOpenResult>
+  openHotmailBatch: (payload: HotmailOpenBatchPayload) => Promise<HotmailOpenBatchResult>
   updateHotmailRecovery: (payload: HotmailRecoveryActionPayload) => Promise<HotmailRecoveryBatchResult>
   updateHotmailPassword: (payload: HotmailPasswordActionPayload) => Promise<HotmailPasswordBatchResult>
   runHotmailCombo: (payload: HotmailComboActionPayload) => Promise<HotmailComboBatchResult>
