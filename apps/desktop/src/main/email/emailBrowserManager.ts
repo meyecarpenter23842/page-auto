@@ -1,6 +1,7 @@
 import { utilityProcess, type UtilityProcess } from 'electron'
 import { join } from 'node:path'
 import type { AccountRecord } from '../../shared/accounts'
+import type { BrowserWindowPlacement } from '../../shared/browserWindowLayout'
 import type {
   HotmailBrowserOpenResult,
   HotmailPasswordActionResult,
@@ -10,7 +11,7 @@ import type {
 import { setBrowserLaunchAwareTimeout } from '../browser/browserLaunchBroker'
 import { startEmailProxyAuthBridge, type EmailProxyAuthBridge } from './emailProxyAuthBridge'
 import { buildEmailLoginPayload, traceEmailCredential } from './emailCredentialBinding'
-import { shouldKeepEmailBrowserWorker } from './emailBrowserLifecycle'
+import { isEmailWindowDetachedMessage, shouldKeepEmailBrowserWorker } from './emailBrowserLifecycle'
 import { ensureEmailProfileDirectory, inspectEmailProfile } from './emailProfileResolver'
 import {
   nextEmailAuthResumeKind,
@@ -148,14 +149,16 @@ export class EmailBrowserManager {
 
   constructor(
     private readonly onClosed?: (accountId: number) => void,
-    private readonly mailboxProviderRequestHandler?: MailboxProviderWorkerRequestHandler
+    private readonly mailboxProviderRequestHandler?: MailboxProviderWorkerRequestHandler,
+    private readonly onDetached?: (accountId: number) => void
   ) {}
 
   async open(
     account: AccountRecord,
     profileRoot: string,
     browserExecutable: string,
-    proxy: EmailProxyCandidate | null
+    proxy: EmailProxyCandidate | null,
+    placement: BrowserWindowPlacement | null = null
   ): Promise<HotmailBrowserOpenResult> {
     const prepared = await this.prepareWorker(account, profileRoot, false)
     if ('status' in prepared) {
@@ -174,6 +177,7 @@ export class EmailBrowserManager {
       secret: account.emailPassword,
       profileDirectory: entry.profileDirectory
     })
+    await this.sendPlacement(entry, account.id, placement)
     const response = await this.send(entry, 'open-result', {
       type: 'open-mail',
       accountId: account.id,
@@ -202,7 +206,8 @@ export class EmailBrowserManager {
     proxy: EmailProxyCandidate | null,
     operation: HotmailRecoveryOperation,
     backupEmail: string | null,
-    confirmCompleted: boolean
+    confirmCompleted: boolean,
+    placement: BrowserWindowPlacement | null = null
   ): Promise<HotmailRecoveryActionResult & { proxyManagedExternally: boolean }> {
     const prepared = await this.prepareWorker(account, profileRoot, true)
     if ('status' in prepared) {
@@ -236,6 +241,7 @@ export class EmailBrowserManager {
       secret: account.emailPassword,
       profileDirectory: entry.profileDirectory
     })
+    await this.sendPlacement(entry, account.id, placement)
     const response = await this.send(entry, 'recovery-result', {
       type: 'recovery-action',
       accountId: account.id,
@@ -268,7 +274,8 @@ export class EmailBrowserManager {
     browserExecutable: string,
     proxy: EmailProxyCandidate | null,
     newPassword: string,
-    confirmCompleted: boolean
+    confirmCompleted: boolean,
+    placement: BrowserWindowPlacement | null = null
   ): Promise<HotmailPasswordActionResult & { proxyManagedExternally: boolean }> {
     const prepared = await this.prepareWorker(account, profileRoot, true)
     if ('status' in prepared) {
@@ -300,6 +307,7 @@ export class EmailBrowserManager {
       secret: account.emailPassword,
       profileDirectory: entry.profileDirectory
     })
+    await this.sendPlacement(entry, account.id, placement)
     const response = await this.send(entry, 'password-result', {
       type: 'password-action',
       accountId: account.id,
@@ -324,6 +332,17 @@ export class EmailBrowserManager {
 
     if (entry.actionOnly && response.status !== 'needs_attention') this.stopEntry(account.id, entry)
     return result
+  }
+
+  async applyPlacement(accountId: number, placement: BrowserWindowPlacement | null): Promise<boolean> {
+    const entry = this.workers.get(accountId)
+    if (!entry) return false
+    try {
+      await this.sendPlacement(entry, accountId, placement)
+      return true
+    } catch {
+      return false
+    }
   }
 
   closeAll(): void {
@@ -386,6 +405,10 @@ export class EmailBrowserManager {
 
     process.once('spawn', () => resolveSpawn?.())
     process.on('message', (message) => {
+      if (isEmailWindowDetachedMessage(message)) {
+        if (message.accountId === account.id) this.onDetached?.(account.id)
+        return
+      }
       if (isMailboxProviderWorkerRequestMessage(message)) {
         void this.handleMailboxProviderRequest(entry, message)
         return
@@ -448,6 +471,11 @@ export class EmailBrowserManager {
       entry.proxyBridge = await startEmailProxyAuthBridge(proxy)
     }
     return routedProxy(proxy, entry.proxyBridge)
+  }
+
+  private async sendPlacement(entry: WorkerEntry, accountId: number, placement: BrowserWindowPlacement | null): Promise<void> {
+    await entry.spawned
+    entry.process.postMessage({ type: 'email-window-placement', accountId, placement })
   }
 
   private async send(entry: WorkerEntry, kind: PendingKind, command: Record<string, unknown>): Promise<WorkerResponse> {
