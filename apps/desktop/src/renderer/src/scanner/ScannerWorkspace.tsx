@@ -6,6 +6,7 @@ import type {
   ScanResultRecord,
   ScanType
 } from '../../../shared/scanner'
+import { ScannerSourcePanel, type ScannerSourceMode } from './ScannerSourcePanel'
 import './scanner.css'
 
 const TABS: Array<{ id: ScanType; label: string; hint: string }> = [
@@ -89,10 +90,16 @@ function terminal(job: ScanJobDetails | null): boolean {
   return !job || ['completed', 'failed', 'stopped', 'needs_attention'].includes(job.status)
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
 export function ScannerWorkspace() {
   const [activeType, setActiveType] = useState<ScanType>('group')
   const [accounts, setAccounts] = useState<AccountRecord[]>([])
   const [accountId, setAccountId] = useState<number | null>(null)
+  const [sourceMode, setSourceMode] = useState<ScannerSourceMode>('account')
+  const [tokenCredentialId, setTokenCredentialId] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [limit, setLimit] = useState(100)
   const [membersMin, setMembersMin] = useState(0)
@@ -108,6 +115,7 @@ export function ScannerWorkspace() {
 
   const activeTab = useMemo(() => TABS.find((tab) => tab.id === activeType) ?? TABS[0]!, [activeType])
   const columns = COLUMNS[activeType]
+  const sourceLocked = Boolean(job && !terminal(job))
 
   useEffect(() => {
     void Promise.all([
@@ -118,7 +126,7 @@ export function ScannerWorkspace() {
       setAccountId((current) => current ?? nextAccounts[0]?.id ?? null)
       setDatasetCount(datasets.length)
       setLastDatasetId(datasets[0]?.id ?? null)
-    }).catch((error) => setNotice(error instanceof Error ? error.message : String(error)))
+    }).catch((error) => setNotice(errorMessage(error)))
   }, [])
 
   useEffect(() => {
@@ -132,7 +140,7 @@ export function ScannerWorkspace() {
     const timer = window.setInterval(() => {
       void window.pageAutoScanner.getJob({ jobId: job.id }).then((next) => {
         if (next) setJob(next)
-      }).catch((error) => setNotice(error instanceof Error ? error.message : String(error)))
+      }).catch((error) => setNotice(errorMessage(error)))
     }, 300)
     return () => window.clearInterval(timer)
   }, [job?.id, job?.status])
@@ -148,6 +156,12 @@ export function ScannerWorkspace() {
 
   const start = async () => {
     if (busy) return
+    if (sourceMode === 'token') {
+      setNotice(tokenCredentialId
+        ? 'Token credential đã sẵn sàng, nhưng adapter quét bằng token chưa được mở ở Batch 3.'
+        : 'Hãy lưu/chọn một Token credential. Batch 3 chưa mở adapter quét bằng token.')
+      return
+    }
     if (activeType === 'group' && accountId === null) {
       setNotice('Quét Nhóm production cần chọn một Account Page-Auto.')
       return
@@ -164,7 +178,7 @@ export function ScannerWorkspace() {
       })
       setJob(next)
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : String(error))
+      setNotice(errorMessage(error))
     } finally {
       setBusy(false)
     }
@@ -177,7 +191,7 @@ export function ScannerWorkspace() {
       const next = await window.pageAutoScanner[command]({ jobId: job.id })
       if (next) setJob(next)
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : String(error))
+      setNotice(errorMessage(error))
     } finally {
       setBusy(false)
     }
@@ -193,7 +207,7 @@ export function ScannerWorkspace() {
       setLastDatasetId(created.id)
       setNotice(`Đã lưu Dataset “${created.name}” với ${created.recordCount} record.`)
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : String(error))
+      setNotice(errorMessage(error))
     } finally {
       setBusy(false)
     }
@@ -206,7 +220,7 @@ export function ScannerWorkspace() {
       const result = await window.pageAutoScanner.exportDatasetCsv({ datasetId: lastDatasetId })
       if (!result.canceled) setNotice(`Đã xuất CSV ${result.recordCount} record${result.filePath ? ` · ${result.filePath}` : ''}.`)
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : String(error))
+      setNotice(errorMessage(error))
     } finally {
       setBusy(false)
     }
@@ -227,24 +241,17 @@ export function ScannerWorkspace() {
         ))}
       </div>
 
-      <div className="scanner-source-card">
-        <div>
-          <span className="scanner-section-kicker">NGUỒN QUÉT DÙNG CHUNG</span>
-          <strong>Account / session Page-Auto</strong>
-          <small>{activeType === 'group' ? 'Quét Nhóm chạy production qua Facebook Common Runtime; không có login/browser riêng.' : 'Adapter nghiệp vụ này vẫn ở foundation cho tới batch production riêng.'}</small>
-        </div>
-        <label>
-          Account
-          <select value={accountId ?? ''} onChange={(event) => setAccountId(event.currentTarget.value ? Number(event.currentTarget.value) : null)}>
-            <option value="">Không chọn</option>
-            {accounts.map((account) => <option key={account.id} value={account.id}>{account.uid} · {account.name ?? account.username ?? 'Chưa có tên'}</option>)}
-          </select>
-        </label>
-        <label className="scanner-token-disabled">
-          Access Token
-          <input value="Chưa có production path được hỗ trợ" disabled readOnly />
-        </label>
-      </div>
+      <ScannerSourcePanel
+        accounts={accounts}
+        accountId={accountId}
+        onAccountIdChange={setAccountId}
+        sourceMode={sourceMode}
+        onSourceModeChange={setSourceMode}
+        tokenCredentialId={tokenCredentialId}
+        onTokenCredentialIdChange={setTokenCredentialId}
+        locked={sourceLocked}
+        onNotice={setNotice}
+      />
 
       <div className="scanner-config-grid">
         <div className="scanner-card scanner-query-card">
@@ -289,7 +296,7 @@ export function ScannerWorkspace() {
 
       <div className="scanner-footer">
         <div className="scanner-actions">
-          <button className="button primary" type="button" disabled={busy || Boolean(job && !terminal(job)) || (activeType === 'group' && accountId === null)} onClick={() => void start()}>Bắt đầu</button>
+          <button className="button primary" type="button" disabled={busy || Boolean(job && !terminal(job)) || sourceMode === 'token' || (activeType === 'group' && accountId === null)} onClick={() => void start()}>Bắt đầu</button>
           <button className="button secondary" type="button" disabled={busy || job?.status !== 'running'} onClick={() => void runCommand('pauseJob')}>Pause</button>
           <button className="button secondary" type="button" disabled={busy || job?.status !== 'paused'} onClick={() => void runCommand('resumeJob')}>Resume</button>
           <button className="button secondary" type="button" disabled={busy || !job || terminal(job)} onClick={() => void runCommand('stopJob')}>Dừng</button>
