@@ -20,6 +20,7 @@ import { PAGE_WALL_FINITE_PLAN_SCHEMA_VERSION, applyPageWallFinitePlanMigration 
 import { PAGE_WALL_SCHEMA_VERSION, applyPageWallMigration } from './pageWallMigration'
 import { PAGE_WALL_RECURRING_SCHEMA_VERSION, applyPageWallRecurringMigration } from './pageWallRecurringMigration'
 import { SCENARIO_SCHEMA_VERSION, applyScenarioMigration } from './scenarioMigration'
+import { SCANNER_SCHEMA_VERSION, applyScannerMigration } from './scannerMigration'
 import { STORY_SCHEMA_VERSION, applyStoryMigration } from './storyMigration'
 
 export interface DatabaseRuntime {
@@ -85,6 +86,7 @@ export function initializeDatabase(databaseFile: string): DatabaseRuntime {
   applyPageWallFinitePlanMigration(client)
   applyPageScenarioScheduleMigration(client)
   applyPageAvatarMigration(client)
+  applyScannerMigration(client)
 
   const schemaVersion = Math.max(
     latestSchemaVersion,
@@ -102,7 +104,8 @@ export function initializeDatabase(databaseFile: string): DatabaseRuntime {
     PAGE_WALL_RECURRING_SCHEMA_VERSION,
     PAGE_WALL_FINITE_PLAN_SCHEMA_VERSION,
     PAGE_SCENARIO_SCHEDULE_SCHEMA_VERSION,
-    PAGE_AVATAR_SCHEMA_VERSION
+    PAGE_AVATAR_SCHEMA_VERSION,
+    SCANNER_SCHEMA_VERSION
   )
   const orm = drizzle(client)
   orm

@@ -13,6 +13,7 @@ import { registerInteractionWorkspaceRunnerIpcHandlers, type InteractionWorkspac
 import { registerIpcHandlers, type IpcRuntime } from './ipc'
 import { createLogger } from './logger'
 import { registerPostLibraryIpcHandlers, type PostLibraryIpcRuntime } from './postLibraryIpc'
+import { registerScannerIpcHandlers, type ScannerIpcRuntime } from './scannerIpc'
 import { registerScenarioIpcHandlers, type ScenarioIpcRuntime } from './scenarioIpc'
 import { registerScenarioRunnerIpcHandlers, type ScenarioRunnerIpcRuntime } from './scenarioRunnerIpc'
 import { registerStoryIpcHandlers, type StoryIpcRuntime } from './storyIpc'
@@ -34,6 +35,7 @@ let copyPostIpcRuntime: CopyPostIpcRuntime | null = null
 let storyIpcRuntime: StoryIpcRuntime | null = null
 let hotmailIpcRuntime: HotmailIpcRuntime | null = null
 let postLibraryIpcRuntime: PostLibraryIpcRuntime | null = null
+let scannerIpcRuntime: ScannerIpcRuntime | null = null
 let scenarioIpcRuntime: ScenarioIpcRuntime | null = null
 let scenarioRunnerIpcRuntime: ScenarioRunnerIpcRuntime | null = null
 
@@ -128,6 +130,7 @@ app.whenReady().then(() => {
     checkpoint282WorkbenchIpcRuntime = registerCheckpoint282WorkbenchIpcHandlers({ database: databaseRuntime.client, dataDirectory })
     hotmailIpcRuntime = registerHotmailIpcHandlers(databaseRuntime.client)
     postLibraryIpcRuntime = registerPostLibraryIpcHandlers(databaseRuntime.client)
+    scannerIpcRuntime = registerScannerIpcHandlers(databaseRuntime.client)
     scenarioIpcRuntime = registerScenarioIpcHandlers(databaseRuntime.client)
     scenarioRunnerIpcRuntime = registerScenarioRunnerIpcHandlers({ database: databaseRuntime.client, dataDirectory })
     logger.info('Application initialized', { databaseFile, dataDirectory, packaged: app.isPackaged, version: app.getVersion() })
@@ -146,6 +149,8 @@ app.whenReady().then(() => {
     scenarioRunnerIpcRuntime = null
     scenarioIpcRuntime?.dispose()
     scenarioIpcRuntime = null
+    scannerIpcRuntime?.dispose()
+    scannerIpcRuntime = null
     checkpoint282WorkbenchIpcRuntime?.dispose()
     checkpoint282WorkbenchIpcRuntime = null
     storyIpcRuntime?.dispose()
@@ -187,6 +192,8 @@ app.on('before-quit', () => {
   scenarioRunnerIpcRuntime = null
   scenarioIpcRuntime?.dispose()
   scenarioIpcRuntime = null
+  scannerIpcRuntime?.dispose()
+  scannerIpcRuntime = null
   checkpoint282WorkbenchIpcRuntime?.dispose()
   checkpoint282WorkbenchIpcRuntime = null
   storyIpcRuntime?.dispose()
