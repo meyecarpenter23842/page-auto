@@ -1,4 +1,5 @@
 import type { AccountRecord } from '../../shared/accounts'
+import type { BrowserRetileResult } from '../../shared/browserWindowLayout'
 import type {
   HotmailBrowserOpenResult,
   HotmailPasswordActionResult,
@@ -6,6 +7,7 @@ import type {
   HotmailRecoveryOperation
 } from '../../shared/hotmail'
 import { EmailBrowserManager } from './emailBrowserManager'
+import { EmailBrowserWindowLayoutRuntime } from './emailBrowserWindowLayout'
 import type { MailboxProviderWorkerRequestHandler } from './mailboxProviderWorkerRpc'
 import { EmailProxyPool, type EmailProxyCandidate, type EmailProxySettingsRaw } from './emailProxyPool'
 import { EmailRuntimeOwnership, type EmailRuntimeOwner } from './emailRuntimeOwnership'
@@ -60,13 +62,16 @@ function recoveryError(
   }
 }
 
+function keepsVisibleBrowser(status: HotmailBrowserOpenResult['status']): boolean {
+  return status === 'started' || status === 'already_open' || status === 'needs_attention'
+}
+
 /**
  * EA1 Email Common Runtime foundation.
  *
- * Owns Email browser workers, Email proxy assignments and per-account workflow
- * ownership. Microsoft surface classification/login remains inside the existing
- * worker/state-machine path; manual primary-mailbox open may route to an audited
- * provider browser without changing recovery-mail/code routing.
+ * Owns Email browser workers, Email proxy assignments, per-account workflow ownership
+ * and an Email-only Compact slot pool. Placement math/native bounds are shared with the
+ * Facebook BrowserWindowLayoutManager; only slot ownership/config are separate.
  */
 export class EmailCommonRuntime {
   readonly proxyPool: EmailProxyPool
@@ -76,7 +81,8 @@ export class EmailCommonRuntime {
 
   constructor(
     getProxySettings: () => EmailProxySettingsRaw,
-    private readonly mailboxProviderRequestHandler?: MailboxProviderWorkerRequestHandler
+    private readonly mailboxProviderRequestHandler?: MailboxProviderWorkerRequestHandler,
+    private readonly windowLayout?: EmailBrowserWindowLayoutRuntime
   ) {
     this.proxyPool = new EmailProxyPool(getProxySettings)
   }
@@ -99,19 +105,23 @@ export class EmailCommonRuntime {
     const owner = this.ownership.current(account.id)
     if (owner) return openError(account.id, runtimeBusyMessage(owner))
 
+    const placement = this.windowLayout?.claim(account.id) ?? null
     const route = resolvePrimaryMailboxOpenRoute(account.email)
+    let result: HotmailBrowserOpenResult
     if (route.kind === 'microsoft') {
-      return await this.managerFor(account.id).open(account, profileRoot, browserExecutable, proxy)
-    }
-    if (route.kind === 'browser_provider') {
-      return await this.primaryMailboxManagerFor(account.id).open(account, profileRoot, browserExecutable, proxy)
+      result = await this.managerFor(account.id).open(account, profileRoot, browserExecutable, proxy, placement)
+    } else if (route.kind === 'browser_provider') {
+      result = await this.primaryMailboxManagerFor(account.id).open(account, profileRoot, browserExecutable, proxy, placement)
+    } else {
+      const mailbox = account.email?.trim() || 'chưa có Email'
+      result = openError(
+        account.id,
+        `Không mở Outlook thay cho mail chính ${mailbox}. ${primaryMailboxProviderLabel(route.providerId)} chưa có surface Mở mail được audit.`
+      )
     }
 
-    const mailbox = account.email?.trim() || 'chưa có Email'
-    return openError(
-      account.id,
-      `Không mở Outlook thay cho mail chính ${mailbox}. ${primaryMailboxProviderLabel(route.providerId)} chưa có surface Mở mail được audit.`
-    )
+    if (!keepsVisibleBrowser(result.status)) this.windowLayout?.release(account.id)
+    return result
   }
 
   async runRecoveryAction(
@@ -133,6 +143,7 @@ export class EmailCommonRuntime {
       )
     }
 
+    const placement = this.windowLayout?.claim(account.id) ?? null
     try {
       const result = await this.managerFor(account.id).runRecoveryAction(
         account,
@@ -141,12 +152,17 @@ export class EmailCommonRuntime {
         proxy,
         operation,
         backupEmail,
-        confirmCompleted
+        confirmCompleted,
+        placement
       )
-      if (result.status !== 'needs_attention') this.ownership.release(account.id, 'recovery')
+      if (result.status !== 'needs_attention') {
+        this.ownership.release(account.id, 'recovery')
+        this.windowLayout?.release(account.id)
+      }
       return result
     } catch (error) {
       this.ownership.release(account.id, 'recovery')
+      this.windowLayout?.release(account.id)
       throw error
     }
   }
@@ -167,6 +183,7 @@ export class EmailCommonRuntime {
       )
     }
 
+    const placement = this.windowLayout?.claim(account.id) ?? null
     try {
       const result = await this.managerFor(account.id).runPasswordAction(
         account,
@@ -174,12 +191,17 @@ export class EmailCommonRuntime {
         browserExecutable,
         proxy,
         newPassword,
-        confirmCompleted
+        confirmCompleted,
+        placement
       )
-      if (result.status !== 'needs_attention') this.ownership.release(account.id, 'password')
+      if (result.status !== 'needs_attention') {
+        this.ownership.release(account.id, 'password')
+        this.windowLayout?.release(account.id)
+      }
       return result
     } catch (error) {
       this.ownership.release(account.id, 'password')
+      this.windowLayout?.release(account.id)
       throw error
     }
   }
@@ -196,9 +218,10 @@ export class EmailCommonRuntime {
       return openError(account.id, current ? runtimeBusyMessage(current) : 'Không thể giữ ownership Email runtime cho workflow.')
     }
 
+    const placement = this.windowLayout?.claim(account.id) ?? null
     try {
-      const result = await this.managerFor(account.id).open(account, profileRoot, browserExecutable, proxy)
-      if (result.status !== 'started' && result.status !== 'already_open') {
+      const result = await this.managerFor(account.id).open(account, profileRoot, browserExecutable, proxy, placement)
+      if (!keepsVisibleBrowser(result.status)) {
         this.ownership.release(account.id, owner)
         this.closeAccount(account.id)
       }
@@ -228,7 +251,8 @@ export class EmailCommonRuntime {
       browserExecutable,
       proxy,
       newPassword,
-      confirmCompleted
+      confirmCompleted,
+      this.windowLayout?.placementFor(account.id) ?? null
     )
   }
 
@@ -252,8 +276,36 @@ export class EmailCommonRuntime {
       proxy,
       operation,
       backupEmail,
-      confirmCompleted
+      confirmCompleted,
+      this.windowLayout?.placementFor(account.id) ?? null
     )
+  }
+
+  async retileWindows(): Promise<BrowserRetileResult> {
+    if (!this.windowLayout) {
+      return { status: 'not_compact', appliedCount: 0, overflowCount: 0, message: 'Email Compact chưa được cấu hình.' }
+    }
+    const plan = this.windowLayout.retilePlan()
+    if (plan.result.status !== 'success') return plan.result
+
+    let appliedCount = 0
+    for (const [accountId, placement] of plan.placements) {
+      const microsoft = this.managers.get(accountId)
+      const primary = this.primaryMailboxManagers.get(accountId)
+      const applied = microsoft
+        ? await microsoft.applyPlacement(accountId, placement)
+        : primary
+          ? await primary.applyPlacement(accountId, placement)
+          : false
+      if (applied) appliedCount += 1
+    }
+    return {
+      ...plan.result,
+      appliedCount,
+      message: plan.result.overflowCount > 0
+        ? `Đã sắp xếp ${appliedCount} Chrome Email; ${plan.result.overflowCount} cửa sổ nằm ở lớp tràn.`
+        : `Đã sắp xếp ${appliedCount} Chrome Email theo grid hiện tại.`
+    }
   }
 
   closeWorkflow(accountId: number, owner: EmailRuntimeWorkflowOwner): void {
@@ -268,6 +320,7 @@ export class EmailCommonRuntime {
     this.primaryMailboxManagers.delete(accountId)
     this.ownership.clear(accountId)
     this.proxyPool.release(accountId)
+    this.windowLayout?.release(accountId)
     manager?.closeAll()
     primaryMailboxManager?.closeAll()
   }
@@ -282,7 +335,10 @@ export class EmailCommonRuntime {
     this.managers.clear()
     this.primaryMailboxManagers.clear()
     this.ownership.clearAll()
-    for (const accountId of accountIds) this.proxyPool.release(accountId)
+    for (const accountId of accountIds) {
+      this.proxyPool.release(accountId)
+      this.windowLayout?.release(accountId)
+    }
     for (const manager of managers) manager.closeAll()
     for (const manager of primaryMailboxManagers) manager.closeAll()
   }
@@ -291,11 +347,13 @@ export class EmailCommonRuntime {
     const existing = this.managers.get(accountId)
     if (existing) return existing
 
+    const releasePlacement = (closedAccountId: number) => this.windowLayout?.release(closedAccountId)
     const manager = new EmailBrowserManager((closedAccountId) => {
       this.proxyPool.release(closedAccountId)
       this.ownership.clear(closedAccountId)
+      releasePlacement(closedAccountId)
       if (this.managers.get(closedAccountId) === manager) this.managers.delete(closedAccountId)
-    }, this.mailboxProviderRequestHandler)
+    }, this.mailboxProviderRequestHandler, releasePlacement)
     this.managers.set(accountId, manager)
     return manager
   }
@@ -304,12 +362,14 @@ export class EmailCommonRuntime {
     const existing = this.primaryMailboxManagers.get(accountId)
     if (existing) return existing
 
+    const releasePlacement = (closedAccountId: number) => this.windowLayout?.release(closedAccountId)
     const manager = new PrimaryMailboxBrowserManager((closedAccountId) => {
       this.proxyPool.release(closedAccountId)
+      releasePlacement(closedAccountId)
       if (this.primaryMailboxManagers.get(closedAccountId) === manager) {
         this.primaryMailboxManagers.delete(closedAccountId)
       }
-    })
+    }, releasePlacement)
     this.primaryMailboxManagers.set(accountId, manager)
     return manager
   }
