@@ -21,6 +21,7 @@ export const MIN_EMAIL_BROWSER_WINDOW_WIDTH = 640
 export const MAX_EMAIL_BROWSER_WINDOW_WIDTH = 7680
 export const MIN_EMAIL_BROWSER_WINDOW_HEIGHT = 480
 export const MAX_EMAIL_BROWSER_WINDOW_HEIGHT = 4320
+export const MAX_HOTMAIL_OPEN_CONCURRENCY = 20
 
 export const HOTMAIL_RECOVERY_OPERATIONS = ['add', 'remove', 'replace'] as const
 export type HotmailRecoveryOperation = (typeof HOTMAIL_RECOVERY_OPERATIONS)[number]
@@ -93,6 +94,10 @@ export interface HotmailBatchPayload {
   accountIds: number[]
 }
 
+export interface HotmailOpenBatchPayload extends HotmailBatchPayload {
+  concurrency: number
+}
+
 export interface HotmailOAuthStartResult {
   accountId: number
   started: boolean
@@ -127,6 +132,10 @@ export interface HotmailBrowserOpenResult extends HotmailActionResult {
   profileDirectory: string | null
   attached: boolean
   proxyManagedExternally: boolean
+}
+
+export interface HotmailOpenBatchResult {
+  results: HotmailBrowserOpenResult[]
 }
 
 export interface HotmailRecoveryActionPayload {
