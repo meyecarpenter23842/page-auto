@@ -4,6 +4,7 @@ import './pageScenarioScheduleBridge'
 import './pageWallFiniteBridge'
 import './changeInfoBridge'
 import './emailBrowserLayoutBridge'
+import './scannerBridge'
 
 export type { PageAutoApi } from './legacy'
 export type { AppUpdaterPreloadApi } from './appUpdaterBridge'
@@ -11,3 +12,4 @@ export type { PageScenarioSchedulePreloadApi } from './pageScenarioScheduleBridg
 export type { PageWallFinitePreloadApi } from './pageWallFiniteBridge'
 export type { ChangeInfoPreloadApi } from './changeInfoBridge'
 export type { EmailBrowserLayoutPreloadApi } from './emailBrowserLayoutBridge'
+export type { ScannerPreloadApi } from './scannerBridge'
