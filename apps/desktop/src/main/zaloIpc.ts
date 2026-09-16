@@ -1,13 +1,18 @@
+import { existsSync, statSync } from 'node:fs'
+import { basename, isAbsolute } from 'node:path'
 import { ipcMain } from 'electron'
 import type Database from 'better-sqlite3'
 import {
   maskZaloPassword,
+  normalizeZaloActionInput,
   ZALO_IPC,
   type ZaloAccountDraft,
   type ZaloAccountIdPayload,
   type ZaloAccountRecord,
   type ZaloAccountUpdatePayload,
   type ZaloAccountView,
+  type ZaloActionInput,
+  type ZaloActionRequestPayload,
   type ZaloBrowserSettings,
   type ZaloLoginPayload
 } from '../shared/zalo'
@@ -34,6 +39,15 @@ function toView(account: ZaloAccountRecord): ZaloAccountView {
   }
 }
 
+function validateActionFiles(action: ZaloActionInput): ZaloActionInput {
+  if (action.type !== 'send_attachment') return action
+  for (const path of action.paths) {
+    if (!isAbsolute(path)) throw new Error(`Attachment Zalo phải là đường dẫn tuyệt đối: ${basename(path) || 'file'}.`)
+    if (!existsSync(path) || !statSync(path).isFile()) throw new Error(`Không tìm thấy attachment Zalo: ${basename(path) || 'file'}.`)
+  }
+  return action
+}
+
 export function registerZaloIpc(client: Database.Database, dataDirectory: string): ZaloIpcRuntime {
   const accounts = new ZaloAccountRepository(client)
   const settings = new ZaloSettingsRepository(client)
@@ -47,6 +61,10 @@ export function registerZaloIpc(client: Database.Database, dataDirectory: string
     ZALO_IPC.open,
     ZALO_IPC.login,
     ZALO_IPC.close,
+    ZALO_IPC.actionExecute,
+    ZALO_IPC.actionPause,
+    ZALO_IPC.actionResume,
+    ZALO_IPC.actionStop,
     ZALO_IPC.settingsGet,
     ZALO_IPC.settingsSave
   ]
@@ -69,6 +87,15 @@ export function registerZaloIpc(client: Database.Database, dataDirectory: string
     if (!account) throw new Error(`Không tìm thấy Zalo account #${payload.id}.`)
     return browser.login(account, payload.mode)
   })
+  ipcMain.handle(ZALO_IPC.actionExecute, async (_event, payload: ZaloActionRequestPayload) => {
+    const account = accounts.get(payload.id)
+    if (!account) throw new Error(`Không tìm thấy Zalo account #${payload.id}.`)
+    const action = validateActionFiles(normalizeZaloActionInput(payload.action))
+    return browser.executeAction(account, action)
+  })
+  ipcMain.handle(ZALO_IPC.actionPause, (_event, payload: ZaloAccountIdPayload) => browser.controlAction(payload.id, 'pause'))
+  ipcMain.handle(ZALO_IPC.actionResume, (_event, payload: ZaloAccountIdPayload) => browser.controlAction(payload.id, 'resume'))
+  ipcMain.handle(ZALO_IPC.actionStop, (_event, payload: ZaloAccountIdPayload) => browser.controlAction(payload.id, 'stop'))
   ipcMain.handle(ZALO_IPC.close, async (_event, payload: ZaloAccountIdPayload) => {
     await browser.close(payload.id)
     return true

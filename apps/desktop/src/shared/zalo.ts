@@ -8,6 +8,10 @@ export const ZALO_IPC = {
   open: 'zalo:accounts:open',
   login: 'zalo:accounts:login',
   close: 'zalo:accounts:close',
+  actionExecute: 'zalo:actions:execute',
+  actionPause: 'zalo:actions:pause',
+  actionResume: 'zalo:actions:resume',
+  actionStop: 'zalo:actions:stop',
   settingsGet: 'zalo:settings:get',
   settingsSave: 'zalo:settings:save'
 } as const
@@ -25,6 +29,24 @@ export type ZaloSessionStatus = (typeof ZALO_SESSION_STATUSES)[number]
 
 export const ZALO_LOGIN_MODES = ['phone_password', 'qr'] as const
 export type ZaloLoginMode = (typeof ZALO_LOGIN_MODES)[number]
+
+export const ZALO_ACTION_TYPES = ['send_message', 'send_attachment', 'add_friend'] as const
+export type ZaloActionType = (typeof ZALO_ACTION_TYPES)[number]
+export type ZaloActionResultStatus = 'success' | 'needs_attention' | 'failed' | 'stopped'
+export type ZaloActionResultCode =
+  | 'success'
+  | 'already_friend'
+  | 'session_not_ready'
+  | 'validation_error'
+  | 'target_not_found'
+  | 'target_unverified'
+  | 'composer_missing'
+  | 'send_control_missing'
+  | 'attachment_control_missing'
+  | 'friend_control_missing'
+  | 'verification_uncertain'
+  | 'stopped'
+  | 'executor_exception'
 
 export interface ZaloAccountRecord {
   id: number
@@ -75,6 +97,31 @@ export interface ZaloLoginPayload {
   mode: ZaloLoginMode
 }
 
+export type ZaloActionInput =
+  | { type: 'send_message'; targetPhone: string; content: string }
+  | { type: 'send_attachment'; targetPhone: string; paths: string[] }
+  | { type: 'add_friend'; targetPhone: string; message?: string | null }
+
+export interface ZaloActionRequestPayload {
+  id: number
+  action: ZaloActionInput
+}
+
+export interface ZaloActionControlPayload { id: number }
+
+export interface ZaloActionResult {
+  accountId: number
+  action: ZaloActionType
+  targetPhone: string
+  status: ZaloActionResultStatus
+  code: ZaloActionResultCode
+  message: string
+  verifiedTarget: boolean
+  targetDisplayName: string | null
+  completedAt: number
+  data?: Record<string, unknown>
+}
+
 export interface ZaloBrowserSettings {
   executablePath: string | null
   profileRoot: string | null
@@ -115,6 +162,52 @@ export function normalizeZaloPhone(input: string): string {
   if (digits.length < 8 || digits.length > 15) throw new Error('Số điện thoại Zalo phải có 8-15 chữ số.')
   if (digits.startsWith('84') && digits.length >= 10) return `0${digits.slice(2)}`
   return digits
+}
+
+export function normalizeZaloActionInput(input: ZaloActionInput): ZaloActionInput {
+  const targetPhone = normalizeZaloPhone(input.targetPhone)
+  if (input.type === 'send_message') {
+    const content = input.content.trim()
+    if (!content) throw new Error('Nội dung tin nhắn Zalo không được để trống.')
+    if (content.length > 10_000) throw new Error('Nội dung tin nhắn Zalo quá dài.')
+    return { type: input.type, targetPhone, content }
+  }
+  if (input.type === 'send_attachment') {
+    const paths = input.paths.map((path) => path.trim()).filter(Boolean)
+    if (!paths.length) throw new Error('Phải chọn ít nhất một ảnh/file để gửi Zalo.')
+    if (paths.length > 20) throw new Error('Một action Zalo chỉ nhận tối đa 20 ảnh/file.')
+    return { type: input.type, targetPhone, paths }
+  }
+  const message = input.message?.trim() || null
+  if (message && message.length > 300) throw new Error('Lời nhắn kết bạn Zalo quá dài.')
+  return { type: input.type, targetPhone, message }
+}
+
+export function zaloActionResult(
+  accountId: number,
+  action: ZaloActionType,
+  targetPhone: string,
+  status: ZaloActionResultStatus,
+  code: ZaloActionResultCode,
+  message: string,
+  options: {
+    verifiedTarget?: boolean
+    targetDisplayName?: string | null
+    data?: Record<string, unknown>
+  } = {}
+): ZaloActionResult {
+  return {
+    accountId,
+    action,
+    targetPhone,
+    status,
+    code,
+    message,
+    verifiedTarget: options.verifiedTarget ?? false,
+    targetDisplayName: options.targetDisplayName ?? null,
+    completedAt: Date.now(),
+    ...(options.data === undefined ? {} : { data: options.data })
+  }
 }
 
 export function maskZaloPassword(password: string | null | undefined): string {
