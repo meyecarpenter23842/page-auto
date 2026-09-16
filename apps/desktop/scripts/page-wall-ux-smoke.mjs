@@ -27,13 +27,7 @@ function isNearWhite(value) {
 }
 
 try {
-  electronApp = await electron.launch({
-    executablePath: electronExecutable,
-    args: [mainEntry],
-    cwd: appDirectory,
-    env: { ...process.env, PAGE_AUTO_DATA_DIR: dataDirectory }
-  })
-
+  electronApp = await electron.launch({ executablePath: electronExecutable, args: [mainEntry], cwd: appDirectory, env: { ...process.env, PAGE_AUTO_DATA_DIR: dataDirectory } })
   windowPage = await electronApp.firstWindow()
   await windowPage.locator('.app-shell').waitFor({ state: 'visible', timeout: 30_000 })
 
@@ -41,51 +35,27 @@ try {
     const accountA = await window.pageAuto.createAccount({ uid: '700000001', name: 'Wall Smoke A', status: 'valid' })
     const accountB = await window.pageAuto.createAccount({ uid: '700000002', name: 'Wall Smoke B', status: 'valid' })
     const page = await window.pageAuto.createPageTab({ name: 'Wall Smoke Page', pageUid: '920000001' })
-
-    const schedules = page.schedules.map((schedule) => ({
-      dayOfWeek: schedule.dayOfWeek,
-      startMinute: schedule.startMinute,
-      endMinute: schedule.endMinute,
-      enabled: schedule.enabled,
-      sortOrder: schedule.sortOrder
-    }))
-
+    const schedules = page.schedules.map((schedule) => ({ dayOfWeek: schedule.dayOfWeek, startMinute: schedule.startMinute, endMinute: schedule.endMinute, enabled: schedule.enabled, sortOrder: schedule.sortOrder }))
     await window.pageAuto.updatePageTab({
       id: page.id,
       config: {
-        name: page.name,
-        pageUid: page.pageUid,
-        rotation: page.rotation,
+        name: page.name, pageUid: page.pageUid, rotation: page.rotation,
         accounts: [
           { accountId: accountA.id, enabled: false, sortOrder: 0, postsPerTurn: null },
           { accountId: accountB.id, enabled: false, sortOrder: 1, postsPerTurn: null }
         ],
-        schedules,
-        groupUids: page.groupUids,
-        groupOrderMode: page.groupOrderMode,
-        contentMode: page.contentMode,
-        contents: page.contents,
-        image: page.image
+        schedules, groupUids: page.groupUids, groupOrderMode: page.groupOrderMode,
+        contentMode: page.contentMode, contents: page.contents, image: page.image
       }
     })
-
     await window.pageAuto.createContentLibraryItem({
-      contentSetId: -1,
-      name: 'Smoke Wall Post',
-      enabled: true,
+      contentSetId: -1, name: 'Smoke Wall Post', enabled: true,
       variants: ['Nội dung smoke cho Đăng Tường'],
       image: { folderPath: '', mode: 'sequential', imagesPerPost: 1, missingPolicy: 'text_only' }
     })
-
-    const bind = (type, label) => window.pageAuto.createActionWorkspace({
-      type: 'interaction',
-      label: `${page.name} · ${label}`,
-      configJson: JSON.stringify({ pageBusinessType: type, pageTabId: page.id }),
-      accounts: []
-    })
+    const bind = (type, label) => window.pageAuto.createActionWorkspace({ type: 'interaction', label: `${page.name} · ${label}`, configJson: JSON.stringify({ pageBusinessType: type, pageTabId: page.id }), accounts: [] })
     await bind('group_post', 'Đăng Nhóm')
     await bind('page_wall_post', 'Đăng Tường')
-
     return { pageId: page.id, accountA: accountA.id, accountB: accountB.id }
   })
 
@@ -108,56 +78,40 @@ try {
       const box = node.getBoundingClientRect()
       return { left: box.left, top: box.top, right: box.right, bottom: box.bottom, width: box.width, height: box.height }
     }
-    return {
-      accounts: rect('.business-page_wall_post [data-testid="page-wall-region-accounts"]'),
-      content: rect('.business-page_wall_post [data-testid="page-wall-region-content"]'),
-      control: rect('.business-page_wall_post [data-testid="page-wall-region-control"]')
-    }
+    return { accounts: rect('.business-page_wall_post [data-testid="page-wall-region-accounts"]'), content: rect('.business-page_wall_post [data-testid="page-wall-region-content"]'), control: rect('.business-page_wall_post [data-testid="page-wall-region-control"]') }
   })
   invariant(geometry.accounts && geometry.content && geometry.control, `Không đọc được layout Wall: ${JSON.stringify(geometry)}`)
   invariant(geometry.accounts.left < geometry.content.left - 20, `Tài khoản không nằm cột trái: ${JSON.stringify(geometry)}`)
   invariant(Math.abs(geometry.content.left - geometry.control.left) < 4, `Hai vùng phải không cùng cột: ${JSON.stringify(geometry)}`)
   invariant(geometry.content.bottom < geometry.control.top + 4, `Nội dung không nằm trên Lịch/Đăng ngay: ${JSON.stringify(geometry)}`)
   invariant(geometry.accounts.top <= geometry.content.top + 4 && geometry.accounts.bottom >= geometry.control.bottom - 4, `Tài khoản không full-height bên trái: ${JSON.stringify(geometry)}`)
-
   invariant(await wallRoot.locator('.page-wall-finite-head').isHidden(), 'Card header dư của Wall vẫn chiếm layout.')
   invariant(await wallRoot.locator('.page-wall-finite-footer').isHidden(), 'Footer kỹ thuật finite vẫn lộ ra UI.')
 
-  const darkBackgrounds = await windowPage.evaluate(() => {
-    const selectors = [
-      '.business-page_wall_post [data-testid="page-wall-region-accounts"]',
-      '.business-page_wall_post [data-testid="page-wall-region-content"]',
-      '.business-page_wall_post [data-testid="page-wall-region-control"]',
-      '.business-page_wall_post .page-wall-selected-post'
-    ]
-    return selectors.map((selector) => ({ selector, background: getComputedStyle(document.querySelector(selector)).backgroundColor }))
-  })
-  for (const entry of darkBackgrounds) {
-    invariant(!isNearWhite(entry.background), `Dark theme còn surface trắng tại ${entry.selector}: ${entry.background}`)
-  }
+  const darkBackgrounds = await windowPage.evaluate(() => [
+    '.business-page_wall_post [data-testid="page-wall-region-accounts"]',
+    '.business-page_wall_post [data-testid="page-wall-region-content"]',
+    '.business-page_wall_post [data-testid="page-wall-region-control"]',
+    '.business-page_wall_post .page-wall-selected-post'
+  ].map((selector) => ({ selector, background: getComputedStyle(document.querySelector(selector)).backgroundColor })))
+  for (const entry of darkBackgrounds) invariant(!isNearWhite(entry.background), `Dark theme còn surface trắng tại ${entry.selector}: ${entry.background}`)
 
   const rows = wallRoot.locator('.page-wall-account-table tbody tr')
   await rows.first().waitFor({ state: 'visible' })
   invariant(await rows.count() === 2, `Wall smoke cần 2 account, thực tế ${await rows.count()}.`)
-
   const firstCheckbox = rows.nth(0).locator('input[type="checkbox"]')
   const secondCheckbox = rows.nth(1).locator('input[type="checkbox"]')
   const initialAccountCount = await wallRoot.locator('[data-testid="page-wall-region-accounts"] .page-wall-region-head > span').innerText()
   invariant(initialAccountCount.includes('2/2'), `Wall vẫn coi Page-level enabled=false là không chọn được: ${initialAccountCount}`)
   invariant(!(await firstCheckbox.isDisabled()) && !(await secondCheckbox.isDisabled()), 'Wall vẫn disable checkbox vì cờ enabled của Page Tab.')
-
   await wallRoot.getByRole('button', { name: 'Bỏ chọn', exact: true }).first().click()
   invariant(!(await firstCheckbox.isChecked()) && !(await secondCheckbox.isChecked()), 'Bỏ chọn không bỏ hết account Wall.')
-
   await rows.nth(0).locator('td').nth(2).click()
   invariant((await rows.nth(0).getAttribute('class') ?? '').includes('range-row'), 'Click dòng account Wall không tạo vùng phủ khối.')
   invariant(!(await firstCheckbox.isChecked()), 'Click dòng account Wall không được tự tick account đầu tiên.')
   invariant(!(await secondCheckbox.isChecked()), 'Click dòng account Wall không được tick nhầm account khác.')
-
-  await firstCheckbox.click()
-  invariant(await firstCheckbox.isChecked(), 'Click checkbox account Wall không chọn được account đầu tiên.')
-  await secondCheckbox.click()
-  invariant(await secondCheckbox.isChecked(), 'Click checkbox account Wall không chọn được account thứ hai.')
+  await firstCheckbox.click(); await secondCheckbox.click()
+  invariant(await firstCheckbox.isChecked() && await secondCheckbox.isChecked(), 'Checkbox account Wall không chọn được đủ 2 account.')
   const accountCount = await wallRoot.locator('[data-testid="page-wall-region-accounts"] .page-wall-region-head > span').innerText()
   invariant(accountCount.includes('2/2'), `Counter account Wall không phản ánh selection thật: ${accountCount}`)
 
@@ -177,42 +131,29 @@ try {
 
   await wallRoot.locator('.page-wall-mode-tabs button').filter({ hasText: 'Lịch chạy' }).click()
   await wallRoot.locator('.page-wall-schedule-toolbar button').filter({ hasText: '+ Thêm lịch' }).click()
-
   let scheduleDialog = windowPage.getByRole('dialog', { name: 'Thiết lập lịch đăng' })
   await scheduleDialog.waitFor({ state: 'visible' })
 
   const modalGeometry = await scheduleDialog.evaluate((element) => {
     const box = element.getBoundingClientRect()
-    return {
-      left: box.left,
-      top: box.top,
-      right: box.right,
-      bottom: box.bottom,
-      centerX: box.left + box.width / 2,
-      centerY: box.top + box.height / 2,
-      viewportX: window.innerWidth / 2,
-      viewportY: window.innerHeight / 2
-    }
+    return { left: box.left, top: box.top, right: box.right, bottom: box.bottom, centerX: box.left + box.width / 2, centerY: box.top + box.height / 2, viewportX: window.innerWidth / 2, viewportY: window.innerHeight / 2 }
   })
   invariant(modalGeometry.left >= 8 && modalGeometry.top >= 8 && modalGeometry.right <= await windowPage.evaluate(() => innerWidth) - 8 && modalGeometry.bottom <= await windowPage.evaluate(() => innerHeight) - 8, `Popup lịch bị tràn màn hình: ${JSON.stringify(modalGeometry)}`)
   invariant(Math.abs(modalGeometry.centerX - modalGeometry.viewportX) < 90 && Math.abs(modalGeometry.centerY - modalGeometry.viewportY) < 90, `Popup lịch không đứng giữa màn hình: ${JSON.stringify(modalGeometry)}`)
 
-  const tomorrowDate = await windowPage.evaluate(() => {
-    const date = new Date()
-    date.setDate(date.getDate() + 1)
-    const shifted = new Date(date.getTime() - date.getTimezoneOffset() * 60_000)
-    return shifted.toISOString().slice(0, 10)
-  })
-  await scheduleDialog.getByLabel('Ngày cụ thể').check()
-  await scheduleDialog.locator('input[type="date"]').fill(tomorrowDate)
+  invariant(await scheduleDialog.locator('input[type="date"]').count() === 0, 'Popup lịch tuần vẫn còn input ngày cụ thể.')
+  invariant(!(await scheduleDialog.innerText()).includes('Ngày cụ thể'), 'Popup lịch tuần vẫn còn lựa chọn Ngày cụ thể.')
+  for (const label of ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7']) {
+    invariant(await scheduleDialog.getByLabel(label, { exact: true }).isChecked(), `Ngày ${label} không mặc định được chọn.`)
+  }
+  await scheduleDialog.getByLabel('T3', { exact: true }).uncheck()
+  await scheduleDialog.getByLabel('T5', { exact: true }).uncheck()
+  invariant(!(await scheduleDialog.getByLabel('T3', { exact: true }).isChecked()) && !(await scheduleDialog.getByLabel('T5', { exact: true }).isChecked()), 'Không chỉnh được ngày chạy tuần.')
 
   await scheduleDialog.getByRole('button', { name: 'Chọn', exact: true }).click()
   picker = windowPage.getByRole('dialog', { name: 'Chọn bài từ Thư viện' })
   await picker.waitFor({ state: 'visible' })
-  const layers = await windowPage.evaluate(() => ({
-    schedule: Number(getComputedStyle(document.querySelector('.page-wall-modal-backdrop.schedule')).zIndex || 0),
-    picker: Number(getComputedStyle(document.querySelector('.page-wall-modal-backdrop.picker')).zIndex || 0)
-  }))
+  const layers = await windowPage.evaluate(() => ({ schedule: Number(getComputedStyle(document.querySelector('.page-wall-modal-backdrop.schedule')).zIndex || 0), picker: Number(getComputedStyle(document.querySelector('.page-wall-modal-backdrop.picker')).zIndex || 0) }))
   invariant(layers.picker > layers.schedule, `Post Picker của lịch vẫn nằm sau popup lịch: ${JSON.stringify(layers)}`)
   await picker.locator('article').filter({ hasText: 'Smoke Wall Post' }).getByRole('button', { name: 'Chọn bài này' }).click()
   await picker.waitFor({ state: 'detached' })
@@ -222,10 +163,7 @@ try {
   await scheduleDialog.getByRole('button', { name: 'Thêm', exact: true }).click()
   const editor = windowPage.getByRole('dialog', { name: 'Thêm bài viết' })
   await editor.waitFor({ state: 'visible' })
-  const editorLayers = await windowPage.evaluate(() => ({
-    schedule: Number(getComputedStyle(document.querySelector('.page-wall-modal-backdrop.schedule')).zIndex || 0),
-    editor: Number(getComputedStyle(document.querySelector('.page-wall-modal-backdrop.editor')).zIndex || 0)
-  }))
+  const editorLayers = await windowPage.evaluate(() => ({ schedule: Number(getComputedStyle(document.querySelector('.page-wall-modal-backdrop.schedule')).zIndex || 0), editor: Number(getComputedStyle(document.querySelector('.page-wall-modal-backdrop.editor')).zIndex || 0) }))
   invariant(editorLayers.editor > editorLayers.schedule, `Editor bài vẫn nằm sau popup lịch: ${JSON.stringify(editorLayers)}`)
   await editor.locator('label').filter({ hasText: 'Tên bài' }).locator('input').fill('Smoke Added Post')
   await editor.locator('label').filter({ hasText: 'Nội dung' }).locator('textarea').fill('Nội dung bài mới để kiểm tra số ảnh')
@@ -234,11 +172,9 @@ try {
   invariant(await imageCount.inputValue() === '4', 'Không nhập được số ảnh mỗi bài trong modal Thêm bài.')
   await editor.getByRole('button', { name: 'Lưu vào Thư viện', exact: true }).click()
   await editor.waitFor({ state: 'detached' })
-
   const savedImageCount = await windowPage.evaluate(async () => {
     const library = await window.pageAuto.getContentLibrary({ id: -1 })
-    const item = library?.items.find((candidate) => candidate.name === 'Smoke Added Post')
-    return item?.image.imagesPerPost ?? null
+    return library?.items.find((candidate) => candidate.name === 'Smoke Added Post')?.image.imagesPerPost ?? null
   })
   invariant(savedImageCount === 4, `Số ảnh mỗi bài không được persist vào canonical post: ${savedImageCount}`)
 
@@ -264,6 +200,13 @@ try {
   await planRow.waitFor({ state: 'visible' })
   const planText = await planRow.innerText()
   invariant(planText.includes('Smoke Added Post') && planText.includes('1 TK'), `Lịch lưu xong không hiện đúng summary: ${planText}`)
+  invariant(planText.includes('CN') && planText.includes('T2') && !planText.includes('T3') && !planText.includes('T5'), `Summary ngày tuần không đúng: ${planText}`)
+
+  const persistedWeekdays = await windowPage.evaluate(async (pageId) => {
+    const dashboard = await window.pageWallFinite.getDashboard({ pageTabId: pageId })
+    return dashboard.plans.map((plan) => plan.weekdays)
+  }, setup.pageId)
+  invariant(persistedWeekdays.length === 2 && persistedWeekdays.every((days) => JSON.stringify(days) === JSON.stringify([0, 1, 3, 5, 6])), `Weekday mapping/persist sai: ${JSON.stringify(persistedWeekdays)}`)
 
   const editButton = planRow.getByRole('button', { name: 'Sửa', exact: true })
   invariant(!(await editButton.isDisabled()), 'Nút Sửa lịch đang bị khóa dù lịch không có occurrence đang chạy.')
@@ -271,24 +214,19 @@ try {
   scheduleDialog = windowPage.getByRole('dialog', { name: 'Thiết lập lịch đăng' })
   await scheduleDialog.waitFor({ state: 'visible' })
   invariant((await scheduleDialog.innerText()).includes('Sửa lịch đăng'), 'Nút Sửa không mở popup chỉnh lịch.')
+  invariant(!(await scheduleDialog.getByLabel('T3', { exact: true }).isChecked()), 'Sửa lịch không đọc lại weekday đã lưu.')
   await scheduleDialog.getByRole('button', { name: '×', exact: true }).click()
   await scheduleDialog.waitFor({ state: 'detached' })
 
   await planRow.getByRole('button', { name: 'Tạm dừng', exact: true }).click()
   await planRow.getByRole('button', { name: 'Bắt đầu', exact: true }).waitFor({ state: 'visible' })
   invariant((await planRow.innerText()).includes('Tạm dừng'), 'Dòng lịch không cập nhật trạng thái Tạm dừng.')
-  const pausedStatuses = await windowPage.evaluate(async (pageId) => {
-    const dashboard = await window.pageWallFinite.getDashboard({ pageTabId: pageId })
-    return dashboard.plans.map((plan) => plan.status)
-  }, setup.pageId)
+  const pausedStatuses = await windowPage.evaluate(async (pageId) => (await window.pageWallFinite.getDashboard({ pageTabId: pageId })).plans.map((plan) => plan.status), setup.pageId)
   invariant(pausedStatuses.length === 2 && pausedStatuses.every((status) => status === 'disabled'), `Pause không persist toàn bộ plan-slot: ${JSON.stringify(pausedStatuses)}`)
 
   await planRow.getByRole('button', { name: 'Bắt đầu', exact: true }).click()
   await planRow.getByRole('button', { name: 'Tạm dừng', exact: true }).waitFor({ state: 'visible' })
-  const resumedStatuses = await windowPage.evaluate(async (pageId) => {
-    const dashboard = await window.pageWallFinite.getDashboard({ pageTabId: pageId })
-    return dashboard.plans.map((plan) => plan.status)
-  }, setup.pageId)
+  const resumedStatuses = await windowPage.evaluate(async (pageId) => (await window.pageWallFinite.getDashboard({ pageTabId: pageId })).plans.map((plan) => plan.status), setup.pageId)
   invariant(resumedStatuses.length === 2 && resumedStatuses.every((status) => status === 'active'), `Bắt đầu lại không persist toàn bộ plan-slot: ${JSON.stringify(resumedStatuses)}`)
 
   await windowPage.screenshot({ path: layoutScreenshotPath, fullPage: true })
@@ -299,6 +237,8 @@ try {
     pageRotationDisabledAccountsSelectable: true,
     canonicalImageCountPersistence: true,
     immediateDelayControl: true,
+    weeklyScheduleControls: true,
+    weeklyMappingPersisted: true,
     scheduleEditOpens: true,
     schedulePauseResumePersists: true,
     layoutLeftPlusRightStack: true,
@@ -309,9 +249,7 @@ try {
     modalScreenshotPath
   })
 } catch (error) {
-  if (windowPage) {
-    await windowPage.screenshot({ path: layoutScreenshotPath, fullPage: true }).catch(() => undefined)
-  }
+  if (windowPage) await windowPage.screenshot({ path: layoutScreenshotPath, fullPage: true }).catch(() => undefined)
   throw error
 } finally {
   if (electronApp) await electronApp.close().catch(() => undefined)

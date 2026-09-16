@@ -42,6 +42,8 @@ export interface SavePageWallFinitePlanPayload {
 export interface SavePageWallFiniteScheduleInput extends Omit<SavePageWallPlanInput, 'minuteOfDay'> {
   /** One finite plan-slot is persisted per minute. UI presents the slots as one schedule. */
   minuteOfDays: number[]
+  /** Recurring local weekdays. 0=CN, 1=T2 ... 6=T7. Missing means all days for legacy callers. */
+  weekdays?: number[]
 }
 
 export interface SavePageWallFiniteSchedulePayload {
@@ -57,6 +59,7 @@ export interface SetPageWallFiniteScheduleEnabledPayload {
 }
 
 export interface PageWallFinitePlanView extends PageWallPlanRecord {
+  weekdays: number[]
   latestOccurrence: PageWallPlanOccurrenceRecord | null
 }
 
@@ -72,6 +75,22 @@ export interface PageWallFiniteRuntimeState {
 }
 
 export const PAGE_WALL_PUBLISH_UNCONFIRMED_LABEL = 'Đã gửi · chưa xác minh'
+export const PAGE_WALL_WEEKDAYS = [0, 1, 2, 3, 4, 5, 6] as const
+
+export function normalizePageWallScheduleWeekdays(values: readonly number[] | undefined): number[] {
+  if (values === undefined) return [...PAGE_WALL_WEEKDAYS]
+  const weekdays = [...new Set(values.filter((value) => Number.isInteger(value) && value >= 0 && value <= 6))]
+    .sort((left, right) => left - right)
+  if (weekdays.length === 0) throw new Error('Lịch Đăng Tường cần ít nhất một ngày chạy.')
+  return weekdays
+}
+
+export function pageWallWeekdayLabel(weekdays: readonly number[]): string {
+  const normalized = normalizePageWallScheduleWeekdays(weekdays)
+  if (normalized.length === 7) return 'CN–T7'
+  const labels = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7']
+  return normalized.map((day) => labels[day]).join(', ')
+}
 
 type PageWallFiniteFinishedJob = Pick<PageWallJobRecord, 'status' | 'resultStatus' | 'resultCode'>
 export interface PageWallFiniteOccurrenceSummary {
@@ -82,11 +101,6 @@ export interface PageWallFiniteOccurrenceSummary {
   publishUnconfirmedCount: number
 }
 
-/**
- * `publish_unconfirmed` is a terminal uncertainty after the consequential Post click,
- * not proof that Facebook rejected the post. Keep the concrete job terminal so it can
- * never be auto-claimed/retried, but surface the finite occurrence as needs_attention.
- */
 export function summarizePageWallFiniteOccurrenceJobs(
   jobs: readonly PageWallFiniteFinishedJob[]
 ): PageWallFiniteOccurrenceSummary {
@@ -204,7 +218,7 @@ export function pageWallFiniteScheduleRuntimeState(
       && plan.latestOccurrence.status === 'success'
     )).length
     if (successToday === plans.length && successToday > 0) {
-      return { label: 'Đã chạy hôm nay · chờ ngày mai', tone: 'completed' }
+      return { label: 'Đã chạy hôm nay · chờ lịch tiếp theo', tone: 'completed' }
     }
     if (successToday > 0) {
       return { label: `Đã chạy ${successToday}/${plans.length} hôm nay`, tone: 'completed' }

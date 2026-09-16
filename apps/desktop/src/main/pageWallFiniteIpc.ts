@@ -5,6 +5,7 @@ import {
   PAGE_WALL_FINITE_IPC,
   normalizePageWallImmediateDelaySeconds,
   normalizePageWallScheduleMinutes,
+  normalizePageWallScheduleWeekdays,
   summarizePageWallFiniteOccurrenceJobs,
   type PageWallFiniteApi,
   type PageWallFiniteDashboard,
@@ -100,10 +101,25 @@ export function registerPageWallFiniteRuntime(database: Database.Database, dataD
   let disposed = false
   let ticking = false
 
+  const readPlanWeekdays = (planId: number): number[] => {
+    const rows = database.prepare(`
+      SELECT day_of_week AS dayOfWeek
+      FROM page_wall_plan_weekdays
+      WHERE plan_id = ?
+      ORDER BY day_of_week
+    `).all(planId) as Array<{ dayOfWeek: number }>
+    return rows.length ? normalizePageWallScheduleWeekdays(rows.map((row) => row.dayOfWeek)) : normalizePageWallScheduleWeekdays(undefined)
+  }
+
+  const writePlanWeekdays = (planId: number, values: readonly number[] | undefined): void => {
+    const weekdays = normalizePageWallScheduleWeekdays(values)
+    database.prepare('DELETE FROM page_wall_plan_weekdays WHERE plan_id = ?').run(planId)
+    const insert = database.prepare('INSERT INTO page_wall_plan_weekdays (plan_id, day_of_week) VALUES (?, ?)')
+    for (const day of weekdays) insert.run(planId, day)
+  }
+
   const sourcePayload = (pageTabId: number, accountId: number, source: PageWallPlanTaskDefinition['source']): PageWallRunNowPayload => {
-    if (source.kind === 'manual') {
-      return { pageTabId, accountId, content: source.content, imagePaths: [...source.imagePaths] }
-    }
+    if (source.kind === 'manual') return { pageTabId, accountId, content: source.content, imagePaths: [...source.imagePaths] }
     const post = posts.get(source.postId)
     if (!post) throw new Error(`Không tìm thấy bài canonical #${source.postId}.`)
     const content = post.variants[source.variantIndex] ?? (post.variants.length === 0 && source.variantIndex === 0 ? '' : undefined)
@@ -147,10 +163,8 @@ export function registerPageWallFiniteRuntime(database: Database.Database, dataD
   const markOccurrence = (id: number, status: string, message: string | null, now: number, finished: boolean) => {
     database.prepare(`
       UPDATE page_wall_plan_occurrences
-      SET status = ?, result_message = ?,
-          started_at = COALESCE(started_at, ?),
-          finished_at = CASE WHEN ? THEN ? ELSE finished_at END,
-          updated_at = ?
+      SET status = ?, result_message = ?, started_at = COALESCE(started_at, ?),
+          finished_at = CASE WHEN ? THEN ? ELSE finished_at END, updated_at = ?
       WHERE id = ?
     `).run(status, message, now, finished ? 1 : 0, now, now, id)
   }
@@ -203,11 +217,7 @@ export function registerPageWallFiniteRuntime(database: Database.Database, dataD
       markOccurrence(occurrence.id, summary.status, summary.message, Date.now(), true)
       const plan = plans.get(occurrence.planId)
       if (plan?.scheduleKind === 'specific_date') {
-        plans.setStatus(
-          plan.id,
-          summary.needsAttention ? 'needs_attention' : 'completed',
-          summary.needsAttention ? summary.message : null
-        )
+        plans.setStatus(plan.id, summary.needsAttention ? 'needs_attention' : 'completed', summary.needsAttention ? summary.message : null)
       } else if (summary.needsAttention && plan) {
         plans.setStatus(plan.id, 'needs_attention', summary.message)
       }
@@ -222,7 +232,6 @@ export function registerPageWallFiniteRuntime(database: Database.Database, dataD
     const concrete = await concreteJobsForPlan(plan, scheduledAt)
     const bundle = plans.createOccurrenceWithJobs({ planId: plan.id, localDate, scheduledAt, jobs: concrete }, now)
     if (!bundle) return
-
     const parkAt = scheduledAt + PARK_MS
     const park = database.prepare("UPDATE page_wall_jobs SET scheduled_at = ?, updated_at = ? WHERE id = ? AND status = 'pending'")
     for (const item of bundle.jobs) park.run(parkAt, now, item.job.id)
@@ -233,13 +242,15 @@ export function registerPageWallFiniteRuntime(database: Database.Database, dataD
     if (disposed || ticking) return
     ticking = true
     const now = Date.now()
-    const localDate = localDateKey(new Date(now))
+    const nowDate = new Date(now)
+    const localDate = localDateKey(nowDate)
     try {
       const rows = database.prepare("SELECT id FROM page_wall_plans WHERE status = 'active' ORDER BY id").all() as Array<{ id: number }>
       for (const row of rows) {
         const plan = plans.get(row.id)
         if (!plan) continue
         if (plan.scheduleKind === 'specific_date' && plan.localDate !== localDate) continue
+        if (plan.scheduleKind === 'daily' && !readPlanWeekdays(plan.id).includes(nowDate.getDay())) continue
         const scheduledAt = scheduledAtFor(localDate, plan.minuteOfDay)
         if (scheduledAt > now) continue
         try {
@@ -255,7 +266,7 @@ export function registerPageWallFiniteRuntime(database: Database.Database, dataD
     const pageTabId = payload.pageTabId
     const pagePlans = plans.listByPage(pageTabId)
     return {
-      plans: pagePlans.map((plan) => ({ ...plan, latestOccurrence: plans.listOccurrences(plan.id, 1)[0] ?? null })),
+      plans: pagePlans.map((plan) => ({ ...plan, weekdays: readPlanWeekdays(plan.id), latestOccurrence: plans.listOccurrences(plan.id, 1)[0] ?? null })),
       jobs: jobs.list(500).filter((job) => job.pageTabId === pageTabId)
     }
   }
@@ -269,7 +280,6 @@ export function registerPageWallFiniteRuntime(database: Database.Database, dataD
     const results: PageWallFiniteRunNowResult['results'] = []
     let nextLaunchAt = 0
     let launchGate: Promise<void> = Promise.resolve()
-
     const waitForLaunchSlot = (): Promise<void> => {
       if (delayMs === 0) return Promise.resolve()
       const slot = launchGate.then(async () => {
@@ -280,7 +290,6 @@ export function registerPageWallFiniteRuntime(database: Database.Database, dataD
       launchGate = slot.catch(() => undefined)
       return slot
     }
-
     await runRollingAccountPool({
       items: accountIds.map((accountId, order) => ({ accountId, order })),
       concurrency,
@@ -307,6 +316,7 @@ export function registerPageWallFiniteRuntime(database: Database.Database, dataD
 
   const saveSchedule = (payload: SavePageWallFiniteSchedulePayload): PageWallPlanRecord[] => {
     const minuteOfDays = normalizePageWallScheduleMinutes(payload.input.minuteOfDays)
+    const weekdays = normalizePageWallScheduleWeekdays(payload.input.weekdays)
     const planIds = positiveUniqueIds(payload.planIds ?? [])
     return database.transaction(() => {
       for (const planId of planIds) {
@@ -315,14 +325,8 @@ export function registerPageWallFiniteRuntime(database: Database.Database, dataD
         if (existing.pageTabId !== payload.input.pageTabId) throw new Error('Slot lịch không thuộc đúng Page đang sửa.')
         const history = plans.listOccurrences(planId, 1_000)
         const latest = history[0]
-        if (latest?.status === 'pending' || latest?.status === 'running') {
-          throw new Error('Lịch đang có lượt chạy; hãy chờ lượt hiện tại kết thúc rồi sửa.')
-        }
-        if (
-          payload.input.scheduleKind === 'specific_date'
-          && payload.input.localDate
-          && history.some((occurrence) => occurrence.localDate === payload.input.localDate)
-        ) {
+        if (latest?.status === 'pending' || latest?.status === 'running') throw new Error('Lịch đang có lượt chạy; hãy chờ lượt hiện tại kết thúc rồi sửa.')
+        if (payload.input.scheduleKind === 'specific_date' && payload.input.localDate && history.some((occurrence) => occurrence.localDate === payload.input.localDate)) {
           throw new Error(`Ngày ${payload.input.localDate} đã có lượt chạy; hãy chọn ngày khác để không chạy trùng lịch sử.`)
         }
       }
@@ -331,12 +335,12 @@ export function registerPageWallFiniteRuntime(database: Database.Database, dataD
       for (let index = 0; index < minuteOfDays.length; index += 1) {
         const input = singleSlotInput(payload, minuteOfDays[index]!)
         const existingId = planIds[index]
-        saved.push(existingId ? plans.update(existingId, input) : plans.create(input))
+        const record = existingId ? plans.update(existingId, input) : plans.create(input)
+        writePlanWeekdays(record.id, weekdays)
+        saved.push(record)
       }
       for (const staleId of planIds.slice(minuteOfDays.length)) {
-        if (plans.listOccurrences(staleId, 1).length > 0) {
-          throw new Error('Không thể xóa bớt giờ đã có lịch sử chạy; hãy giữ giờ đó hoặc tạo lịch mới.')
-        }
+        if (plans.listOccurrences(staleId, 1).length > 0) throw new Error('Không thể xóa bớt giờ đã có lịch sử chạy; hãy giữ giờ đó hoặc tạo lịch mới.')
         plans.delete(staleId)
       }
       return saved
@@ -356,12 +360,8 @@ export function registerPageWallFiniteRuntime(database: Database.Database, dataD
       const plan = plans.get(planId)
       if (!plan) throw new Error(`Không tìm thấy slot lịch Đăng Tường #${planId}.`)
       if (plan.pageTabId !== payload.pageTabId) throw new Error('Slot lịch không thuộc đúng Page đang thao tác.')
-      if (payload.enabled && plan.status === 'completed') {
-        throw new Error('Lịch ngày cụ thể này đã hoàn tất; hãy Sửa sang ngày/giờ mới trước khi bắt đầu lại.')
-      }
-      if (payload.enabled && plan.scheduleKind === 'specific_date' && plan.localDate && plan.localDate < today) {
-        throw new Error('Ngày của lịch đã qua; hãy Sửa lịch sang ngày mới trước khi bắt đầu lại.')
-      }
+      if (payload.enabled && plan.status === 'completed') throw new Error('Lịch ngày cụ thể này đã hoàn tất; hãy Sửa sang ngày/giờ mới trước khi bắt đầu lại.')
+      if (payload.enabled && plan.scheduleKind === 'specific_date' && plan.localDate && plan.localDate < today) throw new Error('Ngày của lịch đã qua; hãy Sửa lịch sang ngày mới trước khi bắt đầu lại.')
       return plans.setStatus(planId, payload.enabled ? 'active' : 'disabled', null)
     }))()
   }
@@ -375,17 +375,9 @@ export function registerPageWallFiniteRuntime(database: Database.Database, dataD
       return record
     },
     deletePlan: async (payload: PageWallFinitePlanIdPayload) => plans.delete(payload.planId),
-    saveSchedule: async (payload) => {
-      const records = saveSchedule(payload)
-      void tick()
-      return records
-    },
+    saveSchedule: async (payload) => { const records = saveSchedule(payload); void tick(); return records },
     deleteSchedule: async (payload) => deleteSchedule(payload),
-    setScheduleEnabled: async (payload) => {
-      const records = setScheduleEnabled(payload)
-      if (payload.enabled) void tick()
-      return records
-    }
+    setScheduleEnabled: async (payload) => { const records = setScheduleEnabled(payload); if (payload.enabled) void tick(); return records }
   }
 
   ipcMain.handle(PAGE_WALL_FINITE_IPC.dashboard, (_event, payload: PageWallFinitePagePayload) => api.getDashboard(payload))
