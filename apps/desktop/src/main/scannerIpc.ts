@@ -7,6 +7,7 @@ import {
   type CreateScannerTokenCredentialInput,
   type ExportScanDatasetCsvInput,
   type ExportScanDatasetCsvResult,
+  type RenameScanDatasetInput,
   type SaveScanDatasetInput,
   type ScanDatasetIdPayload,
   type ScanJobIdPayload,
@@ -23,6 +24,7 @@ import { PageScanAccountRuntime } from './scanner/page/pageScanAccountRuntime'
 import { PageScanAdapter } from './scanner/page/pageScanAdapter'
 import { ScanJobService } from './scanner/scanJobService'
 import { ScannerAdapterRegistry } from './scanner/scannerAdapterRegistry'
+import { ScannerLibraryDatasetRepository } from './scanner/scannerLibraryDatasetRepository'
 import { ElectronScannerTokenSecretStore } from './scanner/token/electronTokenSecretStore'
 import { ScannerTokenCredentialRepository } from './scanner/token/tokenCredentialRepository'
 import { ScannerTokenCredentialService } from './scanner/token/tokenCredentialService'
@@ -30,9 +32,7 @@ import { MetaGraphScannerTokenValidator } from './scanner/token/tokenValidator'
 import { UserScanAccountRuntime } from './scanner/user/userScanAccountRuntime'
 import { UserScanAdapter } from './scanner/user/userScanAdapter'
 
-export interface ScannerIpcRuntime {
-  dispose: () => void
-}
+export interface ScannerIpcRuntime { dispose: () => void }
 
 function safeFileName(value: string): string {
   const normalized = value.replace(/[<>:"/\\|?*\u0000-\u001F]/g, '_').trim()
@@ -44,6 +44,8 @@ export function registerScannerIpcHandlers(
   dataDirectory: string = dirname(database.name)
 ): ScannerIpcRuntime {
   const repository = new ScannerRepository(database)
+  const libraryDatasets = new ScannerLibraryDatasetRepository(database)
+  libraryDatasets.repairLegacyGroupMemberTypes()
   const groupRuntime = new GroupScanAccountRuntime(database, dataDirectory)
   const groupMembersRuntime = new GroupMembersScanAccountRuntime(database, dataDirectory)
   const pageRuntime = new PageScanAccountRuntime(database, dataDirectory)
@@ -74,16 +76,12 @@ export function registerScannerIpcHandlers(
   ipcMain.handle(SCANNER_IPC.listDatasets, () => service.listDatasets())
   ipcMain.handle(SCANNER_IPC.getDataset, (_event, payload: ScanDatasetIdPayload) => service.getDataset(payload.datasetId))
   ipcMain.handle(SCANNER_IPC.saveDataset, (_event, input: SaveScanDatasetInput) => service.saveDataset(input))
+  ipcMain.handle(SCANNER_IPC.renameDataset, (_event, input: RenameScanDatasetInput) => libraryDatasets.rename(input))
+  ipcMain.handle(SCANNER_IPC.deleteDataset, (_event, payload: ScanDatasetIdPayload) => libraryDatasets.delete(payload.datasetId))
   ipcMain.handle(SCANNER_IPC.getSourceCapabilities, () => tokenService.getCapabilities())
   ipcMain.handle(SCANNER_IPC.listTokenCredentials, () => tokenService.list())
-  ipcMain.handle(
-    SCANNER_IPC.createTokenCredential,
-    (_event, input: CreateScannerTokenCredentialInput) => tokenService.create(input)
-  )
-  ipcMain.handle(
-    SCANNER_IPC.validateTokenCredential,
-    (_event, payload: ScannerTokenCredentialIdPayload) => tokenService.validate(payload.credentialId)
-  )
+  ipcMain.handle(SCANNER_IPC.createTokenCredential, (_event, input: CreateScannerTokenCredentialInput) => tokenService.create(input))
+  ipcMain.handle(SCANNER_IPC.validateTokenCredential, (_event, payload: ScannerTokenCredentialIdPayload) => tokenService.validate(payload.credentialId))
   ipcMain.handle(
     SCANNER_IPC.exportDatasetCsv,
     async (_event, input: ExportScanDatasetCsvInput): Promise<ExportScanDatasetCsvResult> => {

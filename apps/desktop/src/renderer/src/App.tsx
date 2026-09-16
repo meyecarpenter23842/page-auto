@@ -12,13 +12,12 @@ import { SettingsPanel } from './settings/SettingsPanel'
 import './globalBrowserDock.css'
 
 type RouteId = 'accounts' | 'hotmail' | 'content-library' | 'page-tabs' | 'actions' | 'scanner' | 'logs' | 'settings'
-
 interface Route { id: RouteId; label: string }
 
 const routes: Route[] = [
   { id: 'accounts', label: 'Tài khoản' },
   { id: 'hotmail', label: 'Email' },
-  { id: 'content-library', label: 'Bài viết' },
+  { id: 'content-library', label: 'Thư viện' },
   { id: 'page-tabs', label: 'Page Tabs' },
   { id: 'actions', label: 'Hành động' },
   { id: 'scanner', label: 'Quét dữ liệu' },
@@ -29,7 +28,7 @@ const routes: Route[] = [
 const routeDescriptions: Record<RouteId, { title: string; description: string }> = {
   accounts: { title: 'Account Manager', description: 'Quản lý account theo data-grid nhiều cột, import linh hoạt và persistent browser profile riêng.' },
   hotmail: { title: 'Email', description: 'Dashboard Email theo UID từ Account Manager, Microsoft Mail.Read, external profile root trực tiếp, mail khôi phục và Proxy Email pool độc lập.' },
-  'content-library': { title: 'Thư viện Bài viết', description: 'Quản lý kho bài viết dùng chung và tạo nội dung AI trước khi lưu vào cùng thư viện gốc.' },
+  'content-library': { title: 'Thư viện', description: 'Quản lý bài viết dùng chung, Dataset từ Quét dữ liệu và nội dung AI trong cùng một workspace.' },
   'page-tabs': { title: 'Page Tabs', description: 'Mỗi Page UID là một workspace đa nghiệp vụ: Nhóm, Đăng Tường, Sửa Page và các tác vụ mở rộng dùng chung tầng Facebook.' },
   actions: { title: 'Hành động', description: 'Workspace nhiều tab nghiệp vụ; Kịch bản hiện tại là tab mặc định và các tab Hành động khác sẽ được bổ sung theo module dùng chung.' },
   scanner: { title: 'Quét dữ liệu', description: 'Workspace Scanner dùng chung job lifecycle, Account/session và Dataset; từng loại Nhóm/Page/User/Member là module nghiệp vụ độc lập.' },
@@ -60,21 +59,14 @@ export function App() {
   const openBrowserDock = async () => {
     if (browserDockOpening) return
     setBrowserDockOpening(true)
-    try {
-      await window.pageAuto.openAccountBrowserDock()
-    } catch (cause) {
-      console.error('[PAGE-AUTO browser-dock] open failed', cause)
-    } finally {
-      setBrowserDockOpening(false)
-    }
+    try { await window.pageAuto.openAccountBrowserDock() }
+    catch (cause) { console.error('[PAGE-AUTO browser-dock] open failed', cause) }
+    finally { setBrowserDockOpening(false) }
   }
 
   const openChangeInfoWorkspace = (workspaceId: number) => {
-    try {
-      window.sessionStorage.setItem(ACTION_WORKSPACE_OPEN_REQUEST_KEY, String(workspaceId))
-    } catch {
-      // The workspace still exists in SQLite; user can open it manually if session storage is unavailable.
-    }
+    try { window.sessionStorage.setItem(ACTION_WORKSPACE_OPEN_REQUEST_KEY, String(workspaceId)) }
+    catch { /* workspace remains in SQLite */ }
     setActiveRoute('actions')
   }
 
@@ -91,47 +83,19 @@ export function App() {
       <aside className="sidebar">
         <span className="sidebar-orbit sidebar-orbit-one" aria-hidden="true" />
         <span className="sidebar-orbit sidebar-orbit-two" aria-hidden="true" />
-
-        <div className="brand sidebar-card">
-          <div className="brand-mark">PA</div>
-          <div><strong>PAGE-AUTO</strong><span>Desktop Control</span></div>
-        </div>
-
-        <div className="sidebar-menu-card sidebar-card">
-          <p className="sidebar-kicker">MENU CHÍNH</p>
-          <nav className="sidebar-nav" aria-label="Điều hướng chính">
-            {routes.map((route) => (
-              <button
-                aria-current={route.id === activeRoute ? 'page' : undefined}
-                className={route.id === activeRoute ? 'nav-item active' : 'nav-item'}
-                key={route.id}
-                type="button"
-                onClick={() => setActiveRoute(route.id)}
-              >
-                <span className="nav-icon"><RouteIcon id={route.id} /></span>
-                <span className="nav-label">{route.label}</span>
-              </button>
-            ))}
-          </nav>
-        </div>
-
-        <div className="sidebar-footer sidebar-card">
-          <div className="sidebar-status-line"><span className="status-dot" /><strong>Local portable mode</strong></div>
-          <span className="sidebar-version">{appInfo ? `v${appInfo.version}` : 'Đang tải phiên bản...'}</span>
-        </div>
+        <div className="brand sidebar-card"><div className="brand-mark">PA</div><div><strong>PAGE-AUTO</strong><span>Desktop Control</span></div></div>
+        <div className="sidebar-menu-card sidebar-card"><p className="sidebar-kicker">MENU CHÍNH</p><nav className="sidebar-nav" aria-label="Điều hướng chính">
+          {routes.map((route) => <button aria-current={route.id === activeRoute ? 'page' : undefined} className={route.id === activeRoute ? 'nav-item active' : 'nav-item'} key={route.id} type="button" onClick={() => setActiveRoute(route.id)}><span className="nav-icon"><RouteIcon id={route.id} /></span><span className="nav-label">{route.label}</span></button>)}
+        </nav></div>
+        <div className="sidebar-footer sidebar-card"><div className="sidebar-status-line"><span className="status-dot" /><strong>Local portable mode</strong></div><span className="sidebar-version">{appInfo ? `v${appInfo.version}` : 'Đang tải phiên bản...'}</span></div>
       </aside>
 
       {activeRoute === 'page-tabs' ? <RotationWindowStatusPanel /> : null}
-
       <main key={activeRoute} className={`${workspaceClass} workspace-transition`}>
         <header className="topbar">
-          <div><p className="eyebrow">PAGE-AUTO / {activeRoute === 'hotmail' ? 'EMAIL' : activeRoute === 'actions' ? 'HÀNH ĐỘNG' : activeRoute === 'scanner' ? 'QUÉT DỮ LIỆU' : activeRoute === 'content-library' ? 'BÀI VIẾT' : activeRoute.toUpperCase()}</p><h1>{active.title}</h1></div>
-          <div className="topbar-actions">
-            <button className="button secondary global-browser-dock-button" type="button" disabled={browserDockOpening} onClick={() => void openBrowserDock()}>{browserDockOpening ? 'Đang mở…' : 'Cửa sổ Chrome'}</button>
-            <div className="version-badge">{appInfo ? `v${appInfo.version}` : 'Loading...'}</div>
-          </div>
+          <div><p className="eyebrow">PAGE-AUTO / {activeRoute === 'hotmail' ? 'EMAIL' : activeRoute === 'actions' ? 'HÀNH ĐỘNG' : activeRoute === 'scanner' ? 'QUÉT DỮ LIỆU' : activeRoute === 'content-library' ? 'THƯ VIỆN' : activeRoute.toUpperCase()}</p><h1>{active.title}</h1></div>
+          <div className="topbar-actions"><button className="button secondary global-browser-dock-button" type="button" disabled={browserDockOpening} onClick={() => void openBrowserDock()}>{browserDockOpening ? 'Đang mở…' : 'Cửa sổ Chrome'}</button><div className="version-badge">{appInfo ? `v${appInfo.version}` : 'Loading...'}</div></div>
         </header>
-
         {activeRoute === 'accounts' ? <AccountManager onOpenChangeInfoWorkspace={openChangeInfoWorkspace} /> : activeRoute === 'hotmail' ? <HotmailAuto /> : activeRoute === 'content-library' ? <ContentLibraryHub /> : activeRoute === 'page-tabs' ? <PageBusinessWorkspace /> : activeRoute === 'actions' ? <ActionWorkspace /> : activeRoute === 'scanner' ? <ScannerWorkspace /> : activeRoute === 'logs' ? <ExecutionLogs /> : <SettingsPanel appInfo={appInfo} />}
       </main>
     </div>

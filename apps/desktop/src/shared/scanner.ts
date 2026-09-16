@@ -71,19 +71,15 @@ export interface ScanJobRecord {
   updatedAt: number
 }
 
-export interface ScanJobDetails extends ScanJobRecord {
-  results: ScanResultRecord[]
-}
-
+export interface ScanJobDetails extends ScanJobRecord { results: ScanResultRecord[] }
 export interface ScanJobIdPayload { jobId: number }
 
-export const SCAN_DATASET_TYPES = ['group', 'page', 'user'] as const
+export const SCAN_DATASET_TYPES = ['group', 'page', 'user', 'group_members'] as const
 export type ScanDatasetType = (typeof SCAN_DATASET_TYPES)[number]
 
-export interface SaveScanDatasetInput {
-  jobId: number
-  name: string
-}
+export interface SaveScanDatasetInput { jobId: number; name: string }
+export interface RenameScanDatasetInput { datasetId: number; name: string }
+export interface ScanDatasetDeleteResult { datasetId: number; deleted: boolean }
 
 export interface ScanDatasetSummary {
   id: number
@@ -106,29 +102,13 @@ export interface ScanDatasetItemRecord {
   createdAt: number
 }
 
-export interface ScanDatasetDetails extends ScanDatasetSummary {
-  items: ScanDatasetItemRecord[]
-}
-
+export interface ScanDatasetDetails extends ScanDatasetSummary { items: ScanDatasetItemRecord[] }
 export interface ScanDatasetIdPayload { datasetId: number }
-
-export interface ExportScanDatasetCsvInput {
-  datasetId: number
-}
-
-export interface ExportScanDatasetCsvResult {
-  canceled: boolean
-  filePath: string | null
-  recordCount: number
-}
+export interface ExportScanDatasetCsvInput { datasetId: number }
+export interface ExportScanDatasetCsvResult { canceled: boolean; filePath: string | null; recordCount: number }
 
 export const SCANNER_TOKEN_VALIDATION_STATES = [
-  'unverified',
-  'valid',
-  'expired',
-  'permission_limited',
-  'invalid',
-  'needs_reauth'
+  'unverified', 'valid', 'expired', 'permission_limited', 'invalid', 'needs_reauth'
 ] as const
 export type ScannerTokenValidationState = (typeof SCANNER_TOKEN_VALIDATION_STATES)[number]
 
@@ -146,15 +126,8 @@ export interface ScannerTokenCredentialSummary {
   updatedAt: number
 }
 
-export interface CreateScannerTokenCredentialInput {
-  label: string
-  accessToken: string
-}
-
-export interface ScannerTokenCredentialIdPayload {
-  credentialId: string
-}
-
+export interface CreateScannerTokenCredentialInput { label: string; accessToken: string }
+export interface ScannerTokenCredentialIdPayload { credentialId: string }
 export interface ScannerSourceCapabilities {
   tokenStorageAvailable: boolean
   tokenScanningSupported: boolean
@@ -171,6 +144,8 @@ export const SCANNER_IPC = {
   listDatasets: 'scanner:dataset:list',
   getDataset: 'scanner:dataset:get',
   saveDataset: 'scanner:dataset:save',
+  renameDataset: 'scanner:dataset:rename',
+  deleteDataset: 'scanner:dataset:delete',
   exportDatasetCsv: 'scanner:dataset:export-csv',
   getSourceCapabilities: 'scanner:source:capabilities',
   listTokenCredentials: 'scanner:token:list',
@@ -179,7 +154,5 @@ export const SCANNER_IPC = {
 } as const
 
 export function datasetTypeForScanType(scanType: ScanType): ScanDatasetType {
-  if (scanType === 'group') return 'group'
-  if (scanType === 'page') return 'page'
-  return 'user'
+  return scanType
 }
