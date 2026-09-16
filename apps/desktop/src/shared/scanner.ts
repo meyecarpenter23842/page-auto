@@ -77,7 +77,7 @@ export interface ScanJobIdPayload { jobId: number }
 export const SCAN_DATASET_TYPES = ['group', 'page', 'user', 'group_members'] as const
 export type ScanDatasetType = (typeof SCAN_DATASET_TYPES)[number]
 
-export interface SaveScanDatasetInput { jobId: number; name: string; resultIds?: number[] }
+export interface SaveScanDatasetInput { jobId: number; name: string; resultIds?: number[] | undefined }
 export interface RenameScanDatasetInput { datasetId: number; name: string }
 export interface ScanDatasetDeleteResult { datasetId: number; deleted: boolean }
 
