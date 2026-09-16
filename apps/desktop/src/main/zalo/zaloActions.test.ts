@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { normalizeZaloActionInput } from '../../../shared/zalo'
+import { normalizeZaloActionInput } from '../../shared/zalo'
 import { ZaloActionControl, ZaloActionStoppedError } from './actions/zaloActionControl'
 import { assessZaloTargetEvidence } from './actions/zaloTargetResolver'
 
