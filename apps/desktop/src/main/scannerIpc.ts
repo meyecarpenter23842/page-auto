@@ -16,7 +16,6 @@ import {
 import { ScannerRepository } from './database/scannerRepository'
 import { scannerDatasetCsv } from './scanner/datasetCsv'
 import { MockGroupMembersScanAdapter } from './scanner/adapters/mockGroupMembersScanAdapter'
-import { MockUserScanAdapter } from './scanner/adapters/mockUserScanAdapter'
 import { GroupScanAccountRuntime } from './scanner/group/groupScanAccountRuntime'
 import { GroupScanAdapter } from './scanner/group/groupScanAdapter'
 import { PageScanAccountRuntime } from './scanner/page/pageScanAccountRuntime'
@@ -27,6 +26,8 @@ import { ElectronScannerTokenSecretStore } from './scanner/token/electronTokenSe
 import { ScannerTokenCredentialRepository } from './scanner/token/tokenCredentialRepository'
 import { ScannerTokenCredentialService } from './scanner/token/tokenCredentialService'
 import { MetaGraphScannerTokenValidator } from './scanner/token/tokenValidator'
+import { UserScanAccountRuntime } from './scanner/user/userScanAccountRuntime'
+import { UserScanAdapter } from './scanner/user/userScanAdapter'
 
 export interface ScannerIpcRuntime {
   dispose: () => void
@@ -44,10 +45,11 @@ export function registerScannerIpcHandlers(
   const repository = new ScannerRepository(database)
   const groupRuntime = new GroupScanAccountRuntime(database, dataDirectory)
   const pageRuntime = new PageScanAccountRuntime(database, dataDirectory)
+  const userRuntime = new UserScanAccountRuntime(database, dataDirectory)
   const adapters = new ScannerAdapterRegistry([
     new GroupScanAdapter(groupRuntime),
     new PageScanAdapter(pageRuntime),
-    new MockUserScanAdapter(),
+    new UserScanAdapter(userRuntime),
     new MockGroupMembersScanAdapter()
   ])
   const service = new ScanJobService(repository, adapters)
@@ -103,6 +105,7 @@ export function registerScannerIpcHandlers(
       service.dispose()
       groupRuntime.dispose()
       pageRuntime.dispose()
+      userRuntime.dispose()
       for (const channel of Object.values(SCANNER_IPC)) ipcMain.removeHandler(channel)
     }
   }

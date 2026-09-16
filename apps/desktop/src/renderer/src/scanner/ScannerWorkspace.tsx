@@ -64,7 +64,7 @@ function terminal(job: ScanJobDetails | null): boolean {
 }
 
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error) }
-function needsProductionAccount(scanType: ScanType): boolean { return scanType === 'group' || scanType === 'page' }
+function needsProductionAccount(scanType: ScanType): boolean { return scanType === 'group' || scanType === 'page' || scanType === 'user' }
 
 export function ScannerWorkspace() {
   const [activeType, setActiveType] = useState<ScanType>('group')
@@ -172,7 +172,7 @@ export function ScannerWorkspace() {
             <label>Privacy<select value={privacy} onChange={(event) => setPrivacy(event.currentTarget.value)}><option value="all">Tất cả</option><option value="public">Public</option><option value="private">Private</option></select></label>
             <label>Location<input value={location} onChange={(event) => setLocation(event.currentTarget.value)} placeholder="Tất cả" /></label>
             <p className="scanner-placeholder-copy">Members / Privacy / Location là filter client-side trên metadata/text Facebook đã tải; không giả là filter server-side.</p>
-          </> : activeType === 'page' ? <p className="scanner-placeholder-copy">Quét Page production đọc Page UID và metadata có bằng chứng từ Facebook. Username / Category / Followers / Likes / Location không xác minh được sẽ để trống, không đoán dữ liệu.</p> : <p className="scanner-placeholder-copy">Filter riêng của {activeTab.label} sẽ được mở khi adapter production của nghiệp vụ đó được audit. Foundation hiện chỉ giữ common framework.</p>}
+          </> : activeType === 'page' ? <p className="scanner-placeholder-copy">Quét Page production đọc Page UID và metadata có bằng chứng từ Facebook. Username / Category / Followers / Likes / Location không xác minh được sẽ để trống, không đoán dữ liệu.</p> : activeType === 'user' ? <p className="scanner-placeholder-copy">Quét Người dùng production chỉ nhận UID hoặc URL Profile. UID phải được xác minh từ metadata profile Facebook; Username / Location / Gender / Followers không có bằng chứng sẽ để trống, không đoán dữ liệu.</p> : <p className="scanner-placeholder-copy">Thành viên nhóm chỉ được mở production sau live audit DOM/member source; hiện không giả selector hoặc dữ liệu thành viên.</p>}
         </div>
       </div>
 
@@ -180,7 +180,7 @@ export function ScannerWorkspace() {
         <div className="scanner-result-header"><div><span className="scanner-section-kicker">KẾT QUẢ DATA-GRID</span><strong>{job?.resultCount ?? 0} kết quả · {job?.acceptedCount ?? 0} accepted</strong></div><div className="scanner-runtime-state">{job ? STATUS_LABEL[job.status] ?? job.status : 'Chưa chạy'}{job?.message ? ` · ${job.message}` : ''}</div></div>
         <div className="scanner-table-wrap"><table className="scanner-table"><thead><tr>{columns.map((column) => <th key={column.key}>{column.label}</th>)}</tr></thead><tbody>
           {job?.results.map((result) => <tr key={result.id}>{columns.map((column) => <td key={column.key}>{resultValue(result, column.key)}</td>)}</tr>)}
-          {!job?.results.length ? <tr><td colSpan={columns.length} className="scanner-empty">{activeType === 'group' ? 'Chưa có kết quả Quét Nhóm.' : activeType === 'page' ? 'Chưa có kết quả Quét Page.' : `Chưa có kết quả. ${activeTab.label} vẫn dùng adapter foundation cho tới batch production riêng.`}</td></tr> : null}
+          {!job?.results.length ? <tr><td colSpan={columns.length} className="scanner-empty">{activeType === 'group' ? 'Chưa có kết quả Quét Nhóm.' : activeType === 'page' ? 'Chưa có kết quả Quét Page.' : activeType === 'user' ? 'Chưa có kết quả Quét Người dùng.' : 'Chưa có kết quả. Thành viên nhóm chưa mở adapter production trước khi có live audit nguồn.'}</td></tr> : null}
         </tbody></table></div>
       </div>
 
