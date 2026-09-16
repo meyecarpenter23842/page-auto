@@ -23,6 +23,7 @@ import { PAGE_WALL_WEEKLY_SCHEDULE_SCHEMA_VERSION, applyPageWallWeeklyScheduleMi
 import { SCENARIO_SCHEMA_VERSION, applyScenarioMigration } from './scenarioMigration'
 import { SCANNER_SCHEMA_VERSION, applyScannerMigration } from './scannerMigration'
 import { STORY_SCHEMA_VERSION, applyStoryMigration } from './storyMigration'
+import { ZALO_SCHEMA_VERSION, applyZaloMigration } from './zaloMigration'
 
 export interface DatabaseRuntime {
   client: Database.Database
@@ -86,6 +87,7 @@ export function initializeDatabase(databaseFile: string): DatabaseRuntime {
   applyPageAvatarMigration(client)
   applyScannerMigration(client)
   applyPageWallWeeklyScheduleMigration(client)
+  applyZaloMigration(client)
 
   const schemaVersion = Math.max(
     latestSchemaVersion,
@@ -105,7 +107,8 @@ export function initializeDatabase(databaseFile: string): DatabaseRuntime {
     PAGE_SCENARIO_SCHEDULE_SCHEMA_VERSION,
     PAGE_AVATAR_SCHEMA_VERSION,
     SCANNER_SCHEMA_VERSION,
-    PAGE_WALL_WEEKLY_SCHEDULE_SCHEMA_VERSION
+    PAGE_WALL_WEEKLY_SCHEDULE_SCHEMA_VERSION,
+    ZALO_SCHEMA_VERSION
   )
   const orm = drizzle(client)
   orm

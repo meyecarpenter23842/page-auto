@@ -21,7 +21,8 @@ export default defineConfig({
           'email-browser-worker': resolve('src/main/email/email-browser-worker.ts'),
           'primary-mailbox-browser-worker': resolve('src/main/email/primary-mailbox-browser-worker.ts'),
           'email-oauth-worker': resolve('src/main/email/email-oauth-worker.ts'),
-          'email-proxy-test-worker': resolve('src/main/email/email-proxy-test-worker.ts')
+          'email-proxy-test-worker': resolve('src/main/email/email-proxy-test-worker.ts'),
+          'zalo-browser-worker': resolve('src/main/zalo/zalo-browser-worker.ts')
         }
       }
     }
