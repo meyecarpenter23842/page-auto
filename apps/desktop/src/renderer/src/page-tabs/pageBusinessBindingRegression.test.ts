@@ -82,7 +82,7 @@ describe('Page business binding regression', () => {
   it('uses a FPlus-style complete schedule dialog with post, accounts, multi-time and concurrency', () => {
     expect(wallSource).toContain('aria-label="Thiết lập lịch đăng"')
     expect(wallSource).toContain('1. Chọn bài viết')
-    expect(wallSource).toContain('2. Thời gian đăng bài')
+    expect(wallSource).toContain('2. Ngày và giờ đăng bài')
     expect(wallSource).toContain('3. Chọn tài khoản muốn đăng')
     expect(wallSource).toContain('+ Thêm giờ')
     expect(wallSource).toContain('+ Thêm lịch')
