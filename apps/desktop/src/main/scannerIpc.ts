@@ -16,10 +16,11 @@ import {
 import { ScannerRepository } from './database/scannerRepository'
 import { scannerDatasetCsv } from './scanner/datasetCsv'
 import { MockGroupMembersScanAdapter } from './scanner/adapters/mockGroupMembersScanAdapter'
-import { MockPageScanAdapter } from './scanner/adapters/mockPageScanAdapter'
 import { MockUserScanAdapter } from './scanner/adapters/mockUserScanAdapter'
 import { GroupScanAccountRuntime } from './scanner/group/groupScanAccountRuntime'
 import { GroupScanAdapter } from './scanner/group/groupScanAdapter'
+import { PageScanAccountRuntime } from './scanner/page/pageScanAccountRuntime'
+import { PageScanAdapter } from './scanner/page/pageScanAdapter'
 import { ScanJobService } from './scanner/scanJobService'
 import { ScannerAdapterRegistry } from './scanner/scannerAdapterRegistry'
 import { ElectronScannerTokenSecretStore } from './scanner/token/electronTokenSecretStore'
@@ -42,9 +43,10 @@ export function registerScannerIpcHandlers(
 ): ScannerIpcRuntime {
   const repository = new ScannerRepository(database)
   const groupRuntime = new GroupScanAccountRuntime(database, dataDirectory)
+  const pageRuntime = new PageScanAccountRuntime(database, dataDirectory)
   const adapters = new ScannerAdapterRegistry([
     new GroupScanAdapter(groupRuntime),
-    new MockPageScanAdapter(),
+    new PageScanAdapter(pageRuntime),
     new MockUserScanAdapter(),
     new MockGroupMembersScanAdapter()
   ])
@@ -100,6 +102,7 @@ export function registerScannerIpcHandlers(
     dispose: () => {
       service.dispose()
       groupRuntime.dispose()
+      pageRuntime.dispose()
       for (const channel of Object.values(SCANNER_IPC)) ipcMain.removeHandler(channel)
     }
   }

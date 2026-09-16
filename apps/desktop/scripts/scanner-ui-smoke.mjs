@@ -23,11 +23,7 @@ try {
     executablePath: electronExecutable,
     args: [mainEntry],
     cwd: appDirectory,
-    env: {
-      ...process.env,
-      PAGE_AUTO_DATA_DIR: dataDirectory,
-      PAGE_AUTO_PWA_RELAY_DISABLED: '1'
-    }
+    env: { ...process.env, PAGE_AUTO_DATA_DIR: dataDirectory, PAGE_AUTO_PWA_RELAY_DISABLED: '1' }
   })
 
   const windowPage = await electronApp.firstWindow()
@@ -41,14 +37,7 @@ try {
   }
 
   const text = await root.innerText()
-  for (const expected of [
-    'Account / session hoặc Access Token',
-    'BỘ LỌC',
-    'KẾT QUẢ DATA-GRID',
-    'Lưu Dataset',
-    'Xuất CSV',
-    'Members / Privacy / Location là filter client-side trên metadata/text Facebook đã tải; không giả là filter server-side.'
-  ]) {
+  for (const expected of ['Account / session hoặc Access Token', 'BỘ LỌC', 'KẾT QUẢ DATA-GRID', 'Lưu Dataset', 'Xuất CSV', 'Members / Privacy / Location là filter client-side trên metadata/text Facebook đã tải; không giả là filter server-side.']) {
     invariant(text.includes(expected), `Scanner UI thiếu contract: ${expected}.`)
   }
   invariant(!text.includes('mock foundation'), 'Quét Nhóm vẫn hiển thị nhãn mock foundation.')
@@ -61,12 +50,16 @@ try {
   const tokenText = await tokenManager.innerText()
   invariant(tokenText.includes('Quét bằng token:'), 'Token source thiếu trạng thái adapter production.')
   invariant(tokenText.includes('Tự lấy token từ phiên Facebook:'), 'Token source thiếu contract auto-acquire.')
-  invariant(await root.getByRole('button', { name: 'Bắt đầu', exact: true }).isDisabled(), 'Scanner vẫn cho chạy adapter bằng token ở Batch 3.')
+  invariant(await root.getByRole('button', { name: 'Bắt đầu', exact: true }).isDisabled(), 'Scanner vẫn cho chạy adapter bằng token khi token business path chưa được audit.')
   invariant(await root.getByRole('button', { name: /Lấy token/i }).count() === 0, 'Scanner xuất hiện nút tự lấy token ngoài contract.')
 
   await root.getByRole('button', { name: 'Account/session', exact: true }).click()
   await root.getByRole('tab', { name: 'Quét Page', exact: true }).click()
-  invariant((await root.innerText()).includes('foundation'), 'Tab Quét Page chưa phân biệt rõ adapter chưa production.')
+  const pageText = await root.innerText()
+  invariant(pageText.includes('Quét Page production đọc Page UID'), 'Tab Quét Page chưa hiển thị contract production Batch 4.')
+  invariant(pageText.includes('Page UID') && pageText.includes('Followers') && pageText.includes('Likes'), 'Quét Page thiếu cột metadata production.')
+  invariant(!pageText.includes('Quét Page vẫn dùng adapter foundation'), 'Quét Page vẫn hiển thị adapter foundation sau Batch 4.')
+  invariant(await root.getByRole('button', { name: 'Bắt đầu', exact: true }).isDisabled(), 'Quét Page production phải yêu cầu Account khi DB smoke chưa có account.')
 
   await root.getByRole('tab', { name: 'Quét Nhóm', exact: true }).click()
   await windowPage.screenshot({ path: screenshotPath, fullPage: true })
