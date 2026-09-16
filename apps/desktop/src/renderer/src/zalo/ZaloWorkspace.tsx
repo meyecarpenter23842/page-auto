@@ -2,6 +2,9 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   type ZaloAccountDraft,
   type ZaloAccountView,
+  type ZaloActionInput,
+  type ZaloActionResult,
+  type ZaloActionType,
   type ZaloBrowserSettings,
   type ZaloLoginMode
 } from '../../../shared/zalo'
@@ -24,6 +27,12 @@ function statusLabel(status: ZaloAccountView['sessionStatus']): string {
   return labels[status]
 }
 
+function actionLabel(type: ZaloActionType): string {
+  if (type === 'send_message') return 'Gửi tin'
+  if (type === 'send_attachment') return 'Gửi ảnh/file'
+  return 'Kết bạn'
+}
+
 export function ZaloWorkspace() {
   const [tab, setTab] = useState<TabId>('accounts')
   const [accounts, setAccounts] = useState<ZaloAccountView[]>([])
@@ -31,6 +40,14 @@ export function ZaloWorkspace() {
   const [settings, setSettings] = useState<ZaloBrowserSettings | null>(null)
   const [busy, setBusy] = useState<BusyState>(null)
   const [notice, setNotice] = useState('')
+  const [businessAccountId, setBusinessAccountId] = useState<number | null>(null)
+  const [targetPhone, setTargetPhone] = useState('')
+  const [messageContent, setMessageContent] = useState('')
+  const [attachmentPaths, setAttachmentPaths] = useState('')
+  const [friendMessage, setFriendMessage] = useState('')
+  const [actionBusy, setActionBusy] = useState<ZaloActionType | null>(null)
+  const [actionPaused, setActionPaused] = useState(false)
+  const [lastActionResult, setLastActionResult] = useState<ZaloActionResult | null>(null)
 
   const load = async () => {
     const [nextAccounts, nextSettings] = await Promise.all([
@@ -39,11 +56,16 @@ export function ZaloWorkspace() {
     ])
     setAccounts(nextAccounts)
     setSettings(nextSettings)
+    setBusinessAccountId((current) => current ?? nextAccounts.find((account) => account.sessionStatus === 'ready')?.id ?? nextAccounts[0]?.id ?? null)
   }
 
   useEffect(() => { void load().catch((error) => setNotice(error instanceof Error ? error.message : String(error))) }, [])
 
   const readyCount = useMemo(() => accounts.filter((account) => account.sessionStatus === 'ready').length, [accounts])
+  const selectedBusinessAccount = useMemo(
+    () => accounts.find((account) => account.id === businessAccountId) ?? null,
+    [accounts, businessAccountId]
+  )
 
   const create = async () => {
     if (!draft.phone.trim()) return
@@ -118,6 +140,51 @@ export function ZaloWorkspace() {
     }
   }
 
+  const runBusinessAction = async (type: ZaloActionType) => {
+    if (!businessAccountId || !targetPhone.trim()) {
+      setNotice('Chọn tài khoản Zalo và nhập SĐT target trước khi chạy action.')
+      return
+    }
+    let action: ZaloActionInput
+    if (type === 'send_message') {
+      action = { type, targetPhone, content: messageContent }
+    } else if (type === 'send_attachment') {
+      action = { type, targetPhone, paths: attachmentPaths.split(/\r?\n/).map((path) => path.trim()).filter(Boolean) }
+    } else {
+      action = { type, targetPhone, message: friendMessage || null }
+    }
+
+    setActionBusy(type)
+    setActionPaused(false)
+    setLastActionResult(null)
+    try {
+      const result = await window.pageAutoZalo.executeAction(businessAccountId, action)
+      setLastActionResult(result)
+      setNotice(result.message)
+      await load()
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error))
+    } finally {
+      setActionBusy(null)
+      setActionPaused(false)
+    }
+  }
+
+  const pauseAction = async () => {
+    if (!businessAccountId || !actionBusy) return
+    if (await window.pageAutoZalo.pauseAction(businessAccountId)) setActionPaused(true)
+  }
+
+  const resumeAction = async () => {
+    if (!businessAccountId || !actionBusy) return
+    if (await window.pageAutoZalo.resumeAction(businessAccountId)) setActionPaused(false)
+  }
+
+  const stopAction = async () => {
+    if (!businessAccountId || !actionBusy) return
+    await window.pageAutoZalo.stopAction(businessAccountId)
+  }
+
   return (
     <section className="panel-stack">
       <div className="tab-strip" role="tablist" aria-label="Zalo workspace">
@@ -128,10 +195,46 @@ export function ZaloWorkspace() {
       {notice ? <div className="notice-card">{notice}</div> : null}
 
       {tab === 'business' ? (
-        <div className="panel">
-          <h2>Gửi tin / Kết bạn</h2>
-          <p>Batch 2 hoàn thiện login/session chung. Automation gửi tin, gửi ảnh/file và kết bạn vẫn chưa được bật ở đây.</p>
-        </div>
+        <>
+          <div className="panel">
+            <h2>Action Zalo — một target</h2>
+            <p>Batch 3 chạy từng action production độc lập. Runtime luôn kiểm tra session và xác minh đúng target/conversation trước thao tác. Bulk target + Thư viện bài viết chung thuộc Batch 4.</p>
+            <div className="form-grid">
+              <label>Tài khoản
+                <select value={businessAccountId ?? ''} onChange={(event) => setBusinessAccountId(event.target.value ? Number(event.target.value) : null)} disabled={Boolean(actionBusy)}>
+                  <option value="">Chọn tài khoản</option>
+                  {accounts.map((account) => <option key={account.id} value={account.id}>{account.phone} — {statusLabel(account.sessionStatus)}</option>)}
+                </select>
+              </label>
+              <label>SĐT target<input value={targetPhone} onChange={(event) => setTargetPhone(event.target.value)} placeholder="09..." disabled={Boolean(actionBusy)} /></label>
+              <label>Nội dung tin nhắn<textarea value={messageContent} onChange={(event) => setMessageContent(event.target.value)} placeholder="Nội dung gửi cho một target đã xác minh" disabled={Boolean(actionBusy)} /></label>
+              <label>Ảnh/file — mỗi dòng một đường dẫn tuyệt đối<textarea value={attachmentPaths} onChange={(event) => setAttachmentPaths(event.target.value)} placeholder={'F:\\media\\anh-1.jpg\nF:\\media\\tailieu.pdf'} disabled={Boolean(actionBusy)} /></label>
+              <label>Lời nhắn kết bạn (nếu Zalo hiện ô lời nhắn)<textarea value={friendMessage} onChange={(event) => setFriendMessage(event.target.value)} disabled={Boolean(actionBusy)} /></label>
+            </div>
+            <div className="inline-actions">
+              <button className="button primary" type="button" disabled={Boolean(actionBusy)} onClick={() => void runBusinessAction('send_message')}>Gửi tin</button>
+              <button className="button primary" type="button" disabled={Boolean(actionBusy)} onClick={() => void runBusinessAction('send_attachment')}>Gửi ảnh/file</button>
+              <button className="button primary" type="button" disabled={Boolean(actionBusy)} onClick={() => void runBusinessAction('add_friend')}>Kết bạn</button>
+              {actionBusy ? (
+                <>
+                  <button className="button secondary" type="button" disabled={actionPaused} onClick={() => void pauseAction()}>Tạm dừng</button>
+                  <button className="button secondary" type="button" disabled={!actionPaused} onClick={() => void resumeAction()}>Tiếp tục</button>
+                  <button className="button secondary" type="button" onClick={() => void stopAction()}>Dừng</button>
+                </>
+              ) : null}
+            </div>
+            <p>Account: {selectedBusinessAccount ? `${selectedBusinessAccount.phone} / ${statusLabel(selectedBusinessAccount.sessionStatus)}` : 'chưa chọn'}{actionBusy ? ` • Đang chạy: ${actionLabel(actionBusy)}${actionPaused ? ' (đã pause)' : ''}` : ''}</p>
+          </div>
+
+          {lastActionResult ? (
+            <div className="panel">
+              <h2>Kết quả action gần nhất</h2>
+              <p><strong>{actionLabel(lastActionResult.action)}</strong> — {lastActionResult.status} / {lastActionResult.code}</p>
+              <p>{lastActionResult.message}</p>
+              <p>Target: {lastActionResult.targetPhone} • Identity verified: {lastActionResult.verifiedTarget ? 'Có' : 'Không'}{lastActionResult.targetDisplayName ? ` • ${lastActionResult.targetDisplayName}` : ''}</p>
+            </div>
+          ) : null}
+        </>
       ) : (
         <>
           <div className="stats-grid">

@@ -2,12 +2,21 @@ import { chromium, type BrowserContext, type Page } from 'playwright-core'
 import { DEFAULT_APP_SETTINGS, type BrowserSettings } from '../../shared/appSettings'
 import type { BrowserWindowPlacement } from '../../shared/browserWindowLayout'
 import { wholeChromeScaleForLaunch } from '../../shared/browserWholeChromeScale'
-import type { ZaloBrowserSettings, ZaloLoginMode, ZaloSessionStatus } from '../../shared/zalo'
+import {
+  zaloActionResult,
+  type ZaloActionInput,
+  type ZaloActionResult,
+  type ZaloBrowserSettings,
+  type ZaloLoginMode,
+  type ZaloSessionStatus
+} from '../../shared/zalo'
 import {
   applyBrowserContextSettings,
   applyBrowserPlacementToContext,
   buildBrowserLaunchOptions
 } from '../browser/browserRuntime'
+import { ZaloActionControl } from './actions/zaloActionControl'
+import { runZaloAction } from './actions/zaloActionRunner'
 import { inspectZaloSession, runZaloPhonePasswordLogin, runZaloQrLogin } from './zaloLoginFlow'
 import { classifyZaloSessionEvidence } from './zaloSessionEvidence'
 
@@ -26,6 +35,17 @@ interface LoginCommand {
   password: string | null
 }
 
+interface ActionCommand {
+  type: 'action'
+  accountId: number
+  action: ZaloActionInput
+}
+
+interface ActionControlCommand {
+  type: 'action-control'
+  operation: 'pause' | 'resume' | 'stop'
+}
+
 interface ApplySettingsCommand {
   type: 'apply-settings'
   settings: ZaloBrowserSettings
@@ -33,7 +53,7 @@ interface ApplySettingsCommand {
 }
 
 interface ShutdownCommand { type: 'shutdown' }
-type WorkerCommand = OpenCommand | LoginCommand | ApplySettingsCommand | ShutdownCommand
+type WorkerCommand = OpenCommand | LoginCommand | ActionCommand | ActionControlCommand | ApplySettingsCommand | ShutdownCommand
 
 interface WorkerResult {
   type: 'zalo-result'
@@ -41,6 +61,11 @@ interface WorkerResult {
   status: ZaloSessionStatus
   message: string
   reused: boolean
+}
+
+interface WorkerActionResult {
+  type: 'zalo-action-result'
+  result: ZaloActionResult
 }
 
 interface WorkerClosed { type: 'zalo-closed'; accountId: number }
@@ -70,6 +95,16 @@ function commandOf(event: unknown): WorkerCommand | null {
       phone: login.phone,
       password: typeof login.password === 'string' ? login.password : null
     }
+  }
+  if (candidate.type === 'action') {
+    const action = candidate as Partial<ActionCommand>
+    if (typeof action.accountId !== 'number' || !action.action || typeof action.action !== 'object') return null
+    return { type: 'action', accountId: action.accountId, action: action.action as ZaloActionInput }
+  }
+  if (candidate.type === 'action-control') {
+    const control = candidate as Partial<ActionControlCommand>
+    if (!['pause', 'resume', 'stop'].includes(String(control.operation))) return null
+    return { type: 'action-control', operation: control.operation as ActionControlCommand['operation'] }
   }
   if (candidate.type === 'apply-settings' && (candidate as Partial<ApplySettingsCommand>).settings) {
     const apply = candidate as ApplySettingsCommand
@@ -107,10 +142,16 @@ async function run(): Promise<void> {
   let currentNavigationTimeoutMs = DEFAULT_APP_SETTINGS.browser.navigationTimeoutMs
   let closing = false
   let queue = Promise.resolve()
+  const actionControl = new ZaloActionControl()
 
   const post = (status: ZaloSessionStatus, message: string, reused: boolean): void => {
     const result: WorkerResult = { type: 'zalo-result', accountId, status, message, reused }
     parentPort.postMessage(result)
+  }
+
+  const postAction = (result: ZaloActionResult): void => {
+    const message: WorkerActionResult = { type: 'zalo-action-result', result }
+    parentPort.postMessage(message)
   }
 
   const ensureOpen = async (command: OpenCommand): Promise<void> => {
@@ -134,6 +175,7 @@ async function run(): Promise<void> {
       await applyBrowserContextSettings(opened, browserSettings)
       opened.once('close', () => {
         context = null
+        actionControl.stop()
         if (!closing) {
           const closed: WorkerClosed = { type: 'zalo-closed', accountId }
           parentPort.postMessage(closed)
@@ -178,6 +220,32 @@ async function run(): Promise<void> {
     post(result.status, result.message, reused)
   }
 
+  const executeAction = async (command: ActionCommand): Promise<void> => {
+    const active = context
+    if (!active) {
+      postAction(zaloActionResult(accountId, command.action.type, command.action.targetPhone, 'failed', 'session_not_ready', 'Zalo browser chưa được mở.'))
+      return
+    }
+    const page = await activeZaloPage(active, currentNavigationTimeoutMs)
+    const sessionStatus = classifyZaloSessionEvidence(await inspectZaloSession(page))
+    if (sessionStatus !== 'ready') {
+      postAction(zaloActionResult(
+        accountId,
+        command.action.type,
+        command.action.targetPhone,
+        sessionStatus === 'needs_attention' ? 'needs_attention' : 'failed',
+        'session_not_ready',
+        sessionStatus === 'needs_attention'
+          ? 'Zalo session cần operator kiểm tra trước khi chạy action.'
+          : 'Zalo session chưa sẵn sàng; action không được thực thi.'
+      ))
+      return
+    }
+
+    actionControl.reset()
+    postAction(await runZaloAction(accountId, page, command.action, actionControl))
+  }
+
   const applySettings = async (command: ApplySettingsCommand): Promise<void> => {
     if (!context) return
     const requestedScale = wholeChromeScaleForLaunch(command.placement)
@@ -189,8 +257,17 @@ async function run(): Promise<void> {
   parentPort.on('message', (event) => {
     const command = commandOf(event)
     if (!command) return
+
+    if (command.type === 'action-control') {
+      if (command.operation === 'pause') actionControl.pause()
+      else if (command.operation === 'resume') actionControl.resume()
+      else actionControl.stop()
+      return
+    }
+
     if (command.type === 'shutdown') {
       closing = true
+      actionControl.stop()
       queue = queue.then(async () => {
         const active = context
         context = null
@@ -201,9 +278,20 @@ async function run(): Promise<void> {
       })
       return
     }
+
     queue = queue
-      .then(() => command.type === 'open' ? ensureOpen(command) : command.type === 'login' ? login(command) : applySettings(command))
+      .then(() => command.type === 'open'
+        ? ensureOpen(command)
+        : command.type === 'login'
+          ? login(command)
+          : command.type === 'action'
+            ? executeAction(command)
+            : applySettings(command))
       .catch((error) => {
+        if (command.type === 'action') {
+          postAction(zaloActionResult(accountId, command.action.type, command.action.targetPhone, 'failed', 'executor_exception', error instanceof Error ? error.message : String(error)))
+          return
+        }
         post('browser_error', error instanceof Error ? error.message : String(error), context !== null)
       })
   })

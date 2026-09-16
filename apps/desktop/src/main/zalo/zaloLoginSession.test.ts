@@ -63,10 +63,12 @@ describe('Zalo Batch 2 login/session', () => {
     expect(renderer).toContain('account.passwordMasked')
   })
 
-  it('keeps business actions out of Batch 2 common login/session runtime', () => {
+  it('keeps business action implementation out of Batch 2 common login flow', () => {
+    const loginFlow = readFileSync(join(process.cwd(), 'src/main/zalo/zaloLoginFlow.ts'), 'utf8')
     const worker = readFileSync(join(process.cwd(), 'src/main/zalo/zalo-browser-worker.ts'), 'utf8')
-    expect(worker).not.toMatch(/send_message|send_attachment|add_friend|articleManager/i)
+    expect(loginFlow).not.toMatch(/sendZaloMessage|sendZaloAttachment|addZaloFriend|articleManager/i)
     expect(worker).toContain("mode === 'phone_password'")
     expect(worker).toContain('runZaloQrLogin')
+    expect(worker).toContain('runZaloAction')
   })
 })
