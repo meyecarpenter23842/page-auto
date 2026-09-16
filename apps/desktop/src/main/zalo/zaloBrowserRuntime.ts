@@ -2,7 +2,14 @@ import { join } from 'node:path'
 import { utilityProcess, type UtilityProcess } from 'electron'
 import { DEFAULT_APP_SETTINGS, type BrowserSettings } from '../../shared/appSettings'
 import type { BrowserWindowPlacement } from '../../shared/browserWindowLayout'
-import type { ZaloAccountRecord, ZaloBrowserSettings, ZaloOpenResult, ZaloSessionStatus } from '../../shared/zalo'
+import {
+  redactZaloSecretText,
+  type ZaloAccountRecord,
+  type ZaloBrowserSettings,
+  type ZaloLoginMode,
+  type ZaloOpenResult,
+  type ZaloSessionStatus
+} from '../../shared/zalo'
 import { setBrowserLaunchAwareTimeout } from '../browser/browserLaunchBroker'
 import { BrowserSlotPool } from '../browser/browserSlotPool'
 import { BrowserWindowLayoutManager } from '../browser/browserWindowLayoutManager'
@@ -11,14 +18,19 @@ import { ZaloExecutionCoordinator, type ZaloAccountLease } from './zaloExecution
 import { resolveZaloProfileDirectory, ZaloProfileResolutionError } from './zaloProfileResolver'
 
 const OPEN_TIMEOUT_MS = 90_000
+const LOGIN_TIMEOUT_MS = 190_000
 const SHUTDOWN_TIMEOUT_MS = 5_000
 
-type PendingOpen = { resolve: (result: ZaloOpenResult) => void; timer: NodeJS.Timeout }
+type PendingRequest = {
+  resolve: (result: ZaloOpenResult) => void
+  timer: NodeJS.Timeout
+  secrets: Array<string | null | undefined>
+}
 type WorkerEntry = {
   process: UtilityProcess
   profileDirectory: string
   lease: ZaloAccountLease
-  pending: PendingOpen | null
+  pending: PendingRequest | null
   closing: boolean
 }
 
@@ -82,6 +94,12 @@ export class ZaloBrowserRuntime {
     }
 
     let entry = this.workers.get(account.id)
+    if (entry && !entry.closing && entry.profileDirectory !== resolved.profileDirectory) {
+      await this.close(account.id)
+      entry = undefined
+    }
+
+    let reused = Boolean(entry && !entry.closing)
     if (!entry || entry.closing) {
       if (entry) this.workers.delete(account.id)
       const lease = this.coordinator.tryAcquire(account.id)
@@ -96,6 +114,7 @@ export class ZaloBrowserRuntime {
       }
       try {
         entry = await this.spawn(account.id, resolved.profileDirectory, lease)
+        reused = false
       } catch (error) {
         lease.release()
         this.accounts.updateSessionStatus(account.id, 'browser_error')
@@ -109,7 +128,6 @@ export class ZaloBrowserRuntime {
       }
     }
 
-    const reused = this.workers.has(account.id) && entry.profileDirectory === resolved.profileDirectory
     const placement = this.placement(account.id, settings)
     try {
       entry.process.postMessage({ type: 'apply-settings', settings, placement })
@@ -117,29 +135,57 @@ export class ZaloBrowserRuntime {
       // open command below will surface worker failure.
     }
 
-    return new Promise<ZaloOpenResult>((resolve) => {
-      if (!entry) {
-        resolve({ accountId: account.id, profileDirectory: resolved.profileDirectory, status: 'browser_error', reused: false, message: 'Zalo worker không khả dụng.' })
-        return
+    return this.request(
+      account.id,
+      entry,
+      reused,
+      OPEN_TIMEOUT_MS,
+      { type: 'open', accountId: account.id, settings, placement },
+      'Zalo browser quá thời gian chờ session evidence.'
+    )
+  }
+
+  async login(account: ZaloAccountRecord, mode: ZaloLoginMode): Promise<ZaloOpenResult> {
+    const opened = await this.open(account)
+    if (opened.status === 'ready' || opened.status === 'profile_error' || opened.status === 'browser_error' || opened.status === 'needs_attention') {
+      return opened
+    }
+    if (mode === 'phone_password' && !account.password) {
+      this.accounts.updateSessionStatus(account.id, 'login_required')
+      return {
+        ...opened,
+        status: 'login_required',
+        message: 'Tài khoản Zalo chưa có mật khẩu để đăng nhập tự động.'
       }
-      if (entry.pending) {
-        resolve({ accountId: account.id, profileDirectory: resolved.profileDirectory, status: 'needs_attention', reused: true, message: 'Zalo account đang mở/kiểm tra session.' })
-        return
+    }
+
+    const entry = this.workers.get(account.id)
+    if (!entry || entry.closing) {
+      this.accounts.updateSessionStatus(account.id, 'browser_error')
+      return {
+        ...opened,
+        status: 'browser_error',
+        message: 'Zalo browser không còn khả dụng để tiếp tục đăng nhập.'
       }
-      const timer = setBrowserLaunchAwareTimeout(entry.process, () => {
-        if (!entry?.pending || entry.pending.resolve !== resolve) return
-        entry.pending = null
-        resolve({ accountId: account.id, profileDirectory: resolved.profileDirectory, status: 'browser_error', reused, message: 'Zalo browser quá thời gian chờ session evidence.' })
-      }, OPEN_TIMEOUT_MS)
-      entry.pending = { resolve, timer }
-      try {
-        entry.process.postMessage({ type: 'open', accountId: account.id, settings, placement })
-      } catch (error) {
-        clearTimeout(timer)
-        entry.pending = null
-        resolve({ accountId: account.id, profileDirectory: resolved.profileDirectory, status: 'browser_error', reused, message: error instanceof Error ? error.message : String(error) })
-      }
-    })
+    }
+
+    return this.request(
+      account.id,
+      entry,
+      true,
+      LOGIN_TIMEOUT_MS,
+      {
+        type: 'login',
+        accountId: account.id,
+        mode,
+        phone: account.phone,
+        password: mode === 'phone_password' ? account.password : null
+      },
+      mode === 'qr'
+        ? 'Hết thời gian chờ operator xác nhận QR Zalo.'
+        : 'Zalo quá thời gian chờ xác thực sau đăng nhập.',
+      [account.password]
+    )
   }
 
   applySettingsToOpenBrowsers(settings: ZaloBrowserSettings): void {
@@ -157,11 +203,7 @@ export class ZaloBrowserRuntime {
       return
     }
     entry.closing = true
-    if (entry.pending) {
-      clearTimeout(entry.pending.timer)
-      entry.pending.resolve({ accountId, profileDirectory: entry.profileDirectory, status: 'browser_error', reused: true, message: 'Zalo browser đã đóng trước khi kiểm tra session xong.' })
-      entry.pending = null
-    }
+    this.resolvePending(accountId, entry, 'browser_error', 'Zalo browser đã đóng trước khi kiểm tra session xong.', true)
     await new Promise<void>((resolve) => {
       let done = false
       const finish = (): void => {
@@ -182,6 +224,7 @@ export class ZaloBrowserRuntime {
   closeAll(): void {
     for (const [accountId, entry] of this.workers) {
       entry.closing = true
+      this.resolvePending(accountId, entry, 'browser_error', 'Zalo browser runtime đang đóng.', true)
       try { entry.process.kill() } catch { /* already gone */ }
       this.cleanup(accountId, entry)
     }
@@ -191,6 +234,37 @@ export class ZaloBrowserRuntime {
 
   isControlled(accountId: number): boolean {
     return this.coordinator.isActive(accountId)
+  }
+
+  private request(
+    accountId: number,
+    entry: WorkerEntry,
+    reused: boolean,
+    timeoutMs: number,
+    command: unknown,
+    timeoutMessage: string,
+    secrets: Array<string | null | undefined> = []
+  ): Promise<ZaloOpenResult> {
+    return new Promise<ZaloOpenResult>((resolve) => {
+      if (entry.pending) {
+        resolve({ accountId, profileDirectory: entry.profileDirectory, status: 'needs_attention', reused: true, message: 'Zalo account đang mở/kiểm tra session.' })
+        return
+      }
+      const timer = setBrowserLaunchAwareTimeout(entry.process, () => {
+        if (!entry.pending || entry.pending.resolve !== resolve) return
+        entry.pending = null
+        resolve({ accountId, profileDirectory: entry.profileDirectory, status: 'browser_error', reused, message: timeoutMessage })
+      }, timeoutMs)
+      entry.pending = { resolve, timer, secrets }
+      try {
+        entry.process.postMessage(command)
+      } catch (error) {
+        clearTimeout(timer)
+        entry.pending = null
+        const message = redactZaloSecretText(error instanceof Error ? error.message : String(error), secrets)
+        resolve({ accountId, profileDirectory: entry.profileDirectory, status: 'browser_error', reused, message })
+      }
+    })
   }
 
   private placement(accountId: number, settings: ZaloBrowserSettings): BrowserWindowPlacement | null {
@@ -207,7 +281,10 @@ export class ZaloBrowserRuntime {
     this.workers.set(accountId, entry)
     worker.on('message', (message) => this.handleMessage(accountId, entry, message))
     worker.once('exit', () => {
-      if (!entry.closing) this.accounts.updateSessionStatus(accountId, 'browser_error')
+      if (!entry.closing) {
+        this.accounts.updateSessionStatus(accountId, 'browser_error')
+        this.resolvePending(accountId, entry, 'browser_error', 'Zalo browser worker đã dừng ngoài dự kiến.', true)
+      }
       this.cleanup(accountId, entry)
     })
     await new Promise<void>((resolve) => worker.once('spawn', resolve))
@@ -226,13 +303,31 @@ export class ZaloBrowserRuntime {
         profileDirectory: entry.profileDirectory,
         status: message.status,
         reused: message.reused,
-        message: message.message
+        message: redactZaloSecretText(message.message, pending.secrets)
       })
       return
     }
-    if (isClosed(message) && message.accountId === accountId) {
-      this.cleanup(accountId, entry)
-    }
+    if (isClosed(message) && message.accountId === accountId) this.cleanup(accountId, entry)
+  }
+
+  private resolvePending(
+    accountId: number,
+    entry: WorkerEntry,
+    status: ZaloSessionStatus,
+    message: string,
+    reused: boolean
+  ): void {
+    const pending = entry.pending
+    if (!pending) return
+    clearTimeout(pending.timer)
+    entry.pending = null
+    pending.resolve({
+      accountId,
+      profileDirectory: entry.profileDirectory,
+      status,
+      reused,
+      message: redactZaloSecretText(message, pending.secrets)
+    })
   }
 
   private cleanup(accountId: number, entry: WorkerEntry): void {
