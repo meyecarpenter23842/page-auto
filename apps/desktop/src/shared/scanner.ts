@@ -107,6 +107,26 @@ export interface ScanDatasetIdPayload { datasetId: number }
 export interface ExportScanDatasetCsvInput { datasetId: number }
 export interface ExportScanDatasetCsvResult { canceled: boolean; filePath: string | null; recordCount: number }
 
+export interface ScanDatasetFolder {
+  id: number
+  name: string
+  parentId: number | null
+  datasetIds: number[]
+  createdAt: number
+  updatedAt: number
+}
+
+export interface ScanDatasetFolderOverview {
+  folders: ScanDatasetFolder[]
+  ungroupedDatasetIds: number[]
+}
+
+export interface CreateScanDatasetFolderInput { name: string; parentId: number | null }
+export interface RenameScanDatasetFolderInput { folderId: number; name: string }
+export interface ScanDatasetFolderIdPayload { folderId: number }
+export interface MoveScanDatasetInput { datasetId: number; folderId: number | null }
+export interface ScanDatasetFolderDeleteResult { folderId: number; deleted: boolean }
+
 export const SCANNER_TOKEN_VALIDATION_STATES = [
   'unverified', 'valid', 'expired', 'permission_limited', 'invalid', 'needs_reauth'
 ] as const
@@ -147,6 +167,11 @@ export const SCANNER_IPC = {
   renameDataset: 'scanner:dataset:rename',
   deleteDataset: 'scanner:dataset:delete',
   exportDatasetCsv: 'scanner:dataset:export-csv',
+  listDatasetFolders: 'scanner:dataset-folder:list',
+  createDatasetFolder: 'scanner:dataset-folder:create',
+  renameDatasetFolder: 'scanner:dataset-folder:rename',
+  deleteDatasetFolder: 'scanner:dataset-folder:delete',
+  moveDataset: 'scanner:dataset-folder:move-dataset',
   getSourceCapabilities: 'scanner:source:capabilities',
   listTokenCredentials: 'scanner:token:list',
   createTokenCredential: 'scanner:token:create',

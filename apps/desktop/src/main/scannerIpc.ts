@@ -4,11 +4,15 @@ import { writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import {
   SCANNER_IPC,
+  type CreateScanDatasetFolderInput,
   type CreateScannerTokenCredentialInput,
   type ExportScanDatasetCsvInput,
   type ExportScanDatasetCsvResult,
+  type MoveScanDatasetInput,
+  type RenameScanDatasetFolderInput,
   type RenameScanDatasetInput,
   type SaveScanDatasetInput,
+  type ScanDatasetFolderIdPayload,
   type ScanDatasetIdPayload,
   type ScanJobIdPayload,
   type ScannerTokenCredentialIdPayload,
@@ -78,6 +82,11 @@ export function registerScannerIpcHandlers(
   ipcMain.handle(SCANNER_IPC.saveDataset, (_event, input: SaveScanDatasetInput) => service.saveDataset(input))
   ipcMain.handle(SCANNER_IPC.renameDataset, (_event, input: RenameScanDatasetInput) => libraryDatasets.rename(input))
   ipcMain.handle(SCANNER_IPC.deleteDataset, (_event, payload: ScanDatasetIdPayload) => libraryDatasets.delete(payload.datasetId))
+  ipcMain.handle(SCANNER_IPC.listDatasetFolders, () => libraryDatasets.listFolders())
+  ipcMain.handle(SCANNER_IPC.createDatasetFolder, (_event, input: CreateScanDatasetFolderInput) => libraryDatasets.createFolder(input))
+  ipcMain.handle(SCANNER_IPC.renameDatasetFolder, (_event, input: RenameScanDatasetFolderInput) => libraryDatasets.renameFolder(input))
+  ipcMain.handle(SCANNER_IPC.deleteDatasetFolder, (_event, payload: ScanDatasetFolderIdPayload) => libraryDatasets.deleteFolder(payload.folderId))
+  ipcMain.handle(SCANNER_IPC.moveDataset, (_event, input: MoveScanDatasetInput) => libraryDatasets.moveDataset(input))
   ipcMain.handle(SCANNER_IPC.getSourceCapabilities, () => tokenService.getCapabilities())
   ipcMain.handle(SCANNER_IPC.listTokenCredentials, () => tokenService.list())
   ipcMain.handle(SCANNER_IPC.createTokenCredential, (_event, input: CreateScannerTokenCredentialInput) => tokenService.create(input))
