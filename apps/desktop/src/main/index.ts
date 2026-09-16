@@ -5,10 +5,12 @@ import { registerAppUpdaterIpc, type AppUpdaterIpcRuntime } from './appUpdaterIp
 import { initializeDatabase, type DatabaseRuntime } from './database'
 import { registerPageWallFiniteRuntime, type PageWallFiniteRuntime } from './pageWallFiniteIpc'
 import { prepareDataDirectory } from './services/dataDirectory'
+import { registerZaloIpc, type ZaloIpcRuntime } from './zaloIpc'
 
 let finiteDatabase: DatabaseRuntime | null = null
 let finiteRuntime: PageWallFiniteRuntime | null = null
 let updaterRuntime: AppUpdaterIpcRuntime | null = null
+let zaloRuntime: ZaloIpcRuntime | null = null
 
 app.whenReady().then(() => {
   updaterRuntime ??= registerAppUpdaterIpc()
@@ -29,9 +31,12 @@ app.whenReady().then(() => {
 
   finiteDatabase = initializeDatabase(join(dataDirectory, 'page-auto.sqlite'))
   finiteRuntime = registerPageWallFiniteRuntime(finiteDatabase.client, dataDirectory)
+  zaloRuntime = registerZaloIpc(finiteDatabase.client, dataDirectory)
 })
 
 app.on('before-quit', () => {
+  zaloRuntime?.dispose()
+  zaloRuntime = null
   updaterRuntime?.dispose()
   updaterRuntime = null
   finiteRuntime?.dispose()
