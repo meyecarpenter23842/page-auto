@@ -5,10 +5,13 @@ import {
   installManagedBrowserReuse
 } from './managedBrowserBridge'
 import {
+  checkFacebookCommonAccess,
   FacebookCommonRuntime,
   type FacebookCommonStepResult
 } from '../facebook/facebookCommonRuntime'
+import { createPacedFacebookPage } from '../facebook/facebookInteractionPacing'
 import type { PageScanRawRecord } from '../scanner/page/pageScanAdapter'
+import { pageUidFromAppLink, requireVerifiedPageUid } from '../scanner/page/pageScanIdentity'
 import {
   extractPageFollowerCount,
   extractPageLikeCount,
@@ -94,7 +97,10 @@ async function navigateWithBackoff(page: Page, url: string, runKey: string, time
     }
     if (status === 403) return { kind: 'permission_limited', response }
     if (status === 404) return { kind: 'not_found', response }
-    if (!response && page.url() === 'about:blank') return { kind: 'failed', response: null }
+    if (!response) {
+      if (attempt < 2 && await sleepWithControl(runKey, 500 * (2 ** attempt))) continue
+      return { kind: 'failed', response: null }
+    }
     return { kind: 'ok', response }
   }
   return { kind: 'rate_limited', response: null }
@@ -127,19 +133,11 @@ async function categoryFromRoot(root: Locator): Promise<string | null> {
   return firstVisibleText(root.locator('a[href*="/pages/category/"]'))
 }
 
-function uidFromAppLink(value: string | null): string | null {
-  if (!value) return null
-  const match = value.match(/(?:fb:\/\/(?:page|profile)\/?(?:\?id=)?|(?:page|profile)\/)(\d+)/i)
-  return match?.[1] ?? null
-}
-
 async function verifiedPageUid(page: Page): Promise<string | null> {
-  const direct = pageUidFromHref(page.url())
-  if (direct) return direct
   const appLinks = page.locator('meta[property="al:android:url"], meta[property="al:ios:url"]')
   const count = await appLinks.count().catch(() => 0)
   for (let index = 0; index < count; index += 1) {
-    const uid = uidFromAppLink(await appLinks.nth(index).getAttribute('content').catch(() => null))
+    const uid = pageUidFromAppLink(await appLinks.nth(index).getAttribute('content').catch(() => null))
     if (uid) return uid
   }
   return null
@@ -157,27 +155,93 @@ async function pageDisplayName(page: Page, fallback: string): Promise<string> {
   return title || fallback
 }
 
-async function keywordRecordFromLink(link: Locator): Promise<PageScanRawRecord | null> {
+interface KeywordPageCandidate {
+  key: string
+  url: string
+  uid: string | null
+  username: string | null
+  displayName: string
+  category: string | null
+  followers: number | null
+  likes: number | null
+  rawText: string
+}
+
+async function keywordCandidateFromLink(link: Locator): Promise<KeywordPageCandidate | null> {
   const href = await link.getAttribute('href').catch(() => null)
-  const uid = href ? pageUidFromHref(href) : null
-  if (!uid) return null
-  const url = normalizePageUrl(href ?? uid) ?? `https://www.facebook.com/${uid}/`
+  if (!href) return null
+  const url = normalizePageUrl(href)
+  if (!url) return null
+  const uid = pageUidFromHref(url)
+  const username = pageUsernameFromHref(url)
+  if (!uid && !username) return null
   const container = await candidateContainer(link)
   const rawText = ((container ? await container.innerText().catch(() => '') : await link.innerText().catch(() => '')) || '')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 4_000)
-  const displayName = (await link.innerText().catch(() => '')).replace(/\s+/g, ' ').trim() || uid
+  const displayName = (await link.innerText().catch(() => '')).replace(/\s+/g, ' ').trim() || username || uid || url
   return {
-    entityId: uid,
-    displayName,
+    key: uid ? `uid:${uid}` : `url:${url.toLocaleLowerCase()}`,
     url,
-    username: pageUsernameFromHref(href ?? ''),
+    uid,
+    username,
+    displayName,
     category: container ? await categoryFromRoot(container) : null,
     followers: extractPageFollowerCount(rawText),
     likes: extractPageLikeCount(rawText),
+    rawText
+  }
+}
+
+function recordFromKeywordCandidate(candidate: KeywordPageCandidate, uid: string): PageScanRawRecord {
+  return {
+    entityId: uid,
+    displayName: candidate.displayName || uid,
+    url: candidate.url,
+    username: candidate.username,
+    category: candidate.category,
+    followers: candidate.followers,
+    likes: candidate.likes,
     location: null,
-    rawText,
+    rawText: candidate.rawText,
+    source: 'keyword_search'
+  }
+}
+
+async function resolveVanityKeywordRecord(
+  page: Page,
+  job: PageScanWorkerJob,
+  candidate: KeywordPageCandidate
+): Promise<PageScanRawRecord | null> {
+  const nav = await navigateWithBackoff(page, candidate.url, job.runKey, job.browser.navigationTimeoutMs)
+  if (nav.kind === 'rate_limited') {
+    throw new Error('Facebook đang rate-limit khi resolve Page vanity URL sau các lần backoff có giới hạn.')
+  }
+  if (nav.kind !== 'ok') return null
+
+  const access = await checkFacebookCommonAccess(page, 'khi resolve Page vanity URL')
+  if (access.status !== 'success') throw access
+
+  const bodyText = await page.locator('body').innerText().catch(() => '')
+  if (hasTemporaryPageRestriction(bodyText)) {
+    throw new Error('Facebook đang tạm hạn chế thao tác khi resolve Page vanity URL; phiên quét dừng để không tiếp tục ép request.')
+  }
+
+  const verifiedUid = await verifiedPageUid(page)
+  if (!verifiedUid) return null
+  const rawText = bodyText.replace(/\s+/g, ' ').trim().slice(0, 12_000)
+  const url = await canonicalPageUrl(page) ?? candidate.url
+  return {
+    entityId: verifiedUid,
+    displayName: await pageDisplayName(page, candidate.displayName || verifiedUid),
+    url,
+    username: pageUsernameFromHref(url) ?? candidate.username,
+    category: await categoryFromRoot(page.locator('body')) ?? candidate.category,
+    followers: extractPageFollowerCount(rawText) ?? candidate.followers,
+    likes: extractPageLikeCount(rawText) ?? candidate.likes,
+    location: null,
+    rawText: rawText || candidate.rawText,
     source: 'keyword_search'
   }
 }
@@ -199,10 +263,7 @@ function failureRecord(uid: string, url: string, status: NonNullable<PageScanRaw
 }
 
 async function directRecord(page: Page, target: PageDirectTarget): Promise<PageScanRawRecord> {
-  const uid = target.uid ?? await verifiedPageUid(page)
-  if (!uid) {
-    throw new Error('Không xác minh được Page UID số từ URL Page này; Scanner không dùng username/slug thay cho Page UID.')
-  }
+  const uid = requireVerifiedPageUid(target.uid, await verifiedPageUid(page))
   const bodyText = (await page.locator('body').innerText().catch(() => '')).replace(/\s+/g, ' ').trim().slice(0, 12_000)
   const url = await canonicalPageUrl(page) ?? target.url
   return {
@@ -269,35 +330,55 @@ async function scanKeyword(runtime: FacebookCommonRuntime, job: PageScanWorkerJo
   if (blocked) throw blocked
 
   const seen = new Set<string>()
+  const seenCandidates = new Set<string>()
   let idleRounds = 0
+  let resolverPage: Page | null = null
   const maxRounds = Math.min(80, Math.max(14, Math.ceil(job.limit / 5) + 8))
 
-  for (let round = 0; round < maxRounds && seen.size < job.limit; round += 1) {
-    if (!await waitIfPaused(job.runKey)) return
-    const bodyText = await runtime.page.locator('body').innerText().catch(() => '')
-    if (hasTemporaryPageRestriction(bodyText)) {
-      throw new Error('Facebook đang tạm hạn chế thao tác/tìm kiếm Page; phiên quét dừng để không tiếp tục ép request.')
-    }
-
-    const root = runtime.page.locator('[role="main"], main').first()
-    const links = (await root.count().catch(() => 0)) > 0 ? root.locator('a[href]') : runtime.page.locator('a[href]')
-    const count = await links.count().catch(() => 0)
-    let newRecords = 0
-    for (let index = 0; index < count && seen.size < job.limit; index += 1) {
+  try {
+    for (let round = 0; round < maxRounds && seen.size < job.limit; round += 1) {
       if (!await waitIfPaused(job.runKey)) return
-      const record = await keywordRecordFromLink(links.nth(index))
-      if (!record || seen.has(record.entityId)) continue
-      seen.add(record.entityId)
-      newRecords += 1
-      post({ type: 'record', runKey: job.runKey, record })
-    }
+      const bodyText = await runtime.page.locator('body').innerText().catch(() => '')
+      if (hasTemporaryPageRestriction(bodyText)) {
+        throw new Error('Facebook đang tạm hạn chế thao tác/tìm kiếm Page; phiên quét dừng để không tiếp tục ép request.')
+      }
 
-    idleRounds = newRecords === 0 ? idleRounds + 1 : 0
-    if (idleRounds >= 3 || seen.size >= job.limit) return
-    await runtime.page.mouse.wheel(0, 1600).catch(() => undefined)
-    if (!await sleepWithControl(job.runKey, 900)) return
-    const afterScrollBlock = await accessFailure(runtime, 'trong lúc phân trang/scroll tìm Page')
-    if (afterScrollBlock) throw afterScrollBlock
+      const root = runtime.page.locator('[role="main"], main').first()
+      const links = (await root.count().catch(() => 0)) > 0 ? root.locator('a[href]') : runtime.page.locator('a[href]')
+      const count = await links.count().catch(() => 0)
+      let newRecords = 0
+      for (let index = 0; index < count && seen.size < job.limit; index += 1) {
+        if (!await waitIfPaused(job.runKey)) return
+        const candidate = await keywordCandidateFromLink(links.nth(index))
+        if (!candidate || seenCandidates.has(candidate.key)) continue
+        seenCandidates.add(candidate.key)
+
+        let record: PageScanRawRecord | null
+        if (candidate.uid) {
+          record = recordFromKeywordCandidate(candidate, candidate.uid)
+        } else {
+          if (!resolverPage) {
+            const rawResolverPage = await runtime.context.newPage()
+            rawResolverPage.setDefaultNavigationTimeout(runtime.browser.navigationTimeoutMs)
+            resolverPage = createPacedFacebookPage(rawResolverPage, runtime.browser)
+          }
+          record = await resolveVanityKeywordRecord(resolverPage, job, candidate)
+        }
+        if (!record || seen.has(record.entityId)) continue
+        seen.add(record.entityId)
+        newRecords += 1
+        post({ type: 'record', runKey: job.runKey, record })
+      }
+
+      idleRounds = newRecords === 0 ? idleRounds + 1 : 0
+      if (idleRounds >= 3 || seen.size >= job.limit) return
+      await runtime.page.mouse.wheel(0, 1600).catch(() => undefined)
+      if (!await sleepWithControl(job.runKey, 900)) return
+      const afterScrollBlock = await accessFailure(runtime, 'trong lúc phân trang/scroll tìm Page')
+      if (afterScrollBlock) throw afterScrollBlock
+    }
+  } finally {
+    if (resolverPage) await resolverPage.close().catch(() => undefined)
   }
 }
 
