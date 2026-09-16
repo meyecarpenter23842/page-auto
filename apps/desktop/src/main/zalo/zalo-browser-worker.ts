@@ -2,18 +2,28 @@ import { chromium, type BrowserContext, type Page } from 'playwright-core'
 import { DEFAULT_APP_SETTINGS, type BrowserSettings } from '../../shared/appSettings'
 import type { BrowserWindowPlacement } from '../../shared/browserWindowLayout'
 import { wholeChromeScaleForLaunch } from '../../shared/browserWholeChromeScale'
-import type { ZaloBrowserSettings, ZaloSessionStatus } from '../../shared/zalo'
+import type { ZaloBrowserSettings, ZaloLoginMode, ZaloSessionStatus } from '../../shared/zalo'
 import {
   applyBrowserContextSettings,
   applyBrowserPlacementToContext,
   buildBrowserLaunchOptions
 } from '../browser/browserRuntime'
+import { inspectZaloSession, runZaloPhonePasswordLogin, runZaloQrLogin } from './zaloLoginFlow'
+import { classifyZaloSessionEvidence } from './zaloSessionEvidence'
 
 interface OpenCommand {
   type: 'open'
   accountId: number
   settings: ZaloBrowserSettings
   placement: BrowserWindowPlacement | null
+}
+
+interface LoginCommand {
+  type: 'login'
+  accountId: number
+  mode: ZaloLoginMode
+  phone: string
+  password: string | null
 }
 
 interface ApplySettingsCommand {
@@ -23,7 +33,7 @@ interface ApplySettingsCommand {
 }
 
 interface ShutdownCommand { type: 'shutdown' }
-type WorkerCommand = OpenCommand | ApplySettingsCommand | ShutdownCommand
+type WorkerCommand = OpenCommand | LoginCommand | ApplySettingsCommand | ShutdownCommand
 
 interface WorkerResult {
   type: 'zalo-result'
@@ -50,44 +60,22 @@ function commandOf(event: unknown): WorkerCommand | null {
     const open = candidate as OpenCommand
     return { type: 'open', accountId: open.accountId, settings: open.settings, placement: open.placement ?? null }
   }
+  if (candidate.type === 'login') {
+    const login = candidate as Partial<LoginCommand>
+    if (typeof login.accountId !== 'number' || !['phone_password', 'qr'].includes(String(login.mode)) || typeof login.phone !== 'string') return null
+    return {
+      type: 'login',
+      accountId: login.accountId,
+      mode: login.mode as ZaloLoginMode,
+      phone: login.phone,
+      password: typeof login.password === 'string' ? login.password : null
+    }
+  }
   if (candidate.type === 'apply-settings' && (candidate as Partial<ApplySettingsCommand>).settings) {
     const apply = candidate as ApplySettingsCommand
     return { type: 'apply-settings', settings: apply.settings, placement: apply.placement ?? null }
   }
   return null
-}
-
-export interface ZaloSessionEvidence {
-  authenticatedShell: boolean
-  loginSurface: boolean
-  qrSurface: boolean
-  attentionSurface: boolean
-}
-
-export function classifyZaloSessionEvidence(evidence: ZaloSessionEvidence): ZaloSessionStatus {
-  if (evidence.authenticatedShell) return 'ready'
-  if (evidence.attentionSurface) return 'needs_attention'
-  if (evidence.qrSurface) return 'qr_waiting'
-  if (evidence.loginSurface) return 'login_required'
-  return 'needs_attention'
-}
-
-async function inspectSession(page: Page): Promise<ZaloSessionEvidence> {
-  // Read-only probes only. Batch 1 deliberately does not automate phone/password login.
-  return page.evaluate(() => {
-    const text = (document.body?.innerText ?? '').toLocaleLowerCase('vi-VN')
-    const authenticatedShell = Boolean(
-      document.querySelector('#app-page')
-      && (text.includes('tin nhắn') || text.includes('danh bạ'))
-    )
-    const qrSurface = Boolean(
-      document.querySelector('canvas, img[src*="qr" i]')
-      && (text.includes('quét mã qr') || text.includes('mã qr'))
-    )
-    const loginSurface = text.includes('đăng nhập') || text.includes('số điện thoại')
-    const attentionSurface = text.includes('xác minh') || text.includes('captcha') || text.includes('bất thường')
-    return { authenticatedShell, loginSurface, qrSurface, attentionSurface }
-  }).catch(() => ({ authenticatedShell: false, loginSurface: false, qrSurface: false, attentionSurface: true }))
 }
 
 function asBrowserSettings(settings: ZaloBrowserSettings): BrowserSettings {
@@ -99,6 +87,14 @@ function asBrowserSettings(settings: ZaloBrowserSettings): BrowserSettings {
   }
 }
 
+async function activeZaloPage(context: BrowserContext, navigationTimeoutMs: number): Promise<Page> {
+  const page = context.pages()[0] ?? await context.newPage()
+  if (!page.url().startsWith('https://chat.zalo.me')) {
+    await page.goto('https://chat.zalo.me/', { waitUntil: 'domcontentloaded', timeout: navigationTimeoutMs }).catch(() => undefined)
+  }
+  return page
+}
+
 async function run(): Promise<void> {
   const profileDirectory = process.argv[2]
   const accountId = Number(process.argv[3])
@@ -108,6 +104,7 @@ async function run(): Promise<void> {
 
   let context: BrowserContext | null = null
   let currentScale: number | null = null
+  let currentNavigationTimeoutMs = DEFAULT_APP_SETTINGS.browser.navigationTimeoutMs
   let closing = false
   let queue = Promise.resolve()
 
@@ -118,6 +115,7 @@ async function run(): Promise<void> {
 
   const ensureOpen = async (command: OpenCommand): Promise<void> => {
     const browserSettings = asBrowserSettings(command.settings)
+    currentNavigationTimeoutMs = browserSettings.navigationTimeoutMs
     const requestedScale = wholeChromeScaleForLaunch(command.placement)
     const reused = context !== null
 
@@ -146,32 +144,44 @@ async function run(): Promise<void> {
 
     const active = context
     if (!active) throw new Error('Zalo browser context không khả dụng.')
-    if (currentScale === requestedScale) {
-      await applyBrowserPlacementToContext(active, command.placement)
-    }
+    if (currentScale === requestedScale) await applyBrowserPlacementToContext(active, command.placement)
 
-    const page = active.pages()[0] ?? await active.newPage()
-    if (!page.url().startsWith('https://chat.zalo.me')) {
-      await page.goto('https://chat.zalo.me/', { waitUntil: 'domcontentloaded', timeout: browserSettings.navigationTimeoutMs }).catch(() => undefined)
-    }
-    const evidence = await inspectSession(page)
-    const status = classifyZaloSessionEvidence(evidence)
+    const page = await activeZaloPage(active, browserSettings.navigationTimeoutMs)
+    const status = classifyZaloSessionEvidence(await inspectZaloSession(page))
     const message = status === 'ready'
       ? 'Zalo session đã xác thực.'
       : status === 'qr_waiting'
         ? 'Đang chờ operator quét QR trên Zalo Web.'
         : status === 'login_required'
-          ? 'Zalo yêu cầu đăng nhập thủ công.'
+          ? 'Zalo yêu cầu đăng nhập.'
           : 'Zalo cần operator kiểm tra trạng thái đăng nhập/challenge.'
     post(status, message, reused)
+  }
+
+  const login = async (command: LoginCommand): Promise<void> => {
+    const active = context
+    if (!active) throw new Error('Zalo browser chưa được mở.')
+    const page = await activeZaloPage(active, currentNavigationTimeoutMs)
+    const reused = true
+
+    if (command.mode === 'phone_password') {
+      if (!command.password) {
+        post('login_required', 'Tài khoản Zalo chưa có mật khẩu để đăng nhập tự động.', reused)
+        return
+      }
+      const result = await runZaloPhonePasswordLogin(page, command.phone, command.password)
+      post(result.status, result.message, reused)
+      return
+    }
+
+    const result = await runZaloQrLogin(page)
+    post(result.status, result.message, reused)
   }
 
   const applySettings = async (command: ApplySettingsCommand): Promise<void> => {
     if (!context) return
     const requestedScale = wholeChromeScaleForLaunch(command.placement)
-    if (currentScale === requestedScale) {
-      await applyBrowserPlacementToContext(context, command.placement)
-    }
+    if (currentScale === requestedScale) await applyBrowserPlacementToContext(context, command.placement)
     // Whole-Chrome scale is a Chrome launch flag. A changed scale is applied on the
     // next reopen; never fake a successful in-place scale change.
   }
@@ -191,9 +201,11 @@ async function run(): Promise<void> {
       })
       return
     }
-    queue = queue.then(() => command.type === 'open' ? ensureOpen(command) : applySettings(command)).catch((error) => {
-      post('browser_error', error instanceof Error ? error.message : String(error), context !== null)
-    })
+    queue = queue
+      .then(() => command.type === 'open' ? ensureOpen(command) : command.type === 'login' ? login(command) : applySettings(command))
+      .catch((error) => {
+        post('browser_error', error instanceof Error ? error.message : String(error), context !== null)
+      })
   })
 }
 

@@ -1,17 +1,18 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
-  maskZaloPassword,
   type ZaloAccountDraft,
-  type ZaloAccountRecord,
-  type ZaloBrowserSettings
+  type ZaloAccountView,
+  type ZaloBrowserSettings,
+  type ZaloLoginMode
 } from '../../../shared/zalo'
 
 type TabId = 'accounts' | 'business'
+type BusyState = { id: number; label: string } | null
 
 const emptyDraft: ZaloAccountDraft = { phone: '', password: '', displayName: '', note: '' }
 
-function statusLabel(status: ZaloAccountRecord['sessionStatus']): string {
-  const labels: Record<ZaloAccountRecord['sessionStatus'], string> = {
+function statusLabel(status: ZaloAccountView['sessionStatus']): string {
+  const labels: Record<ZaloAccountView['sessionStatus'], string> = {
     unknown: 'Chưa kiểm tra',
     ready: 'Sẵn sàng',
     login_required: 'Cần đăng nhập',
@@ -25,10 +26,10 @@ function statusLabel(status: ZaloAccountRecord['sessionStatus']): string {
 
 export function ZaloWorkspace() {
   const [tab, setTab] = useState<TabId>('accounts')
-  const [accounts, setAccounts] = useState<ZaloAccountRecord[]>([])
+  const [accounts, setAccounts] = useState<ZaloAccountView[]>([])
   const [draft, setDraft] = useState<ZaloAccountDraft>(emptyDraft)
   const [settings, setSettings] = useState<ZaloBrowserSettings | null>(null)
-  const [busyId, setBusyId] = useState<number | null>(null)
+  const [busy, setBusy] = useState<BusyState>(null)
   const [notice, setNotice] = useState('')
 
   const load = async () => {
@@ -57,7 +58,7 @@ export function ZaloWorkspace() {
   }
 
   const open = async (id: number) => {
-    setBusyId(id)
+    setBusy({ id, label: 'Đang mở…' })
     try {
       const result = await window.pageAutoZalo.openAccount(id)
       setNotice(result.message)
@@ -65,18 +66,44 @@ export function ZaloWorkspace() {
     } catch (error) {
       setNotice(error instanceof Error ? error.message : String(error))
     } finally {
-      setBusyId(null)
+      setBusy(null)
+    }
+  }
+
+  const login = async (id: number, mode: ZaloLoginMode) => {
+    setBusy({ id, label: mode === 'qr' ? 'Đang chờ QR…' : 'Đang đăng nhập…' })
+    try {
+      const result = await window.pageAutoZalo.loginAccount(id, mode)
+      setNotice(result.message)
+      await load()
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const close = async (id: number) => {
+    setBusy({ id, label: 'Đang đóng…' })
+    try {
+      await window.pageAutoZalo.closeAccount(id)
+      setNotice('Đã đóng Chrome Zalo. Profile/session vẫn được giữ để mở lại lần sau.')
+      await load()
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error))
+    } finally {
+      setBusy(null)
     }
   }
 
   const remove = async (id: number) => {
-    setBusyId(id)
+    setBusy({ id, label: 'Đang xóa…' })
     try {
       await window.pageAutoZalo.deleteAccount(id)
       setNotice('Đã xóa tài khoản Zalo và đóng browser đang mở (nếu có).')
       await load()
     } finally {
-      setBusyId(null)
+      setBusy(null)
     }
   }
 
@@ -103,7 +130,7 @@ export function ZaloWorkspace() {
       {tab === 'business' ? (
         <div className="panel">
           <h2>Gửi tin / Kết bạn</h2>
-          <p>Batch 1 chỉ dựng shell. Automation gửi tin, gửi ảnh/file và kết bạn chưa được bật ở đây.</p>
+          <p>Batch 2 hoàn thiện login/session chung. Automation gửi tin, gửi ảnh/file và kết bạn vẫn chưa được bật ở đây.</p>
         </div>
       ) : (
         <>
@@ -125,21 +152,28 @@ export function ZaloWorkspace() {
 
           <div className="panel table-wrap">
             <h2>Danh sách tài khoản</h2>
+            <p>Mở/kiểm tra chỉ đọc trạng thái session. Đăng nhập mật khẩu dùng credential đã lưu trong Main; QR chờ operator tự quét và xác nhận trên thiết bị của mình.</p>
             <table className="data-table">
               <thead><tr><th>ID</th><th>Số điện thoại</th><th>Tên</th><th>Mật khẩu</th><th>Session</th><th>Ghi chú</th><th>Thao tác</th></tr></thead>
               <tbody>
-                {accounts.map((account) => (
-                  <tr key={account.id}>
-                    <td>{account.id}</td><td>{account.phone}</td><td>{account.displayName || '—'}</td>
-                    <td>{maskZaloPassword(account.password) || '—'}</td><td>{statusLabel(account.sessionStatus)}</td><td>{account.note || '—'}</td>
-                    <td>
-                      <div className="inline-actions">
-                        <button className="button secondary" disabled={busyId === account.id} type="button" onClick={() => void open(account.id)}>{busyId === account.id ? 'Đang mở…' : 'Mở / kiểm tra'}</button>
-                        <button className="button secondary" disabled={busyId === account.id} type="button" onClick={() => void remove(account.id)}>Xóa</button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                {accounts.map((account) => {
+                  const isBusy = busy?.id === account.id
+                  return (
+                    <tr key={account.id}>
+                      <td>{account.id}</td><td>{account.phone}</td><td>{account.displayName || '—'}</td>
+                      <td>{account.passwordMasked || '—'}</td><td>{statusLabel(account.sessionStatus)}</td><td>{account.note || '—'}</td>
+                      <td>
+                        <div className="inline-actions">
+                          <button className="button secondary" disabled={isBusy} type="button" onClick={() => void open(account.id)}>{isBusy ? busy?.label : 'Mở / kiểm tra'}</button>
+                          <button className="button secondary" disabled={isBusy || !account.hasPassword} type="button" onClick={() => void login(account.id, 'phone_password')}>Đăng nhập mật khẩu</button>
+                          <button className="button secondary" disabled={isBusy} type="button" onClick={() => void login(account.id, 'qr')}>QR đăng nhập</button>
+                          <button className="button secondary" disabled={isBusy} type="button" onClick={() => void close(account.id)}>Đóng</button>
+                          <button className="button secondary" disabled={isBusy} type="button" onClick={() => void remove(account.id)}>Xóa</button>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
                 {accounts.length === 0 ? <tr><td colSpan={7}>Chưa có tài khoản Zalo.</td></tr> : null}
               </tbody>
             </table>

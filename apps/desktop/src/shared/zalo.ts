@@ -6,6 +6,7 @@ export const ZALO_IPC = {
   update: 'zalo:accounts:update',
   delete: 'zalo:accounts:delete',
   open: 'zalo:accounts:open',
+  login: 'zalo:accounts:login',
   close: 'zalo:accounts:close',
   settingsGet: 'zalo:settings:get',
   settingsSave: 'zalo:settings:save'
@@ -22,6 +23,9 @@ export const ZALO_SESSION_STATUSES = [
 ] as const
 export type ZaloSessionStatus = (typeof ZALO_SESSION_STATUSES)[number]
 
+export const ZALO_LOGIN_MODES = ['phone_password', 'qr'] as const
+export type ZaloLoginMode = (typeof ZALO_LOGIN_MODES)[number]
+
 export interface ZaloAccountRecord {
   id: number
   phone: string
@@ -30,6 +34,21 @@ export interface ZaloAccountRecord {
   status: string
   sessionStatus: ZaloSessionStatus
   note: string | null
+  lastOpenedAt: number | null
+  lastLoginAt: number | null
+  createdAt: number
+  updatedAt: number
+}
+
+export interface ZaloAccountView {
+  id: number
+  phone: string
+  displayName: string | null
+  status: string
+  sessionStatus: ZaloSessionStatus
+  note: string | null
+  hasPassword: boolean
+  passwordMasked: string
   lastOpenedAt: number | null
   lastLoginAt: number | null
   createdAt: number
@@ -50,6 +69,11 @@ export interface ZaloAccountUpdatePayload {
 }
 
 export interface ZaloAccountIdPayload { id: number }
+
+export interface ZaloLoginPayload {
+  id: number
+  mode: ZaloLoginMode
+}
 
 export interface ZaloBrowserSettings {
   executablePath: string | null
@@ -96,6 +120,15 @@ export function normalizeZaloPhone(input: string): string {
 export function maskZaloPassword(password: string | null | undefined): string {
   if (!password) return ''
   return '••••••••'
+}
+
+export function redactZaloSecretText(input: string, secrets: Array<string | null | undefined>): string {
+  let output = input
+  for (const secret of secrets) {
+    if (!secret) continue
+    output = output.split(secret).join('[REDACTED]')
+  }
+  return output
 }
 
 export function cloneDefaultZaloBrowserSettings(): ZaloBrowserSettings {
