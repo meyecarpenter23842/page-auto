@@ -68,4 +68,14 @@ describe('scanner group auto-selection', () => {
     const selected = reconcileGroupResultSelection(new Set([1]), new Set([1, 2]), [1, 2, 3])
     expect([...selected]).toEqual([1, 3])
   })
+
+  it('resets selection to the exact matching rows when the post-scan filter changes', () => {
+    const selected = reconcileGroupResultSelection(
+      new Set([1]),
+      new Set([1, 2]),
+      [1, 2],
+      { resetToEligible: true }
+    )
+    expect([...selected]).toEqual([1, 2])
+  })
 })
