@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { StartScanJobInput } from '../../../shared/scanner'
 import { AccountExecutionCoordinator } from '../../services/accountExecutionCoordinator'
 import { ScanAdapterRuntimeError, type ScanAdapterControl, type ScanAdapterRecord, type ScanControlState } from '../scanAdapter'
-import { GroupScanAdapter, type GroupScanRawRecord, type GroupScanRuntime } from './groupScanAdapter'
+import { GroupScanAdapter, groupResultDisplayName, type GroupScanRawRecord, type GroupScanRuntime } from './groupScanAdapter'
 
 const control: ScanAdapterControl = {
   isStopped: () => false,
@@ -38,10 +38,10 @@ async function collect(adapter: GroupScanAdapter, request: StartScanJobInput): P
 describe('GroupScanAdapter', () => {
   it('dedupes Group UID, maps nullable fields and preserves typed permission results', async () => {
     const adapter = new GroupScanAdapter(runtime([
-      { entityId: '100', displayName: 'Group A', url: 'https://www.facebook.com/groups/100/', members: 5000, privacy: 'Public', rawText: 'Public · 5K members', source: 'keyword_search' },
-      { entityId: '100', displayName: 'Group A duplicate', url: null, members: 5000, privacy: 'Public', rawText: 'Public · 5K members', source: 'keyword_search' },
+      { entityId: '100', displayName: 'Group A', url: 'https://www.facebook.com/groups/100/', members: 5000, privacy: 'Public', rawText: 'Group A Public · 5K members', source: 'keyword_search' },
+      { entityId: '100', displayName: 'Group A duplicate', url: null, members: 5000, privacy: 'Public', rawText: 'Group A Public · 5K members', source: 'keyword_search' },
       { entityId: '200', displayName: 'Group B', url: 'https://www.facebook.com/groups/200/', members: null, privacy: null, rawText: '', source: 'keyword_search' },
-      { entityId: '300', displayName: 'Group C', url: 'https://www.facebook.com/groups/300/', members: null, privacy: null, rawText: '', source: 'group_uid', status: 'permission_limited' }
+      { entityId: '300', displayName: '300', url: 'https://www.facebook.com/groups/300/', members: null, privacy: null, rawText: '', source: 'group_uid', status: 'permission_limited' }
     ]))
 
     const results = await collect(adapter, input())
@@ -50,17 +50,30 @@ describe('GroupScanAdapter', () => {
     expect(results[1]?.status).toBe('partial_success')
     expect(results[1]?.data).toMatchObject({ members: null, privacy: null, locale: null, location: null, category: null })
     expect(results[2]?.status).toBe('permission_limited')
+    expect(results[2]?.displayName).toBe('—')
   })
 
-  it('applies members/privacy/location filters without turning them into server-side claims', async () => {
+  it('keeps all scan results so renderer filters can auto-select without destroying the raw result set', async () => {
     const adapter = new GroupScanAdapter(runtime([
-      { entityId: '100', displayName: 'HCM', url: null, members: 5000, privacy: 'Public', rawText: 'Hồ Chí Minh Public 5K members', source: 'keyword_search' },
-      { entityId: '200', displayName: 'HN', url: null, members: 50000, privacy: 'Private', rawText: 'Hà Nội Private 50K members', source: 'keyword_search' }
+      { entityId: '100', displayName: 'HCM', url: null, members: 5000, privacy: 'Public', rawText: 'HCM Public 5K members Hồ Chí Minh', source: 'keyword_search' },
+      { entityId: '200', displayName: 'HN', url: null, members: 50000, privacy: 'Private', rawText: 'HN Private 50K members Hà Nội', source: 'keyword_search' }
     ]))
     const results = await collect(adapter, input({ membersMin: 1000, privacy: 'public', location: 'Hồ Chí Minh' }))
-    expect(results).toHaveLength(1)
-    expect(results[0]?.entityId).toBe('100')
+    expect(results.map((item) => item.entityId)).toEqual(['100', '200'])
     expect(results[0]?.data.filterScope).toBe('client')
+    expect(results[0]?.data.filterText).toContain('Hồ Chí Minh')
+  })
+
+  it('recovers a useful group name from result-card text when the link text is only the UID', () => {
+    expect(groupResultDisplayName({
+      entityId: '986890875439854',
+      displayName: '986890875439854',
+      url: null,
+      members: 323000,
+      privacy: 'Public',
+      rawText: 'Nguyên liệu pha chế trà sữa Public · 323K members · Hồ Chí Minh',
+      source: 'keyword_search'
+    })).toBe('Nguyên liệu pha chế trà sữa')
   })
 
   it('rejects unsupported token source as needs_attention instead of inventing a token path', async () => {

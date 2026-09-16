@@ -299,6 +299,16 @@ export class ScannerRepository {
     if (name.length > 160) throw new Error('Tên Dataset tối đa 160 ký tự.')
     if (job.results.length === 0) throw new Error('Phiên quét chưa có kết quả để lưu Dataset.')
 
+    let results = job.results
+    if (input.resultIds !== undefined) {
+      const requestedIds = new Set(input.resultIds.map((id) => positiveId(id, 'Scan result ID')))
+      results = job.results.filter((result) => requestedIds.has(result.id))
+      if (requestedIds.size !== results.length) {
+        throw new Error('Danh sách kết quả được chọn có record không thuộc phiên quét hiện tại.')
+      }
+      if (results.length === 0) throw new Error('Hãy chọn ít nhất một kết quả để lưu Dataset.')
+    }
+
     const create = this.client.transaction(() => {
       const inserted = this.client.prepare(`
         INSERT INTO scan_datasets(dataset_type, name, source_job_id, created_at, updated_at)
@@ -310,7 +320,7 @@ export class ScannerRepository {
           dataset_id, entity_id, display_name, url, data_json, source_job_id, created_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?)
       `)
-      for (const result of job.results) {
+      for (const result of results) {
         addItem.run(datasetId, result.entityId, result.displayName, result.url, JSON.stringify(result.data), job.id, now)
       }
       return datasetId
