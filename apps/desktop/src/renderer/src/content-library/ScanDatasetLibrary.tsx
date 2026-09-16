@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import type {
   ScanDatasetDetails,
+  ScanDatasetFolder,
+  ScanDatasetFolderOverview,
   ScanDatasetItemRecord,
   ScanDatasetSummary,
   ScanDatasetType
@@ -33,6 +35,8 @@ const COLUMNS: Record<ScanDatasetType, Array<{ key: string; label: string }>> = 
   ]
 }
 
+const EMPTY_FOLDER_OVERVIEW: ScanDatasetFolderOverview = { folders: [], ungroupedDatasetIds: [] }
+
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error) }
 
 function itemValue(item: ScanDatasetItemRecord, key: string): string {
@@ -64,6 +68,9 @@ function matchesText(item: ScanDatasetItemRecord, query: string): boolean {
 
 export function ScanDatasetLibrary() {
   const [datasets, setDatasets] = useState<ScanDatasetSummary[]>([])
+  const [folderOverview, setFolderOverview] = useState<ScanDatasetFolderOverview>(EMPTY_FOLDER_OVERVIEW)
+  const [expandedFolders, setExpandedFolders] = useState<Set<number>>(() => new Set())
+  const [ungroupedExpanded, setUngroupedExpanded] = useState(true)
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [details, setDetails] = useState<ScanDatasetDetails | null>(null)
   const [selectedItemId, setSelectedItemId] = useState<number | null>(null)
@@ -79,13 +86,23 @@ export function ScanDatasetLibrary() {
   const [notice, setNotice] = useState<string | null>(null)
 
   const loadDatasets = async (preferId?: number | null) => {
-    const next = await window.pageAutoScanner.listDatasets()
+    const [next, folders] = await Promise.all([
+      window.pageAutoScanner.listDatasets(),
+      window.pageAutoScanner.listDatasetFolders()
+    ])
     setDatasets(next)
+    setFolderOverview(folders)
+    setExpandedFolders((current) => {
+      const expanded = new Set(current)
+      for (const folder of folders.folders) if (folder.parentId === null) expanded.add(folder.id)
+      return expanded
+    })
     const target = preferId && next.some((item) => item.id === preferId) ? preferId : next[0]?.id ?? null
     setSelectedId(target)
     if (target === null) {
       setDetails(null)
       setRenameValue('')
+      setSelectedItemId(null)
       return
     }
     const loaded = await window.pageAutoScanner.getDataset({ datasetId: target })
@@ -128,6 +145,55 @@ export function ScanDatasetLibrary() {
   }, [details, recordQuery, minValue, maxValue, privacy, sourceGroupId])
 
   const selectedItem = useMemo(() => details?.items.find((item) => item.id === selectedItemId) ?? null, [details, selectedItemId])
+  const roots = useMemo(() => folderOverview.folders.filter((folder) => folder.parentId === null), [folderOverview])
+  const childrenByParent = useMemo(() => {
+    const map = new Map<number, ScanDatasetFolder[]>()
+    for (const folder of folderOverview.folders) {
+      if (folder.parentId === null) continue
+      const children = map.get(folder.parentId) ?? []
+      children.push(folder)
+      map.set(folder.parentId, children)
+    }
+    return map
+  }, [folderOverview])
+  const folderByDatasetId = useMemo(() => {
+    const map = new Map<number, number>()
+    for (const folder of folderOverview.folders) {
+      for (const datasetId of folder.datasetIds) map.set(datasetId, folder.id)
+    }
+    return map
+  }, [folderOverview])
+  const datasetsByFolder = useMemo(() => {
+    const map = new Map<number, ScanDatasetSummary[]>()
+    for (const dataset of visibleDatasets) {
+      const folderId = folderByDatasetId.get(dataset.id)
+      if (folderId === undefined) continue
+      const items = map.get(folderId) ?? []
+      items.push(dataset)
+      map.set(folderId, items)
+    }
+    return map
+  }, [visibleDatasets, folderByDatasetId])
+  const ungroupedDatasets = useMemo(
+    () => visibleDatasets.filter((dataset) => !folderByDatasetId.has(dataset.id)),
+    [visibleDatasets, folderByDatasetId]
+  )
+  const selectedFolderId = details ? folderByDatasetId.get(details.id) ?? null : null
+
+  const folderVisibleCount = (folder: ScanDatasetFolder): number => {
+    const direct = datasetsByFolder.get(folder.id)?.length ?? 0
+    if (folder.parentId !== null) return direct
+    return direct + (childrenByParent.get(folder.id) ?? []).reduce((total, child) => total + (datasetsByFolder.get(child.id)?.length ?? 0), 0)
+  }
+
+  const toggleFolder = (folderId: number) => {
+    setExpandedFolders((current) => {
+      const next = new Set(current)
+      if (next.has(folderId)) next.delete(folderId)
+      else next.add(folderId)
+      return next
+    })
+  }
 
   const selectDataset = async (datasetId: number) => {
     if (busy || datasetId === selectedId) return
@@ -145,6 +211,62 @@ export function ScanDatasetLibrary() {
       setRecordQuery(''); setMinValue(0); setMaxValue(0); setPrivacy('all'); setSourceGroupId('')
     } catch (error) { setNotice(errorMessage(error)) }
     finally { setBusy(false) }
+  }
+
+  const createFolder = async (parentId: number | null) => {
+    if (busy) return
+    const name = window.prompt(parentId === null ? 'Tên thư mục Dataset cấp 1:' : 'Tên thư mục Dataset cấp 2:')
+    if (name === null || !name.trim()) return
+    setBusy(true); setNotice(null)
+    try {
+      const created = await window.pageAutoScanner.createDatasetFolder({ name, parentId })
+      const overview = await window.pageAutoScanner.listDatasetFolders()
+      setFolderOverview(overview)
+      if (parentId !== null) setExpandedFolders((current) => new Set(current).add(parentId))
+      else setExpandedFolders((current) => new Set(current).add(created.id))
+      setNotice(`Đã tạo thư mục “${created.name}”.`)
+    } catch (error) { setNotice(errorMessage(error)) } finally { setBusy(false) }
+  }
+
+  const renameFolder = async (folder: ScanDatasetFolder) => {
+    if (busy) return
+    const name = window.prompt('Tên mới của thư mục:', folder.name)
+    if (name === null || !name.trim() || name.trim() === folder.name) return
+    setBusy(true); setNotice(null)
+    try {
+      const renamed = await window.pageAutoScanner.renameDatasetFolder({ folderId: folder.id, name })
+      setFolderOverview(await window.pageAutoScanner.listDatasetFolders())
+      setNotice(`Đã đổi tên thư mục thành “${renamed.name}”.`)
+    } catch (error) { setNotice(errorMessage(error)) } finally { setBusy(false) }
+  }
+
+  const deleteFolder = async (folder: ScanDatasetFolder) => {
+    if (busy) return
+    if (!window.confirm(`Xóa thư mục “${folder.name}”? Dataset bên trong sẽ chuyển về “Chưa phân loại”.`)) return
+    setBusy(true); setNotice(null)
+    try {
+      const result = await window.pageAutoScanner.deleteDatasetFolder({ folderId: folder.id })
+      if (!result.deleted) throw new Error('Thư mục không còn tồn tại.')
+      await loadDatasets(selectedId)
+      setNotice('Đã xóa thư mục. Dataset bên trong vẫn được giữ lại ở “Chưa phân loại”.')
+    } catch (error) { setNotice(errorMessage(error)) } finally { setBusy(false) }
+  }
+
+  const moveDataset = async (folderId: number | null) => {
+    if (!details || busy || folderId === selectedFolderId) return
+    setBusy(true); setNotice(null)
+    try {
+      const overview = await window.pageAutoScanner.moveDataset({ datasetId: details.id, folderId })
+      setFolderOverview(overview)
+      if (folderId !== null) {
+        const destination = overview.folders.find((folder) => folder.id === folderId)
+        if (destination?.parentId !== null && destination?.parentId !== undefined) {
+          setExpandedFolders((current) => new Set(current).add(destination.parentId!))
+        }
+        setExpandedFolders((current) => new Set(current).add(folderId))
+      } else setUngroupedExpanded(true)
+      setNotice(folderId === null ? 'Đã chuyển Dataset về “Chưa phân loại”.' : 'Đã chuyển Dataset vào thư mục.')
+    } catch (error) { setNotice(errorMessage(error)) } finally { setBusy(false) }
   }
 
   const renameDataset = async () => {
@@ -179,6 +301,42 @@ export function ScanDatasetLibrary() {
     } catch (error) { setNotice(errorMessage(error)) } finally { setBusy(false) }
   }
 
+  const renderDatasetButton = (dataset: ScanDatasetSummary, depth: 1 | 2) => (
+    <button
+      key={dataset.id}
+      type="button"
+      disabled={busy}
+      className={`scan-library-dataset-button depth-${depth}${selectedId === dataset.id ? ' active' : ''}`}
+      onClick={() => void selectDataset(dataset.id)}
+    >
+      <strong>{dataset.name}</strong><span>{TYPE_LABEL[dataset.type]} · {dataset.recordCount} record</span>
+    </button>
+  )
+
+  const renderFolderRow = (folder: ScanDatasetFolder, depth: 0 | 1) => {
+    const expanded = expandedFolders.has(folder.id)
+    const childFolders = depth === 0 ? childrenByParent.get(folder.id) ?? [] : []
+    const directDatasets = datasetsByFolder.get(folder.id) ?? []
+    return (
+      <div className="scan-library-folder-node" key={folder.id} data-folder-depth={depth + 1}>
+        <div className={`scan-library-folder-row depth-${depth}`}>
+          <button className="scan-library-folder-toggle" type="button" aria-expanded={expanded} onClick={() => toggleFolder(folder.id)}>
+            <span aria-hidden="true">{expanded ? '▾' : '▸'}</span><strong>{folder.name}</strong><small>{folderVisibleCount(folder)}</small>
+          </button>
+          <div className="scan-library-folder-actions">
+            {depth === 0 ? <button type="button" disabled={busy} aria-label={`Tạo thư mục con trong ${folder.name}`} title="Tạo thư mục cấp 2" onClick={() => void createFolder(folder.id)}>＋</button> : null}
+            <button type="button" disabled={busy} aria-label={`Đổi tên thư mục ${folder.name}`} title="Đổi tên" onClick={() => void renameFolder(folder)}>✎</button>
+            <button type="button" disabled={busy} aria-label={`Xóa thư mục ${folder.name}`} title="Xóa" onClick={() => void deleteFolder(folder)}>×</button>
+          </div>
+        </div>
+        {expanded ? <div className="scan-library-folder-children">
+          {childFolders.map((child) => renderFolderRow(child, 1))}
+          {directDatasets.map((dataset) => renderDatasetButton(dataset, depth === 0 ? 1 : 2))}
+        </div> : null}
+      </div>
+    )
+  }
+
   const filterLabel = details?.type === 'group' ? 'Members' : details?.type === 'page' || details?.type === 'user' ? 'Followers' : null
   const columns = details ? COLUMNS[details.type] : []
 
@@ -188,16 +346,31 @@ export function ScanDatasetLibrary() {
         <div className="scan-library-heading"><strong>Dữ liệu quét</strong><span>{datasets.length} Dataset</span></div>
         <label>Loại dữ liệu<select value={typeFilter} onChange={(event) => setTypeFilter(event.currentTarget.value as 'all' | ScanDatasetType)}><option value="all">Tất cả</option>{Object.entries(TYPE_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
         <input value={datasetQuery} onChange={(event) => setDatasetQuery(event.currentTarget.value)} placeholder="Tìm Dataset..." aria-label="Tìm Dataset" />
-        <div className="scan-library-datasets">
-          {visibleDatasets.map((dataset) => <button key={dataset.id} type="button" disabled={busy} className={selectedId === dataset.id ? 'active' : ''} onClick={() => void selectDataset(dataset.id)}><strong>{dataset.name}</strong><span>{TYPE_LABEL[dataset.type]} · {dataset.recordCount} record</span></button>)}
-          {!visibleDatasets.length ? <p>Chưa có Dataset phù hợp.</p> : null}
+        <div className="scan-library-folder-toolbar"><strong>Thư mục</strong><button className="button secondary" type="button" disabled={busy} onClick={() => void createFolder(null)}>+ Thư mục</button></div>
+        <div className="scan-library-datasets" data-testid="scan-dataset-folder-tree">
+          {roots.map((folder) => renderFolderRow(folder, 0))}
+          <div className="scan-library-folder-node ungrouped">
+            <div className="scan-library-folder-row depth-0">
+              <button className="scan-library-folder-toggle" type="button" aria-expanded={ungroupedExpanded} onClick={() => setUngroupedExpanded((value) => !value)}>
+                <span aria-hidden="true">{ungroupedExpanded ? '▾' : '▸'}</span><strong>Chưa phân loại</strong><small>{ungroupedDatasets.length}</small>
+              </button>
+            </div>
+            {ungroupedExpanded ? <div className="scan-library-folder-children">{ungroupedDatasets.map((dataset) => renderDatasetButton(dataset, 1))}</div> : null}
+          </div>
+          {!visibleDatasets.length && !folderOverview.folders.length ? <p>Chưa có Dataset phù hợp.</p> : null}
         </div>
       </aside>
 
       <div className="scan-library-main">
         <div className="scan-library-toolbar">
           <div><strong>{details?.name ?? (busy ? 'Đang tải Dataset…' : 'Chọn một Dataset')}</strong><span>{details ? `${TYPE_LABEL[details.type]} · ${details.recordCount} record` : 'Dataset được lưu từ Quét dữ liệu sẽ xuất hiện tại đây.'}</span></div>
-          {details ? <div className="scan-library-actions"><input value={renameValue} onChange={(event) => setRenameValue(event.currentTarget.value)} aria-label="Tên Dataset" /><button className="button secondary" disabled={busy || !renameValue.trim()} onClick={() => void renameDataset()}>Đổi tên</button><button className="button secondary" disabled={busy} onClick={() => void exportDataset()}>Xuất CSV</button><button className="button secondary" disabled={busy} onClick={() => void deleteDataset()}>Xóa</button></div> : null}
+          {details ? <div className="scan-library-actions">
+            <label className="scan-library-folder-picker">Thư mục<select aria-label="Thư mục Dataset" value={selectedFolderId ?? ''} disabled={busy} onChange={(event) => void moveDataset(event.currentTarget.value ? Number(event.currentTarget.value) : null)}><option value="">Chưa phân loại</option>{roots.flatMap((root) => [<option key={root.id} value={root.id}>{root.name}</option>, ...(childrenByParent.get(root.id) ?? []).map((child) => <option key={child.id} value={child.id}>↳ {root.name} / {child.name}</option>)])}</select></label>
+            <input value={renameValue} onChange={(event) => setRenameValue(event.currentTarget.value)} aria-label="Tên Dataset" />
+            <button className="button secondary" disabled={busy || !renameValue.trim()} onClick={() => void renameDataset()}>Đổi tên</button>
+            <button className="button secondary" disabled={busy} onClick={() => void exportDataset()}>Xuất CSV</button>
+            <button className="button secondary" disabled={busy} onClick={() => void deleteDataset()}>Xóa</button>
+          </div> : null}
         </div>
 
         <div className="scan-library-filters">

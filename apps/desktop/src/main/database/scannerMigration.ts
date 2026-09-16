@@ -3,6 +3,10 @@ import type Database from 'better-sqlite3'
 export const SCANNER_SCHEMA_VERSION = 26
 export const SCANNER_MIGRATION_NAME = 'scanner_foundation'
 
+function tableExists(client: Database.Database, name: string): boolean {
+  return Boolean(client.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name))
+}
+
 function applySourceCredentialHardening(client: Database.Database): void {
   client.exec(`
     CREATE TABLE IF NOT EXISTS scanner_token_credentials (
@@ -23,6 +27,34 @@ function applySourceCredentialHardening(client: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_scanner_token_credentials_updated
       ON scanner_token_credentials(updated_at DESC, id);
+  `)
+}
+
+function applyDatasetFolderHardening(client: Database.Database): void {
+  client.exec(`
+    CREATE TABLE IF NOT EXISTS scan_dataset_folders (
+      id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+      name TEXT NOT NULL,
+      parent_id INTEGER REFERENCES scan_dataset_folders(id) ON DELETE CASCADE,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_scan_dataset_folders_parent
+      ON scan_dataset_folders(parent_id, name, id);
+  `)
+
+  if (!tableExists(client, 'scan_datasets')) return
+  const columns = client.prepare('PRAGMA table_info(scan_datasets)').all() as Array<{ name: string }>
+  if (!columns.some((column) => column.name === 'folder_id')) {
+    client.exec(`
+      ALTER TABLE scan_datasets
+      ADD COLUMN folder_id INTEGER REFERENCES scan_dataset_folders(id) ON DELETE SET NULL;
+    `)
+  }
+  client.exec(`
+    CREATE INDEX IF NOT EXISTS idx_scan_datasets_folder
+      ON scan_datasets(folder_id, updated_at DESC, id DESC);
   `)
 }
 
@@ -107,6 +139,7 @@ export function applyScannerMigration(client: Database.Database): void {
     }
 
     applySourceCredentialHardening(client)
+    applyDatasetFolderHardening(client)
   })
 
   migrate()
