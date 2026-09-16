@@ -15,6 +15,7 @@ export default defineConfig({
           'scenario-action-worker': resolve('src/main/browser/scenario-action-worker.ts'),
           'scanner-group-worker': resolve('src/main/browser/scanner-group-worker.ts'),
           'scanner-page-worker': resolve('src/main/browser/scanner-page-worker.ts'),
+          'scanner-user-worker': resolve('src/main/browser/scanner-user-worker.ts'),
           'change-info-audit-worker': resolve('src/main/browser/change-info-audit-worker.ts'),
           'email-browser-worker': resolve('src/main/email/email-browser-worker.ts'),
           'primary-mailbox-browser-worker': resolve('src/main/email/primary-mailbox-browser-worker.ts'),

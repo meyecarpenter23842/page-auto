@@ -61,6 +61,17 @@ try {
   invariant(!pageText.includes('Quét Page vẫn dùng adapter foundation'), 'Quét Page vẫn hiển thị adapter foundation sau Batch 4.')
   invariant(await root.getByRole('button', { name: 'Bắt đầu', exact: true }).isDisabled(), 'Quét Page production phải yêu cầu Account khi DB smoke chưa có account.')
 
+  await root.getByRole('tab', { name: 'Quét Người dùng', exact: true }).click()
+  const userText = await root.innerText()
+  invariant(userText.includes('Quét Người dùng production chỉ nhận UID hoặc URL Profile'), 'Tab Quét Người dùng chưa hiển thị contract production Batch 5A.')
+  invariant(userText.includes('UID') && userText.includes('Username') && userText.includes('Followers'), 'Quét Người dùng thiếu cột metadata production.')
+  invariant(!userText.includes('Quét Người dùng vẫn dùng adapter foundation'), 'Quét Người dùng vẫn hiển thị adapter foundation sau Batch 5A.')
+  invariant(await root.getByRole('button', { name: 'Bắt đầu', exact: true }).isDisabled(), 'Quét Người dùng production phải yêu cầu Account khi DB smoke chưa có account.')
+
+  await root.getByRole('tab', { name: 'Thành viên nhóm', exact: true }).click()
+  const membersText = await root.innerText()
+  invariant(membersText.includes('live audit DOM/member source'), 'Tab Thành viên nhóm phải ghi rõ production blocker thay vì giả adapter production.')
+
   await root.getByRole('tab', { name: 'Quét Nhóm', exact: true }).click()
   await windowPage.screenshot({ path: screenshotPath, fullPage: true })
 } finally {
