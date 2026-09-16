@@ -70,7 +70,11 @@ try {
 
   await root.getByRole('tab', { name: 'Thành viên nhóm', exact: true }).click()
   const membersText = await root.innerText()
-  invariant(membersText.includes('live audit DOM/member source'), 'Tab Thành viên nhóm phải ghi rõ production blocker thay vì giả adapter production.')
+  invariant(membersText.includes('Thành viên nhóm production mở'), 'Tab Thành viên nhóm chưa hiển thị contract production Batch 5B.')
+  invariant(membersText.includes('/user/') && membersText.includes('chống trùng UID'), 'Tab Thành viên nhóm thiếu identity/dedupe contract production.')
+  invariant(await root.getByLabel('Group Dataset nguồn').count() === 1, 'Tab Thành viên nhóm thiếu Group Dataset source picker.')
+  invariant(!membersText.includes('live audit DOM/member source'), 'Tab Thành viên nhóm vẫn hiển thị blocker cũ sau Batch 5B.')
+  invariant(await root.getByRole('button', { name: 'Bắt đầu', exact: true }).isDisabled(), 'Thành viên nhóm production phải yêu cầu Account khi DB smoke chưa có account.')
 
   await root.getByRole('tab', { name: 'Quét Nhóm', exact: true }).click()
   await windowPage.screenshot({ path: screenshotPath, fullPage: true })

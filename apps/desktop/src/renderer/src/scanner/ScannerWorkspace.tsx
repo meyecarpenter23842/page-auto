@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { AccountRecord } from '../../../shared/accounts'
 import type {
+  ScanDatasetSummary,
   ScanFieldMap,
   ScanJobDetails,
   ScanResultRecord,
@@ -13,7 +14,7 @@ const TABS: Array<{ id: ScanType; label: string; hint: string }> = [
   { id: 'group', label: 'Quét Nhóm', hint: 'Từ khóa, Group UID/URL hoặc nhiều UID/URL (mỗi dòng một Group)' },
   { id: 'page', label: 'Quét Page', hint: 'Từ khóa, Page UID hoặc URL Page' },
   { id: 'user', label: 'Quét Người dùng', hint: 'UID hoặc URL Profile' },
-  { id: 'group_members', label: 'Thành viên nhóm', hint: 'Group UID hoặc nguồn Group Dataset' }
+  { id: 'group_members', label: 'Thành viên nhóm', hint: 'Group UID/URL (mỗi dòng một Group) hoặc chọn Group Dataset' }
 ]
 
 const STATUS_LABEL: Record<string, string> = {
@@ -64,7 +65,7 @@ function terminal(job: ScanJobDetails | null): boolean {
 }
 
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error) }
-function needsProductionAccount(scanType: ScanType): boolean { return scanType === 'group' || scanType === 'page' || scanType === 'user' }
+function needsProductionAccount(scanType: ScanType): boolean { return scanType === 'group' || scanType === 'page' || scanType === 'user' || scanType === 'group_members' }
 
 export function ScannerWorkspace() {
   const [activeType, setActiveType] = useState<ScanType>('group')
@@ -82,20 +83,32 @@ export function ScannerWorkspace() {
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
   const [datasetName, setDatasetName] = useState(defaultDatasetName('group'))
+  const [datasets, setDatasets] = useState<ScanDatasetSummary[]>([])
   const [datasetCount, setDatasetCount] = useState(0)
   const [lastDatasetId, setLastDatasetId] = useState<number | null>(null)
+  const [groupDatasetId, setGroupDatasetId] = useState<number | null>(null)
 
   const activeTab = useMemo(() => TABS.find((tab) => tab.id === activeType) ?? TABS[0]!, [activeType])
   const columns = COLUMNS[activeType]
   const sourceLocked = Boolean(job && !terminal(job))
+  const groupDatasets = useMemo(() => datasets.filter((dataset) => dataset.type === 'group'), [datasets])
 
   useEffect(() => {
-    void Promise.all([window.pageAuto.listAccounts({ status: 'all' }), window.pageAutoScanner.listDatasets()]).then(([nextAccounts, datasets]) => {
-      setAccounts(nextAccounts); setAccountId((current) => current ?? nextAccounts[0]?.id ?? null); setDatasetCount(datasets.length); setLastDatasetId(datasets[0]?.id ?? null)
+    void Promise.all([window.pageAuto.listAccounts({ status: 'all' }), window.pageAutoScanner.listDatasets()]).then(([nextAccounts, nextDatasets]) => {
+      setAccounts(nextAccounts)
+      setAccountId((current) => current ?? nextAccounts[0]?.id ?? null)
+      setDatasets(nextDatasets)
+      setDatasetCount(nextDatasets.length)
+      setLastDatasetId(nextDatasets[0]?.id ?? null)
     }).catch((error) => setNotice(errorMessage(error)))
   }, [])
 
-  useEffect(() => { setDatasetName(defaultDatasetName(activeType)); setJob(null); setNotice(null) }, [activeType])
+  useEffect(() => {
+    setDatasetName(defaultDatasetName(activeType))
+    setQuery('')
+    setJob(null)
+    setNotice(null)
+  }, [activeType])
 
   useEffect(() => {
     if (!job || terminal(job)) return
@@ -107,7 +120,9 @@ export function ScannerWorkspace() {
 
   const buildFilters = (): ScanFieldMap => activeType === 'group'
     ? { membersMin, membersMax, privacy, location: location.trim() || null }
-    : {}
+    : activeType === 'group_members'
+      ? { groupDatasetId }
+      : {}
 
   const start = async () => {
     if (busy) return
@@ -135,7 +150,10 @@ export function ScannerWorkspace() {
     setBusy(true)
     try {
       const created = await window.pageAutoScanner.saveDataset({ jobId: job.id, name: datasetName })
-      const datasets = await window.pageAutoScanner.listDatasets(); setDatasetCount(datasets.length); setLastDatasetId(created.id)
+      const nextDatasets = await window.pageAutoScanner.listDatasets()
+      setDatasets(nextDatasets)
+      setDatasetCount(nextDatasets.length)
+      setLastDatasetId(created.id)
       setNotice(`Đã lưu Dataset “${created.name}” với ${created.recordCount} record.`)
     } catch (error) { setNotice(errorMessage(error)) } finally { setBusy(false) }
   }
@@ -172,7 +190,10 @@ export function ScannerWorkspace() {
             <label>Privacy<select value={privacy} onChange={(event) => setPrivacy(event.currentTarget.value)}><option value="all">Tất cả</option><option value="public">Public</option><option value="private">Private</option></select></label>
             <label>Location<input value={location} onChange={(event) => setLocation(event.currentTarget.value)} placeholder="Tất cả" /></label>
             <p className="scanner-placeholder-copy">Members / Privacy / Location là filter client-side trên metadata/text Facebook đã tải; không giả là filter server-side.</p>
-          </> : activeType === 'page' ? <p className="scanner-placeholder-copy">Quét Page production đọc Page UID và metadata có bằng chứng từ Facebook. Username / Category / Followers / Likes / Location không xác minh được sẽ để trống, không đoán dữ liệu.</p> : activeType === 'user' ? <p className="scanner-placeholder-copy">Quét Người dùng production chỉ nhận UID hoặc URL Profile. UID phải được xác minh từ metadata profile Facebook; Username / Location / Gender / Followers không có bằng chứng sẽ để trống, không đoán dữ liệu.</p> : <p className="scanner-placeholder-copy">Thành viên nhóm chỉ được mở production sau live audit DOM/member source; hiện không giả selector hoặc dữ liệu thành viên.</p>}
+          </> : activeType === 'page' ? <p className="scanner-placeholder-copy">Quét Page production đọc Page UID và metadata có bằng chứng từ Facebook. Username / Category / Followers / Likes / Location không xác minh được sẽ để trống, không đoán dữ liệu.</p> : activeType === 'user' ? <p className="scanner-placeholder-copy">Quét Người dùng production chỉ nhận UID hoặc URL Profile. UID phải được xác minh từ metadata profile Facebook; Username / Location / Gender / Followers không có bằng chứng sẽ để trống, không đoán dữ liệu.</p> : <>
+            <label>Group Dataset<select aria-label="Group Dataset nguồn" value={groupDatasetId ?? ''} onChange={(event) => setGroupDatasetId(event.currentTarget.value ? Number(event.currentTarget.value) : null)}><option value="">Không dùng Dataset</option>{groupDatasets.map((dataset) => <option key={dataset.id} value={dataset.id}>{dataset.name} · {dataset.recordCount}</option>)}</select></label>
+            <p className="scanner-placeholder-copy">Thành viên nhóm production mở `/groups/&lt;UID&gt;/members`, đọc UID từ link member `/groups/&lt;Group UID&gt;/user/&lt;Member UID&gt;`, scroll có giới hạn và chống trùng UID. Có thể nhập Group UID/URL, chọn Group Dataset, hoặc dùng cả hai.</p>
+          </>}
         </div>
       </div>
 
@@ -180,7 +201,7 @@ export function ScannerWorkspace() {
         <div className="scanner-result-header"><div><span className="scanner-section-kicker">KẾT QUẢ DATA-GRID</span><strong>{job?.resultCount ?? 0} kết quả · {job?.acceptedCount ?? 0} accepted</strong></div><div className="scanner-runtime-state">{job ? STATUS_LABEL[job.status] ?? job.status : 'Chưa chạy'}{job?.message ? ` · ${job.message}` : ''}</div></div>
         <div className="scanner-table-wrap"><table className="scanner-table"><thead><tr>{columns.map((column) => <th key={column.key}>{column.label}</th>)}</tr></thead><tbody>
           {job?.results.map((result) => <tr key={result.id}>{columns.map((column) => <td key={column.key}>{resultValue(result, column.key)}</td>)}</tr>)}
-          {!job?.results.length ? <tr><td colSpan={columns.length} className="scanner-empty">{activeType === 'group' ? 'Chưa có kết quả Quét Nhóm.' : activeType === 'page' ? 'Chưa có kết quả Quét Page.' : activeType === 'user' ? 'Chưa có kết quả Quét Người dùng.' : 'Chưa có kết quả. Thành viên nhóm chưa mở adapter production trước khi có live audit nguồn.'}</td></tr> : null}
+          {!job?.results.length ? <tr><td colSpan={columns.length} className="scanner-empty">{activeType === 'group' ? 'Chưa có kết quả Quét Nhóm.' : activeType === 'page' ? 'Chưa có kết quả Quét Page.' : activeType === 'user' ? 'Chưa có kết quả Quét Người dùng.' : 'Chưa có kết quả Thành viên nhóm.'}</td></tr> : null}
         </tbody></table></div>
       </div>
 
