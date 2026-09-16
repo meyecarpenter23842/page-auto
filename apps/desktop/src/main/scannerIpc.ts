@@ -15,9 +15,10 @@ import {
 } from '../shared/scanner'
 import { ScannerRepository } from './database/scannerRepository'
 import { scannerDatasetCsv } from './scanner/datasetCsv'
-import { MockGroupMembersScanAdapter } from './scanner/adapters/mockGroupMembersScanAdapter'
 import { GroupScanAccountRuntime } from './scanner/group/groupScanAccountRuntime'
 import { GroupScanAdapter } from './scanner/group/groupScanAdapter'
+import { GroupMembersScanAccountRuntime } from './scanner/groupMembers/groupMembersScanAccountRuntime'
+import { GroupMembersScanAdapter } from './scanner/groupMembers/groupMembersScanAdapter'
 import { PageScanAccountRuntime } from './scanner/page/pageScanAccountRuntime'
 import { PageScanAdapter } from './scanner/page/pageScanAdapter'
 import { ScanJobService } from './scanner/scanJobService'
@@ -44,13 +45,14 @@ export function registerScannerIpcHandlers(
 ): ScannerIpcRuntime {
   const repository = new ScannerRepository(database)
   const groupRuntime = new GroupScanAccountRuntime(database, dataDirectory)
+  const groupMembersRuntime = new GroupMembersScanAccountRuntime(database, dataDirectory)
   const pageRuntime = new PageScanAccountRuntime(database, dataDirectory)
   const userRuntime = new UserScanAccountRuntime(database, dataDirectory)
   const adapters = new ScannerAdapterRegistry([
     new GroupScanAdapter(groupRuntime),
     new PageScanAdapter(pageRuntime),
     new UserScanAdapter(userRuntime),
-    new MockGroupMembersScanAdapter()
+    new GroupMembersScanAdapter(groupMembersRuntime)
   ])
   const service = new ScanJobService(repository, adapters)
   const tokenService = new ScannerTokenCredentialService(
@@ -104,6 +106,7 @@ export function registerScannerIpcHandlers(
     dispose: () => {
       service.dispose()
       groupRuntime.dispose()
+      groupMembersRuntime.dispose()
       pageRuntime.dispose()
       userRuntime.dispose()
       for (const channel of Object.values(SCANNER_IPC)) ipcMain.removeHandler(channel)
