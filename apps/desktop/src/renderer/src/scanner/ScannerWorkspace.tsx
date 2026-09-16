@@ -91,6 +91,7 @@ export function ScannerWorkspace() {
   const [lastDatasetId, setLastDatasetId] = useState<number | null>(null)
   const [groupDatasetId, setGroupDatasetId] = useState<number | null>(null)
   const previousEligibleIdsRef = useRef<Set<number>>(new Set())
+  const previousGroupFilterKeyRef = useRef('')
 
   const activeTab = useMemo(() => TABS.find((tab) => tab.id === activeType) ?? TABS[0]!, [activeType])
   const columns = COLUMNS[activeType]
@@ -101,6 +102,12 @@ export function ScannerWorkspace() {
     membersMin, membersMax, privacy, location
   }), [groupResults, membersMin, membersMax, privacy, location])
   const eligibleIdSet = useMemo(() => new Set(eligibleIds), [eligibleIds])
+  const groupFilterKey = useMemo(() => JSON.stringify({
+    membersMin,
+    membersMax,
+    privacy,
+    location: location.trim().toLocaleLowerCase()
+  }), [membersMin, membersMax, privacy, location])
   const allEligibleSelected = eligibleIds.length > 0 && eligibleIds.every((id) => selectedResultIds.has(id))
 
   useEffect(() => {
@@ -132,18 +139,25 @@ export function ScannerWorkspace() {
   useEffect(() => {
     if (activeType !== 'group') {
       previousEligibleIdsRef.current = new Set()
+      previousGroupFilterKeyRef.current = ''
       return
     }
     const previousEligibleIds = previousEligibleIdsRef.current
+    const previousFilterKey = previousGroupFilterKeyRef.current
+    const filterChanged = previousFilterKey !== '' && previousFilterKey !== groupFilterKey
     previousEligibleIdsRef.current = new Set(eligibleIds)
-    setSelectedResultIds((current) => reconcileGroupResultSelection(current, previousEligibleIds, eligibleIds))
-  }, [activeType, eligibleIds])
+    previousGroupFilterKeyRef.current = groupFilterKey
+    setSelectedResultIds((current) => reconcileGroupResultSelection(
+      current,
+      previousEligibleIds,
+      eligibleIds,
+      { resetToEligible: filterChanged }
+    ))
+  }, [activeType, eligibleIds, groupFilterKey])
 
-  const buildFilters = (): ScanFieldMap => activeType === 'group'
-    ? { membersMin, membersMax, privacy, location: location.trim() || null }
-    : activeType === 'group_members'
-      ? { groupDatasetId }
-      : {}
+  const buildFilters = (): ScanFieldMap => activeType === 'group_members'
+    ? { groupDatasetId }
+    : {}
 
   const start = async () => {
     if (busy) return
@@ -214,6 +228,7 @@ export function ScannerWorkspace() {
 
   const startDisabled = busy || Boolean(job && !terminal(job)) || sourceMode === 'token' || (needsProductionAccount(activeType) && accountId === null)
   const selectedCount = activeType === 'group' ? selectedResultIds.size : (job?.results.length ?? 0)
+  const showGroupResultFilters = activeType === 'group' && Boolean(job?.results.length) && terminal(job)
 
   return (
     <section className="scanner-shell" data-testid="scanner-workspace">
@@ -223,27 +238,29 @@ export function ScannerWorkspace() {
 
       <ScannerSourcePanel accounts={accounts} accountId={accountId} onAccountIdChange={setAccountId} sourceMode={sourceMode} onSourceModeChange={setSourceMode} tokenCredentialId={tokenCredentialId} onTokenCredentialIdChange={setTokenCredentialId} locked={sourceLocked} onNotice={setNotice} />
 
-      <div className="scanner-config-grid">
-        <div className="scanner-card scanner-query-card">
+      <div className={activeType === 'group' ? 'scanner-config-grid scanner-group-scan-config' : 'scanner-config-grid'}>
+        <div className={activeType === 'group' ? 'scanner-card scanner-query-card scanner-group-query-card' : 'scanner-card scanner-query-card'}>
           <span className="scanner-section-kicker">NGUỒN / TÌM KIẾM</span>
           <label>{activeTab.hint}<input value={query} onChange={(event) => setQuery(event.currentTarget.value)} placeholder={activeTab.hint} /></label>
           <label className="scanner-limit-field">Giới hạn<input type="number" min={1} max={50000} value={limit} onChange={(event) => setLimit(Math.max(1, Math.min(50000, Number(event.currentTarget.value) || 1)))} /></label>
+          {activeType === 'group' ? <button className="button primary scanner-run-button" type="button" disabled={startDisabled} onClick={() => void start()}>Quét</button> : null}
         </div>
 
-        <div className="scanner-card scanner-filter-card">
-          <span className="scanner-section-kicker">BỘ LỌC</span>
-          {activeType === 'group' ? <>
-            <label>Members tối thiểu<input type="number" min={0} value={membersMin} onChange={(event) => setMembersMin(Math.max(0, Number(event.currentTarget.value) || 0))} /></label>
-            <label>Members tối đa<input type="number" min={0} value={membersMax} onChange={(event) => setMembersMax(Math.max(0, Number(event.currentTarget.value) || 0))} /></label>
-            <label>Privacy<select value={privacy} onChange={(event) => setPrivacy(event.currentTarget.value)}><option value="all">Tất cả</option><option value="public">Public</option><option value="private">Private</option></select></label>
-            <label>Location<input value={location} onChange={(event) => setLocation(event.currentTarget.value)} placeholder="Tất cả" /></label>
-          </> : activeType === 'group_members' ? <label className="scanner-group-dataset-field">Group Dataset<select aria-label="Group Dataset nguồn" value={groupDatasetId ?? ''} onChange={(event) => setGroupDatasetId(event.currentTarget.value ? Number(event.currentTarget.value) : null)}><option value="">Không dùng Dataset</option>{groupDatasets.map((dataset) => <option key={dataset.id} value={dataset.id}>{dataset.name} · {dataset.recordCount}</option>)}</select></label> : <span className="scanner-inline-note">Metadata không xác minh được sẽ để trống, không đoán dữ liệu.</span>}
+        {activeType !== 'group' ? <div className="scanner-card scanner-filter-card">
+          <span className="scanner-section-kicker">TÙY CHỌN</span>
+          {activeType === 'group_members' ? <label className="scanner-group-dataset-field">Group Dataset<select aria-label="Group Dataset nguồn" value={groupDatasetId ?? ''} onChange={(event) => setGroupDatasetId(event.currentTarget.value ? Number(event.currentTarget.value) : null)}><option value="">Không dùng Dataset</option>{groupDatasets.map((dataset) => <option key={dataset.id} value={dataset.id}>{dataset.name} · {dataset.recordCount}</option>)}</select></label> : <span className="scanner-inline-note">Metadata không xác minh được sẽ để trống, không đoán dữ liệu.</span>}
           <button className="button primary scanner-run-button" type="button" disabled={startDisabled} onClick={() => void start()}>Quét</button>
-        </div>
+        </div> : null}
       </div>
 
       <div className="scanner-card scanner-result-card">
         <div className="scanner-result-header"><div><span className="scanner-section-kicker">KẾT QUẢ DATA-GRID</span><strong>{activeType === 'group' ? `${job?.resultCount ?? 0} tìm thấy · ${eligibleIds.length} đạt lọc · ${selectedCount} đã chọn` : `${job?.resultCount ?? 0} kết quả · ${job?.acceptedCount ?? 0} accepted`}</strong></div><div className="scanner-runtime-state">{job ? STATUS_LABEL[job.status] ?? job.status : 'Chưa chạy'}{job?.message ? ` · ${job.message}` : ''}</div></div>
+        {showGroupResultFilters ? <div className="scanner-result-filters" data-testid="group-result-filters">
+          <label>Members tối thiểu<input type="number" min={0} value={membersMin} onChange={(event) => setMembersMin(Math.max(0, Number(event.currentTarget.value) || 0))} /></label>
+          <label>Members tối đa<input type="number" min={0} value={membersMax} onChange={(event) => setMembersMax(Math.max(0, Number(event.currentTarget.value) || 0))} /></label>
+          <label>Privacy<select value={privacy} onChange={(event) => setPrivacy(event.currentTarget.value)}><option value="all">Tất cả</option><option value="public">Public</option><option value="private">Private</option></select></label>
+          <label>Location<input value={location} onChange={(event) => setLocation(event.currentTarget.value)} placeholder="Tất cả" /></label>
+        </div> : null}
         <div className="scanner-table-wrap"><table className="scanner-table"><thead><tr>{activeType === 'group' ? <th className="scanner-check-column"><input type="checkbox" aria-label="Chọn tất cả Group đạt bộ lọc" checked={allEligibleSelected} disabled={eligibleIds.length === 0} onChange={toggleAllEligible} /></th> : null}{columns.map((column) => <th key={column.key}>{column.label}</th>)}</tr></thead><tbody>
           {job?.results.map((result) => <tr key={result.id} className={activeType === 'group' && eligibleIdSet.has(result.id) ? 'scanner-row-eligible' : undefined}>{activeType === 'group' ? <td className="scanner-check-column"><input type="checkbox" aria-label={`Chọn Group ${result.entityId}`} checked={selectedResultIds.has(result.id)} onChange={() => toggleResult(result.id)} /></td> : null}{columns.map((column) => <td key={column.key}>{resultValue(result, column.key)}</td>)}</tr>)}
           {!job?.results.length ? <tr><td colSpan={columns.length + (activeType === 'group' ? 1 : 0)} className="scanner-empty">{activeType === 'group' ? 'Chưa có kết quả Quét Nhóm.' : activeType === 'page' ? 'Chưa có kết quả Quét Page.' : activeType === 'user' ? 'Chưa có kết quả Quét Người dùng.' : 'Chưa có kết quả Thành viên nhóm.'}</td></tr> : null}

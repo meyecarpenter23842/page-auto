@@ -7,6 +7,10 @@ export interface GroupSelectionFilters {
   location: string
 }
 
+interface ReconcileGroupSelectionOptions {
+  resetToEligible?: boolean
+}
+
 function sameIds(left: ReadonlySet<number>, right: ReadonlySet<number>): boolean {
   return left.size === right.size && [...left].every((id) => right.has(id))
 }
@@ -64,9 +68,14 @@ export function eligibleGroupResultIds(
 export function reconcileGroupResultSelection(
   selectedIds: Set<number>,
   previousEligibleIds: ReadonlySet<number>,
-  nextEligibleIds: readonly number[]
+  nextEligibleIds: readonly number[],
+  options: ReconcileGroupSelectionOptions = {}
 ): Set<number> {
   const nextEligible = new Set(nextEligibleIds)
+  if (options.resetToEligible) {
+    return sameIds(selectedIds, nextEligible) ? selectedIds : nextEligible
+  }
+
   const nextSelection = new Set([...selectedIds].filter((id) => nextEligible.has(id)))
   for (const id of nextEligible) {
     if (!previousEligibleIds.has(id)) nextSelection.add(id)
