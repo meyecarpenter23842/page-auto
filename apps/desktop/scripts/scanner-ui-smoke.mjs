@@ -37,10 +37,21 @@ try {
   }
 
   const text = await root.innerText()
-  for (const expected of ['Account / session hoặc Access Token', 'BỘ LỌC', 'KẾT QUẢ DATA-GRID', 'Lưu Dataset', 'Xuất CSV', 'Members / Privacy / Location là filter client-side trên metadata/text Facebook đã tải; không giả là filter server-side.']) {
+  for (const expected of ['KẾT QUẢ DATA-GRID', 'Lưu Dataset', 'Xuất CSV', '0 tìm thấy · 0 đạt lọc · 0 đã chọn']) {
     invariant(text.includes(expected), `Scanner UI thiếu contract: ${expected}.`)
   }
+  const sourceMode = root.getByRole('group', { name: 'Nguồn quét', exact: true })
+  invariant(await sourceMode.count() === 1, 'Scanner thiếu nhóm chọn nguồn quét.')
+  invariant(await sourceMode.getByRole('button', { name: 'Account/session', exact: true }).count() === 1, 'Scanner thiếu nguồn Account/session.')
+  invariant(await sourceMode.getByRole('button', { name: 'Access Token', exact: true }).count() === 1, 'Scanner thiếu nguồn Access Token.')
   invariant(!text.includes('mock foundation'), 'Quét Nhóm vẫn hiển thị nhãn mock foundation.')
+  invariant(await root.getByLabel('Members tối thiểu').count() === 1, 'Quét Nhóm thiếu filter Members tối thiểu.')
+  invariant(await root.getByLabel('Members tối đa').count() === 1, 'Quét Nhóm thiếu filter Members tối đa.')
+  invariant(await root.getByLabel('Privacy').count() === 1, 'Quét Nhóm thiếu filter Privacy.')
+  invariant(await root.getByLabel('Location').count() === 1, 'Quét Nhóm thiếu filter Location.')
+  const selectAllEligible = root.getByRole('checkbox', { name: 'Chọn tất cả Group đạt bộ lọc', exact: true })
+  invariant(await selectAllEligible.count() === 1, 'Quét Nhóm thiếu checkbox chọn tất cả Group đạt bộ lọc.')
+  invariant(await selectAllEligible.isDisabled(), 'Checkbox chọn tất cả phải disabled khi chưa có Group đạt lọc.')
 
   await root.getByRole('button', { name: 'Access Token', exact: true }).click()
   const tokenManager = root.locator('[data-testid="scanner-token-manager"]')
@@ -50,31 +61,30 @@ try {
   const tokenText = await tokenManager.innerText()
   invariant(tokenText.includes('Quét bằng token:'), 'Token source thiếu trạng thái adapter production.')
   invariant(tokenText.includes('Tự lấy token từ phiên Facebook:'), 'Token source thiếu contract auto-acquire.')
-  invariant(await root.getByRole('button', { name: 'Bắt đầu', exact: true }).isDisabled(), 'Scanner vẫn cho chạy adapter bằng token khi token business path chưa được audit.')
+  invariant(await root.getByRole('button', { name: 'Quét', exact: true }).isDisabled(), 'Scanner vẫn cho chạy adapter bằng token khi token business path chưa được audit.')
   invariant(await root.getByRole('button', { name: /Lấy token/i }).count() === 0, 'Scanner xuất hiện nút tự lấy token ngoài contract.')
 
   await root.getByRole('button', { name: 'Account/session', exact: true }).click()
   await root.getByRole('tab', { name: 'Quét Page', exact: true }).click()
   const pageText = await root.innerText()
-  invariant(pageText.includes('Quét Page production đọc Page UID'), 'Tab Quét Page chưa hiển thị contract production Batch 4.')
-  invariant(pageText.includes('Page UID') && pageText.includes('Followers') && pageText.includes('Likes'), 'Quét Page thiếu cột metadata production.')
+  invariant(pageText.includes('Page UID') && pageText.includes('Tên Page') && pageText.includes('Followers') && pageText.includes('Likes'), 'Quét Page thiếu cột metadata production.')
+  invariant(pageText.includes('Metadata không xác minh được sẽ để trống, không đoán dữ liệu.'), 'Quét Page thiếu contract metadata không suy đoán.')
   invariant(!pageText.includes('Quét Page vẫn dùng adapter foundation'), 'Quét Page vẫn hiển thị adapter foundation sau Batch 4.')
-  invariant(await root.getByRole('button', { name: 'Bắt đầu', exact: true }).isDisabled(), 'Quét Page production phải yêu cầu Account khi DB smoke chưa có account.')
+  invariant(await root.getByRole('button', { name: 'Quét', exact: true }).isDisabled(), 'Quét Page production phải yêu cầu Account khi DB smoke chưa có account.')
 
   await root.getByRole('tab', { name: 'Quét Người dùng', exact: true }).click()
   const userText = await root.innerText()
-  invariant(userText.includes('Quét Người dùng production chỉ nhận UID hoặc URL Profile'), 'Tab Quét Người dùng chưa hiển thị contract production Batch 5A.')
-  invariant(userText.includes('UID') && userText.includes('Username') && userText.includes('Followers'), 'Quét Người dùng thiếu cột metadata production.')
+  invariant(userText.includes('UID') && userText.includes('Tên') && userText.includes('Username') && userText.includes('Followers'), 'Quét Người dùng thiếu cột metadata production.')
+  invariant(userText.includes('Metadata không xác minh được sẽ để trống, không đoán dữ liệu.'), 'Quét Người dùng thiếu contract metadata không suy đoán.')
   invariant(!userText.includes('Quét Người dùng vẫn dùng adapter foundation'), 'Quét Người dùng vẫn hiển thị adapter foundation sau Batch 5A.')
-  invariant(await root.getByRole('button', { name: 'Bắt đầu', exact: true }).isDisabled(), 'Quét Người dùng production phải yêu cầu Account khi DB smoke chưa có account.')
+  invariant(await root.getByRole('button', { name: 'Quét', exact: true }).isDisabled(), 'Quét Người dùng production phải yêu cầu Account khi DB smoke chưa có account.')
 
   await root.getByRole('tab', { name: 'Thành viên nhóm', exact: true }).click()
   const membersText = await root.innerText()
-  invariant(membersText.includes('Thành viên nhóm production mở'), 'Tab Thành viên nhóm chưa hiển thị contract production Batch 5B.')
-  invariant(membersText.includes('/user/') && membersText.includes('chống trùng UID'), 'Tab Thành viên nhóm thiếu identity/dedupe contract production.')
+  invariant(membersText.includes('UID') && membersText.includes('Tên thành viên') && membersText.includes('Group nguồn'), 'Thành viên nhóm thiếu cột production.')
   invariant(await root.getByLabel('Group Dataset nguồn').count() === 1, 'Tab Thành viên nhóm thiếu Group Dataset source picker.')
   invariant(!membersText.includes('live audit DOM/member source'), 'Tab Thành viên nhóm vẫn hiển thị blocker cũ sau Batch 5B.')
-  invariant(await root.getByRole('button', { name: 'Bắt đầu', exact: true }).isDisabled(), 'Thành viên nhóm production phải yêu cầu Account khi DB smoke chưa có account.')
+  invariant(await root.getByRole('button', { name: 'Quét', exact: true }).isDisabled(), 'Thành viên nhóm production phải yêu cầu Account khi DB smoke chưa có account.')
 
   await root.getByRole('tab', { name: 'Quét Nhóm', exact: true }).click()
   await windowPage.screenshot({ path: screenshotPath, fullPage: true })

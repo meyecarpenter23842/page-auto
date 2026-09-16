@@ -5,7 +5,7 @@ import {
   type ScanAdapterControl,
   type ScanAdapterRecord
 } from '../scanAdapter'
-import { groupRecordMatchesFilters, type GroupScanPrivacy } from './groupScanSupport'
+import type { GroupScanPrivacy } from './groupScanSupport'
 
 export interface GroupScanRawRecord {
   entityId: string
@@ -20,6 +20,35 @@ export interface GroupScanRawRecord {
 
 export interface GroupScanRuntime {
   scan(input: StartScanJobInput, control: ScanAdapterControl): AsyncIterable<GroupScanRawRecord>
+}
+
+function normalizeText(value: string): string {
+  return value.replace(/\s+/g, ' ').trim()
+}
+
+function isIdentityName(value: string, entityId: string): boolean {
+  return normalizeText(value).toLocaleLowerCase() === normalizeText(entityId).toLocaleLowerCase()
+}
+
+function nameFromFilterText(rawText: string, entityId: string): string {
+  const text = normalizeText(rawText)
+  if (!text) return ''
+  const boundaries = [
+    /\s(?:Public|Private|Công khai|Riêng tư)\b/i,
+    /\s\d[\d.,]*\s*[kKmM]?\s*(?:members?|thành viên)\b/i
+  ]
+    .map((pattern) => text.search(pattern))
+    .filter((index) => index > 0)
+  const candidate = normalizeText(boundaries.length ? text.slice(0, Math.min(...boundaries)) : '')
+    .replace(/[·|\-–—:]+$/g, '')
+    .trim()
+  return candidate && !isIdentityName(candidate, entityId) ? candidate : ''
+}
+
+export function groupResultDisplayName(raw: GroupScanRawRecord): string {
+  const explicit = normalizeText(raw.displayName)
+  if (explicit && !isIdentityName(explicit, raw.entityId)) return explicit
+  return nameFromFilterText(raw.rawText, raw.entityId) || '—'
 }
 
 export class GroupScanAdapter implements ScanAdapter {
@@ -48,13 +77,10 @@ export class GroupScanAdapter implements ScanAdapter {
       if (seen.has(dedupeKey)) continue
       seen.add(dedupeKey)
 
-      const terminalRecord = raw.status && raw.status !== 'success' && raw.status !== 'partial_success'
-      if (!terminalRecord && !groupRecordMatchesFilters(raw, input.filters)) continue
-      const displayName = raw.displayName.trim() || entityId
       const hasCoreMetadata = raw.members !== null && raw.privacy !== null
       yield {
         entityId,
-        displayName,
+        displayName: groupResultDisplayName(raw),
         url: raw.url?.trim() || null,
         status: raw.status ?? (hasCoreMetadata ? 'success' : 'partial_success'),
         data: {
@@ -64,7 +90,8 @@ export class GroupScanAdapter implements ScanAdapter {
           location: null,
           category: null,
           source: raw.source,
-          filterScope: 'client'
+          filterScope: 'client',
+          filterText: normalizeText(raw.rawText)
         }
       }
     }
