@@ -7,6 +7,10 @@ export interface GroupSelectionFilters {
   location: string
 }
 
+function sameIds(left: ReadonlySet<number>, right: ReadonlySet<number>): boolean {
+  return left.size === right.size && [...left].every((id) => right.has(id))
+}
+
 function numericValue(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
@@ -55,4 +59,17 @@ export function eligibleGroupResultIds(
   return results
     .filter((result) => groupResultMatchesSelectionFilters(result, filters))
     .map((result) => result.id)
+}
+
+export function reconcileGroupResultSelection(
+  selectedIds: Set<number>,
+  previousEligibleIds: ReadonlySet<number>,
+  nextEligibleIds: readonly number[]
+): Set<number> {
+  const nextEligible = new Set(nextEligibleIds)
+  const nextSelection = new Set([...selectedIds].filter((id) => nextEligible.has(id)))
+  for (const id of nextEligible) {
+    if (!previousEligibleIds.has(id)) nextSelection.add(id)
+  }
+  return sameIds(selectedIds, nextSelection) ? selectedIds : nextSelection
 }

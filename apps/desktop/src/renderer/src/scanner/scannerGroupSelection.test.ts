@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ScanResultRecord } from '../../../shared/scanner'
-import { eligibleGroupResultIds, groupResultMatchesSelectionFilters } from './scannerGroupSelection'
+import { eligibleGroupResultIds, groupResultMatchesSelectionFilters, reconcileGroupResultSelection } from './scannerGroupSelection'
 
 function result(
   id: number,
@@ -62,5 +62,10 @@ describe('scanner group auto-selection', () => {
       privacy: 'all',
       location: ''
     })).toEqual([1, 2])
+  })
+
+  it('selects newly eligible rows without restoring a row the user deselected during polling', () => {
+    const selected = reconcileGroupResultSelection(new Set([1]), new Set([1, 2]), [1, 2, 3])
+    expect([...selected]).toEqual([1, 3])
   })
 })

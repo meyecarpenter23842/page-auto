@@ -37,9 +37,13 @@ try {
   }
 
   const text = await root.innerText()
-  for (const expected of ['Account / session hoặc Access Token', 'KẾT QUẢ DATA-GRID', 'Lưu Dataset', 'Xuất CSV', '0 tìm thấy · 0 đạt lọc · 0 đã chọn']) {
+  for (const expected of ['KẾT QUẢ DATA-GRID', 'Lưu Dataset', 'Xuất CSV', '0 tìm thấy · 0 đạt lọc · 0 đã chọn']) {
     invariant(text.includes(expected), `Scanner UI thiếu contract: ${expected}.`)
   }
+  const sourceMode = root.getByRole('group', { name: 'Nguồn quét', exact: true })
+  invariant(await sourceMode.count() === 1, 'Scanner thiếu nhóm chọn nguồn quét.')
+  invariant(await sourceMode.getByRole('button', { name: 'Account/session', exact: true }).count() === 1, 'Scanner thiếu nguồn Account/session.')
+  invariant(await sourceMode.getByRole('button', { name: 'Access Token', exact: true }).count() === 1, 'Scanner thiếu nguồn Access Token.')
   invariant(!text.includes('mock foundation'), 'Quét Nhóm vẫn hiển thị nhãn mock foundation.')
   invariant(await root.getByLabel('Members tối thiểu').count() === 1, 'Quét Nhóm thiếu filter Members tối thiểu.')
   invariant(await root.getByLabel('Members tối đa').count() === 1, 'Quét Nhóm thiếu filter Members tối đa.')

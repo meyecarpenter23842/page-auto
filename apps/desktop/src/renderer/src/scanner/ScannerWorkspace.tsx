@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AccountRecord } from '../../../shared/accounts'
 import type {
   ScanDatasetSummary,
@@ -8,7 +8,7 @@ import type {
   ScanType
 } from '../../../shared/scanner'
 import { ScannerSourcePanel, type ScannerSourceMode } from './ScannerSourcePanel'
-import { eligibleGroupResultIds } from './scannerGroupSelection'
+import { eligibleGroupResultIds, reconcileGroupResultSelection } from './scannerGroupSelection'
 import './scanner.css'
 
 const TABS: Array<{ id: ScanType; label: string; hint: string }> = [
@@ -17,6 +17,7 @@ const TABS: Array<{ id: ScanType; label: string; hint: string }> = [
   { id: 'user', label: 'Quét Người dùng', hint: 'UID hoặc URL Profile' },
   { id: 'group_members', label: 'Thành viên nhóm', hint: 'Group UID/URL (mỗi dòng một Group) hoặc chọn Group Dataset' }
 ]
+const EMPTY_GROUP_RESULTS: ScanResultRecord[] = []
 
 const STATUS_LABEL: Record<string, string> = {
   queued: 'Đang xếp hàng', running: 'Đang quét', paused: 'Tạm dừng', completed: 'Hoàn tất', failed: 'Lỗi', stopped: 'Đã dừng', needs_attention: 'Cần xử lý'
@@ -89,12 +90,13 @@ export function ScannerWorkspace() {
   const [datasetCount, setDatasetCount] = useState(0)
   const [lastDatasetId, setLastDatasetId] = useState<number | null>(null)
   const [groupDatasetId, setGroupDatasetId] = useState<number | null>(null)
+  const previousEligibleIdsRef = useRef<Set<number>>(new Set())
 
   const activeTab = useMemo(() => TABS.find((tab) => tab.id === activeType) ?? TABS[0]!, [activeType])
   const columns = COLUMNS[activeType]
   const sourceLocked = Boolean(job && !terminal(job))
   const groupDatasets = useMemo(() => datasets.filter((dataset) => dataset.type === 'group'), [datasets])
-  const groupResults = activeType === 'group' ? (job?.results ?? []) : []
+  const groupResults = activeType === 'group' ? (job?.results ?? EMPTY_GROUP_RESULTS) : EMPTY_GROUP_RESULTS
   const eligibleIds = useMemo(() => eligibleGroupResultIds(groupResults, {
     membersMin, membersMax, privacy, location
   }), [groupResults, membersMin, membersMax, privacy, location])
@@ -128,8 +130,13 @@ export function ScannerWorkspace() {
   }, [job?.id, job?.status])
 
   useEffect(() => {
-    if (activeType !== 'group') return
-    setSelectedResultIds(new Set(eligibleIds))
+    if (activeType !== 'group') {
+      previousEligibleIdsRef.current = new Set()
+      return
+    }
+    const previousEligibleIds = previousEligibleIdsRef.current
+    previousEligibleIdsRef.current = new Set(eligibleIds)
+    setSelectedResultIds((current) => reconcileGroupResultSelection(current, previousEligibleIds, eligibleIds))
   }, [activeType, eligibleIds])
 
   const buildFilters = (): ScanFieldMap => activeType === 'group'
