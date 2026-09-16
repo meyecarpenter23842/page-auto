@@ -18,6 +18,7 @@ import {
   parseGroupScanQuery,
   scanJobStatusFromFacebookAccess
 } from '../scanner/group/groupScanSupport'
+import { chooseFacebookDisplayName } from '../scanner/scannerDisplayName'
 import type {
   GroupScanWorkerCommand,
   GroupScanWorkerEvent,
@@ -154,6 +155,10 @@ async function directRecord(page: Page, identity: string): Promise<GroupScanRawR
   if (!rawText) {
     rawText = (await page.locator('body').innerText().catch(() => '')).replace(/\s+/g, ' ').trim().slice(0, 12_000)
   }
+  const h1 = await page.locator('h1').first().innerText().catch(() => null)
+  const ogTitle = await page.locator('meta[property="og:title"]').first().getAttribute('content').catch(() => null)
+  const documentTitle = await page.title().catch(() => null)
+  displayName = chooseFacebookDisplayName([displayName, h1, ogTitle, documentTitle], identity)
   return {
     entityId: identity,
     displayName,
