@@ -19,6 +19,7 @@ import { PAGE_SCENARIO_SCHEDULE_SCHEMA_VERSION, applyPageScenarioScheduleMigrati
 import { PAGE_WALL_FINITE_PLAN_SCHEMA_VERSION, applyPageWallFinitePlanMigration } from './pageWallFinitePlanMigration'
 import { PAGE_WALL_SCHEMA_VERSION, applyPageWallMigration } from './pageWallMigration'
 import { PAGE_WALL_RECURRING_SCHEMA_VERSION, applyPageWallRecurringMigration } from './pageWallRecurringMigration'
+import { PAGE_WALL_WEEKLY_SCHEDULE_SCHEMA_VERSION, applyPageWallWeeklyScheduleMigration } from './pageWallWeeklyScheduleMigration'
 import { SCENARIO_SCHEMA_VERSION, applyScenarioMigration } from './scenarioMigration'
 import { SCANNER_SCHEMA_VERSION, applyScannerMigration } from './scannerMigration'
 import { STORY_SCHEMA_VERSION, applyStoryMigration } from './storyMigration'
@@ -59,10 +60,7 @@ export function initializeDatabase(databaseFile: string): DatabaseRuntime {
     )
 
     for (const migration of migrations) {
-      if (appliedVersions.has(migration.version)) {
-        continue
-      }
-
+      if (appliedVersions.has(migration.version)) continue
       client.exec(migration.sql)
       insertMigration.run(migration.version, migration.name, Date.now())
     }
@@ -87,6 +85,7 @@ export function initializeDatabase(databaseFile: string): DatabaseRuntime {
   applyPageScenarioScheduleMigration(client)
   applyPageAvatarMigration(client)
   applyScannerMigration(client)
+  applyPageWallWeeklyScheduleMigration(client)
 
   const schemaVersion = Math.max(
     latestSchemaVersion,
@@ -105,27 +104,18 @@ export function initializeDatabase(databaseFile: string): DatabaseRuntime {
     PAGE_WALL_FINITE_PLAN_SCHEMA_VERSION,
     PAGE_SCENARIO_SCHEDULE_SCHEMA_VERSION,
     PAGE_AVATAR_SCHEMA_VERSION,
-    SCANNER_SCHEMA_VERSION
+    SCANNER_SCHEMA_VERSION,
+    PAGE_WALL_WEEKLY_SCHEDULE_SCHEMA_VERSION
   )
   const orm = drizzle(client)
   orm
     .insert(appSettings)
-    .values({
-      key: 'schema_version',
-      value: String(schemaVersion),
-      updatedAt: Date.now()
-    })
+    .values({ key: 'schema_version', value: String(schemaVersion), updatedAt: Date.now() })
     .onConflictDoUpdate({
       target: appSettings.key,
-      set: {
-        value: String(schemaVersion),
-        updatedAt: Date.now()
-      }
+      set: { value: String(schemaVersion), updatedAt: Date.now() }
     })
     .run()
 
-  return {
-    client,
-    close: () => client.close()
-  }
+  return { client, close: () => client.close() }
 }

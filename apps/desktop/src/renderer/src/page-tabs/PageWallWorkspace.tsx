@@ -12,6 +12,7 @@ import {
   canEditPageWallFiniteSchedule,
   normalizePageWallScheduleMinutes,
   pageWallFiniteScheduleRuntimeState,
+  pageWallWeekdayLabel,
   type PageWallFiniteDashboard,
   type PageWallFinitePlanView
 } from '../../../shared/pageWallFiniteRuntime'
@@ -26,6 +27,16 @@ type Mode = 'now' | 'schedule'
 type PickerTarget = 'workspace' | 'schedule'
 type WallAccount = PageTabConfig['accounts'][number]
 
+const WEEKDAY_OPTIONS = [
+  { value: 0, label: 'CN' },
+  { value: 1, label: 'T2' },
+  { value: 2, label: 'T3' },
+  { value: 3, label: 'T4' },
+  { value: 4, label: 'T5' },
+  { value: 5, label: 'T6' },
+  { value: 6, label: 'T7' }
+] as const
+
 interface PostRef {
   postId: number
   postName: string
@@ -34,8 +45,7 @@ interface PostRef {
 
 interface ScheduleDraft {
   planIds: number[]
-  scheduleKind: 'specific_date' | 'daily'
-  localDate: string
+  weekdays: number[]
   times: string[]
   accountIds: number[]
   accountConcurrency: number
@@ -50,6 +60,7 @@ interface ScheduleGroup {
   planIds: number[]
   scheduleKind: 'specific_date' | 'daily'
   localDate: string | null
+  weekdays: number[]
   minutes: number[]
   accountIds: number[]
   accountConcurrency: number
@@ -88,6 +99,7 @@ function groupSignature(plan: PageWallFinitePlanView): string {
   return JSON.stringify({
     scheduleKind: plan.scheduleKind,
     localDate: plan.localDate,
+    weekdays: plan.weekdays,
     accountConcurrency: plan.accountConcurrency,
     tasks: plan.tasks.map((task) => ({ accountId: task.accountId, source: sourceSignature(task.source) }))
   })
@@ -117,12 +129,13 @@ function groupSchedulePlans(plans: PageWallFinitePlanView[]): ScheduleGroup[] {
       planIds: sorted.map((plan) => plan.id),
       scheduleKind: first.scheduleKind,
       localDate: first.localDate,
+      weekdays: [...first.weekdays],
       minutes: sorted.map((plan) => plan.minuteOfDay),
       accountIds,
       accountConcurrency: first.accountConcurrency,
       source: first.tasks[0]?.source ?? null,
       status: groupStatus(sorted),
-      editable: canEditPageWallFiniteSchedule(sorted)
+      editable: first.scheduleKind === 'daily' && canEditPageWallFiniteSchedule(sorted)
     }
   }).sort((left, right) => {
     const leftDate = left.scheduleKind === 'daily' ? '9999-12-31' : left.localDate ?? ''
@@ -214,20 +227,21 @@ function ScheduleModal({ draft, accounts, libraryItems, busy, onChange, onChoose
   const [accountMenu, setAccountMenu] = useState<{ x: number; y: number } | null>(null)
   const postItem = draft.post ? libraryItems.find((item) => canonicalPostId(item) === draft.post?.postId) ?? null : null
   const toggle = (accountId: number) => onChange({ ...draft, accountIds: draft.accountIds.includes(accountId) ? draft.accountIds.filter((id) => id !== accountId) : [...draft.accountIds, accountId] })
+  const toggleWeekday = (day: number) => onChange({ ...draft, weekdays: draft.weekdays.includes(day) ? draft.weekdays.filter((value) => value !== day) : [...draft.weekdays, day].sort((a, b) => a - b) })
   const setTime = (index: number, value: string) => onChange({ ...draft, times: draft.times.map((time, current) => current === index ? value : time) })
   const rawMinutes = draft.times.map(timeToMinute)
   const uniqueMinutes = (() => { try { return normalizePageWallScheduleMinutes(rawMinutes) } catch { return [] } })()
   const timesValid = rawMinutes.every((minute) => minute >= 0) && uniqueMinutes.length === draft.times.length
-  const canSave = Boolean(draft.post && draft.accountIds.length && timesValid && uniqueMinutes.length && (draft.scheduleKind === 'daily' || draft.localDate) && !busy)
+  const canSave = Boolean(draft.post && draft.accountIds.length && draft.weekdays.length && timesValid && uniqueMinutes.length && !busy)
   const postSummary = draft.post ? `#${draft.post.postId} · ${draft.post.postName} · Biến thể ${draft.post.variantIndex + 1}` : 'Chưa chọn bài'
   return <div className="page-wall-modal-backdrop schedule" role="presentation" onMouseDown={onClose}>
     <section className="page-wall-schedule-dialog" role="dialog" aria-modal="true" aria-label="Thiết lập lịch đăng" onMouseDown={(event) => event.stopPropagation()}>
       <header><div><small>LỊCH ĐĂNG TƯỜNG</small><h3>{draft.planIds.length ? 'Sửa lịch đăng' : 'Hẹn giờ đăng bài'}</h3></div><button type="button" onClick={onClose}>×</button></header>
       <div className="page-wall-schedule-step"><b>1. Chọn bài viết</b><div className={`page-wall-selected-post compact ${draft.post ? 'ready' : 'empty'}`}><div><small>BÀI ĐANG CHỌN</small><strong>{postSummary}</strong>{postItem?.image.folderPath ? <span>{postItem.image.imagesPerPost} ảnh/lượt · {postItem.image.folderPath}</span> : <span>{draft.post ? 'Không ảnh' : 'Chọn bài trước khi lưu lịch'}</span>}</div><div><button className="pt-button secondary" type="button" onClick={onChoosePost}>Chọn</button><button type="button" onClick={onAddPost}>Thêm</button><button type="button" disabled={!draft.post || !postItem} onClick={onEditPost}>Sửa</button></div></div></div>
-      <div className="page-wall-schedule-step"><b>2. Thời gian đăng bài</b><div className="page-wall-plan-kind"><label><input type="radio" checked={draft.scheduleKind === 'specific_date'} onChange={() => onChange({ ...draft, scheduleKind: 'specific_date' })} /> Ngày cụ thể</label><label><input type="radio" checked={draft.scheduleKind === 'daily'} onChange={() => onChange({ ...draft, scheduleKind: 'daily' })} /> Mỗi ngày</label></div>{draft.scheduleKind === 'specific_date' ? <label className="page-wall-date-field"><span>Ngày chạy</span><input type="date" value={draft.localDate} onChange={(event) => onChange({ ...draft, localDate: event.target.value })} /></label> : null}<div className="page-wall-time-list">{draft.times.map((time, index) => <div className="page-wall-time-chip" key={`${index}-${time}`}><input type="time" value={time} onChange={(event) => setTime(index, event.target.value)} /><button type="button" aria-label={`Xóa giờ ${time}`} disabled={draft.times.length === 1} onClick={() => onChange({ ...draft, times: draft.times.filter((_value, current) => current !== index) })}>×</button></div>)}<button className="page-wall-add-time" type="button" disabled={draft.times.length >= 12} onClick={() => onChange({ ...draft, times: [...draft.times, '12:00'] })}>+ Thêm giờ</button></div>{!timesValid ? <small className="page-wall-time-error">Giờ chạy phải hợp lệ và không được trùng nhau.</small> : null}</div>
+      <div className="page-wall-schedule-step"><b>2. Ngày và giờ đăng bài</b><div className="page-wall-plan-kind">{WEEKDAY_OPTIONS.map((day) => <label key={day.value}><input aria-label={day.label} type="checkbox" checked={draft.weekdays.includes(day.value)} onChange={() => toggleWeekday(day.value)} /> {day.label}</label>)}</div>{!draft.weekdays.length ? <small className="page-wall-time-error">Hãy chọn ít nhất một ngày chạy.</small> : null}<div className="page-wall-time-list">{draft.times.map((time, index) => <div className="page-wall-time-chip" key={`${index}-${time}`}><input type="time" value={time} onChange={(event) => setTime(index, event.target.value)} /><button type="button" aria-label={`Xóa giờ ${time}`} disabled={draft.times.length === 1} onClick={() => onChange({ ...draft, times: draft.times.filter((_value, current) => current !== index) })}>×</button></div>)}<button className="page-wall-add-time" type="button" disabled={draft.times.length >= 12} onClick={() => onChange({ ...draft, times: [...draft.times, '12:00'] })}>+ Thêm giờ</button></div>{!timesValid ? <small className="page-wall-time-error">Giờ chạy phải hợp lệ và không được trùng nhau.</small> : null}</div>
       <div className="page-wall-schedule-step accounts"><div className="page-wall-step-title"><b>3. Chọn tài khoản muốn đăng</b><span>{draft.accountIds.length}/{runnable.length} TK</span></div><div className="page-wall-mini-account-tools"><button type="button" onClick={() => onChange({ ...draft, accountIds: runnable.map((account) => account.accountId) })}>Chọn tất cả</button><button type="button" onClick={() => onChange({ ...draft, accountIds: [] })}>Bỏ chọn</button><label><span>TK song song</span><input type="number" min={1} max={20} value={draft.accountConcurrency} onChange={(event) => onChange({ ...draft, accountConcurrency: Math.max(1, Math.min(20, Number(event.target.value) || 1)) })} /></label></div><div className="page-wall-schedule-account-table"><table><thead><tr><th></th><th>UID</th><th>Tên</th><th>Trạng thái</th></tr></thead><tbody>{accounts.map((account) => { const canUse = isWallAccountSelectable(account); const selected = draft.accountIds.includes(account.accountId); const ranged = accountRange.rangeIds.has(account.accountId); return <tr key={account.accountId} className={`${selected ? 'selected ' : ''}${ranged ? 'range-row ' : ''}${!canUse ? 'disabled' : ''}`.trim()} onPointerDown={(event) => { if (canUse && !busy) accountRange.onRowPointerDown(event, account.accountId) }} onPointerEnter={() => { if (canUse && !busy) accountRange.onRowPointerEnter(account.accountId) }} onContextMenu={(event) => { if (!canUse || busy) return; event.preventDefault(); accountRange.ensureContextRow(account.accountId); setAccountMenu({ x: event.clientX, y: event.clientY }) }}><td><input type="checkbox" checked={selected} disabled={!canUse || busy} onPointerDown={(event) => event.stopPropagation()} onChange={() => toggle(account.accountId)} /></td><td><b>{account.uid}</b></td><td>{account.name || '—'}</td><td>{account.status}</td></tr> })}</tbody></table></div>{accountMenu ? <AccountSelectionMenu x={accountMenu.x} y={accountMenu.y} checkedCount={draft.accountIds.filter((id) => runnableIds.includes(id)).length} rangeCount={accountRange.rangeIds.size} totalCount={runnableIds.length} onCheckRange={() => { const next = new Set(draft.accountIds); for (const id of accountRange.rangeIds) if (runnableIds.includes(id)) next.add(id); onChange({ ...draft, accountIds: [...next] }); setAccountMenu(null) }} onCheckAll={() => { onChange({ ...draft, accountIds: [...runnableIds] }); setAccountMenu(null) }} onClearChecked={() => { onChange({ ...draft, accountIds: [] }); setAccountMenu(null) }} onDismiss={() => setAccountMenu(null)} /> : null}</div>
       {draft.hasHistory ? <small className="page-wall-history-note">Lịch đã có lượt chạy. Thay đổi chỉ áp dụng cho lượt kế tiếp; lịch sử cũ được giữ nguyên.</small> : null}
-      <div className="page-wall-schedule-review"><strong>{draft.scheduleKind === 'daily' ? 'Mỗi ngày' : draft.localDate || 'Chưa chọn ngày'} · {uniqueMinutes.map(minuteToTime).join(', ') || 'Chưa có giờ'}</strong><span>{postSummary} · {draft.accountIds.length} TK · song song {draft.accountConcurrency}</span></div>
+      <div className="page-wall-schedule-review"><strong>{pageWallWeekdayLabel(draft.weekdays)} · {uniqueMinutes.map(minuteToTime).join(', ') || 'Chưa có giờ'}</strong><span>{postSummary} · {draft.accountIds.length} TK · song song {draft.accountConcurrency}</span></div>
       <footer><button type="button" onClick={onClose}>Hủy</button><button className="pt-button primary" type="button" disabled={!canSave} onClick={onSave}>{busy ? 'Đang lưu…' : 'Lưu lịch'}</button></footer>
     </section>
   </div>
@@ -349,18 +363,17 @@ export function PageWallWorkspace({ activePageId: controlledPageId, scoped = fal
   }
 
   const openAddSchedule = () => setScheduleDraft({
-    planIds: [], scheduleKind: 'daily', localDate: localDateInput(), times: ['08:00'],
+    planIds: [], weekdays: WEEKDAY_OPTIONS.map((day) => day.value), times: ['08:00'],
     accountIds: [...selectedRunnable], accountConcurrency, post: canonical ? { postId: canonical.postId, postName: canonical.postName, variantIndex: canonical.variantIndex } : null,
     enabled: true, hasHistory: false
   })
   const openEditSchedule = (group: ScheduleGroup) => {
     const source = group.source
-    if (!group.editable || source?.kind !== 'canonical') return
+    if (!group.editable || group.scheduleKind !== 'daily' || source?.kind !== 'canonical') return
     const item = libraryItems.find((candidate) => canonicalPostId(candidate) === source.postId)
     setScheduleDraft({
       planIds: group.planIds,
-      scheduleKind: group.scheduleKind,
-      localDate: group.localDate ?? localDateInput(),
+      weekdays: [...group.weekdays],
       times: group.minutes.map(minuteToTime),
       accountIds: group.accountIds,
       accountConcurrency: group.accountConcurrency,
@@ -370,7 +383,7 @@ export function PageWallWorkspace({ activePageId: controlledPageId, scoped = fal
     })
   }
   const saveSchedule = async () => {
-    if (!pageTabId || !scheduleDraft?.post || !scheduleDraft.accountIds.length) return
+    if (!pageTabId || !scheduleDraft?.post || !scheduleDraft.accountIds.length || !scheduleDraft.weekdays.length) return
     setBusy(true); setError(null)
     try {
       const minuteOfDays = normalizePageWallScheduleMinutes(scheduleDraft.times.map(timeToMinute))
@@ -378,7 +391,7 @@ export function PageWallWorkspace({ activePageId: controlledPageId, scoped = fal
       const tasks = buildPageWallFiniteTasks({ accountIds: scheduleDraft.accountIds, taskCount: scheduleDraft.accountIds.length, source })
       await window.pageWallFinite.saveSchedule({
         planIds: scheduleDraft.planIds,
-        input: { pageTabId, scheduleKind: scheduleDraft.scheduleKind, localDate: scheduleDraft.scheduleKind === 'specific_date' ? scheduleDraft.localDate : null, minuteOfDays, accountConcurrency: scheduleDraft.accountConcurrency, tasks, enabled: scheduleDraft.enabled }
+        input: { pageTabId, scheduleKind: 'daily', localDate: null, weekdays: scheduleDraft.weekdays, minuteOfDays, accountConcurrency: scheduleDraft.accountConcurrency, tasks, enabled: scheduleDraft.enabled }
       })
       setScheduleDraft(null)
       await refreshDashboard(pageTabId)
@@ -435,16 +448,18 @@ export function PageWallWorkspace({ activePageId: controlledPageId, scoped = fal
       <section className="pt-panel page-wall-region control" data-testid="page-wall-region-control">
         <div className="page-wall-mode-tabs"><button type="button" className={mode === 'now' ? 'active' : ''} onClick={() => setMode('now')}>Đăng ngay</button><button type="button" className={mode === 'schedule' ? 'active' : ''} onClick={() => setMode('schedule')}>Lịch chạy</button></div>
         {mode === 'now' ? <div className="page-wall-now-panel"><div className="page-wall-now-summary"><strong>Chạy đúng các TK đang tick</strong><span>{selectedRunnable.length} TK · {canonical ? `#${canonical.postId} ${canonical.postName}` : 'chưa chọn bài'} · song song {accountConcurrency} · delay {runDelaySeconds}s</span>{runBlockedReason ? <em>{runBlockedReason}</em> : null}</div><div className="page-wall-now-options"><label><span>Delay giữa lượt đăng</span><div><input aria-label="Delay giữa lượt Đăng ngay" type="number" min={0} max={3600} value={runDelaySeconds} disabled={busy} onChange={(event) => setRunDelaySeconds(Math.max(0, Math.min(3600, Number(event.target.value) || 0)))} /><small>giây</small></div></label><small>Lượt đầu chạy ngay; các lượt sau cách nhau ít nhất số giây này. Chỉ áp dụng Đăng ngay.</small></div><button className="pt-button primary page-wall-run-button" type="button" disabled={!canRun} onClick={() => void runSelected()}>{busy ? 'Đang chạy…' : '▶ Bắt đầu đăng'}</button><div className="page-wall-runtime-results">{lastResults.map((result) => <div key={result.accountId} className={`result-${resultTone(result)}`}><b>ACC#{result.accountId}</b><span>{result.message}</span></div>)}{!lastResults.length ? <p>Chưa có lượt chạy trong phiên UI này.</p> : null}</div></div> : null}
-        {mode === 'schedule' ? <div className="page-wall-schedule-panel"><div className="page-wall-schedule-toolbar"><div><strong>Lịch đã lưu</strong><span>Mỗi lịch tự giữ bài + tài khoản + ngày/giờ + concurrency.</span></div><button className="pt-button primary" type="button" disabled={busy} onClick={openAddSchedule}>+ Thêm lịch</button></div><div className="page-wall-plan-list" data-testid="page-wall-plan-list">{scheduleGroups.map((group) => {
+        {mode === 'schedule' ? <div className="page-wall-schedule-panel"><div className="page-wall-schedule-toolbar"><div><strong>Lịch đã lưu</strong><span>Mỗi lịch tự giữ bài + tài khoản + thứ/ngày chạy + giờ + concurrency.</span></div><button className="pt-button primary" type="button" disabled={busy} onClick={openAddSchedule}>+ Thêm lịch</button></div><div className="page-wall-plan-list" data-testid="page-wall-plan-list">{scheduleGroups.map((group) => {
           const runtime = pageWallFiniteScheduleRuntimeState(group.plans, localDateInput())
           const pausable = group.plans.some((plan) => plan.status === 'active' || plan.status === 'needs_attention')
           const resumable = !pausable && group.plans.some((plan) => plan.status === 'disabled')
-          const editTitle = group.source?.kind !== 'canonical' ? 'Lịch legacy không hỗ trợ sửa bài canonical.' : !group.editable ? 'Lịch đang có lượt chạy; chờ kết thúc rồi sửa.' : 'Sửa lịch'
-          return <div key={group.key} className={`page-wall-plan-row runtime-${runtime.tone}`}><i></i><div className="page-wall-plan-copy"><strong>{group.scheduleKind === 'daily' ? 'Mỗi ngày' : group.localDate} · {group.minutes.map(minuteToTime).join(', ')}</strong><span>{sourceLabel(group.source)} · {group.accountIds.length} TK · SS {group.accountConcurrency}</span></div><b>{runtime.label}</b>{pausable || resumable ? <button className={`page-wall-plan-toggle ${resumable ? 'resume' : 'pause'}`} type="button" disabled={busy} onClick={() => void setScheduleEnabled(group, resumable)}>{resumable ? 'Bắt đầu' : 'Tạm dừng'}</button> : <span className="page-wall-plan-toggle-spacer"></span>}<button type="button" disabled={!group.editable || group.source?.kind !== 'canonical' || busy} title={editTitle} onClick={() => openEditSchedule(group)}>Sửa</button><button type="button" aria-label={`Xóa lịch ${group.planIds.join('-')}`} disabled={busy} onClick={() => void deleteSchedule(group)}>×</button></div>
-        })}{!scheduleGroups.length ? <div className="page-wall-no-plans"><b>Chưa có lịch đăng</b><span>Bấm “+ Thêm lịch” rồi chọn bài, tài khoản và một hoặc nhiều giờ chạy.</span></div> : null}</div></div> : null}
+          const legacyDate = group.scheduleKind === 'specific_date'
+          const editTitle = legacyDate ? 'Lịch ngày cụ thể cũ được giữ nguyên, không chuyển ngầm sang lịch tuần.' : group.source?.kind !== 'canonical' ? 'Lịch legacy không hỗ trợ sửa bài canonical.' : !group.editable ? 'Lịch đang có lượt chạy; chờ kết thúc rồi sửa.' : 'Sửa lịch'
+          const scheduleLabel = legacyDate ? `Lịch cũ · ${group.localDate}` : pageWallWeekdayLabel(group.weekdays)
+          return <div key={group.key} className={`page-wall-plan-row runtime-${runtime.tone}`}><i></i><div className="page-wall-plan-copy"><strong>{scheduleLabel} · {group.minutes.map(minuteToTime).join(', ')}</strong><span>{sourceLabel(group.source)} · {group.accountIds.length} TK · SS {group.accountConcurrency}</span></div><b>{runtime.label}</b>{pausable || resumable ? <button className={`page-wall-plan-toggle ${resumable ? 'resume' : 'pause'}`} type="button" disabled={busy} onClick={() => void setScheduleEnabled(group, resumable)}>{resumable ? 'Bắt đầu' : 'Tạm dừng'}</button> : <span className="page-wall-plan-toggle-spacer"></span>}<button type="button" disabled={!group.editable || group.source?.kind !== 'canonical' || busy} title={editTitle} onClick={() => openEditSchedule(group)}>Sửa</button><button type="button" aria-label={`Xóa lịch ${group.planIds.join('-')}`} disabled={busy} onClick={() => void deleteSchedule(group)}>×</button></div>
+        })}{!scheduleGroups.length ? <div className="page-wall-no-plans"><b>Chưa có lịch đăng</b><span>Bấm “+ Thêm lịch” rồi chọn bài, tài khoản, ngày trong tuần và một hoặc nhiều giờ chạy.</span></div> : null}</div></div> : null}
       </section>
     </div>
-    <footer className="page-wall-finite-footer"><span><b>Finite Wall:</b> mỗi giờ đã chọn = 1 plan-slot → occurrence → page_wall_jobs</span><span>Một lịch có thể có nhiều giờ; mỗi slot chạy đúng 1 lần/ngày.</span></footer>
+    <footer className="page-wall-finite-footer"><span><b>Finite Wall:</b> mỗi giờ đã chọn = 1 plan-slot → occurrence → page_wall_jobs</span><span>Mỗi slot chạy tối đa 1 lần trong từng ngày đã chọn.</span></footer>
 
     {pickerTarget ? <LibraryPicker items={libraryItems} onClose={() => setPickerTarget(null)} onPick={(item, variantIndex) => applyPickedPost(pickerTarget, item, variantIndex)} /> : null}
     {postEditor ? <PostEditorModal item={postEditor.item} variantIndex={postEditor.variantIndex} onClose={() => setPostEditor(null)} onSaved={(item, variantIndex) => void handlePostSaved(item, variantIndex)} /> : null}
