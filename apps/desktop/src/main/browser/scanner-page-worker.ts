@@ -23,6 +23,7 @@ import {
   scanJobStatusFromFacebookAccess,
   type PageDirectTarget
 } from '../scanner/page/pageScanSupport'
+import { chooseFacebookDisplayName } from '../scanner/scannerDisplayName'
 import type {
   PageScanWorkerCommand,
   PageScanWorkerEvent,
@@ -150,9 +151,9 @@ async function canonicalPageUrl(page: Page): Promise<string | null> {
 
 async function pageDisplayName(page: Page, fallback: string): Promise<string> {
   const h1 = await firstVisibleText(page.locator('h1'))
-  if (h1) return h1
-  const title = (await page.title().catch(() => '')).replace(/\s*\|\s*Facebook\s*$/i, '').trim()
-  return title || fallback
+  const ogTitle = await page.locator('meta[property="og:title"]').first().getAttribute('content').catch(() => null)
+  const title = await page.title().catch(() => '')
+  return chooseFacebookDisplayName([h1, ogTitle, title], fallback)
 }
 
 interface KeywordPageCandidate {
