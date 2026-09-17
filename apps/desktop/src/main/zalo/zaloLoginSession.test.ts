@@ -57,10 +57,18 @@ describe('Zalo Batch 2 login/session', () => {
   it('does not expose stored Zalo password back through preload account views', () => {
     const preload = readFileSync(join(process.cwd(), 'src/preload/zaloBridge.ts'), 'utf8')
     const renderer = readFileSync(join(process.cwd(), 'src/renderer/src/zalo/ZaloWorkspace.tsx'), 'utf8')
+    const shared = readFileSync(join(process.cwd(), 'src/shared/zalo.ts'), 'utf8')
+    const accountView = shared.slice(
+      shared.indexOf('export interface ZaloAccountView'),
+      shared.indexOf('export interface ZaloAccountDraft')
+    )
+
     expect(preload).toContain('ZaloAccountView')
     expect(preload).not.toContain('ZaloAccountRecord')
     expect(renderer).not.toMatch(/account\.password\b/)
-    expect(renderer).toContain('account.passwordMasked')
+    expect(renderer).toContain('selectedAccount.hasPassword')
+    expect(accountView).toContain('passwordMasked: string')
+    expect(accountView).not.toMatch(/\n\s*password:\s/)
   })
 
   it('keeps business action implementation out of Batch 2 common login flow', () => {

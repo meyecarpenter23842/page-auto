@@ -104,7 +104,9 @@ describe('Zalo Batch 3 action modules', () => {
     const preload = readFileSync(join(process.cwd(), 'src/preload/zaloBridge.ts'), 'utf8')
     const combined = `${renderer}\n${preload}`
     expect(renderer).toContain('executeAction')
-    expect(renderer).toContain('Bulk target + Thư viện bài viết chung thuộc Batch 4')
+    expect(renderer).toContain("const [targetPhone, setTargetPhone] = useState('')")
+    expect(renderer).toContain('Batch hiện tại chạy một account + một target')
+    expect(renderer).toContain('name="zalo-run-account"')
     expect(combined).not.toMatch(/playwright|better-sqlite3|node:fs|node:path|articleManager|zalo.*post.*store/i)
   })
 })
