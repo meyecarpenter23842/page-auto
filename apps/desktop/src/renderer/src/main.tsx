@@ -10,6 +10,7 @@ import './mainWorkspaceLayout.css'
 import './theme.css'
 import './darkThemeCoverage.css'
 import './accounts/accountTableSelection.css'
+import './zalo/zaloBatchPanel.css'
 
 const root = document.getElementById('root')
 

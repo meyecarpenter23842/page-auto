@@ -1,0 +1,97 @@
+.zalo-batch-panel {
+  margin-top: 12px;
+  padding: 16px;
+}
+
+.zalo-batch-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.zalo-batch-section {
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #e3e9f2;
+  border-radius: 10px;
+  color: #56657a;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.zalo-batch-section textarea,
+.zalo-batch-options input,
+.zalo-batch-options select {
+  width: 100%;
+}
+
+.zalo-batch-section textarea {
+  min-height: 118px;
+  resize: vertical;
+}
+
+.zalo-batch-account-list,
+.zalo-batch-scroll {
+  max-height: 170px;
+  overflow: auto;
+  display: grid;
+  gap: 5px;
+}
+
+.zalo-check-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  min-height: 30px;
+  padding: 4px 6px;
+  border-radius: 7px;
+  background: #f8fafc;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.zalo-check-row small {
+  color: #7a879a;
+  white-space: nowrap;
+}
+
+.zalo-batch-options {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(120px, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.zalo-batch-options label {
+  display: grid;
+  gap: 5px;
+  color: #56657a;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.zalo-batch-progress-wrap {
+  max-height: 340px;
+  margin-top: 8px;
+  overflow: auto;
+}
+
+@media (max-width: 1280px) {
+  .zalo-batch-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .zalo-batch-options {
+    grid-template-columns: repeat(3, minmax(120px, 1fr));
+  }
+}
+
+@media (max-width: 860px) {
+  .zalo-batch-grid,
+  .zalo-batch-options {
+    grid-template-columns: 1fr;
+  }
+}

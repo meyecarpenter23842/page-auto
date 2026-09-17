@@ -5,6 +5,7 @@ import type Database from 'better-sqlite3'
 import {
   maskZaloPassword,
   normalizeZaloActionInput,
+  normalizeZaloBatchStartPayload,
   ZALO_IPC,
   type ZaloAccountDraft,
   type ZaloAccountIdPayload,
@@ -13,11 +14,14 @@ import {
   type ZaloAccountView,
   type ZaloActionInput,
   type ZaloActionRequestPayload,
+  type ZaloBatchRunIdPayload,
+  type ZaloBatchStartPayload,
   type ZaloBrowserSettings,
   type ZaloLoginPayload
 } from '../shared/zalo'
 import { ZaloAccountRepository } from './database/zaloRepository'
 import { ZaloSettingsRepository } from './database/zaloSettingsRepository'
+import { ZaloBatchRunner } from './zalo/zaloBatchRunner'
 import { ZaloBrowserRuntime } from './zalo/zaloBrowserRuntime'
 
 export interface ZaloIpcRuntime { dispose: () => void }
@@ -39,12 +43,16 @@ function toView(account: ZaloAccountRecord): ZaloAccountView {
   }
 }
 
-function validateActionFiles(action: ZaloActionInput): ZaloActionInput {
-  if (action.type !== 'send_attachment') return action
-  for (const path of action.paths) {
+function validateAttachmentPaths(paths: readonly string[]): void {
+  for (const path of paths) {
     if (!isAbsolute(path)) throw new Error(`Attachment Zalo phải là đường dẫn tuyệt đối: ${basename(path) || 'file'}.`)
     if (!existsSync(path) || !statSync(path).isFile()) throw new Error(`Không tìm thấy attachment Zalo: ${basename(path) || 'file'}.`)
   }
+}
+
+function validateActionFiles(action: ZaloActionInput): ZaloActionInput {
+  if (action.type !== 'send_attachment') return action
+  validateAttachmentPaths(action.paths)
   return action
 }
 
@@ -52,6 +60,7 @@ export function registerZaloIpc(client: Database.Database, dataDirectory: string
   const accounts = new ZaloAccountRepository(client)
   const settings = new ZaloSettingsRepository(client)
   const browser = new ZaloBrowserRuntime(dataDirectory, accounts, () => settings.get())
+  const batch = new ZaloBatchRunner(accounts, browser)
 
   const handlers = [
     ZALO_IPC.list,
@@ -65,6 +74,11 @@ export function registerZaloIpc(client: Database.Database, dataDirectory: string
     ZALO_IPC.actionPause,
     ZALO_IPC.actionResume,
     ZALO_IPC.actionStop,
+    ZALO_IPC.batchStart,
+    ZALO_IPC.batchStatus,
+    ZALO_IPC.batchPause,
+    ZALO_IPC.batchResume,
+    ZALO_IPC.batchStop,
     ZALO_IPC.settingsGet,
     ZALO_IPC.settingsSave
   ]
@@ -96,6 +110,15 @@ export function registerZaloIpc(client: Database.Database, dataDirectory: string
   ipcMain.handle(ZALO_IPC.actionPause, (_event, payload: ZaloAccountIdPayload) => browser.controlAction(payload.id, 'pause'))
   ipcMain.handle(ZALO_IPC.actionResume, (_event, payload: ZaloAccountIdPayload) => browser.controlAction(payload.id, 'resume'))
   ipcMain.handle(ZALO_IPC.actionStop, (_event, payload: ZaloAccountIdPayload) => browser.controlAction(payload.id, 'stop'))
+  ipcMain.handle(ZALO_IPC.batchStart, (_event, input: ZaloBatchStartPayload) => {
+    const normalized = normalizeZaloBatchStartPayload(input)
+    if (normalized.actions.sendAttachment) validateAttachmentPaths(normalized.attachmentPaths)
+    return batch.start(normalized)
+  })
+  ipcMain.handle(ZALO_IPC.batchStatus, (_event, payload: ZaloBatchRunIdPayload) => batch.status(payload.runId))
+  ipcMain.handle(ZALO_IPC.batchPause, (_event, payload: ZaloBatchRunIdPayload) => batch.pause(payload.runId))
+  ipcMain.handle(ZALO_IPC.batchResume, (_event, payload: ZaloBatchRunIdPayload) => batch.resume(payload.runId))
+  ipcMain.handle(ZALO_IPC.batchStop, (_event, payload: ZaloBatchRunIdPayload) => batch.stop(payload.runId))
   ipcMain.handle(ZALO_IPC.close, async (_event, payload: ZaloAccountIdPayload) => {
     await browser.close(payload.id)
     return true
@@ -109,6 +132,7 @@ export function registerZaloIpc(client: Database.Database, dataDirectory: string
 
   return {
     dispose: () => {
+      batch.dispose()
       browser.closeAll()
       for (const channel of handlers) ipcMain.removeHandler(channel)
     }

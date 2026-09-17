@@ -8,6 +8,9 @@ import {
   type ZaloActionInput,
   type ZaloActionRequestPayload,
   type ZaloActionResult,
+  type ZaloBatchRunIdPayload,
+  type ZaloBatchRunSnapshot,
+  type ZaloBatchStartPayload,
   type ZaloBrowserSettings,
   type ZaloLoginMode,
   type ZaloLoginPayload,
@@ -26,6 +29,11 @@ export interface ZaloPreloadApi {
   pauseAction: (id: number) => Promise<boolean>
   resumeAction: (id: number) => Promise<boolean>
   stopAction: (id: number) => Promise<boolean>
+  startBatch: (input: ZaloBatchStartPayload) => Promise<ZaloBatchRunSnapshot>
+  getBatchStatus: (runId: string) => Promise<ZaloBatchRunSnapshot | null>
+  pauseBatch: (runId: string) => Promise<ZaloBatchRunSnapshot | null>
+  resumeBatch: (runId: string) => Promise<ZaloBatchRunSnapshot | null>
+  stopBatch: (runId: string) => Promise<ZaloBatchRunSnapshot | null>
   getSettings: () => Promise<ZaloBrowserSettings>
   saveSettings: (input: ZaloBrowserSettings) => Promise<ZaloBrowserSettings>
 }
@@ -33,6 +41,7 @@ export interface ZaloPreloadApi {
 const payload = (id: number): ZaloAccountIdPayload => ({ id })
 const loginPayload = (id: number, mode: ZaloLoginMode): ZaloLoginPayload => ({ id, mode })
 const actionPayload = (id: number, action: ZaloActionInput): ZaloActionRequestPayload => ({ id, action })
+const batchPayload = (runId: string): ZaloBatchRunIdPayload => ({ runId })
 
 const api: ZaloPreloadApi = {
   listAccounts: () => ipcRenderer.invoke(ZALO_IPC.list),
@@ -46,6 +55,11 @@ const api: ZaloPreloadApi = {
   pauseAction: (id) => ipcRenderer.invoke(ZALO_IPC.actionPause, payload(id)),
   resumeAction: (id) => ipcRenderer.invoke(ZALO_IPC.actionResume, payload(id)),
   stopAction: (id) => ipcRenderer.invoke(ZALO_IPC.actionStop, payload(id)),
+  startBatch: (input) => ipcRenderer.invoke(ZALO_IPC.batchStart, input),
+  getBatchStatus: (runId) => ipcRenderer.invoke(ZALO_IPC.batchStatus, batchPayload(runId)),
+  pauseBatch: (runId) => ipcRenderer.invoke(ZALO_IPC.batchPause, batchPayload(runId)),
+  resumeBatch: (runId) => ipcRenderer.invoke(ZALO_IPC.batchResume, batchPayload(runId)),
+  stopBatch: (runId) => ipcRenderer.invoke(ZALO_IPC.batchStop, batchPayload(runId)),
   getSettings: () => ipcRenderer.invoke(ZALO_IPC.settingsGet),
   saveSettings: (input) => ipcRenderer.invoke(ZALO_IPC.settingsSave, input)
 }
