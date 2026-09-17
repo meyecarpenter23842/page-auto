@@ -80,7 +80,8 @@ describe('Zalo Batch 5 Windows hardening matrix', () => {
 
   it('accepts the Windows size/Auto Fit matrix while keeping Zalo settings independently validated', () => {
     const base = cloneDefaultZaloBrowserSettings()
-    for (const [windowWidth, windowHeight] of [[800, 600], [1280, 800], [1600, 1000], [1920, 1080]]) {
+    const sizes: Array<[number, number]> = [[800, 600], [1280, 800], [1600, 1000], [1920, 1080]]
+    for (const [windowWidth, windowHeight] of sizes) {
       expect(() => assertValidZaloBrowserSettings({
         ...base,
         windowWidth,
