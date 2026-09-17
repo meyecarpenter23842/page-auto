@@ -11,32 +11,113 @@ export interface ZaloLoginFlowResult {
   message: string
 }
 
-export async function inspectZaloSession(page: Page): Promise<ZaloSessionEvidence> {
+async function inspectZaloSessionOnce(page: Page): Promise<ZaloSessionEvidence> {
   return page.evaluate(() => {
-    const text = (document.body?.innerText ?? '').toLocaleLowerCase('vi-VN')
-    const hasPhoneInput = Boolean(document.querySelector('input[type="tel"], input[placeholder*="số điện thoại" i]'))
-    const hasPasswordInput = Boolean(document.querySelector('input[type="password"], input[placeholder*="mật khẩu" i]'))
-    const authenticatedShell = Boolean(
-      document.querySelector('#app-page')
-      && !hasPhoneInput
-      && !hasPasswordInput
-      && (text.includes('tin nhắn') || text.includes('danh bạ'))
-    )
-    const qrSurface = Boolean(
-      document.querySelector('canvas, img[src*="qr" i]')
-      && (text.includes('quét mã qr') || text.includes('mã qr'))
-    )
-    const loginSurface = hasPhoneInput || hasPasswordInput || text.includes('đăng nhập') || text.includes('số điện thoại')
-    const attentionSurface = [
+    const bodyText = (document.body?.innerText ?? '').toLocaleLowerCase('vi-VN')
+
+    const isVisible = (element: Element | null): boolean => {
+      if (!(element instanceof HTMLElement)) return false
+      const style = window.getComputedStyle(element)
+      if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false
+      const rect = element.getBoundingClientRect()
+      return rect.width > 1 && rect.height > 1
+    }
+
+    const hasVisible = (selectors: string): boolean =>
+      Array.from(document.querySelectorAll(selectors)).some((element) => isVisible(element))
+
+    const visibleText = (selectors: string): string =>
+      Array.from(document.querySelectorAll(selectors))
+        .filter((element) => isVisible(element))
+        .map((element) => (element.textContent ?? '').toLocaleLowerCase('vi-VN'))
+        .join('\n')
+
+    const hasPhoneInput = hasVisible('input[type="tel"], input[placeholder*="số điện thoại" i]')
+    const hasPasswordInput = hasVisible('input[type="password"], input[placeholder*="mật khẩu" i]')
+    const chatSearchSurface = hasVisible([
+      'input[type="search"]',
+      'input[placeholder*="Tìm kiếm" i]',
+      'input[placeholder*="Tìm bạn" i]',
+      'input[aria-label*="Tìm kiếm" i]',
+      '[contenteditable="true"][data-placeholder*="Tìm kiếm" i]'
+    ].join(','))
+    const composerSurface = hasVisible([
+      '[contenteditable="true"][role="textbox"]',
+      '[contenteditable="true"][data-placeholder*="tin nhắn" i]',
+      'textarea[placeholder*="tin nhắn" i]'
+    ].join(','))
+    const appRootVisible = hasVisible('#app-page, #app, [data-id*="chat" i], [class*="chat" i]')
+
+    const qrElementVisible = hasVisible('canvas, img[src*="qr" i], [class*="qr" i] canvas, [class*="qr" i] img')
+    const qrSurface = qrElementVisible && (bodyText.includes('quét mã qr') || bodyText.includes('mã qr'))
+
+    const likelyAuthenticatedWorkspace = chatSearchSurface || composerSurface
+    const loginSurface = hasPhoneInput
+      || hasPasswordInput
+      || (!likelyAuthenticatedWorkspace && (bodyText.includes('đăng nhập') || bodyText.includes('số điện thoại')))
+
+    const blockerText = visibleText([
+      '[role="dialog"]',
+      '[aria-modal="true"]',
+      '[class*="modal" i]',
+      '[class*="dialog" i]',
+      '[class*="captcha" i]',
+      '[class*="verify" i]',
+      '[class*="challenge" i]'
+    ].join(','))
+    const attentionNeedles = [
       'xác minh',
       'captcha',
       'bất thường',
       'kiểm tra bảo mật',
       'thử lại sau',
       'quá nhiều lần'
-    ].some((needle) => text.includes(needle))
-    return { authenticatedShell, loginSurface, qrSurface, attentionSurface }
-  }).catch(() => ({ authenticatedShell: false, loginSurface: false, qrSurface: false, attentionSurface: true }))
+    ]
+    const blockingAttention = attentionNeedles.some((needle) => blockerText.includes(needle))
+    const nonWorkspaceAttention = !likelyAuthenticatedWorkspace
+      && attentionNeedles.some((needle) => bodyText.includes(needle))
+    const attentionSurface = blockingAttention || nonWorkspaceAttention
+
+    const authenticatedShell = !loginSurface
+      && !qrSurface
+      && !attentionSurface
+      && (
+        likelyAuthenticatedWorkspace
+        || (appRootVisible && (bodyText.includes('tin nhắn') || bodyText.includes('danh bạ')))
+      )
+
+    return {
+      authenticatedShell,
+      loginSurface,
+      qrSurface,
+      attentionSurface,
+      chatSearchSurface,
+      composerSurface
+    }
+  }).catch(() => ({
+    authenticatedShell: false,
+    loginSurface: false,
+    qrSurface: false,
+    attentionSurface: true,
+    chatSearchSurface: false,
+    composerSurface: false
+  }))
+}
+
+/**
+ * Zalo Web is a SPA and can briefly expose neither login nor chat shell after DOMContentLoaded.
+ * Retry only that transient unknown state; explicit login/QR/challenge surfaces return immediately.
+ */
+export async function inspectZaloSession(page: Page): Promise<ZaloSessionEvidence> {
+  let evidence = await inspectZaloSessionOnce(page)
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const status = classifyZaloSessionEvidence(evidence)
+    const transientUnknown = status === 'needs_attention' && !evidence.attentionSurface
+    if (!transientUnknown) return evidence
+    await page.waitForTimeout(250)
+    evidence = await inspectZaloSessionOnce(page)
+  }
+  return evidence
 }
 
 async function firstVisible(locators: Locator[]): Promise<Locator | null> {
@@ -62,12 +143,20 @@ async function selectPhonePasswordMode(page: Page): Promise<void> {
 
 async function selectQrMode(page: Page): Promise<void> {
   const evidence = await inspectZaloSession(page)
-  if (evidence.authenticatedShell || evidence.qrSurface || evidence.attentionSurface) return
+  const state = classifyZaloSessionEvidence(evidence)
+  if (state === 'ready' || evidence.qrSurface || evidence.attentionSurface) return
   const tab = await firstVisible([
     page.getByText(/VỚI MÃ QR/i),
     page.getByText(/MÃ QR/i)
   ])
   if (tab) await tab.click({ timeout: 5_000 }).catch(() => undefined)
+}
+
+async function stableInitialSession(page: Page): Promise<ZaloSessionStatus> {
+  return waitForZaloSessionState(() => inspectZaloSession(page), {
+    timeoutMs: 1_500,
+    pollIntervalMs: 200
+  })
 }
 
 export async function runZaloPhonePasswordLogin(
@@ -76,7 +165,7 @@ export async function runZaloPhonePasswordLogin(
   password: string,
   timeoutMs = 45_000
 ): Promise<ZaloLoginFlowResult> {
-  const initial = classifyZaloSessionEvidence(await inspectZaloSession(page))
+  const initial = await stableInitialSession(page)
   if (initial === 'ready') return { status: 'ready', message: 'Zalo session đã xác thực; không cần đăng nhập lại.' }
   if (initial === 'needs_attention') return { status: 'needs_attention', message: 'Zalo đang yêu cầu kiểm tra/challenge thủ công.' }
 
@@ -112,7 +201,7 @@ export async function runZaloPhonePasswordLogin(
 }
 
 export async function runZaloQrLogin(page: Page, timeoutMs = 180_000): Promise<ZaloLoginFlowResult> {
-  const initial = classifyZaloSessionEvidence(await inspectZaloSession(page))
+  const initial = await stableInitialSession(page)
   if (initial === 'ready') return { status: 'ready', message: 'Zalo session đã xác thực; không cần quét QR lại.' }
   if (initial === 'needs_attention') return { status: 'needs_attention', message: 'Zalo đang yêu cầu kiểm tra/challenge thủ công.' }
 
