@@ -141,11 +141,12 @@ describe('Zalo Batch 1 foundation', () => {
     expect(source).toContain('window.pageAutoZalo')
   })
 
-  it('keeps Zalo account selection in the workbench grid instead of a separate tab/dropdown screen', () => {
+  it('keeps bulk automation as the primary Zalo workspace instead of the old single-account workbench', () => {
     const source = readFileSync(join(process.cwd(), 'src/renderer/src/zalo/ZaloWorkspace.tsx'), 'utf8')
-    expect(source).toContain('zalo-workbench-grid')
-    expect(source).toContain('name="zalo-run-account"')
-    expect(source).not.toMatch(/type TabId|setTab\(|businessAccountId/)
-    expect(source).not.toContain('aria-label="Zalo workspace"')
+    expect(source).toContain('<ZaloBatchPanel accounts={accounts} />')
+    expect(source).toContain('Quản lý tài khoản Zalo')
+    expect(source).not.toContain('name="zalo-run-account"')
+    expect(source).not.toContain('Batch hiện tại chạy một account + một target')
+    expect(source).not.toMatch(/runBusinessAction|selectedAccountId|targetPhone/)
   })
 })
