@@ -1,41 +1,256 @@
 .zalo-batch-panel {
-  margin-top: 12px;
-  padding: 16px;
+  padding: 14px;
 }
 
-.zalo-batch-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
+.zalo-batch-commandbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #e4e9f1;
 }
 
-.zalo-batch-section {
-  display: grid;
-  align-content: start;
-  gap: 7px;
+.zalo-run-summary {
   min-width: 0;
-  padding: 10px;
-  border: 1px solid #e3e9f2;
-  border-radius: 10px;
-  color: #56657a;
-  font-size: 12px;
-  font-weight: 650;
+  display: grid;
+  gap: 3px;
 }
 
-.zalo-batch-section textarea,
+.zalo-run-summary > span,
+.zalo-batch-card-heading span {
+  color: #6f7d91;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.zalo-run-summary strong {
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.zalo-run-summary small,
+.zalo-batch-card-heading small {
+  color: #7a879a;
+  font-size: 11px;
+}
+
+.zalo-run-actions-top {
+  margin-top: 0;
+  flex-wrap: nowrap;
+}
+
+.zalo-automation-grid {
+  display: grid;
+  grid-template-columns: minmax(430px, .9fr) minmax(520px, 1.1fr);
+  gap: 12px;
+  margin-top: 12px;
+  align-items: start;
+}
+
+.zalo-automation-left,
+.zalo-automation-right {
+  min-width: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.zalo-batch-card {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #dfe6ef;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.zalo-batch-card-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 9px;
+}
+
+.zalo-batch-card-heading > div {
+  display: grid;
+  gap: 2px;
+}
+
+.zalo-batch-card-heading strong {
+  font-size: 14px;
+}
+
+.zalo-batch-account-table-wrap {
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid #e4e9f1;
+  border-radius: 8px;
+}
+
+.zalo-batch-account-table {
+  min-width: 650px;
+}
+
+.zalo-batch-account-table th,
+.zalo-batch-account-table td {
+  padding-top: 7px;
+  padding-bottom: 7px;
+  vertical-align: middle;
+}
+
+.zalo-account-not-ready {
+  background: #fffaf0;
+}
+
+.zalo-batch-options {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(110px, 1fr));
+  gap: 8px;
+}
+
+.zalo-batch-options-compact {
+  margin-top: 9px;
+}
+
+.zalo-batch-options label,
+.zalo-content-mode-row label,
+.zalo-config-field {
+  display: grid;
+  gap: 4px;
+  color: #56657a;
+  font-size: 11px;
+  font-weight: 700;
+}
+
 .zalo-batch-options input,
-.zalo-batch-options select {
+.zalo-batch-options select,
+.zalo-content-mode-row select,
+.zalo-config-field textarea {
   width: 100%;
 }
 
-.zalo-batch-section textarea {
-  min-height: 118px;
+.zalo-runtime-preview {
+  min-height: 170px;
+}
+
+.zalo-runtime-body,
+.zalo-runtime-empty {
+  display: grid;
+  gap: 8px;
+  min-height: 105px;
+  align-content: start;
+  padding: 10px;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.zalo-runtime-body p,
+.zalo-runtime-empty p {
+  margin: 0;
+  color: #637188;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.zalo-runtime-meta {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.zalo-runtime-meta span {
+  padding: 4px 7px;
+  border-radius: 6px;
+  background: #eef3f8;
+  color: #5b6779;
+  font-size: 11px;
+}
+
+.zalo-config-stack {
+  display: grid;
+  gap: 8px;
+}
+
+.zalo-config-stack > .zalo-batch-card-heading {
+  margin-bottom: 0;
+}
+
+.zalo-config-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fbfcfe;
+  overflow: hidden;
+}
+
+.zalo-config-card > summary {
+  display: grid;
+  grid-template-columns: 80px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 8px 10px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.zalo-config-card > summary::-webkit-details-marker {
+  display: none;
+}
+
+.zalo-config-card > summary span {
+  color: #65748b;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.zalo-config-card > summary strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.zalo-config-card > summary small {
+  color: #8792a3;
+  font-size: 11px;
+}
+
+.zalo-config-card[open] > summary {
+  border-bottom: 1px solid #e7ecf3;
+  background: #f5f8fc;
+}
+
+.zalo-config-card > textarea,
+.zalo-config-card > .zalo-batch-scroll,
+.zalo-config-card > .zalo-action-config-grid,
+.zalo-config-card > .zalo-content-mode-row,
+.zalo-config-card > .zalo-config-field {
+  margin: 9px 10px;
+}
+
+.zalo-config-card > textarea,
+.zalo-config-field textarea {
+  width: calc(100% - 20px);
+  min-height: 92px;
   resize: vertical;
 }
 
-.zalo-batch-account-list,
+.zalo-config-field textarea {
+  width: 100%;
+  margin: 0;
+}
+
+.zalo-content-mode-row {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .zalo-batch-scroll {
-  max-height: 170px;
+  max-height: 210px;
   overflow: auto;
   display: grid;
   gap: 5px;
@@ -54,44 +269,76 @@
   font-weight: 500;
 }
 
+.zalo-check-row span {
+  min-width: 0;
+}
+
+.zalo-check-row span em {
+  display: block;
+  margin-top: 2px;
+  overflow: hidden;
+  color: #7a879a;
+  font-size: 10px;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .zalo-check-row small {
   color: #7a879a;
   white-space: nowrap;
 }
 
-.zalo-batch-options {
+.zalo-action-config-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(120px, 1fr));
-  gap: 8px;
-  margin-top: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
 }
 
-.zalo-batch-options label {
-  display: grid;
-  gap: 5px;
-  color: #56657a;
-  font-size: 12px;
-  font-weight: 650;
+.zalo-batch-results {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid #dfe6ef;
+  border-radius: 10px;
 }
 
 .zalo-batch-progress-wrap {
-  max-height: 340px;
-  margin-top: 8px;
+  max-height: 360px;
   overflow: auto;
+  border: 1px solid #e5eaf1;
+  border-radius: 8px;
 }
 
 @media (max-width: 1280px) {
-  .zalo-batch-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .zalo-automation-grid {
+    grid-template-columns: 1fr;
   }
-  .zalo-batch-options {
-    grid-template-columns: repeat(3, minmax(120px, 1fr));
+
+  .zalo-batch-account-table-wrap {
+    max-height: 270px;
   }
 }
 
-@media (max-width: 860px) {
-  .zalo-batch-grid,
-  .zalo-batch-options {
-    grid-template-columns: 1fr;
+@media (max-width: 900px) {
+  .zalo-batch-commandbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .zalo-run-actions-top {
+    flex-wrap: wrap;
+  }
+
+  .zalo-batch-options,
+  .zalo-action-config-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .zalo-config-card > summary {
+    grid-template-columns: 70px minmax(0, 1fr);
+  }
+
+  .zalo-config-card > summary small {
+    grid-column: 2;
   }
 }

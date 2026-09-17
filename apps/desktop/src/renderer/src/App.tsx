@@ -9,7 +9,6 @@ import { PageBusinessWorkspace } from './page-tabs/PageBusinessWorkspace'
 import { RotationWindowStatusPanel } from './page-tabs/RotationWindowStatusPanel'
 import { ScannerWorkspace } from './scanner/ScannerWorkspace'
 import { SettingsPanel } from './settings/SettingsPanel'
-import { ZaloBatchPanel } from './zalo/ZaloBatchPanel'
 import { ZaloWorkspace } from './zalo/ZaloWorkspace'
 import './globalBrowserDock.css'
 
@@ -101,7 +100,7 @@ export function App() {
           <div><p className="eyebrow">PAGE-AUTO / {activeRoute === 'hotmail' ? 'EMAIL' : activeRoute === 'actions' ? 'HÀNH ĐỘNG' : activeRoute === 'scanner' ? 'QUÉT DỮ LIỆU' : activeRoute === 'content-library' ? 'THƯ VIỆN' : activeRoute === 'zalo' ? 'ZALO' : activeRoute.toUpperCase()}</p><h1>{active.title}</h1></div>
           <div className="topbar-actions"><button className="button secondary global-browser-dock-button" type="button" disabled={browserDockOpening} onClick={() => void openBrowserDock()}>{browserDockOpening ? 'Đang mở…' : 'Cửa sổ Chrome'}</button><div className="version-badge">{appInfo ? `v${appInfo.version}` : 'Loading...'}</div></div>
         </header>
-        {activeRoute === 'accounts' ? <AccountManager onOpenChangeInfoWorkspace={openChangeInfoWorkspace} /> : activeRoute === 'hotmail' ? <HotmailAuto /> : activeRoute === 'content-library' ? <ContentLibraryHub /> : activeRoute === 'page-tabs' ? <PageBusinessWorkspace /> : activeRoute === 'actions' ? <ActionWorkspace /> : activeRoute === 'scanner' ? <ScannerWorkspace /> : activeRoute === 'zalo' ? <><ZaloWorkspace /><ZaloBatchPanel /></> : activeRoute === 'logs' ? <ExecutionLogs /> : <SettingsPanel appInfo={appInfo} />}
+        {activeRoute === 'accounts' ? <AccountManager onOpenChangeInfoWorkspace={openChangeInfoWorkspace} /> : activeRoute === 'hotmail' ? <HotmailAuto /> : activeRoute === 'content-library' ? <ContentLibraryHub /> : activeRoute === 'page-tabs' ? <PageBusinessWorkspace /> : activeRoute === 'actions' ? <ActionWorkspace /> : activeRoute === 'scanner' ? <ScannerWorkspace /> : activeRoute === 'zalo' ? <ZaloWorkspace /> : activeRoute === 'logs' ? <ExecutionLogs /> : <SettingsPanel appInfo={appInfo} />}
       </main>
     </div>
   )
