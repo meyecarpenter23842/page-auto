@@ -9,6 +9,7 @@ import { PageBusinessWorkspace } from './page-tabs/PageBusinessWorkspace'
 import { RotationWindowStatusPanel } from './page-tabs/RotationWindowStatusPanel'
 import { ScannerWorkspace } from './scanner/ScannerWorkspace'
 import { SettingsPanel } from './settings/SettingsPanel'
+import { ZaloBatchPanel } from './zalo/ZaloBatchPanel'
 import { ZaloWorkspace } from './zalo/ZaloWorkspace'
 import './globalBrowserDock.css'
 
@@ -34,7 +35,7 @@ const routeDescriptions: Record<RouteId, { title: string; description: string }>
   'page-tabs': { title: 'Page Tabs', description: 'Mỗi Page UID là một workspace đa nghiệp vụ: Nhóm, Đăng Tường, Sửa Page và các tác vụ mở rộng dùng chung tầng Facebook.' },
   actions: { title: 'Hành động', description: 'Workspace nhiều tab nghiệp vụ; Kịch bản hiện tại là tab mặc định và các tab Hành động khác sẽ được bổ sung theo module dùng chung.' },
   scanner: { title: 'Quét dữ liệu', description: 'Workspace Scanner dùng chung job lifecycle, Account/session và Dataset; từng loại Nhóm/Page/User/Member là module nghiệp vụ độc lập.' },
-  zalo: { title: 'Zalo', description: 'Tài khoản, profile/session Zalo độc lập; Batch 1 chỉ dựng nền tảng login/session và shell Gửi tin / Kết bạn.' },
+  zalo: { title: 'Zalo', description: 'Tài khoản/session Zalo độc lập, action đơn và Batch 4 gửi tin/kết bạn hàng loạt theo nhiều account.' },
   logs: { title: 'Runtime Logs', description: 'Execution log chi tiết, screenshot evidence, retry disposition và manual-review cho kết quả publish chưa chắc chắn.' },
   settings: { title: 'Cài đặt', description: 'Cấu hình trình duyệt, session, mạng, vận hành và chẩn đoán dùng chung cho PAGE-AUTO.' }
 }
@@ -100,7 +101,7 @@ export function App() {
           <div><p className="eyebrow">PAGE-AUTO / {activeRoute === 'hotmail' ? 'EMAIL' : activeRoute === 'actions' ? 'HÀNH ĐỘNG' : activeRoute === 'scanner' ? 'QUÉT DỮ LIỆU' : activeRoute === 'content-library' ? 'THƯ VIỆN' : activeRoute === 'zalo' ? 'ZALO' : activeRoute.toUpperCase()}</p><h1>{active.title}</h1></div>
           <div className="topbar-actions"><button className="button secondary global-browser-dock-button" type="button" disabled={browserDockOpening} onClick={() => void openBrowserDock()}>{browserDockOpening ? 'Đang mở…' : 'Cửa sổ Chrome'}</button><div className="version-badge">{appInfo ? `v${appInfo.version}` : 'Loading...'}</div></div>
         </header>
-        {activeRoute === 'accounts' ? <AccountManager onOpenChangeInfoWorkspace={openChangeInfoWorkspace} /> : activeRoute === 'hotmail' ? <HotmailAuto /> : activeRoute === 'content-library' ? <ContentLibraryHub /> : activeRoute === 'page-tabs' ? <PageBusinessWorkspace /> : activeRoute === 'actions' ? <ActionWorkspace /> : activeRoute === 'scanner' ? <ScannerWorkspace /> : activeRoute === 'zalo' ? <ZaloWorkspace /> : activeRoute === 'logs' ? <ExecutionLogs /> : <SettingsPanel appInfo={appInfo} />}
+        {activeRoute === 'accounts' ? <AccountManager onOpenChangeInfoWorkspace={openChangeInfoWorkspace} /> : activeRoute === 'hotmail' ? <HotmailAuto /> : activeRoute === 'content-library' ? <ContentLibraryHub /> : activeRoute === 'page-tabs' ? <PageBusinessWorkspace /> : activeRoute === 'actions' ? <ActionWorkspace /> : activeRoute === 'scanner' ? <ScannerWorkspace /> : activeRoute === 'zalo' ? <><ZaloWorkspace /><ZaloBatchPanel /></> : activeRoute === 'logs' ? <ExecutionLogs /> : <SettingsPanel appInfo={appInfo} />}
       </main>
     </div>
   )

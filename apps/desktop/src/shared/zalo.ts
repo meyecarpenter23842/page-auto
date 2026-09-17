@@ -12,6 +12,11 @@ export const ZALO_IPC = {
   actionPause: 'zalo:actions:pause',
   actionResume: 'zalo:actions:resume',
   actionStop: 'zalo:actions:stop',
+  batchStart: 'zalo:batch:start',
+  batchStatus: 'zalo:batch:status',
+  batchPause: 'zalo:batch:pause',
+  batchResume: 'zalo:batch:resume',
+  batchStop: 'zalo:batch:stop',
   settingsGet: 'zalo:settings:get',
   settingsSave: 'zalo:settings:save'
 } as const
@@ -122,6 +127,62 @@ export interface ZaloActionResult {
   data?: Record<string, unknown>
 }
 
+export type ZaloBatchState = 'running' | 'paused' | 'stopping' | 'completed' | 'stopped' | 'failed'
+export type ZaloBatchTargetState = 'pending' | 'running' | 'success' | 'partial' | 'failed' | 'stopped'
+export type ZaloBatchContentMode = 'sequential' | 'random'
+export type ZaloBatchFailurePolicy = 'continue' | 'stop_run'
+
+export interface ZaloBatchContentItemSnapshot {
+  sourceItemId: number | null
+  name: string
+  variants: string[]
+}
+
+export interface ZaloBatchStartPayload {
+  accountIds: number[]
+  targets: string[]
+  actions: {
+    sendMessage: boolean
+    sendAttachment: boolean
+    addFriend: boolean
+  }
+  contentItems: ZaloBatchContentItemSnapshot[]
+  contentMode: ZaloBatchContentMode
+  attachmentPaths: string[]
+  friendMessage: string | null
+  concurrency: number
+  delayMinMs: number
+  delayMaxMs: number
+  failurePolicy: ZaloBatchFailurePolicy
+}
+
+export interface ZaloBatchRunIdPayload { runId: string }
+
+export interface ZaloBatchTargetProgress {
+  index: number
+  targetPhone: string
+  assignedAccountId: number | null
+  state: ZaloBatchTargetState
+  startedAt: number | null
+  completedAt: number | null
+  results: ZaloActionResult[]
+  message: string
+}
+
+export interface ZaloBatchRunSnapshot {
+  runId: string
+  state: ZaloBatchState
+  startedAt: number
+  completedAt: number | null
+  accountIds: number[]
+  totalTargets: number
+  completedTargets: number
+  successTargets: number
+  failedTargets: number
+  progress: ZaloBatchTargetProgress[]
+  message: string
+}
+
 export interface ZaloBrowserSettings {
   executablePath: string | null
   profileRoot: string | null
@@ -181,6 +242,58 @@ export function normalizeZaloActionInput(input: ZaloActionInput): ZaloActionInpu
   const message = input.message?.trim() || null
   if (message && message.length > 300) throw new Error('Lời nhắn kết bạn Zalo quá dài.')
   return { type: input.type, targetPhone, message }
+}
+
+export function normalizeZaloBatchStartPayload(input: ZaloBatchStartPayload): ZaloBatchStartPayload {
+  const accountIds = [...new Set(input.accountIds.filter((id) => Number.isInteger(id) && id > 0))]
+  if (!accountIds.length) throw new Error('Phải chọn ít nhất một tài khoản Zalo cho batch.')
+
+  const targets = [...new Set(input.targets.map(normalizeZaloPhone))]
+  if (!targets.length) throw new Error('Phải nhập ít nhất một SĐT target cho batch.')
+  if (targets.length > 10_000) throw new Error('Một batch Zalo hỗ trợ tối đa 10.000 target.')
+
+  const actions = {
+    sendMessage: Boolean(input.actions.sendMessage),
+    sendAttachment: Boolean(input.actions.sendAttachment),
+    addFriend: Boolean(input.actions.addFriend)
+  }
+  if (!actions.sendMessage && !actions.sendAttachment && !actions.addFriend) {
+    throw new Error('Phải chọn ít nhất một action Zalo cho batch.')
+  }
+
+  const contentItems = input.contentItems
+    .map((item) => ({
+      sourceItemId: Number.isInteger(item.sourceItemId) ? item.sourceItemId : null,
+      name: item.name.trim() || 'Bài viết',
+      variants: item.variants.map((variant) => variant.trim()).filter(Boolean)
+    }))
+    .filter((item) => item.variants.length > 0)
+  if (actions.sendMessage && !contentItems.length) throw new Error('Batch gửi tin phải có ít nhất một nội dung.')
+
+  const attachmentPaths = input.attachmentPaths.map((path) => path.trim()).filter(Boolean)
+  if (actions.sendAttachment && !attachmentPaths.length) throw new Error('Batch gửi file phải có ít nhất một đường dẫn attachment.')
+  if (attachmentPaths.length > 20) throw new Error('Batch Zalo chỉ nhận tối đa 20 attachment cho mỗi target.')
+
+  const friendMessage = input.friendMessage?.trim() || null
+  if (friendMessage && friendMessage.length > 300) throw new Error('Lời nhắn kết bạn Zalo quá dài.')
+
+  const concurrency = Math.max(1, Math.min(Math.floor(input.concurrency || 1), accountIds.length, 20))
+  const delayMinMs = Math.max(0, Math.min(Math.floor(input.delayMinMs || 0), 3_600_000))
+  const delayMaxMs = Math.max(delayMinMs, Math.min(Math.floor(input.delayMaxMs || delayMinMs), 3_600_000))
+
+  return {
+    accountIds,
+    targets,
+    actions,
+    contentItems,
+    contentMode: input.contentMode === 'random' ? 'random' : 'sequential',
+    attachmentPaths,
+    friendMessage,
+    concurrency,
+    delayMinMs,
+    delayMaxMs,
+    failurePolicy: input.failurePolicy === 'stop_run' ? 'stop_run' : 'continue'
+  }
 }
 
 export function zaloActionResult(
