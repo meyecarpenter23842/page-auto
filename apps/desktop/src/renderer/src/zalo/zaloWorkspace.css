@@ -1,102 +1,86 @@
-.zalo-tool-shell {
-  gap: 12px;
+.workspace-zalo {
+  background: #f3f6fb;
+  color: #18243a;
 }
 
-.zalo-tool-header {
+.workspace-zalo .topbar {
+  background: #f3f6fb;
+  border-bottom-color: #dfe6ef;
+}
+
+.workspace-zalo .topbar h1,
+.workspace-zalo .topbar .eyebrow {
+  color: #17243a;
+}
+
+.zalo-tool-shell {
+  gap: 10px;
+}
+
+.zalo-workspace-titlebar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 18px;
-  padding: 16px 18px;
+  gap: 12px;
+  padding: 2px 2px 0;
 }
 
-.zalo-tool-header h2,
-.zalo-pane-title h2,
-.zalo-result-area h3 {
-  margin: 0;
+.zalo-workspace-titlebar > div:first-child {
+  display: grid;
+  gap: 2px;
 }
 
-.zalo-tool-header p,
-.zalo-pane-title p,
-.zalo-settings-panel > p {
-  margin: 5px 0 0;
-  color: #748197;
-  font-size: 12px;
+.zalo-workspace-titlebar > div:first-child span {
+  color: #738198;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.zalo-workspace-titlebar > div:first-child strong {
+  color: #17243a;
+  font-size: 18px;
 }
 
 .zalo-tool-counters {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
 }
 
-.zalo-tool-counters span,
-.zalo-selection-chip,
-.zalo-running-chip {
+.zalo-tool-counters span {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  min-height: 30px;
-  padding: 5px 9px;
-  border: 1px solid #dce4ef;
-  border-radius: 8px;
-  background: #f7f9fc;
-  font-size: 12px;
+  min-height: 28px;
+  padding: 4px 8px;
+  border: 1px solid #d7e0ec;
+  border-radius: 999px;
+  background: #fff;
+  color: #5f6d82;
+  font-size: 11px;
 }
 
 .zalo-tool-counters strong {
-  font-size: 14px;
+  color: #18243a;
+  font-size: 12px;
 }
 
 .zalo-notice {
   margin: 0;
 }
 
-.zalo-workbench-grid {
-  min-height: 0;
-  display: grid;
-  grid-template-columns: minmax(440px, 0.95fr) minmax(520px, 1.05fr);
-  gap: 12px;
-  align-items: start;
-}
-
-.zalo-account-pane,
-.zalo-action-pane {
-  min-width: 0;
-  padding: 16px;
-}
-
-.zalo-pane-title {
-  min-height: 44px;
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 10px;
-}
-
-.zalo-selection-chip {
-  max-width: 260px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.zalo-running-chip {
-  color: #175cd3;
-  border-color: #b7d0ff;
-  background: #eef5ff;
-}
-
 .zalo-account-table-wrap {
   max-height: 350px;
   overflow: auto;
-  border: 1px solid #e3e9f2;
-  border-radius: 10px;
+  border: 1px solid #e0e6ef;
+  border-radius: 8px;
+  background: #fff;
 }
 
 .zalo-account-table {
-  min-width: 620px;
+  min-width: 720px;
 }
 
 .zalo-account-table th,
@@ -106,38 +90,29 @@
   vertical-align: middle;
 }
 
-.zalo-account-table tbody tr {
-  cursor: pointer;
-}
-
-.zalo-account-table tbody tr.is-selected {
-  background: rgba(37, 99, 235, 0.09);
-  box-shadow: inset 3px 0 0 #2563eb;
-}
-
 .zalo-account-actions,
 .zalo-run-actions {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
   flex-wrap: wrap;
-  margin-top: 10px;
 }
 
 .zalo-account-actions .button,
 .zalo-run-actions .button {
-  min-height: 32px;
-  padding: 7px 10px;
+  min-height: 30px;
+  padding: 6px 9px;
 }
 
 .zalo-status {
   display: inline-flex;
   align-items: center;
-  min-height: 25px;
+  min-height: 24px;
   padding: 3px 7px;
   border-radius: 999px;
   background: #eef2f7;
-  font-size: 11px;
+  color: #59677b;
+  font-size: 10px;
   font-weight: 700;
   white-space: nowrap;
 }
@@ -161,15 +136,23 @@
 }
 
 .zalo-inline-details,
-.zalo-history,
 .zalo-settings-panel {
-  margin-top: 12px;
+  margin-top: 0;
 }
 
-.zalo-inline-details summary,
-.zalo-history summary,
-.zalo-settings-panel summary {
+.zalo-settings-panel {
+  padding: 10px 12px;
+  border: 1px solid #d7e0ec;
+  border-radius: 8px;
+  background: #fff;
+  color: #18243a;
+}
+
+.zalo-settings-panel summary,
+.zalo-inline-details summary {
   cursor: pointer;
+  color: #243149;
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -180,19 +163,21 @@
   margin: 10px 0;
 }
 
-.zalo-compact-form label,
-.zalo-action-form label {
+.zalo-compact-form label {
   display: grid;
   gap: 5px;
   color: #56657a;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 650;
 }
 
-.zalo-compact-form input,
-.zalo-action-form input,
-.zalo-action-form textarea {
+.zalo-compact-form input {
   width: 100%;
+  min-height: 32px;
+  border: 1px solid #ccd6e3;
+  border-radius: 6px;
+  background: #fff;
+  color: #18243a;
 }
 
 .zalo-check {
@@ -206,89 +191,13 @@
   width: auto;
 }
 
-.zalo-action-form {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 9px 10px;
-}
-
-.zalo-action-form .zalo-target-field {
-  grid-column: 1 / -1;
-}
-
-.zalo-action-form textarea {
-  min-height: 92px;
-  resize: vertical;
-}
-
-.zalo-run-separator {
-  width: 1px;
-  height: 28px;
-  margin: 0 2px;
-  background: #dce4ef;
-}
-
-.zalo-result-area {
-  margin-top: 14px;
-  padding-top: 12px;
-  border-top: 1px solid #e4e9f1;
-}
-
-.zalo-result-area h3 {
-  font-size: 14px;
-}
-
-.zalo-result-card {
-  display: grid;
-  gap: 5px;
-  margin-top: 8px;
-  padding: 10px 11px;
-  border: 1px solid #dfe6ef;
-  border-radius: 9px;
-  background: #f8fafc;
-}
-
-.zalo-result-card span {
-  font-size: 12px;
-  line-height: 1.45;
-}
-
-.zalo-result-card small {
-  color: #758195;
-}
-
-.zalo-result-success {
-  border-color: #b7e4c7;
-  background: #f0fdf4;
-}
-
-.zalo-result-needs_attention {
-  border-color: #f5d486;
-  background: #fffbeb;
-}
-
-.zalo-result-failed,
-.zalo-result-stopped {
-  border-color: #f2b8b5;
-  background: #fff5f5;
-}
-
-.zalo-empty-result {
-  margin: 8px 0 0;
-  color: #7b8799;
-  font-size: 12px;
-}
-
-.zalo-settings-panel {
-  padding: 14px 16px;
-}
-
-@media (max-width: 1280px) {
-  .zalo-workbench-grid {
-    grid-template-columns: 1fr;
+@media (max-width: 900px) {
+  .zalo-workspace-titlebar {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
-  .zalo-account-table-wrap {
-    max-height: 300px;
+  .zalo-compact-form {
+    grid-template-columns: 1fr;
   }
 }

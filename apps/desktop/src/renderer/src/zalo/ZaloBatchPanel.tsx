@@ -3,6 +3,8 @@ import { CANONICAL_CONTENT_LIBRARY_SET_ID, type ContentLibraryItem } from '../..
 import type { ZaloAccountView, ZaloBatchRunSnapshot, ZaloBatchStartPayload } from '../../../shared/zalo'
 import './zaloBatchPanel.css'
 
+type ConfigModal = 'targets' | 'content' | 'actions' | null
+
 function terminal(state: ZaloBatchRunSnapshot['state']): boolean {
   return state === 'completed' || state === 'stopped' || state === 'failed'
 }
@@ -24,7 +26,7 @@ function targetList(value: string): string[] {
   return [...new Set(value.split(/\r?\n|[,;]/).map((item) => item.trim()).filter(Boolean))]
 }
 
-function truncate(value: string, max = 220): string {
+function truncate(value: string, max = 180): string {
   const compact = value.replace(/\s+/g, ' ').trim()
   return compact.length > max ? `${compact.slice(0, max)}…` : compact
 }
@@ -50,12 +52,15 @@ export function ZaloBatchPanel({ accounts }: ZaloBatchPanelProps) {
   const [delayMaxSeconds, setDelayMaxSeconds] = useState(8)
   const [run, setRun] = useState<ZaloBatchRunSnapshot | null>(null)
   const [notice, setNotice] = useState('')
+  const [configModal, setConfigModal] = useState<ConfigModal>(null)
 
   useEffect(() => {
     void window.pageAuto.getContentLibrary({ id: CANONICAL_CONTENT_LIBRARY_SET_ID }).then((library) => {
       const items = library?.items.filter((item) => item.enabled) ?? []
       setContentItems(items)
-      setSelectedContentIds((current) => current.length ? current.filter((id) => items.some((item) => item.id === id)) : items.slice(0, 1).map((item) => item.id))
+      setSelectedContentIds((current) => current.length
+        ? current.filter((id) => items.some((item) => item.id === id))
+        : items.slice(0, 1).map((item) => item.id))
     }).catch((error) => setNotice(error instanceof Error ? error.message : String(error)))
   }, [])
 
@@ -63,8 +68,7 @@ export function ZaloBatchPanel({ accounts }: ZaloBatchPanelProps) {
     setSelectedAccountIds((current) => {
       const valid = current.filter((id) => accounts.some((account) => account.id === id))
       if (valid.length) return valid
-      const ready = accounts.filter((account) => account.sessionStatus === 'ready').map((account) => account.id)
-      return ready.length ? ready : []
+      return accounts.filter((account) => account.sessionStatus === 'ready').map((account) => account.id)
     })
   }, [accounts])
 
@@ -88,9 +92,12 @@ export function ZaloBatchPanel({ accounts }: ZaloBatchPanelProps) {
   const selectedPreview = selectedContents[0]?.variants[0] ?? ''
   const actionNames = [sendMessage ? 'Gửi tin' : '', sendAttachment ? 'Ảnh/file' : '', addFriend ? 'Kết bạn' : ''].filter(Boolean)
   const safeConcurrency = Math.min(Math.max(1, concurrency), Math.max(1, runnableAccounts.length))
-  const summary = `${runnableAccounts.length}/${selectedAccounts.length} account sẵn sàng · concurrency ${safeConcurrency} · ${targets.length} target · ${selectedContents.length} bài ${contentMode === 'random' ? 'Random' : 'Tuần tự'} · delay ${delayMinSeconds}-${delayMaxSeconds}s · ${actionNames.join(' + ') || 'chưa chọn action'}`
-  const currentProgress = run?.progress.find((item) => item.state === 'running') ?? [...(run?.progress ?? [])].reverse().find((item) => item.state !== 'pending') ?? null
-  const currentAccount = currentProgress?.assignedAccountId == null ? null : accounts.find((account) => account.id === currentProgress.assignedAccountId) ?? null
+  const currentProgress = run?.progress.find((item) => item.state === 'running')
+    ?? [...(run?.progress ?? [])].reverse().find((item) => item.state !== 'pending')
+    ?? null
+  const currentAccount = currentProgress?.assignedAccountId == null
+    ? null
+    : accounts.find((account) => account.id === currentProgress.assignedAccountId) ?? null
 
   const toggleAccount = (id: number) => {
     if (running) return
@@ -110,10 +117,26 @@ export function ZaloBatchPanel({ accounts }: ZaloBatchPanelProps) {
 
   const start = async () => {
     if (!runnableAccounts.length) {
-      setNotice('Không có tài khoản Sẵn sàng. Mở/đăng nhập tài khoản ở phần Quản lý tài khoản trước khi Start.')
+      setNotice('Không có tài khoản Sẵn sàng.')
       return
     }
-    if (blockedAccounts > 0) setNotice(`Bỏ qua ${blockedAccounts} tài khoản chưa sẵn sàng; batch chỉ dùng ${runnableAccounts.length} tài khoản Sẵn sàng.`)
+    if (!targets.length) {
+      setNotice('Chưa có target. Bấm Target để nhập danh sách SĐT.')
+      setConfigModal('targets')
+      return
+    }
+    if (!actionNames.length) {
+      setNotice('Chưa chọn action.')
+      setConfigModal('actions')
+      return
+    }
+    if (sendMessage && !selectedContents.length) {
+      setNotice('Gửi tin đang bật nhưng chưa chọn bài viết.')
+      setConfigModal('content')
+      return
+    }
+
+    if (blockedAccounts > 0) setNotice(`Bỏ qua ${blockedAccounts} tài khoản chưa sẵn sàng.`)
     try {
       const payload: ZaloBatchStartPayload = {
         accountIds: runnableAccounts.map((account) => account.id),
@@ -130,7 +153,7 @@ export function ZaloBatchPanel({ accounts }: ZaloBatchPanelProps) {
       }
       const next = await window.pageAutoZalo.startBatch(payload)
       setRun(next)
-      setNotice(`Đã Start ${next.totalTargets} target với ${next.accountIds.length} tài khoản sẵn sàng.`)
+      setNotice('')
     } catch (error) {
       setNotice(error instanceof Error ? error.message : String(error))
     }
@@ -151,17 +174,19 @@ export function ZaloBatchPanel({ accounts }: ZaloBatchPanelProps) {
   }
 
   return (
-    <div className="panel zalo-batch-panel">
+    <div className="zalo-batch-panel">
       <div className="zalo-batch-commandbar">
-        <div className="zalo-run-summary">
-          <span>Tóm tắt lượt chạy</span>
-          <strong>{summary}</strong>
-          {blockedAccounts > 0 ? <small>{blockedAccounts} tài khoản đã chọn nhưng chưa sẵn sàng sẽ không được cấp target.</small> : <small>Session được kiểm trước khi Start; batch chỉ snapshot các tài khoản Sẵn sàng.</small>}
+        <div className="zalo-run-facts">
+          <span><b>{runnableAccounts.length}</b> TK</span>
+          <span><b>{targets.length}</b> target</span>
+          <span><b>{selectedContents.length}</b> bài</span>
+          <span><b>{safeConcurrency}</b> song song</span>
+          <span><b>{delayMinSeconds}-{delayMaxSeconds}s</b> delay</span>
         </div>
         <div className="zalo-run-actions zalo-run-actions-top">
           <button className="button primary" type="button" disabled={running} onClick={() => void start()}>Start</button>
-          <button className="button secondary" type="button" disabled={!run || terminal(run.state) || run.state === 'paused'} onClick={() => void control('pause')}>Pause</button>
-          <button className="button secondary" type="button" disabled={!run || terminal(run.state) || run.state !== 'paused'} onClick={() => void control('resume')}>Resume</button>
+          <button className="button secondary" type="button" disabled={!run || terminal(run.state) || run.state === 'paused'} onClick={() => void control('pause')}>Tạm dừng</button>
+          <button className="button secondary" type="button" disabled={!run || terminal(run.state) || run.state !== 'paused'} onClick={() => void control('resume')}>Tiếp tục</button>
           <button className="button secondary" type="button" disabled={!run || terminal(run.state)} onClick={() => void control('stop')}>Stop</button>
         </div>
       </div>
@@ -169,100 +194,86 @@ export function ZaloBatchPanel({ accounts }: ZaloBatchPanelProps) {
       {notice ? <div className="notice-card zalo-notice">{notice}</div> : null}
 
       <div className="zalo-automation-grid">
-        <div className="zalo-automation-left">
-          <section className="zalo-batch-card">
-            <div className="zalo-batch-card-heading">
-              <div><span>Tài khoản</span><strong>Danh sách chạy</strong></div>
-              <small>{runnableAccounts.length}/{selectedAccounts.length} sẵn sàng · {accounts.length} tổng</small>
-            </div>
-            <div className="table-wrap zalo-batch-account-table-wrap">
-              <table className="data-table zalo-batch-account-table">
-                <thead><tr><th>Bật</th><th>SĐT</th><th>Tên</th><th>Session</th><th>Hoạt động</th></tr></thead>
-                <tbody>
-                  {accounts.map((account) => {
-                    const checked = selectedAccountIds.includes(account.id)
-                    return (
-                      <tr key={account.id} className={account.sessionStatus !== 'ready' ? 'zalo-account-not-ready' : ''}>
-                        <td><input type="checkbox" checked={checked} disabled={running} onChange={() => toggleAccount(account.id)} /></td>
-                        <td><strong>{account.phone}</strong></td>
-                        <td>{account.displayName || '—'}</td>
-                        <td><span className={`zalo-status zalo-status-${account.sessionStatus}`}>{statusLabel(account.sessionStatus)}</span></td>
-                        <td>{accountActivity(account.id)}</td>
-                      </tr>
-                    )
-                  })}
-                  {!accounts.length ? <tr><td colSpan={5}>Chưa có tài khoản Zalo.</td></tr> : null}
-                </tbody>
-              </table>
-            </div>
-            <div className="zalo-batch-options zalo-batch-options-compact">
-              <label>TK song song<input type="number" min={1} max={Math.max(1, runnableAccounts.length)} value={concurrency} disabled={running} onChange={(event) => setConcurrency(Math.max(1, Number(event.target.value) || 1))} /></label>
-              <label>Delay min (s)<input type="number" min={0} value={delayMinSeconds} disabled={running} onChange={(event) => setDelayMinSeconds(Math.max(0, Number(event.target.value) || 0))} /></label>
-              <label>Delay max (s)<input type="number" min={0} value={delayMaxSeconds} disabled={running} onChange={(event) => setDelayMaxSeconds(Math.max(0, Number(event.target.value) || 0))} /></label>
-              <label>Khi lỗi<select value={failurePolicy} disabled={running} onChange={(event) => setFailurePolicy(event.target.value as 'continue' | 'stop_run')}><option value="continue">Chạy tiếp</option><option value="stop_run">Dừng lượt</option></select></label>
-            </div>
-          </section>
-        </div>
+        <section className="zalo-batch-card zalo-account-run-card">
+          <div className="zalo-batch-card-heading">
+            <div><span>Tài khoản</span><strong>Danh sách chạy</strong></div>
+            <small>{runnableAccounts.length}/{selectedAccounts.length} sẵn sàng · {accounts.length} tổng</small>
+          </div>
+          <div className="table-wrap zalo-batch-account-table-wrap">
+            <table className="data-table zalo-batch-account-table">
+              <thead><tr><th>Bật</th><th>SĐT</th><th>Tên</th><th>Session</th><th>Hoạt động</th></tr></thead>
+              <tbody>
+                {accounts.map((account) => {
+                  const checked = selectedAccountIds.includes(account.id)
+                  return (
+                    <tr key={account.id} className={account.sessionStatus !== 'ready' ? 'zalo-account-not-ready' : ''}>
+                      <td><input type="checkbox" checked={checked} disabled={running} onChange={() => toggleAccount(account.id)} /></td>
+                      <td><strong>{account.phone}</strong></td>
+                      <td>{account.displayName || '—'}</td>
+                      <td><span className={`zalo-status zalo-status-${account.sessionStatus}`}>{statusLabel(account.sessionStatus)}</span></td>
+                      <td>{accountActivity(account.id)}</td>
+                    </tr>
+                  )
+                })}
+                {!accounts.length ? <tr><td colSpan={5}>Chưa có tài khoản Zalo.</td></tr> : null}
+              </tbody>
+            </table>
+          </div>
+          <div className="zalo-batch-options">
+            <label>TK song song<input type="number" min={1} max={Math.max(1, runnableAccounts.length)} value={concurrency} disabled={running} onChange={(event) => setConcurrency(Math.max(1, Number(event.target.value) || 1))} /></label>
+            <label>Delay min (s)<input type="number" min={0} value={delayMinSeconds} disabled={running} onChange={(event) => setDelayMinSeconds(Math.max(0, Number(event.target.value) || 0))} /></label>
+            <label>Delay max (s)<input type="number" min={0} value={delayMaxSeconds} disabled={running} onChange={(event) => setDelayMaxSeconds(Math.max(0, Number(event.target.value) || 0))} /></label>
+            <label>Khi lỗi<select value={failurePolicy} disabled={running} onChange={(event) => setFailurePolicy(event.target.value as 'continue' | 'stop_run')}><option value="continue">Chạy tiếp</option><option value="stop_run">Dừng lượt</option></select></label>
+          </div>
+        </section>
 
         <div className="zalo-automation-right">
           <section className={`zalo-batch-card zalo-runtime-preview runtime-${run?.state ?? 'idle'}`}>
             <div className="zalo-batch-card-heading">
-              <div><span>Đang xử lý</span><strong>{run ? `${run.completedTargets}/${run.totalTargets} target · ${run.state}` : 'Chưa chạy'}</strong></div>
+              <div><span>Đang xử lý</span><strong>{run ? `${run.completedTargets}/${run.totalTargets} target` : 'Chưa chạy'}</strong></div>
               {currentAccount ? <small>{currentAccount.phone}{currentAccount.displayName ? ` · ${currentAccount.displayName}` : ''}</small> : null}
             </div>
+
             {currentProgress ? (
               <div className="zalo-runtime-body">
-                <div className="zalo-runtime-meta"><span>Account <b>{currentAccount?.phone ?? `#${currentProgress.assignedAccountId ?? '—'}`}</b></span><span>Target <b>{currentProgress.targetPhone}</b></span><span>Trạng thái <b>{currentProgress.state}</b></span></div>
+                <div className="zalo-runtime-meta">
+                  <span>TK <b>{currentAccount?.phone ?? `#${currentProgress.assignedAccountId ?? '—'}`}</b></span>
+                  <span>Target <b>{currentProgress.targetPhone}</b></span>
+                  <span><b>{currentProgress.state}</b></span>
+                </div>
                 <strong>{currentProgress.message}</strong>
-                <p>{currentProgress.results.length ? currentProgress.results.map((result) => `${result.action}: ${result.status}/${result.code}`).join(' · ') : 'Đang chuẩn bị action và xác minh target.'}</p>
+                <p>{currentProgress.results.length
+                  ? currentProgress.results.map((result) => `${result.action}: ${result.status}`).join(' · ')
+                  : 'Đang chuẩn bị action.'}</p>
               </div>
             ) : (
               <div className="zalo-runtime-empty">
-                <strong>{selectedContents.length ? `${selectedContents.length} bài đã chọn · ${variantCount} biến thể` : 'Chưa chọn bài'}</strong>
-                <p>{selectedPreview ? truncate(selectedPreview) : 'Chọn target, bài viết và action ở các mục cấu hình bên dưới rồi Start.'}</p>
+                <div>
+                  <strong>{selectedContents[0]?.name || 'Chưa chọn bài'}</strong>
+                  <span>{selectedContents.length ? `${selectedContents.length} bài · ${variantCount} biến thể · ${contentMode === 'random' ? 'Random' : 'Tuần tự'}` : 'Bấm Bài viết để chọn từ Thư viện chung'}</span>
+                </div>
+                <p>{selectedPreview ? truncate(selectedPreview) : 'Preview bài hiện tại sẽ hiển thị ở đây.'}</p>
               </div>
             )}
           </section>
 
-          <section className="zalo-batch-card zalo-config-stack">
-            <div className="zalo-batch-card-heading"><div><span>Cấu hình</span><strong>Target · Bài viết · Action</strong></div><small>Mỗi mục chỉnh riêng</small></div>
-
-            <details className="zalo-config-card" open>
-              <summary><span>Target</span><strong>{targets.length} SĐT</strong><small>Mỗi dòng một số</small></summary>
-              <textarea value={targetsText} disabled={running} onChange={(event) => setTargetsText(event.target.value)} placeholder={'0912345678\n0987654321\n...'} />
-            </details>
-
-            <details className="zalo-config-card">
-              <summary><span>Bài viết</span><strong>{selectedContents.length}/{contentItems.length} bài · {variantCount} biến thể</strong><small>{contentMode === 'random' ? 'Random' : 'Tuần tự'}</small></summary>
-              <div className="zalo-content-mode-row"><label>Chọn bài<select value={contentMode} disabled={running || !sendMessage} onChange={(event) => setContentMode(event.target.value as 'sequential' | 'random')}><option value="sequential">Tuần tự</option><option value="random">Random</option></select></label></div>
-              <div className="zalo-batch-scroll">
-                {contentItems.map((item) => (
-                  <label key={item.id} className="zalo-check-row">
-                    <input type="checkbox" checked={selectedContentIds.includes(item.id)} disabled={running || !sendMessage} onChange={() => toggleContent(item.id)} />
-                    <span><b>{item.name}</b>{item.variants[0] ? <em>{truncate(item.variants[0], 90)}</em> : null}</span><small>{item.variants.length} biến thể</small>
-                  </label>
-                ))}
-                {!contentItems.length ? <small>Kho bài viết chưa có bài.</small> : null}
-              </div>
-            </details>
-
-            <details className="zalo-config-card">
-              <summary><span>Action</span><strong>{actionNames.join(' + ') || 'Chưa chọn'}</strong><small>Thứ tự theo action runtime</small></summary>
-              <div className="zalo-action-config-grid">
-                <label className="zalo-check-row"><input type="checkbox" checked={sendMessage} disabled={running} onChange={(event) => setSendMessage(event.target.checked)} /><span>Gửi tin</span></label>
-                <label className="zalo-check-row"><input type="checkbox" checked={sendAttachment} disabled={running} onChange={(event) => setSendAttachment(event.target.checked)} /><span>Gửi ảnh/file</span></label>
-                <label className="zalo-check-row"><input type="checkbox" checked={addFriend} disabled={running} onChange={(event) => setAddFriend(event.target.checked)} /><span>Kết bạn</span></label>
-              </div>
-              {sendAttachment ? <label className="zalo-config-field">Ảnh/file bổ sung — mỗi dòng một đường dẫn<textarea value={attachmentPaths} disabled={running} onChange={(event) => setAttachmentPaths(event.target.value)} placeholder={'F:\\media\\anh-1.jpg\nF:\\media\\file.pdf'} /></label> : null}
-              {addFriend ? <label className="zalo-config-field">Lời nhắn kết bạn<textarea value={friendMessage} disabled={running} onChange={(event) => setFriendMessage(event.target.value)} placeholder="Có thể để trống" /></label> : null}
-            </details>
-          </section>
+          <div className="zalo-config-toolbar" aria-label="Cấu hình Zalo batch">
+            <button type="button" className="zalo-config-button" disabled={running} onClick={() => setConfigModal('targets')}>
+              <span>Target</span><strong>{targets.length} SĐT</strong>
+            </button>
+            <button type="button" className="zalo-config-button" disabled={running} onClick={() => setConfigModal('content')}>
+              <span>Bài viết</span><strong>{selectedContents.length} bài · {variantCount} biến thể</strong>
+            </button>
+            <button type="button" className="zalo-config-button" disabled={running} onClick={() => setConfigModal('actions')}>
+              <span>Action</span><strong>{actionNames.join(' + ') || 'Chưa chọn'}</strong>
+            </button>
+          </div>
         </div>
       </div>
 
       {run ? (
-        <div className="zalo-result-area zalo-batch-results">
-          <div className="zalo-batch-card-heading"><div><span>Runtime</span><strong>Progress từng target</strong></div><small>{run.successTargets} thành công · {run.failedTargets} lỗi</small></div>
+        <section className="zalo-batch-card zalo-batch-results">
+          <div className="zalo-batch-card-heading"><div><span>Runtime</span><strong>Tiến độ từng target</strong></div><small>{run.successTargets} thành công · {run.failedTargets} lỗi</small></div>
           <div className="table-wrap zalo-batch-progress-wrap">
             <table className="data-table">
               <thead><tr><th>#</th><th>Target</th><th>Tài khoản</th><th>Trạng thái</th><th>Kết quả</th></tr></thead>
@@ -282,6 +293,65 @@ export function ZaloBatchPanel({ accounts }: ZaloBatchPanelProps) {
               </tbody>
             </table>
           </div>
+        </section>
+      ) : null}
+
+      {configModal ? (
+        <div className="zalo-modal-backdrop" role="presentation" onMouseDown={(event) => {
+          if (event.currentTarget === event.target) setConfigModal(null)
+        }}>
+          <section className="zalo-config-modal" role="dialog" aria-modal="true" aria-label={`Cấu hình ${configModal}`}>
+            <header className="zalo-modal-header">
+              <div>
+                <span>Cấu hình</span>
+                <strong>{configModal === 'targets' ? 'Target' : configModal === 'content' ? 'Bài viết' : 'Action'}</strong>
+              </div>
+              <button className="button secondary" type="button" onClick={() => setConfigModal(null)}>Đóng</button>
+            </header>
+
+            {configModal === 'targets' ? (
+              <div className="zalo-modal-body">
+                <textarea className="zalo-target-editor" value={targetsText} onChange={(event) => setTargetsText(event.target.value)} placeholder={'0912345678\n0987654321\n...'} />
+                <div className="zalo-modal-footer"><span>{targets.length} target hợp lệ sau khi loại trùng</span><button className="button primary" type="button" onClick={() => setConfigModal(null)}>Xong</button></div>
+              </div>
+            ) : null}
+
+            {configModal === 'content' ? (
+              <div className="zalo-modal-body">
+                <div className="zalo-library-toolbar">
+                  <strong>Thư viện bài viết chung</strong>
+                  <select value={contentMode} onChange={(event) => setContentMode(event.target.value as 'sequential' | 'random')}>
+                    <option value="sequential">Tuần tự</option>
+                    <option value="random">Random</option>
+                  </select>
+                </div>
+                <div className="zalo-library-list">
+                  {contentItems.map((item) => (
+                    <label key={item.id} className={selectedContentIds.includes(item.id) ? 'zalo-library-row is-selected' : 'zalo-library-row'}>
+                      <input type="checkbox" checked={selectedContentIds.includes(item.id)} onChange={() => toggleContent(item.id)} />
+                      <span><b>{item.name}</b><em>{item.variants[0] ? truncate(item.variants[0], 120) : 'Không có nội dung'}</em></span>
+                      <small>{item.variants.length} biến thể</small>
+                    </label>
+                  ))}
+                  {!contentItems.length ? <div className="zalo-library-empty">Thư viện chung chưa có bài.</div> : null}
+                </div>
+                <div className="zalo-modal-footer"><span>{selectedContents.length} bài · {variantCount} biến thể</span><button className="button primary" type="button" onClick={() => setConfigModal(null)}>Xong</button></div>
+              </div>
+            ) : null}
+
+            {configModal === 'actions' ? (
+              <div className="zalo-modal-body">
+                <div className="zalo-action-grid">
+                  <label><input type="checkbox" checked={sendMessage} onChange={(event) => setSendMessage(event.target.checked)} /><span><b>Gửi tin</b><small>Dùng bài từ Thư viện chung</small></span></label>
+                  <label><input type="checkbox" checked={sendAttachment} onChange={(event) => setSendAttachment(event.target.checked)} /><span><b>Gửi ảnh/file</b><small>File bổ sung theo đường dẫn</small></span></label>
+                  <label><input type="checkbox" checked={addFriend} onChange={(event) => setAddFriend(event.target.checked)} /><span><b>Kết bạn</b><small>Có thể kèm lời nhắn</small></span></label>
+                </div>
+                {sendAttachment ? <label className="zalo-modal-field">Ảnh/file — mỗi dòng một đường dẫn<textarea value={attachmentPaths} onChange={(event) => setAttachmentPaths(event.target.value)} placeholder={'F:\\media\\anh-1.jpg\nF:\\media\\file.pdf'} /></label> : null}
+                {addFriend ? <label className="zalo-modal-field">Lời nhắn kết bạn<textarea value={friendMessage} onChange={(event) => setFriendMessage(event.target.value)} placeholder="Có thể để trống" /></label> : null}
+                <div className="zalo-modal-footer"><span>{actionNames.join(' + ') || 'Chưa chọn action'}</span><button className="button primary" type="button" onClick={() => setConfigModal(null)}>Xong</button></div>
+              </div>
+            ) : null}
+          </section>
         </div>
       ) : null}
     </div>
