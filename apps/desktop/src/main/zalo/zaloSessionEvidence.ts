@@ -19,15 +19,16 @@ export interface WaitForZaloSessionOptions {
 
 /**
  * Conservative classifier:
- * - explicit challenge/login/QR surfaces win over generic app-shell hints;
- * - ready requires authenticated workspace evidence such as the chat search/composer shell;
+ * - explicit challenge always wins;
+ * - an explicit login surface wins over stale authenticated-workspace hints, while QR on that login surface remains qr_waiting;
+ * - authenticated chat evidence wins over stray page content that merely looks like a QR code;
  * - an otherwise unknown DOM never becomes ready.
  */
 export function classifyZaloSessionEvidence(evidence: ZaloSessionEvidence): ZaloSessionStatus {
   if (evidence.attentionSurface) return 'needs_attention'
-  if (evidence.qrSurface) return 'qr_waiting'
-  if (evidence.loginSurface) return 'login_required'
+  if (evidence.loginSurface) return evidence.qrSurface ? 'qr_waiting' : 'login_required'
   if (evidence.authenticatedShell || evidence.chatSearchSurface || evidence.composerSurface) return 'ready'
+  if (evidence.qrSurface) return 'qr_waiting'
   return 'needs_attention'
 }
 

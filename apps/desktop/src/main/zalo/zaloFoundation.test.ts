@@ -68,7 +68,7 @@ describe('Zalo Batch 1 foundation', () => {
     expect(classifyZaloSessionEvidence({ authenticatedShell: true, loginSurface: false, qrSurface: false, attentionSurface: false })).toBe('ready')
   })
 
-  it('accepts visible authenticated chat surfaces but never lets them override a challenge/login surface', () => {
+  it('accepts visible authenticated chat surfaces but never lets challenge/login evidence override them accidentally', () => {
     expect(classifyZaloSessionEvidence({
       authenticatedShell: false,
       loginSurface: false,
@@ -95,6 +95,15 @@ describe('Zalo Batch 1 foundation', () => {
       chatSearchSurface: true,
       composerSurface: false
     })).toBe('login_required')
+
+    expect(classifyZaloSessionEvidence({
+      authenticatedShell: false,
+      loginSurface: false,
+      qrSurface: true,
+      attentionSurface: false,
+      chatSearchSurface: true,
+      composerSurface: false
+    })).toBe('ready')
   })
 
   it('waits through a transient unknown DOM until authenticated chat evidence appears', async () => {
