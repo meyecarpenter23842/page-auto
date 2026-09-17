@@ -99,14 +99,17 @@ describe('Zalo Batch 3 action modules', () => {
     expect(worker).toContain("sessionStatus !== 'ready'")
   })
 
-  it('keeps Batch 3 single-target and renderer behind typed IPC without a Zalo post store', () => {
+  it('keeps Batch 3 action runtime behind typed IPC while bulk automation is the primary renderer surface', () => {
     const renderer = readFileSync(join(process.cwd(), 'src/renderer/src/zalo/ZaloWorkspace.tsx'), 'utf8')
+    const batchPanel = readFileSync(join(process.cwd(), 'src/renderer/src/zalo/ZaloBatchPanel.tsx'), 'utf8')
     const preload = readFileSync(join(process.cwd(), 'src/preload/zaloBridge.ts'), 'utf8')
-    const combined = `${renderer}\n${preload}`
-    expect(renderer).toContain('executeAction')
-    expect(renderer).toContain("const [targetPhone, setTargetPhone] = useState('')")
-    expect(renderer).toContain('Batch hiện tại chạy một account + một target')
-    expect(renderer).toContain('name="zalo-run-account"')
+    const combined = `${renderer}\n${batchPanel}\n${preload}`
+
+    expect(preload).toContain('executeAction')
+    expect(batchPanel).toContain('startBatch')
+    expect(batchPanel).toContain('getBatchStatus')
+    expect(renderer).toContain('<ZaloBatchPanel accounts={accounts} />')
+    expect(renderer).not.toContain("const [targetPhone, setTargetPhone] = useState('')")
     expect(combined).not.toMatch(/playwright|better-sqlite3|node:fs|node:path|articleManager|zalo.*post.*store/i)
   })
 })
