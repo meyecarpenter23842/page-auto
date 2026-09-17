@@ -66,7 +66,7 @@ describe('Zalo Batch 2 login/session', () => {
     expect(preload).toContain('ZaloAccountView')
     expect(preload).not.toContain('ZaloAccountRecord')
     expect(renderer).not.toMatch(/account\.password\b/)
-    expect(renderer).toContain('selectedAccount.hasPassword')
+    expect(renderer).toContain('account.hasPassword')
     expect(accountView).toContain('passwordMasked: string')
     expect(accountView).not.toMatch(/\n\s*password:\s/)
   })
