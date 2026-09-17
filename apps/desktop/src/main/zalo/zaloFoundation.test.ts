@@ -8,7 +8,7 @@ import { applyZaloMigration } from '../database/zaloMigration'
 import { ZaloAccountRepository } from '../database/zaloRepository'
 import { ZaloExecutionCoordinator } from './zaloExecutionCoordinator'
 import { appManagedZaloProfileRoot, resolveZaloProfileDirectory, ZaloProfileResolutionError } from './zaloProfileResolver'
-import { classifyZaloSessionEvidence } from './zaloSessionEvidence'
+import { classifyZaloSessionEvidence, waitForZaloSessionState } from './zaloSessionEvidence'
 
 const roots: string[] = []
 function tempRoot(): string { const root = mkdtempSync(join(tmpdir(), 'page-auto-zalo-')); roots.push(root); return root }
@@ -68,6 +68,55 @@ describe('Zalo Batch 1 foundation', () => {
     expect(classifyZaloSessionEvidence({ authenticatedShell: true, loginSurface: false, qrSurface: false, attentionSurface: false })).toBe('ready')
   })
 
+  it('accepts visible authenticated chat surfaces but never lets them override a challenge/login surface', () => {
+    expect(classifyZaloSessionEvidence({
+      authenticatedShell: false,
+      loginSurface: false,
+      qrSurface: false,
+      attentionSurface: false,
+      chatSearchSurface: true,
+      composerSurface: false
+    })).toBe('ready')
+
+    expect(classifyZaloSessionEvidence({
+      authenticatedShell: false,
+      loginSurface: false,
+      qrSurface: false,
+      attentionSurface: true,
+      chatSearchSurface: true,
+      composerSurface: true
+    })).toBe('needs_attention')
+
+    expect(classifyZaloSessionEvidence({
+      authenticatedShell: false,
+      loginSurface: true,
+      qrSurface: false,
+      attentionSurface: false,
+      chatSearchSurface: true,
+      composerSurface: false
+    })).toBe('login_required')
+  })
+
+  it('waits through a transient unknown DOM until authenticated chat evidence appears', async () => {
+    let calls = 0
+    const status = await waitForZaloSessionState(async () => {
+      calls += 1
+      if (calls === 1) {
+        return { authenticatedShell: false, loginSurface: false, qrSurface: false, attentionSurface: false }
+      }
+      return {
+        authenticatedShell: false,
+        loginSurface: false,
+        qrSurface: false,
+        attentionSurface: false,
+        chatSearchSurface: true
+      }
+    }, { timeoutMs: 100, pollIntervalMs: 0, sleep: async () => undefined })
+
+    expect(status).toBe('ready')
+    expect(calls).toBeGreaterThanOrEqual(2)
+  })
+
   it('owns a separate Zalo lease namespace so numeric Facebook IDs cannot collide', () => {
     const zalo = new ZaloExecutionCoordinator()
     const first = zalo.tryAcquire(1)
@@ -81,5 +130,13 @@ describe('Zalo Batch 1 foundation', () => {
     const source = readFileSync(join(process.cwd(), 'src/renderer/src/zalo/ZaloWorkspace.tsx'), 'utf8')
     expect(source).not.toMatch(/playwright|better-sqlite3|node:fs|node:path|articleManager|zalo.*post.*store/i)
     expect(source).toContain('window.pageAutoZalo')
+  })
+
+  it('keeps Zalo account selection in the workbench grid instead of a separate tab/dropdown screen', () => {
+    const source = readFileSync(join(process.cwd(), 'src/renderer/src/zalo/ZaloWorkspace.tsx'), 'utf8')
+    expect(source).toContain('zalo-workbench-grid')
+    expect(source).toContain('name="zalo-run-account"')
+    expect(source).not.toMatch(/type TabId|setTab\(|businessAccountId/)
+    expect(source).not.toContain('aria-label="Zalo workspace"')
   })
 })
