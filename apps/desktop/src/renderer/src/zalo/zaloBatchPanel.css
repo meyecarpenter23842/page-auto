@@ -1,68 +1,78 @@
 .zalo-batch-panel {
-  padding: 14px;
+  display: grid;
+  gap: 10px;
 }
 
 .zalo-batch-commandbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 14px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid #e4e9f1;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid #d7e0ec;
+  border-radius: 8px;
+  background: #fff;
 }
 
-.zalo-run-summary {
+.zalo-run-facts {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   min-width: 0;
-  display: grid;
-  gap: 3px;
+  flex-wrap: wrap;
 }
 
-.zalo-run-summary > span,
-.zalo-batch-card-heading span {
-  color: #6f7d91;
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: .08em;
-  text-transform: uppercase;
-}
-
-.zalo-run-summary strong {
-  font-size: 13px;
-  line-height: 1.35;
-}
-
-.zalo-run-summary small,
-.zalo-batch-card-heading small {
-  color: #7a879a;
+.zalo-run-facts span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 28px;
+  padding: 4px 8px;
+  border: 1px solid #e1e7ef;
+  border-radius: 999px;
+  background: #f7f9fc;
+  color: #637188;
   font-size: 11px;
+  white-space: nowrap;
+}
+
+.zalo-run-facts b {
+  color: #16243a;
 }
 
 .zalo-run-actions-top {
-  margin-top: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
   flex-wrap: nowrap;
+}
+
+.zalo-run-actions-top .button {
+  min-height: 30px;
+  padding: 6px 11px;
 }
 
 .zalo-automation-grid {
   display: grid;
-  grid-template-columns: minmax(430px, .9fr) minmax(520px, 1.1fr);
-  gap: 12px;
-  margin-top: 12px;
+  grid-template-columns: minmax(430px, .92fr) minmax(520px, 1.08fr);
+  gap: 10px;
   align-items: start;
 }
 
-.zalo-automation-left,
 .zalo-automation-right {
   min-width: 0;
   display: grid;
-  gap: 12px;
+  gap: 10px;
 }
 
 .zalo-batch-card {
   min-width: 0;
-  padding: 12px;
-  border: 1px solid #dfe6ef;
-  border-radius: 10px;
+  padding: 11px;
+  border: 1px solid #d7e0ec;
+  border-radius: 8px;
   background: #fff;
+  color: #18243a;
 }
 
 .zalo-batch-card-heading {
@@ -70,7 +80,7 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
-  margin-bottom: 9px;
+  margin-bottom: 8px;
 }
 
 .zalo-batch-card-heading > div {
@@ -78,235 +88,379 @@
   gap: 2px;
 }
 
+.zalo-batch-card-heading span {
+  color: #758198;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
 .zalo-batch-card-heading strong {
+  color: #15233a;
   font-size: 14px;
 }
 
+.zalo-batch-card-heading small {
+  color: #7a8799;
+  font-size: 11px;
+}
+
 .zalo-batch-account-table-wrap {
-  max-height: 320px;
+  max-height: 315px;
   overflow: auto;
-  border: 1px solid #e4e9f1;
-  border-radius: 8px;
+  border: 1px solid #dfe6ef;
+  border-radius: 6px;
+  background: #fff;
 }
 
 .zalo-batch-account-table {
-  min-width: 650px;
+  min-width: 640px;
 }
 
 .zalo-batch-account-table th,
 .zalo-batch-account-table td {
-  padding-top: 7px;
-  padding-bottom: 7px;
+  padding: 7px 8px;
   vertical-align: middle;
 }
 
+.zalo-batch-account-table th {
+  background: #f4f7fb;
+  color: #314159;
+}
+
+.zalo-batch-account-table td {
+  color: #233149;
+}
+
 .zalo-account-not-ready {
-  background: #fffaf0;
+  background: #fff9ec;
 }
 
 .zalo-batch-options {
   display: grid;
-  grid-template-columns: repeat(4, minmax(110px, 1fr));
+  grid-template-columns: repeat(4, minmax(105px, 1fr));
   gap: 8px;
+  margin-top: 8px;
 }
 
-.zalo-batch-options-compact {
-  margin-top: 9px;
-}
-
-.zalo-batch-options label,
-.zalo-content-mode-row label,
-.zalo-config-field {
+.zalo-batch-options label {
   display: grid;
   gap: 4px;
-  color: #56657a;
-  font-size: 11px;
+  color: #536178;
+  font-size: 10px;
   font-weight: 700;
 }
 
 .zalo-batch-options input,
-.zalo-batch-options select,
-.zalo-content-mode-row select,
-.zalo-config-field textarea {
+.zalo-batch-options select {
   width: 100%;
+  min-height: 32px;
+  border: 1px solid #ccd6e3;
+  border-radius: 5px;
+  background: #fff;
+  color: #18243a;
 }
 
 .zalo-runtime-preview {
-  min-height: 170px;
+  min-height: 272px;
 }
 
 .zalo-runtime-body,
 .zalo-runtime-empty {
   display: grid;
   gap: 8px;
-  min-height: 105px;
+  min-height: 208px;
   align-content: start;
-  padding: 10px;
-  border-radius: 8px;
+  padding: 12px;
+  border: 1px solid #edf1f6;
+  border-radius: 7px;
   background: #f8fafc;
+}
+
+.zalo-runtime-empty > div {
+  display: grid;
+  gap: 3px;
+}
+
+.zalo-runtime-empty > div > span {
+  color: #738197;
+  font-size: 11px;
 }
 
 .zalo-runtime-body p,
 .zalo-runtime-empty p {
   margin: 0;
-  color: #637188;
+  color: #58677e;
   font-size: 12px;
   line-height: 1.5;
 }
 
 .zalo-runtime-meta {
   display: flex;
-  gap: 7px;
+  gap: 6px;
   flex-wrap: wrap;
 }
 
 .zalo-runtime-meta span {
   padding: 4px 7px;
-  border-radius: 6px;
-  background: #eef3f8;
-  color: #5b6779;
-  font-size: 11px;
+  border: 1px solid #dce5ef;
+  border-radius: 999px;
+  background: #fff;
+  color: #5c6a80;
+  font-size: 10px;
 }
 
-.zalo-config-stack {
+.zalo-config-toolbar {
   display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
-}
-
-.zalo-config-stack > .zalo-batch-card-heading {
-  margin-bottom: 0;
-}
-
-.zalo-config-card {
-  border: 1px solid #e2e8f0;
+  padding: 9px;
+  border: 1px solid #d7e0ec;
   border-radius: 8px;
-  background: #fbfcfe;
-  overflow: hidden;
+  background: #fff;
 }
 
-.zalo-config-card > summary {
-  display: grid;
-  grid-template-columns: 80px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-  min-height: 42px;
+.zalo-config-button {
+  min-width: 0;
+  min-height: 54px;
   padding: 8px 10px;
+  border: 1px solid #cfd9e6;
+  border-radius: 7px;
+  background: #f8fafc;
+  color: #1c2b42;
+  text-align: left;
   cursor: pointer;
-  list-style: none;
 }
 
-.zalo-config-card > summary::-webkit-details-marker {
-  display: none;
+.zalo-config-button:hover:not(:disabled) {
+  border-color: #2d68d8;
+  background: #f0f5ff;
 }
 
-.zalo-config-card > summary span {
-  color: #65748b;
-  font-size: 11px;
+.zalo-config-button:disabled {
+  cursor: default;
+  opacity: .62;
+}
+
+.zalo-config-button span,
+.zalo-config-button strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zalo-config-button span {
+  margin-bottom: 4px;
+  color: #66758b;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.zalo-config-button strong {
+  font-size: 12px;
+}
+
+.zalo-batch-results {
+  margin-top: 0;
+}
+
+.zalo-batch-progress-wrap {
+  max-height: 310px;
+  overflow: auto;
+  border: 1px solid #e0e6ef;
+  border-radius: 6px;
+}
+
+.zalo-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, .46);
+}
+
+.zalo-config-modal {
+  width: min(760px, calc(100vw - 48px));
+  max-height: min(78vh, 760px);
+  overflow: hidden;
+  border: 1px solid #cfd9e6;
+  border-radius: 10px;
+  background: #fff;
+  color: #17243a;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, .24);
+}
+
+.zalo-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid #e3e9f1;
+  background: #f7f9fc;
+}
+
+.zalo-modal-header > div {
+  display: grid;
+  gap: 2px;
+}
+
+.zalo-modal-header span {
+  color: #758198;
+  font-size: 10px;
   font-weight: 800;
   text-transform: uppercase;
 }
 
-.zalo-config-card > summary strong {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
+.zalo-modal-header strong {
+  font-size: 15px;
 }
 
-.zalo-config-card > summary small {
-  color: #8792a3;
-  font-size: 11px;
-}
-
-.zalo-config-card[open] > summary {
-  border-bottom: 1px solid #e7ecf3;
-  background: #f5f8fc;
-}
-
-.zalo-config-card > textarea,
-.zalo-config-card > .zalo-batch-scroll,
-.zalo-config-card > .zalo-action-config-grid,
-.zalo-config-card > .zalo-content-mode-row,
-.zalo-config-card > .zalo-config-field {
-  margin: 9px 10px;
-}
-
-.zalo-config-card > textarea,
-.zalo-config-field textarea {
-  width: calc(100% - 20px);
-  min-height: 92px;
-  resize: vertical;
-}
-
-.zalo-config-field textarea {
-  width: 100%;
-  margin: 0;
-}
-
-.zalo-content-mode-row {
-  display: flex;
-  justify-content: flex-end;
-}
-
-.zalo-batch-scroll {
-  max-height: 210px;
-  overflow: auto;
+.zalo-modal-body {
   display: grid;
-  gap: 5px;
+  gap: 10px;
+  padding: 12px 14px 14px;
+  overflow: auto;
+  max-height: calc(min(78vh, 760px) - 57px);
 }
 
-.zalo-check-row {
+.zalo-target-editor {
+  width: 100%;
+  min-height: 330px;
+  resize: vertical;
+  border: 1px solid #cfd8e5;
+  border-radius: 7px;
+  background: #fff;
+  color: #18243a;
+  padding: 10px;
+}
+
+.zalo-library-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.zalo-library-toolbar select {
+  min-height: 32px;
+  border: 1px solid #ccd6e3;
+  border-radius: 6px;
+  background: #fff;
+  color: #18243a;
+}
+
+.zalo-library-list {
+  display: grid;
+  gap: 6px;
+  max-height: 430px;
+  overflow: auto;
+}
+
+.zalo-library-row {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 7px;
-  min-height: 30px;
-  padding: 4px 6px;
+  gap: 9px;
+  padding: 9px 10px;
+  border: 1px solid #e0e6ef;
   border-radius: 7px;
-  background: #f8fafc;
-  font-size: 12px;
-  font-weight: 500;
+  background: #fff;
+  cursor: pointer;
 }
 
-.zalo-check-row span {
+.zalo-library-row.is-selected {
+  border-color: #90b7ff;
+  background: #f1f6ff;
+  box-shadow: inset 3px 0 0 #2563eb;
+}
+
+.zalo-library-row > span {
   min-width: 0;
+  display: grid;
+  gap: 3px;
 }
 
-.zalo-check-row span em {
-  display: block;
-  margin-top: 2px;
+.zalo-library-row b,
+.zalo-library-row em {
   overflow: hidden;
-  color: #7a879a;
-  font-size: 10px;
-  font-style: normal;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.zalo-check-row small {
-  color: #7a879a;
-  white-space: nowrap;
+.zalo-library-row em {
+  color: #728096;
+  font-size: 11px;
+  font-style: normal;
 }
 
-.zalo-action-config-grid {
+.zalo-library-row small,
+.zalo-library-empty {
+  color: #7b8799;
+  font-size: 11px;
+}
+
+.zalo-action-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
+  gap: 8px;
 }
 
-.zalo-batch-results {
-  margin-top: 12px;
-  padding: 12px;
-  border: 1px solid #dfe6ef;
-  border-radius: 10px;
+.zalo-action-grid > label {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  min-height: 72px;
+  padding: 10px;
+  border: 1px solid #dce4ee;
+  border-radius: 7px;
+  background: #f8fafc;
+  cursor: pointer;
 }
 
-.zalo-batch-progress-wrap {
-  max-height: 360px;
-  overflow: auto;
-  border: 1px solid #e5eaf1;
-  border-radius: 8px;
+.zalo-action-grid span {
+  display: grid;
+  gap: 4px;
+}
+
+.zalo-action-grid small {
+  color: #778499;
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.zalo-modal-field {
+  display: grid;
+  gap: 5px;
+  color: #536178;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.zalo-modal-field textarea {
+  min-height: 90px;
+  resize: vertical;
+  border: 1px solid #cfd8e5;
+  border-radius: 7px;
+  background: #fff;
+  color: #18243a;
+}
+
+.zalo-modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 4px;
+  color: #647289;
+  font-size: 11px;
 }
 
 @media (max-width: 1280px) {
@@ -314,8 +468,13 @@
     grid-template-columns: 1fr;
   }
 
-  .zalo-batch-account-table-wrap {
-    max-height: 270px;
+  .zalo-runtime-preview {
+    min-height: 220px;
+  }
+
+  .zalo-runtime-body,
+  .zalo-runtime-empty {
+    min-height: 150px;
   }
 }
 
@@ -330,15 +489,8 @@
   }
 
   .zalo-batch-options,
-  .zalo-action-config-grid {
+  .zalo-config-toolbar,
+  .zalo-action-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .zalo-config-card > summary {
-    grid-template-columns: 70px minmax(0, 1fr);
-  }
-
-  .zalo-config-card > summary small {
-    grid-column: 2;
   }
 }

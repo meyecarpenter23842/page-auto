@@ -8,7 +8,7 @@ import {
 import { ZaloBatchPanel } from './ZaloBatchPanel'
 import './zaloWorkspace.css'
 
- type BusyState = { id: number; label: string } | null
+type BusyState = { id: number; label: string } | null
 
 const emptyDraft: ZaloAccountDraft = { phone: '', password: '', displayName: '', note: '' }
 
@@ -124,12 +124,8 @@ export function ZaloWorkspace() {
 
   return (
     <section className="panel-stack zalo-tool-shell">
-      <div className="panel zalo-tool-header">
-        <div>
-          <p className="eyebrow">Zalo Automation</p>
-          <h2>Gửi tin / Kết bạn</h2>
-          <p>Chọn tài khoản → target → bài viết/action → Start. Runtime hiển thị account và target đang chạy ngay trên một màn.</p>
-        </div>
+      <div className="zalo-workspace-titlebar">
+        <div><span>Zalo Automation</span><strong>Gửi tin / Kết bạn</strong></div>
         <div className="zalo-tool-counters">
           <span><strong>{accounts.length}</strong> tài khoản</span>
           <span><strong>{readyCount}</strong> sẵn sàng</span>
@@ -142,7 +138,6 @@ export function ZaloWorkspace() {
 
       <details className="panel zalo-settings-panel zalo-account-admin">
         <summary>Quản lý tài khoản Zalo · {accounts.length} tài khoản · {readyCount} sẵn sàng</summary>
-        <p>Mở/kiểm tra hoặc đăng nhập lại tại đây. Tài khoản chưa sẵn sàng sẽ không được đưa vào batch.</p>
         <div className="table-wrap zalo-account-table-wrap">
           <table className="data-table zalo-account-table">
             <thead><tr><th>Số điện thoại</th><th>Tên</th><th>Session</th><th>Ghi chú</th><th>Thao tác</th></tr></thead>
@@ -187,7 +182,6 @@ export function ZaloWorkspace() {
       {settings ? (
         <details className="panel zalo-settings-panel">
           <summary>Cấu hình Chrome Zalo</summary>
-          <p>Cấu hình riêng của Zalo; không đổi Facebook/Email.</p>
           <div className="zalo-compact-form">
             <label>Chrome executable<input value={settings.executablePath ?? ''} onChange={(event) => setSettings({ ...settings, executablePath: event.target.value || null })} placeholder="Để trống = mặc định" /></label>
             <label>Profile Root<input value={settings.profileRoot ?? ''} onChange={(event) => setSettings({ ...settings, profileRoot: event.target.value || null })} placeholder="Để trống = data/zalo-browser-profiles" /></label>

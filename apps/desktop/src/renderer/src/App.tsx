@@ -34,7 +34,7 @@ const routeDescriptions: Record<RouteId, { title: string; description: string }>
   'page-tabs': { title: 'Page Tabs', description: 'Mỗi Page UID là một workspace đa nghiệp vụ: Nhóm, Đăng Tường, Sửa Page và các tác vụ mở rộng dùng chung tầng Facebook.' },
   actions: { title: 'Hành động', description: 'Workspace nhiều tab nghiệp vụ; Kịch bản hiện tại là tab mặc định và các tab Hành động khác sẽ được bổ sung theo module dùng chung.' },
   scanner: { title: 'Quét dữ liệu', description: 'Workspace Scanner dùng chung job lifecycle, Account/session và Dataset; từng loại Nhóm/Page/User/Member là module nghiệp vụ độc lập.' },
-  zalo: { title: 'Zalo', description: 'Tài khoản/session Zalo độc lập, action đơn và Batch 4 gửi tin/kết bạn hàng loạt theo nhiều account.' },
+  zalo: { title: 'Zalo', description: 'Tài khoản/session Zalo độc lập, action đơn và batch gửi tin/kết bạn hàng loạt theo nhiều account.' },
   logs: { title: 'Runtime Logs', description: 'Execution log chi tiết, screenshot evidence, retry disposition và manual-review cho kết quả publish chưa chắc chắn.' },
   settings: { title: 'Cài đặt', description: 'Cấu hình trình duyệt, session, mạng, vận hành và chẩn đoán dùng chung cho PAGE-AUTO.' }
 }
@@ -76,11 +76,13 @@ export function App() {
 
   const workspaceClass = activeRoute === 'page-tabs'
     ? 'workspace workspace-page-tabs'
-    : activeRoute === 'settings'
-      ? 'workspace workspace-settings'
-      : activeRoute === 'content-library'
-        ? 'workspace workspace-content-library'
-        : 'workspace'
+    : activeRoute === 'zalo'
+      ? 'workspace workspace-page-tabs workspace-zalo'
+      : activeRoute === 'settings'
+        ? 'workspace workspace-settings'
+        : activeRoute === 'content-library'
+          ? 'workspace workspace-content-library'
+          : 'workspace'
 
   return (
     <div className="app-shell">
