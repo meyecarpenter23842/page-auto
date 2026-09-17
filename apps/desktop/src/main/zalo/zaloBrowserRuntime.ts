@@ -19,6 +19,7 @@ import { BrowserWindowLayoutManager } from '../browser/browserWindowLayoutManage
 import { ZaloAccountRepository } from '../database/zaloRepository'
 import { ZaloExecutionCoordinator, type ZaloAccountLease } from './zaloExecutionCoordinator'
 import { resolveZaloProfileDirectory, ZaloProfileResolutionError } from './zaloProfileResolver'
+import { interruptedZaloActionResult, type ZaloRuntimeInterruptionReason } from './zaloRuntimeInterruption'
 
 const OPEN_TIMEOUT_MS = 90_000
 const LOGIN_TIMEOUT_MS = 190_000
@@ -261,7 +262,7 @@ export class ZaloBrowserRuntime {
     }
     entry.closing = true
     try { entry.process.postMessage({ type: 'action-control', operation: 'stop' }) } catch { /* shutdown below owns cleanup */ }
-    this.resolvePendingOnClose(accountId, entry, 'Zalo browser đã đóng trước khi operation hoàn tất.')
+    this.resolvePendingOnClose(accountId, entry, 'Zalo browser đã đóng trước khi operation hoàn tất.', 'operator_close')
     await new Promise<void>((resolve) => {
       let done = false
       const finish = (): void => {
@@ -283,7 +284,7 @@ export class ZaloBrowserRuntime {
     for (const [accountId, entry] of this.workers) {
       entry.closing = true
       try { entry.process.postMessage({ type: 'action-control', operation: 'stop' }) } catch { /* best effort */ }
-      this.resolvePendingOnClose(accountId, entry, 'Zalo browser runtime đang đóng.')
+      this.resolvePendingOnClose(accountId, entry, 'Zalo browser runtime đang đóng.', 'runtime_shutdown')
       try { entry.process.kill() } catch { /* already gone */ }
       this.cleanup(accountId, entry)
     }
@@ -366,7 +367,7 @@ export class ZaloBrowserRuntime {
     worker.once('exit', () => {
       if (!entry.closing) {
         this.accounts.updateSessionStatus(accountId, 'browser_error')
-        this.resolvePendingOnClose(accountId, entry, 'Zalo browser worker đã dừng ngoài dự kiến.')
+        this.resolvePendingOnClose(accountId, entry, 'Zalo browser worker đã dừng ngoài dự kiến.', 'worker_crash')
       }
       this.cleanup(accountId, entry)
     })
@@ -401,7 +402,12 @@ export class ZaloBrowserRuntime {
     if (isClosed(message) && message.accountId === accountId) this.cleanup(accountId, entry)
   }
 
-  private resolvePendingOnClose(accountId: number, entry: WorkerEntry, message: string): void {
+  private resolvePendingOnClose(
+    accountId: number,
+    entry: WorkerEntry,
+    message: string,
+    reason: ZaloRuntimeInterruptionReason
+  ): void {
     const pending = entry.pending
     if (!pending) return
     clearTimeout(pending.timer)
@@ -416,7 +422,7 @@ export class ZaloBrowserRuntime {
       })
       return
     }
-    pending.resolve(zaloActionResult(accountId, pending.action.type, pending.action.targetPhone, 'stopped', 'stopped', message))
+    pending.resolve(interruptedZaloActionResult(accountId, pending.action, reason, message))
   }
 
   private cleanup(accountId: number, entry: WorkerEntry): void {
