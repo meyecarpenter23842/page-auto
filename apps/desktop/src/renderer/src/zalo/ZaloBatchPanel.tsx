@@ -77,9 +77,10 @@ function mediaSummary(post: ZaloPostLibraryItem): string {
 
 export interface ZaloBatchPanelProps {
   accounts: ZaloAccountView[]
+  onAccountsChanged?: () => void | Promise<void>
 }
 
-export function ZaloBatchPanel({ accounts }: ZaloBatchPanelProps) {
+export function ZaloBatchPanel({ accounts, onAccountsChanged }: ZaloBatchPanelProps) {
   const [selectedAccountIds, setSelectedAccountIds] = useState<number[]>([])
   const [targetsText, setTargetsText] = useState('')
   const [postLibrary, setPostLibrary] = useState<ZaloPostLibrary>(emptyLibrary)
@@ -118,11 +119,13 @@ export function ZaloBatchPanel({ accounts }: ZaloBatchPanelProps) {
   useEffect(() => {
     if (!run || terminal(run.state)) return
     const timer = window.setInterval(() => {
-      void window.pageAutoZalo.getBatchStatus(run.runId).then((next) => { if (next) setRun(next) })
-        .catch((error) => setNotice(error instanceof Error ? error.message : String(error)))
+      void window.pageAutoZalo.getBatchStatus(run.runId).then((next) => {
+        if (next) setRun(next)
+        void onAccountsChanged?.()
+      }).catch((error) => setNotice(error instanceof Error ? error.message : String(error)))
     }, 700)
     return () => window.clearInterval(timer)
-  }, [run?.runId, run?.state])
+  }, [run?.runId, run?.state, onAccountsChanged])
 
   const running = Boolean(run && !terminal(run.state))
   const targets = useMemo(() => targetAnalysis(targetsText), [targetsText])

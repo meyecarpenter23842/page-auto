@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   type ZaloAccountDraft,
   type ZaloAccountView,
@@ -34,18 +34,22 @@ export function ZaloWorkspace() {
   const [busy, setBusy] = useState<BusyState>(null)
   const [notice, setNotice] = useState('')
 
-  const load = async () => {
+  const loadAccounts = useCallback(async () => {
+    setAccounts(await window.pageAutoZalo.listAccounts())
+  }, [])
+
+  const load = useCallback(async () => {
     const [nextAccounts, nextSettings] = await Promise.all([
       window.pageAutoZalo.listAccounts(),
       window.pageAutoZalo.getSettings()
     ])
     setAccounts(nextAccounts)
     setSettings(nextSettings)
-  }
+  }, [])
 
   useEffect(() => {
     void load().catch((error) => setNotice(error instanceof Error ? error.message : String(error)))
-  }, [])
+  }, [load])
 
   const readyCount = useMemo(() => accounts.filter((account) => account.sessionStatus === 'ready').length, [accounts])
 
@@ -141,7 +145,7 @@ export function ZaloWorkspace() {
 
       {notice ? <div className="notice-card zalo-notice">{notice}</div> : null}
 
-      {activeTab === 'automation' ? <ZaloBatchPanel accounts={accounts} /> : null}
+      {activeTab === 'automation' ? <ZaloBatchPanel accounts={accounts} onAccountsChanged={loadAccounts} /> : null}
 
       {activeTab === 'accounts' ? (
         <div className="zalo-account-workspace">
