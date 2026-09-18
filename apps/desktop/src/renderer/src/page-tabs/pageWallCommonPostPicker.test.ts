@@ -10,6 +10,10 @@ const picker = readFileSync(
   fileURLToPath(new URL('../content-library/CanonicalPostPicker.tsx', import.meta.url)),
   'utf8'
 )
+const pickerStyles = readFileSync(
+  fileURLToPath(new URL('../content-library/canonicalPostPicker.css', import.meta.url)),
+  'utf8'
+)
 
 describe('Page Wall Common Post Picker adapter', () => {
   it('uses the shared folder -> post picker for both Run Now and Schedule', () => {
@@ -38,5 +42,9 @@ describe('Page Wall Common Post Picker adapter', () => {
     expect(wall).toContain("getDisabledReason={(item) => item.image.folderPath.trim() && item.image.mode === 'filename_match'")
     expect(picker).toContain('getDisabledReason?: (item: ContentLibraryItem) => string | null')
     expect(picker).toContain('getDisabledReason?.(item) ?? null')
+  })
+
+  it('keeps the common picker above the Page Wall schedule modal', () => {
+    expect(pickerStyles).toContain('z-index: 1700')
   })
 })
