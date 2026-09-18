@@ -49,8 +49,11 @@ describe('Zalo Batch 1 foundation', () => {
     const data = tempRoot()
     const defaults = cloneDefaultZaloBrowserSettings()
     const managed = resolveZaloProfileDirectory(data, { id: 1 }, defaults)
+    const managedAgain = resolveZaloProfileDirectory(data, { id: 1 }, defaults)
     expect(managed.profileRoot).toBe(appManagedZaloProfileRoot(data))
     expect(managed.profileRoot).toContain('zalo-browser-profiles')
+    expect(managedAgain.profileDirectory).toBe(managed.profileDirectory)
+    expect(managed.profileDirectory).toBe(join(appManagedZaloProfileRoot(data), '1'))
 
     const external = join(data, 'external-zalo')
     mkdirSync(external)

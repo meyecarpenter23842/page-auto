@@ -287,14 +287,11 @@ export class ZaloBrowserRuntime {
     })
   }
 
-  closeAll(): void {
-    for (const [accountId, entry] of this.workers) {
-      entry.closing = true
-      try { entry.process.postMessage({ type: 'action-control', operation: 'stop' }) } catch { /* best effort */ }
-      this.resolvePendingOnClose(accountId, entry, 'Zalo browser runtime đang đóng.', 'runtime_shutdown')
-      try { entry.process.kill() } catch { /* already gone */ }
-      this.cleanup(accountId, entry)
-    }
+  async closeAll(): Promise<void> {
+    // Close persistent contexts through the worker so Chromium can flush cookies/storage
+    // to the stable userDataDir. close() keeps the existing timeout + kill fallback.
+    const accountIds = [...this.workers.keys()]
+    await Promise.all(accountIds.map((accountId) => this.close(accountId)))
     this.workers.clear()
     this.coordinator.clear()
   }

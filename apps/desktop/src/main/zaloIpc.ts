@@ -26,7 +26,7 @@ import { ZaloSettingsRepository } from './database/zaloSettingsRepository'
 import { ZaloBatchRunner } from './zalo/zaloBatchRunner'
 import { ZaloBrowserRuntime } from './zalo/zaloBrowserRuntime'
 
-export interface ZaloIpcRuntime { dispose: () => void }
+export interface ZaloIpcRuntime { dispose: () => Promise<void> }
 
 function toView(account: ZaloAccountRecord): ZaloAccountView {
   return {
@@ -134,9 +134,9 @@ export function registerZaloIpc(client: Database.Database, dataDirectory: string
   })
 
   return {
-    dispose: () => {
+    dispose: async () => {
       batch.dispose()
-      browser.closeAll()
+      await browser.closeAll()
       for (const channel of handlers) ipcMain.removeHandler(channel)
     }
   }

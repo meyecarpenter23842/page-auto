@@ -67,6 +67,22 @@ describe('Zalo Batch 2 login/session', () => {
     })).toBe('needs_attention')
   })
 
+  it('stabilizes open-session evidence before declaring a persisted profile logged out', () => {
+    const worker = readFileSync(join(process.cwd(), 'src/main/zalo/zalo-browser-worker.ts'), 'utf8')
+    expect(worker).toContain('waitForZaloSessionState(() => inspectZaloSession(page)')
+    expect(worker).toContain('timeoutMs: 8_000')
+  })
+
+  it('gracefully closes persistent contexts before app quit so profile state can flush', () => {
+    const runtime = readFileSync(join(process.cwd(), 'src/main/zalo/zaloBrowserRuntime.ts'), 'utf8')
+    const ipc = readFileSync(join(process.cwd(), 'src/main/zaloIpc.ts'), 'utf8')
+    const main = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
+    expect(runtime).toContain('await Promise.all(accountIds.map((accountId) => this.close(accountId)))')
+    expect(ipc).toContain('await browser.closeAll()')
+    expect(main).toContain('event.preventDefault()')
+    expect(main).toContain('void runtime.dispose()')
+  })
+
   it('stops on challenge/security evidence instead of bypassing it', async () => {
     expect(classifyZaloSessionEvidence({
       authenticatedShell: false,

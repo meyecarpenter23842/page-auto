@@ -91,17 +91,19 @@ export class ZaloBatchRunner {
 
   start(input: ZaloBatchStartPayload): ZaloBatchRunSnapshot {
     const normalized = normalizeZaloBatchStartPayload(input)
+    // DB sessionStatus is cached display state only. Start must live-check the persistent
+    // profile through prepareActionSession(), otherwise a stale login_required/unknown badge
+    // can block an already-authenticated Zalo profile after browser/app restart.
     const selectedAccounts = normalized.accountIds.map((id) => {
       const account = this.accounts.get(id)
       if (!account) throw new Error('Không tìm thấy Zalo account #' + id + '.')
       return account
-    }).filter((account) => account.sessionStatus === 'ready')
-    if (!selectedAccounts.length) throw new Error('Không có tài khoản Zalo Sẵn sàng để chạy.')
+    })
+    if (!selectedAccounts.length) throw new Error('Không có tài khoản Zalo hợp lệ để chạy.')
 
-    const readyIds = new Set(selectedAccounts.map((account) => account.id))
     const payload: ZaloBatchStartPayload = {
       ...normalized,
-      accountIds: normalized.accountIds.filter((id) => readyIds.has(id)),
+      accountIds: [...normalized.accountIds],
       contentItems: normalized.contentItems.map((item) => ({
         ...item,
         variants: [...item.variants],
