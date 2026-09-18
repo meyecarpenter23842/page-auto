@@ -78,7 +78,7 @@ describe('Zalo Batch 5 Windows hardening matrix', () => {
     expect(row.key).toBe('settings.zalo-browser')
   })
 
-  it('accepts the Windows size/Auto Fit matrix while keeping Zalo settings independently validated', () => {
+  it('keeps legacy Zalo size/layout fields valid for backup compatibility', () => {
     const base = cloneDefaultZaloBrowserSettings()
     const sizes: Array<[number, number]> = [[800, 600], [1280, 800], [1600, 1000], [1920, 1080]]
     for (const [windowWidth, windowHeight] of sizes) {
@@ -89,6 +89,28 @@ describe('Zalo Batch 5 Windows hardening matrix', () => {
         layout: { ...base.layout, enabled: true, autoFit: true }
       })).not.toThrow()
     }
+  })
+
+  it('uses the canonical Chrome layout/whole-window scale instead of a Zalo-only scale surface', () => {
+    const root = process.cwd()
+    const ipc = readFileSync(join(root, 'src/main/zaloIpc.ts'), 'utf8')
+    const runtime = readFileSync(join(root, 'src/main/zalo/zaloBrowserRuntime.ts'), 'utf8')
+    const worker = readFileSync(join(root, 'src/main/zalo/zalo-browser-worker.ts'), 'utf8')
+    const workspace = readFileSync(join(root, 'src/renderer/src/zalo/ZaloWorkspace.tsx'), 'utf8')
+
+    expect(ipc).toContain('new AppSettingsRepository(client)')
+    expect(ipc).toContain('new BrowserWindowLayoutRepository(client)')
+    expect(ipc).toContain('() => appSettings.get().browser')
+    expect(ipc).toContain('() => browserWindowLayout.get()')
+    expect(runtime).toContain('this.getWindowLayoutSettings()')
+    expect(runtime).not.toContain('settings.layout, asBrowserSettings(settings)')
+    expect(worker).toContain('--force-device-scale-factor=')
+    expect(worker).toContain('sameWholeChromeScale')
+    expect(workspace).toContain('kích thước theo Chrome chung')
+    expect(workspace).not.toContain('<label>Rộng')
+    expect(workspace).not.toContain('<label>Cao')
+    expect(workspace).not.toContain('> Bật layout</label>')
+    expect(workspace).not.toContain('> Auto Fit</label>')
   })
 
   it('redacts password material from diagnostic text', () => {

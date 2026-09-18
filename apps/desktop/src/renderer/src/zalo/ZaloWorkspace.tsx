@@ -122,7 +122,7 @@ export function ZaloWorkspace() {
     try {
       const saved = await window.pageAutoZalo.saveSettings(settings)
       setSettings(saved)
-      setNotice('Đã lưu cấu hình Chrome Zalo.')
+      setNotice('Đã lưu cấu hình profile Chrome Zalo.')
     } catch (error) {
       setNotice(error instanceof Error ? error.message : String(error))
     }
@@ -194,16 +194,15 @@ export function ZaloWorkspace() {
 
           {settings ? (
             <section className="panel zalo-settings-panel">
-              <div className="zalo-section-heading"><div><span>Chrome Zalo</span><strong>Profile và kích thước riêng</strong></div></div>
+              <div className="zalo-section-heading">
+                <div><span>Chrome Zalo</span><strong>Profile riêng · kích thước theo Chrome chung</strong></div>
+                <small>Scale toàn bộ cửa sổ Chrome (tab/address bar/page), không zoom riêng giao diện Zalo.</small>
+              </div>
               <div className="zalo-compact-form">
                 <label>Chrome executable<input value={settings.executablePath ?? ''} onChange={(event) => setSettings({ ...settings, executablePath: event.target.value || null })} placeholder="Để trống = mặc định" /></label>
                 <label>Profile Root<input value={settings.profileRoot ?? ''} onChange={(event) => setSettings({ ...settings, profileRoot: event.target.value || null })} placeholder="Để trống = data/zalo-browser-profiles" /></label>
-                <label>Rộng<input type="number" min={640} max={7680} value={settings.windowWidth} onChange={(event) => setSettings({ ...settings, windowWidth: Number(event.target.value) })} /></label>
-                <label>Cao<input type="number" min={480} max={4320} value={settings.windowHeight} onChange={(event) => setSettings({ ...settings, windowHeight: Number(event.target.value) })} /></label>
-                <label className="zalo-check"><input type="checkbox" checked={settings.layout.enabled} onChange={(event) => setSettings({ ...settings, layout: { ...settings.layout, enabled: event.target.checked } })} /> Bật layout</label>
-                <label className="zalo-check"><input type="checkbox" checked={settings.layout.autoFit} onChange={(event) => setSettings({ ...settings, layout: { ...settings.layout, autoFit: event.target.checked } })} /> Auto Fit</label>
               </div>
-              <button className="button primary" type="button" onClick={() => void saveSettings()}>Lưu cấu hình Chrome</button>
+              <button className="button primary" type="button" onClick={() => void saveSettings()}>Lưu profile Chrome</button>
             </section>
           ) : null}
         </div>
