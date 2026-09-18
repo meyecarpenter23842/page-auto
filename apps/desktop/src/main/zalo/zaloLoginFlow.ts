@@ -35,6 +35,8 @@ async function inspectZaloSessionOnce(page: Page): Promise<ZaloSessionEvidence> 
     const hasPhoneInput = hasVisible('input[type="tel"], input[placeholder*="số điện thoại" i]')
     const hasPasswordInput = hasVisible('input[type="password"], input[placeholder*="mật khẩu" i]')
     const chatSearchSurface = hasVisible([
+      '#contact-search-input',
+      'input[data-id="txt_Main_Search"]',
       'input[type="search"]',
       'input[placeholder*="Tìm kiếm" i]',
       'input[placeholder*="Tìm bạn" i]',
@@ -43,6 +45,8 @@ async function inspectZaloSessionOnce(page: Page): Promise<ZaloSessionEvidence> 
       '[contenteditable="true"][aria-label*="Tìm" i]'
     ].join(','))
     const composerSurface = hasVisible([
+      '#richInput',
+      '#chat-input-container-id',
       '[contenteditable="true"][role="textbox"]',
       '[contenteditable="true"][data-placeholder*="tin nhắn" i]',
       'textarea[placeholder*="tin nhắn" i]'

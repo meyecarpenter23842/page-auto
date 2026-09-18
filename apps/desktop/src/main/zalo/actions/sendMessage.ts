@@ -20,6 +20,31 @@ async function composerText(composer: Locator): Promise<string> {
   }).catch(() => '')
 }
 
+async function typeIntoZaloComposer(
+  page: Page,
+  composer: Locator,
+  content: string,
+  control: ZaloActionControl
+): Promise<boolean> {
+  await composer.click({ timeout: 5_000 }).catch(() => undefined)
+  await page.locator('#chat-input-container-id').click({ timeout: 2_000 }).catch(() => undefined)
+
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    await control.sleep(100)
+    const editable = await composer.isEditable().catch(() => false)
+    const contentEditable = await composer.getAttribute('contenteditable').catch(() => null)
+    if (editable || contentEditable === 'true') {
+      await composer.fill(content)
+      return (await composerText(composer)).trim().length > 0
+    }
+  }
+
+  await composer.focus().catch(() => undefined)
+  await page.keyboard.insertText(content)
+  await control.sleep(120)
+  return (await composerText(composer)).trim().length > 0
+}
+
 export async function sendZaloMessage(
   accountId: number,
   page: Page,
@@ -40,7 +65,14 @@ export async function sendZaloMessage(
 
   const baseline = await page.getByText(input.content, { exact: true }).count().catch(() => 0)
   await control.checkpoint()
-  await composer.fill(input.content)
+  const typed = await typeIntoZaloComposer(page, composer, input.content, control)
+  if (!typed) {
+    return zaloActionResult(accountId, input.type, target.targetPhone, 'failed', 'composer_missing', 'Đã mở đúng conversation nhưng #richInput chưa chuyển sang trạng thái nhập được.', {
+      verifiedTarget: true,
+      targetDisplayName: target.displayName
+    })
+  }
+
   const send = await firstVisible([
     page.getByRole('button', { name: /^Gửi$/i }),
     page.locator('button[aria-label*="Gửi" i]'),
