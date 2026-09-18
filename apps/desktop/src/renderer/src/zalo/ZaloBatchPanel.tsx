@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
-import { CANONICAL_CONTENT_LIBRARY_SET_ID, type ContentLibraryItem } from '../../../shared/contentLibrary'
+import {
+  CanonicalPostPicker,
+  type CanonicalPostPickerValue
+} from '../content-library/CanonicalPostPicker'
 import { normalizeZaloPhone, type ZaloAccountView, type ZaloActionType, type ZaloBatchRunSnapshot, type ZaloBatchStartPayload, type ZaloPostLibrary, type ZaloPostLibraryItem, type ZaloPostMediaConfig } from '../../../shared/zalo'
 import './zaloBatchPanel.css'
 
@@ -97,8 +100,6 @@ export function ZaloBatchPanel({ accounts, onAccountsChanged }: ZaloBatchPanelPr
   const [postModalOpen, setPostModalOpen] = useState(false)
   const [editingPostId, setEditingPostId] = useState<number | null>(null)
   const [canonicalOpen, setCanonicalOpen] = useState(false)
-  const [canonicalItems, setCanonicalItems] = useState<ContentLibraryItem[]>([])
-  const [canonicalLoading, setCanonicalLoading] = useState(false)
   const [sendMessage, setSendMessage] = useState(true)
   const [sendAttachment, setSendAttachment] = useState(false)
   const [addFriend, setAddFriend] = useState(false)
@@ -196,44 +197,41 @@ export function ZaloBatchPanel({ accounts, onAccountsChanged }: ZaloBatchPanelPr
     }
   }
 
-  const loadCanonical = async () => {
-    setCanonicalOpen(true)
-    if (canonicalItems.length) return
-    setCanonicalLoading(true)
-    try {
-      const library = await window.pageAuto.getContentLibrary({ id: CANONICAL_CONTENT_LIBRARY_SET_ID })
-      setCanonicalItems(library?.items ?? [])
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : String(error))
-    } finally {
-      setCanonicalLoading(false)
-    }
-  }
-
-  const addCanonicalPost = (item: ContentLibraryItem) => {
+  const addCanonicalPosts = (values: CanonicalPostPickerValue[]) => {
     if (!postDraft) return
-    const postId = Math.abs(item.id)
-    if (postDraft.posts.some((post) => post.postId === postId)) return
-    const next: ZaloPostLibraryItem = {
-      bindingId: 0,
-      postId,
-      name: item.name,
-      enabled: true,
-      sortOrder: postDraft.posts.length,
-      variants: [...item.variants],
-      canonicalImage: {
-        folderPath: item.image.folderPath, mode: item.image.mode, imagesPerPost: item.image.imagesPerPost, missingPolicy: item.image.missingPolicy
-      },
-      media: {
-        source: 'canonical',
-        folderPath: item.image.folderPath,
-        mode: item.image.mode,
-        imagesPerTarget: item.image.imagesPerPost,
-        missingPolicy: item.image.missingPolicy
-      }
+    const known = new Set(postDraft.posts.map((post) => post.postId))
+    const additions: ZaloPostLibraryItem[] = []
+    for (const value of values) {
+      if (known.has(value.postId)) continue
+      known.add(value.postId)
+      const item = value.item
+      additions.push({
+        bindingId: 0,
+        postId: value.postId,
+        name: item.name,
+        enabled: true,
+        sortOrder: postDraft.posts.length + additions.length,
+        variants: [...item.variants],
+        canonicalImage: {
+          folderPath: item.image.folderPath,
+          mode: item.image.mode,
+          imagesPerPost: item.image.imagesPerPost,
+          missingPolicy: item.image.missingPolicy
+        },
+        media: {
+          source: 'canonical',
+          folderPath: item.image.folderPath,
+          mode: item.image.mode,
+          imagesPerTarget: item.image.imagesPerPost,
+          missingPolicy: item.image.missingPolicy
+        }
+      })
     }
-    setPostDraft({ ...postDraft, posts: [...postDraft.posts, next] })
-    setEditingPostId(postId)
+    if (additions.length) {
+      setPostDraft({ ...postDraft, posts: [...postDraft.posts, ...additions] })
+      setEditingPostId(additions.at(-1)?.postId ?? null)
+    }
+    setCanonicalOpen(false)
   }
 
   const patchPost = (postId: number, patch: Partial<ZaloPostLibraryItem>) => {
@@ -462,7 +460,7 @@ export function ZaloBatchPanel({ accounts, onAccountsChanged }: ZaloBatchPanelPr
         <div className="zalo-modal-backdrop" role="presentation">
           <section className="zalo-post-library-modal" role="dialog" aria-modal="true">
             <header className="zalo-modal-header"><div><span>Consumer binding</span><strong>Bài Zalo đang dùng</strong></div><button className="button secondary" type="button" onClick={() => setPostModalOpen(false)}>Đóng</button></header>
-            <div className="zalo-post-toolbar"><button className="button primary" type="button" onClick={() => void loadCanonical()}>+ Chọn từ Thư viện bài viết</button><div className="zalo-post-mode"><button type="button" className={postDraft.mode === 'sequential' ? 'active' : ''} onClick={() => setPostDraft({ ...postDraft, mode: 'sequential' })}>Tuần tự</button><button type="button" className={postDraft.mode === 'random' ? 'active' : ''} onClick={() => setPostDraft({ ...postDraft, mode: 'random' })}>Random</button></div></div>
+            <div className="zalo-post-toolbar"><button className="button primary" type="button" onClick={() => setCanonicalOpen(true)}>+ Chọn từ Thư viện bài viết</button><div className="zalo-post-mode"><button type="button" className={postDraft.mode === 'sequential' ? 'active' : ''} onClick={() => setPostDraft({ ...postDraft, mode: 'sequential' })}>Tuần tự</button><button type="button" className={postDraft.mode === 'random' ? 'active' : ''} onClick={() => setPostDraft({ ...postDraft, mode: 'random' })}>Random</button></div></div>
             <div className="zalo-post-layout">
               <div className="zalo-post-list">
                 {postDraft.posts.map((post, index) => <div key={post.postId} className={editingPostId === post.postId ? 'zalo-post-row is-selected' : 'zalo-post-row'}>
@@ -490,12 +488,15 @@ export function ZaloBatchPanel({ accounts, onAccountsChanged }: ZaloBatchPanelPr
             <footer className="zalo-post-footer"><span>Gỡ ở đây không xóa bài canonical.</span><button className="button primary" type="button" onClick={() => void savePosts()}>Lưu Bài Zalo</button></footer>
           </section>
 
-          {canonicalOpen ? <section className="zalo-canonical-picker" role="dialog" aria-modal="true">
-            <header className="zalo-modal-header"><div><span>Canonical Post Library</span><strong>Chọn từ Thư viện bài viết</strong></div><button className="button secondary" type="button" onClick={() => setCanonicalOpen(false)}>Đóng</button></header>
-            <div className="zalo-canonical-list">
-              {canonicalLoading ? <div className="zalo-post-empty">Đang tải…</div> : canonicalItems.map((item) => { const postId = Math.abs(item.id); const bound = boundPostIds.has(postId); return <button key={item.id} type="button" className={bound ? 'zalo-canonical-row is-bound' : 'zalo-canonical-row'} disabled={bound} onClick={() => addCanonicalPost(item)}><span><strong>{item.name}</strong><small>{item.variants.length} biến thể · {item.image.folderPath ? item.image.imagesPerPost + ' file/lượt' : 'Không media'}</small></span><b>{bound ? 'Đang dùng' : 'Chọn'}</b></button> })}
-            </div>
-          </section> : null}
+          {canonicalOpen ? (
+            <CanonicalPostPicker
+              mode="multiple"
+              title="Chọn bài cho Zalo"
+              disabledPostIds={[...boundPostIds]}
+              onApply={addCanonicalPosts}
+              onClose={() => setCanonicalOpen(false)}
+            />
+          ) : null}
         </div>
       ) : null}
     </div>

@@ -1,15 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
-  CANONICAL_CONTENT_LIBRARY_SET_ID,
-  type ContentLibraryItem
-} from '../../../shared/contentLibrary'
-import {
   DEFAULT_PAGE_TAB_IMAGE,
   parsePostVariantText,
-  type CanonicalPostSummary,
   type PageTabImageConfig
 } from '../../../shared/pageTabs'
 import type { ScenarioActionPostInput } from '../../../shared/scenarios'
+import {
+  CanonicalPostPicker,
+  type CanonicalPostPickerValue
+} from '../content-library/CanonicalPostPicker'
 import {
   canDisableScenarioPost,
   clampScenarioImagesPerPost,
@@ -20,18 +19,6 @@ import './postActionConfig.css'
 interface Props {
   posts: ScenarioActionPostInput[]
   onChange: (posts: ScenarioActionPostInput[]) => void
-}
-
-function canonicalFromItem(item: ContentLibraryItem): CanonicalPostSummary | null {
-  if (!Number.isSafeInteger(item.id) || item.id >= 0) return null
-  return {
-    postId: Math.abs(item.id),
-    name: item.name,
-    variants: [...item.variants],
-    image: { ...item.image },
-    createdAt: item.createdAt,
-    updatedAt: item.updatedAt
-  }
 }
 
 function preview(values: readonly string[]): string {
@@ -52,9 +39,6 @@ function normalizeOrder(posts: readonly ScenarioActionPostInput[]): ScenarioActi
 export function ScenarioPostLibraryField({ posts, onChange }: Props) {
   const [pickerOpen, setPickerOpen] = useState(false)
   const [creating, setCreating] = useState(false)
-  const [available, setAvailable] = useState<CanonicalPostSummary[]>([])
-  const [loading, setLoading] = useState(false)
-  const [search, setSearch] = useState('')
   const [error, setError] = useState('')
   const [name, setName] = useState('')
   const [variantText, setVariantText] = useState('')
@@ -65,36 +49,10 @@ export function ScenarioPostLibraryField({ posts, onChange }: Props) {
     onChange(normalizeOrder(ensureScenarioHasEnabledPost(posts)))
   }, [onChange, posts])
 
-  useEffect(() => {
-    if (!pickerOpen) return
-    let cancelled = false
-    setLoading(true)
-    setError('')
-    void window.pageAuto.getContentLibrary({ id: CANONICAL_CONTENT_LIBRARY_SET_ID })
-      .then((details) => {
-        if (cancelled) return
-        setAvailable((details?.items ?? []).map(canonicalFromItem).filter((item): item is CanonicalPostSummary => Boolean(item)))
-      })
-      .catch((cause: unknown) => {
-        if (cancelled) return
-        setAvailable([])
-        setError(cause instanceof Error ? cause.message : 'Không thể tải Thư viện Bài viết.')
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-    return () => { cancelled = true }
-  }, [pickerOpen])
-
   const boundPostIds = useMemo(
     () => new Set(posts.flatMap((post) => typeof post.postId === 'number' && post.postId > 0 ? [post.postId] : [])),
     [posts]
   )
-  const pickerRows = useMemo(() => {
-    const query = search.trim().toLocaleLowerCase('vi')
-    return available.filter((post) => !query || [post.name, ...post.variants].some((value) => value.toLocaleLowerCase('vi').includes(query)))
-  }, [available, search])
-
   const updatePosts = (next: readonly ScenarioActionPostInput[]) => onChange(normalizeOrder(next))
   const toggle = (index: number, enabled: boolean) => {
     if (!enabled && !canDisableScenarioPost(posts, index)) {
@@ -117,18 +75,22 @@ export function ScenarioPostLibraryField({ posts, onChange }: Props) {
     updatePosts(next)
   }
 
-  const chooseExisting = (post: CanonicalPostSummary) => {
-    if (boundPostIds.has(post.postId)) return
-    updatePosts([...posts, {
-      postId: post.postId,
-      name: post.name,
-      enabled: true,
-      sortOrder: posts.length,
-      variants: [...post.variants],
-      image: { ...post.image }
-    }])
+  const chooseExisting = (values: CanonicalPostPickerValue[]) => {
+    const additions: ScenarioActionPostInput[] = []
+    for (const value of values) {
+      if (boundPostIds.has(value.postId) || additions.some((post) => post.postId === value.postId)) continue
+      additions.push({
+        postId: value.postId,
+        name: value.item.name,
+        enabled: true,
+        sortOrder: posts.length + additions.length,
+        variants: [...value.item.variants],
+        image: { ...value.item.image }
+      })
+    }
+    if (additions.length) updatePosts([...posts, ...additions])
     setPickerOpen(false)
-    setSearch('')
+    setError('')
   }
 
   const resetCreate = () => {
@@ -233,28 +195,13 @@ export function ScenarioPostLibraryField({ posts, onChange }: Props) {
       ) : null}
 
       {pickerOpen ? (
-        <div className="scenario-modal-backdrop" role="presentation" onMouseDown={() => setPickerOpen(false)}>
-          <section className="scenario-modal action-config-modal" role="dialog" aria-modal="true" aria-label="Chọn bài từ thư viện" onMouseDown={(event) => event.stopPropagation()}>
-            <div className="scenario-modal-head"><div><p className="scenario-kicker">KHO BÀI VIẾT GỐC</p><h3>Chọn từ thư viện</h3></div><button type="button" onClick={() => setPickerOpen(false)}>×</button></div>
-            <div className="action-config-form">
-              <label className="scenario-field"><span>Tìm bài</span><input autoFocus value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Tên hoặc nội dung..." /></label>
-              {loading ? <div className="post-library-loading">Đang tải thư viện...</div> : (
-                <div className="post-library-preview">
-                  {pickerRows.map((post) => {
-                    const bound = boundPostIds.has(post.postId)
-                    return <div className="post-library-preview-row" key={post.postId}>
-                      <span className="post-library-index">#{post.postId}</span>
-                      <div><strong>{post.name}</strong><p>{preview(post.variants)}</p><small>{post.variants.length} biến thể · {post.image.folderPath ? 'có ảnh' : 'không ảnh'}</small></div>
-                      <button className="scenario-button" type="button" disabled={bound} onClick={() => chooseExisting(post)}>{bound ? 'Đang dùng' : 'Chọn'}</button>
-                    </div>
-                  })}
-                  {!pickerRows.length && !loading ? <div className="post-library-empty">Không có bài phù hợp.</div> : null}
-                </div>
-              )}
-            </div>
-            <div className="scenario-modal-actions"><span className="scenario-toolbar-note">Chọn chỉ tạo binding, không copy bài.</span><button className="scenario-button" type="button" onClick={() => setPickerOpen(false)}>Đóng</button></div>
-          </section>
-        </div>
+        <CanonicalPostPicker
+          mode="multiple"
+          title="Chọn bài cho Kịch Bản"
+          disabledPostIds={[...boundPostIds]}
+          onApply={chooseExisting}
+          onClose={() => setPickerOpen(false)}
+        />
       ) : null}
     </div>
   )
