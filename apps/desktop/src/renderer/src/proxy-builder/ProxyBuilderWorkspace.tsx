@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import type { ProxyBuilderAuditResult, ProxyBuilderCapability } from '../../../shared/proxyBuilder'
 import './proxyBuilder.css'
 
 type ProxyBuilderTab = 'create' | 'checker'
@@ -20,6 +21,19 @@ function clampInteger(value: string, min: number, max: number, fallback: number)
   return Math.max(min, Math.min(max, parsed))
 }
 
+function ipv4Summary(capability: ProxyBuilderCapability | null): string {
+  if (!capability) return 'Chưa kiểm tra'
+  if (!capability.ipv4Addresses.length) return 'Không có'
+  return `${capability.ipv4Addresses.length} IP · ${capability.supportsIpv4 ? 'Outbound OK' : 'Chưa đạt probe'}`
+}
+
+function ipv6Summary(capability: ProxyBuilderCapability | null): string {
+  if (!capability) return 'Chưa kiểm tra'
+  if (!capability.ipv6Addresses.length) return 'Không có'
+  const prefixLength = capability.ipv6Prefix?.split('/')[1]
+  return `${prefixLength ? `/${prefixLength}` : 'Global'} · ${capability.supportsIpv6 ? 'Outbound OK' : 'Chưa đạt probe'}`
+}
+
 export function ProxyBuilderWorkspace() {
   const [activeTab, setActiveTab] = useState<ProxyBuilderTab>('create')
   const [host, setHost] = useState('')
@@ -34,11 +48,38 @@ export function ProxyBuilderWorkspace() {
   const [proxyUser, setProxyUser] = useState('proxy')
   const [proxyPassword, setProxyPassword] = useState('')
   const [checkerInput, setCheckerInput] = useState('')
+  const [sshChecking, setSshChecking] = useState(false)
+  const [sshAudit, setSshAudit] = useState<ProxyBuilderAuditResult | null>(null)
 
   const checkerCount = useMemo(
     () => checkerInput.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).length,
     [checkerInput]
   )
+  const capability = sshAudit?.ok ? sshAudit.capability : null
+  const sshStatus = sshChecking ? 'Đang kiểm tra…' : sshAudit?.ok ? 'SSH OK · capability đã cập nhật' : sshAudit ? sshAudit.message : 'Chưa kết nối'
+  const progressPercent = sshChecking ? 20 : capability ? 40 : 0
+
+  const checkSsh = async () => {
+    if (sshChecking) return
+    setSshChecking(true)
+    setSshAudit(null)
+    try {
+      const auth = sshAuthMode === 'password'
+        ? { type: 'password' as const, password: sshPassword }
+        : { type: 'key' as const, privateKey: sshKey }
+      const result = await window.pageAutoProxyBuilder.auditVps({
+        host,
+        username: sshUser,
+        auth,
+        startPort
+      })
+      setSshAudit(result)
+    } catch {
+      setSshAudit({ ok: false, code: 'unknown', message: 'Không nhận được phản hồi từ SSH service.' })
+    } finally {
+      setSshChecking(false)
+    }
+  }
 
   return (
     <section className="proxy-builder-shell" data-testid="proxy-builder-workspace">
@@ -80,8 +121,8 @@ export function ProxyBuilderWorkspace() {
                   )}
                 </div>
                 <div className="proxy-builder-inline-actions">
-                  <button className="button secondary" type="button" disabled title="SSH discovery được triển khai ở Batch 2.">Kiểm tra SSH</button>
-                  <span className="proxy-builder-muted">Chưa kết nối</span>
+                  <button className="button secondary" type="button" disabled={sshChecking} onClick={() => void checkSsh()}>Kiểm tra SSH</button>
+                  <span className="proxy-builder-muted">{sshStatus}</span>
                 </div>
               </div>
 
@@ -135,28 +176,34 @@ export function ProxyBuilderWorkspace() {
               <div className="proxy-builder-create-actions">
                 <button className="button primary" type="button" disabled title="Provision engine được triển khai ở Batch 3.">Tạo Proxy</button>
                 <button className="button secondary" type="button" disabled>Dừng</button>
-                <span>IPv4 / IPv6 sẽ được auto-detect từ VPS; thông số network chi tiết không lộ ra màn chính.</span>
+                <span>IPv4 / IPv6 được audit thật từ VPS; Batch 2 chưa thay đổi network hoặc provision proxy.</span>
               </div>
             </section>
 
             <aside className="proxy-builder-panel proxy-builder-progress-panel" aria-label="Tiến trình tạo proxy">
               <div className="proxy-builder-progress-heading">
-                <div><strong>Tiến trình</strong><span>Chưa chạy</span></div>
-                <span className="proxy-builder-progress-percent">0%</span>
+                <div><strong>Tiến trình</strong><span>{sshChecking ? 'Đang audit VPS' : capability ? 'SSH + capability OK' : sshAudit ? 'Audit lỗi' : 'Chưa chạy'}</span></div>
+                <span className="proxy-builder-progress-percent">{progressPercent}%</span>
               </div>
-              <div className="proxy-builder-progress-track"><span /></div>
+              <div className="proxy-builder-progress-track"><span style={{ width: `${progressPercent}%` }} /></div>
               <ol className="proxy-builder-progress-list">
-                {PROGRESS_STEPS.map((step, index) => (
-                  <li key={step}>
-                    <span className="proxy-builder-step-index">{index + 1}</span>
-                    <div><strong>{step}</strong><small>Chờ</small></div>
-                  </li>
-                ))}
+                {PROGRESS_STEPS.map((step, index) => {
+                  const detail = capability && index < 2 ? 'Xong' : sshChecking && index === 0 ? 'Đang chạy' : index >= 2 ? 'Chờ Lô 3' : 'Chờ'
+                  return (
+                    <li key={step}>
+                      <span className="proxy-builder-step-index">{index + 1}</span>
+                      <div><strong>{step}</strong><small>{detail}</small></div>
+                    </li>
+                  )
+                })}
               </ol>
               <div className="proxy-builder-capability-summary">
-                <span>IPv4</span><strong>Chưa kiểm tra</strong>
-                <span>IPv6</span><strong>Chưa kiểm tra</strong>
-                <span>Interface</span><strong>Auto</strong>
+                <span>IPv4</span><strong>{ipv4Summary(capability)}</strong>
+                <span>IPv6</span><strong>{ipv6Summary(capability)}</strong>
+                <span>Interface</span><strong>{capability?.defaultInterface ?? 'Auto'}</strong>
+                {capability ? <><span>Public IPv4</span><strong>{capability.publicIpv4 ?? 'Không xác định'}</strong></> : null}
+                {capability ? <><span>OS</span><strong>{capability.os}</strong></> : null}
+                {capability ? <><span>Start Port</span><strong>{capability.startPortAvailable ? 'Trống' : 'Đang dùng'}</strong></> : null}
               </div>
             </aside>
           </div>
