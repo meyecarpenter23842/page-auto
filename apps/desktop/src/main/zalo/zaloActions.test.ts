@@ -39,8 +39,14 @@ describe('Zalo Batch 3 action modules', () => {
     expect(sendMessage).toContain('page.keyboard.insertText(content)')
     expect(sendMessage).toContain('#richInput chưa chuyển sang trạng thái nhập được')
     expect(sendMessage.indexOf("page.locator('#chat-input-container-id').click")).toBeLessThan(sendMessage.indexOf("composer.click"))
+    expect(sendMessage).toContain('[data-translate-title="STR_SEND_MESSAGE"]')
+    expect(sendMessage).toContain('[icon*="Send" i]')
+    expect(sendAttachment).toContain('[data-translate-title="STR_SEND_PHOTO"]')
+    expect(sendAttachment).toContain('[icon="Photo_24_Line"]')
+    expect(sendAttachment).toContain('[title="Gửi hình ảnh"]')
     expect(sendAttachment).toContain("page.waitForEvent('filechooser'")
     expect(sendAttachment).toContain('fileChooser.setFiles(path)')
+    expect(sendAttachment).toContain('chooseFileInput(page, image, true)')
   })
 
   it('matches formatted phone evidence without weakening target verification', () => {

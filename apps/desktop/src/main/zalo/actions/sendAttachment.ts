@@ -19,24 +19,31 @@ async function deliveryEvidenceCount(page: Page): Promise<number> {
   return page.getByText(/^(Đang gửi|Đã gửi|Đã nhận|Đã xem)$/i).count().catch(() => 0)
 }
 
-async function chooseFileInput(page: Page, image: boolean): Promise<Locator | null> {
+async function chooseFileInput(page: Page, image: boolean, allowGeneric = false): Promise<Locator | null> {
   const inputs = await page.locator('input[type="file"]').all()
   for (const input of inputs) {
     const accept = ((await input.getAttribute('accept').catch(() => null)) ?? '').toLocaleLowerCase()
     if (image && accept.includes('image')) return input
     if (!image && accept && !accept.includes('image')) return input
   }
-  return inputs[inputs.length - 1] ?? null
+  return allowGeneric ? (inputs[inputs.length - 1] ?? null) : null
 }
 
 async function attachmentTrigger(page: Page, image: boolean): Promise<Locator | null> {
   return image
     ? firstVisible([
+      page.locator('#chatInput [data-translate-title="STR_SEND_PHOTO"]'),
+      page.locator('#chatInput [icon="Photo_24_Line"]'),
+      page.locator('#chatInput [title="Gửi hình ảnh"]'),
+      page.locator('#chatInput i[class*="Photo_24_Line"]').locator('xpath=..'),
       page.getByRole('button', { name: /Ảnh|Hình ảnh|Photo/i }),
       page.locator('[aria-label*="Ảnh" i]'),
       page.locator('[title*="Ảnh" i]')
     ])
     : firstVisible([
+      page.locator('#chatInput [data-translate-title="STR_SEND_FILE"]'),
+      page.locator('#chatInput [title*="Gửi file" i]'),
+      page.locator('#chatInput [title*="Tài liệu" i]'),
       page.getByRole('button', { name: /Tài liệu|File/i }),
       page.locator('[aria-label*="Tài liệu" i]'),
       page.locator('[title*="Tài liệu" i]')
@@ -71,17 +78,30 @@ async function setZaloAttachmentFile(
   }
 
   await control.sleep(300)
-  const revealedInput = await chooseFileInput(page, image)
+  const revealedInput = await chooseFileInput(page, image, true)
   if (!revealedInput) return false
   await revealedInput.setInputFiles(path)
   return true
 }
 
 async function optionalSendButton(page: Page): Promise<Locator | null> {
-  return firstVisible([
+  const direct = await firstVisible([
+    page.locator('#chatInput [data-translate-title="STR_SEND_MESSAGE"]'),
+    page.locator('#chatInput [data-translate-title="STR_SEND"]'),
+    page.locator('#chatInput [title="Gửi"]'),
+    page.locator('#chatInput [icon*="Send" i]'),
+    page.locator('#chatInput i[class*="Send"][class*="24"]'),
     page.getByRole('button', { name: /^Gửi$/i }),
     page.locator('button[aria-label*="Gửi" i]')
   ])
+  if (!direct) return null
+  const tagName = await direct.evaluate((element) => element.tagName.toLowerCase()).catch(() => '')
+  if (tagName === 'i' || tagName === 'svg' || tagName === 'span') {
+    const clickable = direct.locator('xpath=ancestor::*[self::button or @role="button" or contains(@class,"z--btn") or contains(@class,"chat-box")][1]')
+    if (await clickable.isVisible().catch(() => false)) return clickable
+    return direct.locator('xpath=..')
+  }
+  return direct
 }
 
 export async function sendZaloAttachment(

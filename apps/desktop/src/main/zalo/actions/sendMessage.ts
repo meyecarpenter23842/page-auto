@@ -20,6 +20,28 @@ async function composerText(composer: Locator): Promise<string> {
   }).catch(() => '')
 }
 
+async function sendControl(page: Page): Promise<Locator | null> {
+  const direct = await firstVisible([
+    page.locator('#chatInput [data-translate-title="STR_SEND_MESSAGE"]'),
+    page.locator('#chatInput [data-translate-title="STR_SEND"]'),
+    page.locator('#chatInput [title="Gửi"]'),
+    page.locator('#chatInput [icon*="Send" i]'),
+    page.locator('#chatInput i[class*="Send"][class*="24"]'),
+    page.getByRole('button', { name: /^Gửi$/i }),
+    page.locator('button[aria-label*="Gửi" i]'),
+    page.locator('[role="button"][aria-label*="Gửi" i]')
+  ])
+  if (!direct) return null
+
+  const tagName = await direct.evaluate((element) => element.tagName.toLowerCase()).catch(() => '')
+  if (tagName === 'i' || tagName === 'svg' || tagName === 'span') {
+    const clickable = direct.locator('xpath=ancestor::*[self::button or @role="button" or contains(@class,"z--btn") or contains(@class,"chat-box")][1]')
+    if (await clickable.isVisible().catch(() => false)) return clickable
+    return direct.locator('xpath=..')
+  }
+  return direct
+}
+
 async function activateZaloComposer(
   page: Page,
   composer: Locator,
@@ -94,11 +116,7 @@ export async function sendZaloMessage(
     })
   }
 
-  const send = await firstVisible([
-    page.getByRole('button', { name: /^Gửi$/i }),
-    page.locator('button[aria-label*="Gửi" i]'),
-    page.locator('[role="button"][aria-label*="Gửi" i]')
-  ])
+  const send = await sendControl(page)
   if (!send) {
     return zaloActionResult(accountId, input.type, target.targetPhone, 'failed', 'send_control_missing', 'Không xác định được nút Gửi trong conversation đã verify; không gửi bằng phím tắt.', {
       verifiedTarget: true,
