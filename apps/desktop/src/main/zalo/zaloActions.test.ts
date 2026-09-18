@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { normalizeZaloActionInput } from '../../shared/zalo'
 import { ZaloActionControl, ZaloActionStoppedError } from './actions/zaloActionControl'
-import { assessZaloTargetEvidence, digitsMatch, zaloDisplayNameMatches } from './actions/zaloTargetResolver'
+import { assessZaloTargetEvidence, digitsMatch, displayNameFromCandidateText, zaloDisplayNameMatches } from './actions/zaloTargetResolver'
 
 describe('Zalo Batch 3 action modules', () => {
   it('normalizes single-target action input and rejects empty business payloads', () => {
@@ -49,6 +49,21 @@ describe('Zalo Batch 3 action modules', () => {
     expect(digitsMatch('Nguyễn A · 0987 654 321', '0912345678')).toBe(false)
   })
 
+  it('extracts the live result name nearest the phone instead of generic search labels', () => {
+    const liveResultText = [
+      'Tất cả',
+      'Liên hệ',
+      'Tin nhắn',
+      'File',
+      'Tìm bạn qua số điện thoại:',
+      'BINH TT-',
+      'Số điện thoại: 0902964685'
+    ].join('\n')
+
+    expect(displayNameFromCandidateText(liveResultText, '0902964685')).toBe('BINH TT-')
+    expect(displayNameFromCandidateText('BINH TT-\nSố điện thoại: 0902964685', '0902964685')).toBe('BINH TT-')
+  })
+
   it('uses live composer metadata as target-pane identity after phone-verified search result', () => {
     expect(zaloDisplayNameMatches('BINH TT-', 'BINH TT-')).toBe(true)
     expect(zaloDisplayNameMatches('Nhập @, tin nhắn tới BINH TT-', 'BINH TT-')).toBe(true)
@@ -59,6 +74,8 @@ describe('Zalo Batch 3 action modules', () => {
     expect(resolver).toContain("getAttribute('placeholder')")
     expect(resolver).toContain('candidateEvidenceText(candidate, normalized)')
     expect(resolver).toContain('composerIdentityMatches(composer, displayName)')
+    expect(resolver).toContain('for (let attempt = 0; attempt < 24; attempt += 1)')
+    expect(resolver).toContain('không lấy được tên từ result để xác minh conversation')
   })
 
   it('requires target phone + target-pane identity and conversation evidence before sending', () => {
