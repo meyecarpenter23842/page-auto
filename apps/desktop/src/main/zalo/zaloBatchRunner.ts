@@ -216,6 +216,9 @@ export class ZaloBatchRunner {
       run: async (account) => {
         run.runningAccountIds.add(account.id)
         try {
+          const prepared = await this.browser.prepareActionSession(account)
+          if (prepared.status !== 'ready') return
+
           while (!run.stopRequested) {
             if (!await this.waitUntilRunnable(run)) break
             const index = nextTargetIndex
@@ -236,6 +239,17 @@ export class ZaloBatchRunner {
         }
       }
     })
+
+    if (!run.stopRequested) {
+      for (const target of run.snapshot.progress) {
+        if (target.state !== 'pending') continue
+        target.state = 'failed'
+        target.completedAt = Date.now()
+        target.message = 'Không còn Zalo profile/session sẵn sàng để xử lý SĐT này.'
+        run.snapshot.completedTargets += 1
+        run.snapshot.failedTargets += 1
+      }
+    }
 
     if (run.stopRequested) {
       for (const target of run.snapshot.progress) {
@@ -300,7 +314,7 @@ export class ZaloBatchRunner {
       if (!await this.waitUntilRunnable(run)) break
       target.currentAction = action.type
       target.message = 'Đang chạy ' + action.type
-      const result = await this.browser.executeAction(account, action)
+      const result = await this.browser.executePreparedAction(account.id, action)
       results.push(result)
       if (result.status === 'stopped') {
         run.stopRequested = true

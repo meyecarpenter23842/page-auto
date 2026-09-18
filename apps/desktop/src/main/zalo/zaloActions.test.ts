@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { normalizeZaloActionInput } from '../../shared/zalo'
 import { ZaloActionControl, ZaloActionStoppedError } from './actions/zaloActionControl'
-import { assessZaloTargetEvidence } from './actions/zaloTargetResolver'
+import { assessZaloTargetEvidence, digitsMatch } from './actions/zaloTargetResolver'
 
 describe('Zalo Batch 3 action modules', () => {
   it('normalizes single-target action input and rejects empty business payloads', () => {
@@ -24,6 +24,12 @@ describe('Zalo Batch 3 action modules', () => {
       targetPhone: '0912345678',
       paths: []
     })).toThrow(/ít nhất một/i)
+  })
+
+  it('matches formatted phone evidence without weakening target verification', () => {
+    expect(digitsMatch('Nguyễn A · 0912 345 678', '0912345678')).toBe(true)
+    expect(digitsMatch('Nguyễn A · +84 912-345-678', '0912345678')).toBe(true)
+    expect(digitsMatch('Nguyễn A · 0987 654 321', '0912345678')).toBe(false)
   })
 
   it('requires target phone + target-pane identity and conversation evidence before sending', () => {
@@ -89,14 +95,22 @@ describe('Zalo Batch 3 action modules', () => {
     expect(`${sendMessage}\n${sendAttachment}\n${addFriend}`).not.toMatch(/runZaloPhonePasswordLogin|runZaloQrLogin|articleManager/i)
   })
 
-  it('handles pause/resume/stop control messages immediately instead of serializing behind action queue', () => {
+  it('pins actions to the prepared account worker and reuses the existing Zalo tab', () => {
     const worker = readFileSync(join(process.cwd(), 'src/main/zalo/zalo-browser-worker.ts'), 'utf8')
+    const runtime = readFileSync(join(process.cwd(), 'src/main/zalo/zaloBrowserRuntime.ts'), 'utf8')
+    const batch = readFileSync(join(process.cwd(), 'src/main/zalo/zaloBatchRunner.ts'), 'utf8')
     const controlBranch = worker.indexOf("if (command.type === 'action-control')")
     const queuedBranch = worker.indexOf('queue = queue')
     expect(controlBranch).toBeGreaterThan(0)
     expect(queuedBranch).toBeGreaterThan(0)
     expect(controlBranch).toBeLessThan(queuedBranch)
+    expect(worker).toContain("find((page) => page.url().startsWith('https://chat.zalo.me'))")
     expect(worker).toContain("sessionStatus !== 'ready'")
+    expect(runtime).toContain('prepareActionSession')
+    expect(runtime).toContain('executePreparedAction')
+    expect(batch).toContain('prepareActionSession(account)')
+    expect(batch).toContain('executePreparedAction(account.id, action)')
+    expect(batch).not.toContain('this.browser.executeAction(account, action)')
   })
 
   it('keeps Batch 3 action runtime behind typed IPC while bulk automation is the primary renderer surface', () => {
