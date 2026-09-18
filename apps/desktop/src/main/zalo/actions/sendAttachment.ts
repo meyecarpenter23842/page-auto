@@ -5,7 +5,7 @@ import type { ZaloActionControl } from './zaloActionControl'
 import { resolveZaloTarget } from './zaloTargetResolver'
 
 type SendAttachmentInput = Extract<ZaloActionInput, { type: 'send_attachment' }>
-const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'])
+const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.jfif', '.png', '.gif', '.webp', '.bmp', '.avif', '.heic', '.heif'])
 
 async function firstVisible(locators: Locator[]): Promise<Locator | null> {
   for (const locator of locators) {
