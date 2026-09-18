@@ -58,10 +58,52 @@ function displayNameFromCandidate(text: string, targetPhone: string): string | n
   const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
   for (const line of lines) {
     if (digitsMatch(line, targetPhone)) continue
-    if (/^(kết bạn|nhắn tin|tìm kiếm|số điện thoại)$/i.test(line)) continue
+    if (/^(kết bạn|nhắn tin|tìm kiếm|kết quả tìm kiếm|số điện thoại)$/i.test(line)) continue
     if (line.length <= 120) return line
   }
   return null
+}
+
+function normalizeIdentityText(value: string): string {
+  return value.toLocaleLowerCase('vi-VN').replace(/\s+/g, ' ').trim()
+}
+
+export function zaloDisplayNameMatches(value: string, displayName: string): boolean {
+  const haystack = normalizeIdentityText(value)
+  const needle = normalizeIdentityText(displayName)
+  return needle.length > 0 && haystack.includes(needle)
+}
+
+async function candidateEvidenceText(candidate: Locator, targetPhone: string): Promise<string> {
+  const direct = [
+    (await candidate.innerText().catch(() => '')) || (await candidate.textContent().catch(() => '')) || '',
+    (await candidate.getAttribute('aria-label').catch(() => null)) || '',
+    (await candidate.getAttribute('title').catch(() => null)) || ''
+  ].join('\n')
+  if (displayNameFromCandidate(direct, targetPhone)) return direct
+
+  let current = candidate
+  for (let depth = 0; depth < 4; depth += 1) {
+    current = current.locator('xpath=..')
+    const text = (await current.innerText().catch(() => '')) || (await current.textContent().catch(() => '')) || ''
+    if (!text || text.length > 600 || !digitsMatch(text, targetPhone)) continue
+    if (displayNameFromCandidate(text, targetPhone)) return text
+  }
+  return direct
+}
+
+async function composerIdentityMatches(composer: Locator, displayName: string | null): Promise<boolean> {
+  if (!displayName) return false
+  const nodes = [composer, ...(await composer.locator('[data-trailer], [placeholder]').all())]
+  for (const node of nodes.slice(0, 16)) {
+    const metadata = [
+      (await node.getAttribute('data-trailer').catch(() => null)) || '',
+      (await node.getAttribute('placeholder').catch(() => null)) || '',
+      (await node.getAttribute('aria-label').catch(() => null)) || ''
+    ].join('\n')
+    if (zaloDisplayNameMatches(metadata, displayName)) return true
+  }
+  return false
 }
 
 async function searchInput(page: Page): Promise<Locator | null> {
@@ -119,6 +161,12 @@ async function hasIdentityInTargetPane(
   targetPhone: string,
   displayName: string | null
 ): Promise<boolean> {
+  // Live Zalo exposes the active conversation name directly on the composer
+  // (for example data-trailer / placeholder "Nhập @, tin nhắn tới <name>").
+  // This is stronger target-pane evidence than requiring the phone number to
+  // remain visible after the search result has opened the conversation.
+  if (composer && await composerIdentityMatches(composer, displayName)) return true
+
   const searchBox = await search.boundingBox().catch(() => null)
   const composerBox = composer ? await composer.boundingBox().catch(() => null) : null
   const minimumX = composerBox?.x ?? (searchBox ? searchBox.x + searchBox.width + 16 : null)
@@ -160,11 +208,7 @@ export async function resolveZaloTarget(
     return { ok: false, code: 'target_not_found', message: `Không tìm thấy target Zalo theo SĐT ${normalized}.` }
   }
 
-  const candidateText = [
-    (await candidate.innerText().catch(() => '')) || (await candidate.textContent().catch(() => '')) || '',
-    (await candidate.getAttribute('aria-label').catch(() => null)) || '',
-    (await candidate.getAttribute('title').catch(() => null)) || ''
-  ].join('\n')
+  const candidateText = await candidateEvidenceText(candidate, normalized)
   if (!digitsMatch(candidateText, normalized)) {
     return { ok: false, code: 'target_unverified', message: 'Kết quả tìm kiếm không có bằng chứng SĐT khớp target; action bị chặn.' }
   }
