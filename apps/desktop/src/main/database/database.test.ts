@@ -111,9 +111,10 @@ describe('initializeDatabase', () => {
       { version: 25, name: 'page_avatar_preview' },
       { version: 26, name: 'scanner_foundation' },
       { version: 27, name: 'page_wall_weekly_schedule' },
-      { version: 28, name: 'zalo_foundation' }
+      { version: 28, name: 'zalo_foundation' },
+      { version: 29, name: 'zalo_post_bindings' }
     ])
-    expect(schemaVersion?.value).toBe('28')
+    expect(schemaVersion?.value).toBe('29')
     expect(executionLogsTable?.name).toBe('execution_logs')
     expect(postLibraryTable?.name).toBe('page_tab_posts')
     expect(pageTabColumns.some((column) => column.name === 'account_order_mode')).toBe(true)
@@ -144,7 +145,7 @@ describe('initializeDatabase', () => {
       .prepare('SELECT COUNT(*) AS count FROM __page_auto_migrations')
       .get() as { count: number }
 
-    expect(count.count).toBe(28)
+    expect(count.count).toBe(29)
     reopened.close()
   })
 

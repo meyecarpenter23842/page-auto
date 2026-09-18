@@ -708,3 +708,114 @@ html[data-theme='dark'] :is(
   background: var(--pa-dark-green-hover) !important;
   border-color: var(--pa-dark-green-hover) !important;
 }
+
+/* Zalo structural workspace + automation */
+html[data-theme='dark'] .workspace-zalo {
+  --zalo-bg: var(--pa-dark-bg);
+  --zalo-surface: var(--pa-dark-surface);
+  --zalo-surface-soft: var(--pa-dark-surface-2);
+  --zalo-border: var(--pa-dark-border);
+  --zalo-border-soft: #303030;
+  --zalo-text: var(--pa-dark-text-soft);
+  --zalo-text-strong: var(--pa-dark-text);
+  --zalo-muted: var(--pa-dark-muted);
+  --zalo-faint: var(--pa-dark-faint);
+  --zalo-accent: #22c55e;
+  --zalo-accent-soft: #173421;
+  --zalo-success: #86efac;
+  --zalo-success-bg: #173421;
+  --zalo-warning: #fbbf24;
+  --zalo-warning-bg: #382b0d;
+  --zalo-danger: #fca5a5;
+  --zalo-danger-bg: #351515;
+  color: var(--zalo-text);
+  background: var(--zalo-bg);
+}
+
+html[data-theme='dark'] .zalo-workspace-titlebar,
+html[data-theme='dark'] .zalo-subtabs,
+html[data-theme='dark'] .zalo-account-admin,
+html[data-theme='dark'] .zalo-settings-panel,
+html[data-theme='dark'] .zalo-batch-commandbar,
+html[data-theme='dark'] .zalo-batch-card,
+html[data-theme='dark'] .zalo-config-toolbar,
+html[data-theme='dark'] .zalo-config-modal,
+html[data-theme='dark'] .zalo-post-library-modal,
+html[data-theme='dark'] .zalo-canonical-picker {
+  color: var(--pa-dark-text-soft) !important;
+  background: var(--pa-dark-surface) !important;
+  border-color: var(--pa-dark-border) !important;
+  box-shadow: none;
+}
+
+html[data-theme='dark'] .zalo-runtime-preview,
+html[data-theme='dark'] .zalo-runtime-body,
+html[data-theme='dark'] .zalo-runtime-grid > div,
+html[data-theme='dark'] .zalo-runtime-content,
+html[data-theme='dark'] .zalo-config-button,
+html[data-theme='dark'] .zalo-action-strip,
+html[data-theme='dark'] .zalo-post-editor,
+html[data-theme='dark'] .zalo-post-preview,
+html[data-theme='dark'] .zalo-media-summary,
+html[data-theme='dark'] .zalo-canonical-row,
+html[data-theme='dark'] .zalo-target-stats span {
+  color: var(--pa-dark-text-soft) !important;
+  background: var(--pa-dark-surface-2) !important;
+  border-color: var(--pa-dark-border) !important;
+}
+
+html[data-theme='dark'] .zalo-modal-header,
+html[data-theme='dark'] .zalo-post-toolbar,
+html[data-theme='dark'] .zalo-post-footer {
+  color: var(--pa-dark-text-soft) !important;
+  background: var(--pa-dark-surface-2) !important;
+  border-color: var(--pa-dark-border) !important;
+}
+
+html[data-theme='dark'] .zalo-post-row:hover,
+html[data-theme='dark'] .zalo-canonical-row:hover:not(:disabled) {
+  background: #232323 !important;
+}
+
+html[data-theme='dark'] .zalo-post-row.is-selected,
+html[data-theme='dark'] .zalo-post-mode button.active,
+html[data-theme='dark'] .zalo-subtabs button.active {
+  color: #dcfce7 !important;
+  background: #173421 !important;
+  border-color: #2f7d47 !important;
+}
+
+html[data-theme='dark'] .zalo-status-ready,
+html[data-theme='dark'] .zalo-runtime-state.state-success {
+  color: #86efac !important;
+  background: #173421 !important;
+}
+
+html[data-theme='dark'] .zalo-status-login_required,
+html[data-theme='dark'] .zalo-status-qr_waiting,
+html[data-theme='dark'] .zalo-status-needs_attention {
+  color: #fbbf24 !important;
+  background: #382b0d !important;
+}
+
+html[data-theme='dark'] .zalo-status-browser_error,
+html[data-theme='dark'] .zalo-status-profile_error,
+html[data-theme='dark'] .zalo-runtime-state.state-failed,
+html[data-theme='dark'] .zalo-runtime-state.state-partial {
+  color: #fca5a5 !important;
+  background: #351515 !important;
+}
+
+html[data-theme='dark'] .zalo-modal-backdrop {
+  background: rgba(0, 0, 0, .72);
+}
+
+html[data-theme='dark'] .zalo-config-button:hover:not(:disabled),
+html[data-theme='dark'] .zalo-subtabs button:hover,
+html[data-theme='dark'] .zalo-post-actions button:hover,
+html[data-theme='dark'] .zalo-action-more:hover {
+  color: #bbf7d0 !important;
+  background: #243126 !important;
+  border-color: #4c6f55 !important;
+}
+
