@@ -19,14 +19,29 @@ async function deliveryEvidenceCount(page: Page): Promise<number> {
   return page.getByText(/^(Đang gửi|Đã gửi|Đã nhận|Đã xem)$/i).count().catch(() => 0)
 }
 
-async function chooseFileInput(page: Page, image: boolean, allowGeneric = false): Promise<Locator | null> {
-  const inputs = await page.locator('input[type="file"]').all()
-  for (const input of inputs) {
-    const accept = ((await input.getAttribute('accept').catch(() => null)) ?? '').toLocaleLowerCase()
-    if (image && accept.includes('image')) return input
-    if (!image && accept && !accept.includes('image')) return input
+async function inputMatchesKind(input: Locator, image: boolean): Promise<boolean> {
+  const accept = ((await input.getAttribute('accept').catch(() => null)) ?? '').toLocaleLowerCase()
+  if (!accept) return true
+  return image ? accept.includes('image') : !accept.includes('image')
+}
+
+async function revealedFileInput(
+  page: Page,
+  image: boolean,
+  beforeCount: number
+): Promise<Locator | null> {
+  const chatInputs = await page.locator('#chatInput input[type="file"]').all()
+  for (const input of chatInputs) {
+    if (await inputMatchesKind(input, image)) return input
   }
-  return allowGeneric ? (inputs[inputs.length - 1] ?? null) : null
+
+  const allInputs = page.locator('input[type="file"]')
+  const afterCount = await allInputs.count()
+  for (let index = beforeCount; index < afterCount; index += 1) {
+    const input = allInputs.nth(index)
+    if (await inputMatchesKind(input, image)) return input
+  }
+  return null
 }
 
 async function attachmentTrigger(page: Page, image: boolean): Promise<Locator | null> {
@@ -56,18 +71,14 @@ async function setZaloAttachmentFile(
   image: boolean,
   control: ZaloActionControl
 ): Promise<boolean> {
-  const directInput = await chooseFileInput(page, image)
-  if (directInput) {
-    await directInput.setInputFiles(path)
-    return true
-  }
-
   const trigger = await attachmentTrigger(page, image)
   if (!trigger) return false
 
-  // Some live Zalo builds keep no file input in the DOM until the toolbar
-  // control is clicked and instead emit a native filechooser event.
-  const chooserPromise = page.waitForEvent('filechooser', { timeout: 3_000 }).catch(() => null)
+  // Bind the upload to the exact live toolbar action. Never set a pre-existing
+  // page-wide file input before clicking the Zalo photo/file control: Zalo keeps
+  // unrelated hidden upload inputs in the DOM and they silently accept files.
+  const beforeCount = await page.locator('input[type="file"]').count()
+  const chooserPromise = page.waitForEvent('filechooser', { timeout: 5_000 }).catch(() => null)
   const clicked = await trigger.click({ timeout: 5_000 }).then(() => true).catch(() => false)
   if (!clicked) return false
 
@@ -77,8 +88,8 @@ async function setZaloAttachmentFile(
     return true
   }
 
-  await control.sleep(300)
-  const revealedInput = await chooseFileInput(page, image, true)
+  await control.sleep(350)
+  const revealedInput = await revealedFileInput(page, image, beforeCount)
   if (!revealedInput) return false
   await revealedInput.setInputFiles(path)
   return true

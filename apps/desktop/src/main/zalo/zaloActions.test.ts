@@ -46,7 +46,10 @@ describe('Zalo Batch 3 action modules', () => {
     expect(sendAttachment).toContain('[title="Gửi hình ảnh"]')
     expect(sendAttachment).toContain("page.waitForEvent('filechooser'")
     expect(sendAttachment).toContain('fileChooser.setFiles(path)')
-    expect(sendAttachment).toContain('chooseFileInput(page, image, true)')
+    expect(sendAttachment).toContain("page.locator('#chatInput input[type=\"file\"]')")
+    expect(sendAttachment).toContain('revealedFileInput(page, image, beforeCount)')
+    expect(sendAttachment).not.toContain('const directInput = await')
+    expect(sendAttachment.indexOf('const trigger = await attachmentTrigger')).toBeLessThan(sendAttachment.indexOf("page.waitForEvent('filechooser'"))
   })
 
   it('matches formatted phone evidence without weakening target verification', () => {
