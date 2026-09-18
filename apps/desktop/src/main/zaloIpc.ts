@@ -20,6 +20,8 @@ import {
   type ZaloBrowserSettings,
   type ZaloLoginPayload
 } from '../shared/zalo'
+import { AppSettingsRepository } from './database/appSettingsRepository'
+import { BrowserWindowLayoutRepository } from './database/browserWindowLayoutRepository'
 import { ZaloAccountRepository } from './database/zaloRepository'
 import { ZaloPostRepository } from './database/zaloPostRepository'
 import { ZaloSettingsRepository } from './database/zaloSettingsRepository'
@@ -61,8 +63,16 @@ function validateActionFiles(action: ZaloActionInput): ZaloActionInput {
 export function registerZaloIpc(client: Database.Database, dataDirectory: string): ZaloIpcRuntime {
   const accounts = new ZaloAccountRepository(client)
   const settings = new ZaloSettingsRepository(client)
+  const appSettings = new AppSettingsRepository(client)
+  const browserWindowLayout = new BrowserWindowLayoutRepository(client)
   const posts = new ZaloPostRepository(client)
-  const browser = new ZaloBrowserRuntime(dataDirectory, accounts, () => settings.get())
+  const browser = new ZaloBrowserRuntime(
+    dataDirectory,
+    accounts,
+    () => settings.get(),
+    () => appSettings.get().browser,
+    () => browserWindowLayout.get()
+  )
   const batch = new ZaloBatchRunner(accounts, browser)
 
   const handlers = [

@@ -1,7 +1,7 @@
 import { chromium, type BrowserContext, type Page } from 'playwright-core'
 import { DEFAULT_APP_SETTINGS, type BrowserSettings } from '../../shared/appSettings'
 import type { BrowserWindowPlacement } from '../../shared/browserWindowLayout'
-import { wholeChromeScaleForLaunch } from '../../shared/browserWholeChromeScale'
+import { sameWholeChromeScale, wholeChromeScaleForLaunch } from '../../shared/browserWholeChromeScale'
 import {
   zaloActionResult,
   type ZaloActionInput,
@@ -24,6 +24,7 @@ interface OpenCommand {
   type: 'open'
   accountId: number
   settings: ZaloBrowserSettings
+  browserSettings: BrowserSettings
   placement: BrowserWindowPlacement | null
 }
 
@@ -49,6 +50,7 @@ interface ActionControlCommand {
 interface ApplySettingsCommand {
   type: 'apply-settings'
   settings: ZaloBrowserSettings
+  browserSettings: BrowserSettings
   placement: BrowserWindowPlacement | null
 }
 
@@ -81,9 +83,20 @@ function commandOf(event: unknown): WorkerCommand | null {
   if (!payload || typeof payload !== 'object') return null
   const candidate = payload as Partial<WorkerCommand>
   if (candidate.type === 'shutdown') return { type: 'shutdown' }
-  if (candidate.type === 'open' && typeof (candidate as Partial<OpenCommand>).accountId === 'number' && (candidate as Partial<OpenCommand>).settings) {
+  if (
+    candidate.type === 'open'
+    && typeof (candidate as Partial<OpenCommand>).accountId === 'number'
+    && (candidate as Partial<OpenCommand>).settings
+    && (candidate as Partial<OpenCommand>).browserSettings
+  ) {
     const open = candidate as OpenCommand
-    return { type: 'open', accountId: open.accountId, settings: open.settings, placement: open.placement ?? null }
+    return {
+      type: 'open',
+      accountId: open.accountId,
+      settings: open.settings,
+      browserSettings: open.browserSettings,
+      placement: open.placement ?? null
+    }
   }
   if (candidate.type === 'login') {
     const login = candidate as Partial<LoginCommand>
@@ -106,20 +119,20 @@ function commandOf(event: unknown): WorkerCommand | null {
     if (!['pause', 'resume', 'stop'].includes(String(control.operation))) return null
     return { type: 'action-control', operation: control.operation as ActionControlCommand['operation'] }
   }
-  if (candidate.type === 'apply-settings' && (candidate as Partial<ApplySettingsCommand>).settings) {
+  if (
+    candidate.type === 'apply-settings'
+    && (candidate as Partial<ApplySettingsCommand>).settings
+    && (candidate as Partial<ApplySettingsCommand>).browserSettings
+  ) {
     const apply = candidate as ApplySettingsCommand
-    return { type: 'apply-settings', settings: apply.settings, placement: apply.placement ?? null }
+    return {
+      type: 'apply-settings',
+      settings: apply.settings,
+      browserSettings: apply.browserSettings,
+      placement: apply.placement ?? null
+    }
   }
   return null
-}
-
-function asBrowserSettings(settings: ZaloBrowserSettings): BrowserSettings {
-  return {
-    ...DEFAULT_APP_SETTINGS.browser,
-    executablePath: settings.executablePath,
-    windowWidth: settings.windowWidth,
-    windowHeight: settings.windowHeight
-  }
 }
 
 async function activeZaloPage(context: BrowserContext, navigationTimeoutMs: number): Promise<Page> {
@@ -161,7 +174,7 @@ async function run(): Promise<void> {
   }
 
   const ensureOpen = async (command: OpenCommand): Promise<void> => {
-    const browserSettings = asBrowserSettings(command.settings)
+    const browserSettings = command.browserSettings
     currentNavigationTimeoutMs = browserSettings.navigationTimeoutMs
     const requestedScale = wholeChromeScaleForLaunch(command.placement)
     const reused = context !== null
@@ -192,7 +205,7 @@ async function run(): Promise<void> {
 
     const active = context
     if (!active) throw new Error('Zalo browser context không khả dụng.')
-    if (currentScale === requestedScale) await applyBrowserPlacementToContext(active, command.placement)
+    if (sameWholeChromeScale(currentScale, requestedScale)) await applyBrowserPlacementToContext(active, command.placement)
 
     const page = await activeZaloPage(active, browserSettings.navigationTimeoutMs)
     // A persisted Zalo session can briefly render the login shell while the SPA restores
@@ -260,10 +273,16 @@ async function run(): Promise<void> {
 
   const applySettings = async (command: ApplySettingsCommand): Promise<void> => {
     if (!context) return
+    currentNavigationTimeoutMs = command.browserSettings.navigationTimeoutMs
     const requestedScale = wholeChromeScaleForLaunch(command.placement)
-    if (currentScale === requestedScale) await applyBrowserPlacementToContext(context, command.placement)
-    // Whole-Chrome scale is a Chrome launch flag. A changed scale is applied on the
-    // next reopen; never fake a successful in-place scale change.
+    if (sameWholeChromeScale(currentScale, requestedScale)) {
+      await applyBrowserPlacementToContext(context, command.placement)
+      return
+    }
+    console.info(
+      `[PAGE-AUTO zalo compact-scale] reopen-required running=${currentScale ?? 1} requested=${requestedScale ?? 1}`
+    )
+    // Whole-Chrome scale is a Chrome launch flag. Never emulate it with page/CSS zoom.
   }
 
   parentPort.on('message', (event) => {

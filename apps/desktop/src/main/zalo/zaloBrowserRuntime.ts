@@ -1,7 +1,11 @@
 import { join } from 'node:path'
 import { utilityProcess, type UtilityProcess } from 'electron'
 import { DEFAULT_APP_SETTINGS, type BrowserSettings } from '../../shared/appSettings'
-import type { BrowserWindowPlacement } from '../../shared/browserWindowLayout'
+import {
+  cloneDefaultBrowserWindowLayout,
+  type BrowserWindowLayoutSettings,
+  type BrowserWindowPlacement
+} from '../../shared/browserWindowLayout'
 import {
   redactZaloSecretText,
   zaloActionResult,
@@ -83,12 +87,11 @@ function isClosed(message: unknown): message is WorkerClosedMessage {
   return candidate.type === 'zalo-closed' && typeof candidate.accountId === 'number'
 }
 
-function asBrowserSettings(settings: ZaloBrowserSettings): BrowserSettings {
+function asBrowserSettings(settings: ZaloBrowserSettings, common: BrowserSettings): BrowserSettings {
   return {
-    ...DEFAULT_APP_SETTINGS.browser,
+    ...common,
     executablePath: settings.executablePath,
-    windowWidth: settings.windowWidth,
-    windowHeight: settings.windowHeight
+    mode: 'visible'
   }
 }
 
@@ -100,7 +103,9 @@ export class ZaloBrowserRuntime {
   constructor(
     private readonly dataDirectory: string,
     private readonly accounts: ZaloAccountRepository,
-    private readonly getSettings: () => ZaloBrowserSettings
+    private readonly getSettings: () => ZaloBrowserSettings,
+    private readonly getBrowserSettings: () => BrowserSettings = () => DEFAULT_APP_SETTINGS.browser,
+    private readonly getWindowLayoutSettings: () => BrowserWindowLayoutSettings = () => cloneDefaultBrowserWindowLayout()
   ) {}
 
   async open(account: ZaloAccountRecord): Promise<ZaloOpenResult> {
@@ -155,9 +160,10 @@ export class ZaloBrowserRuntime {
       }
     }
 
-    const placement = this.placement(account.id, settings)
+    const browserSettings = asBrowserSettings(settings, this.getBrowserSettings())
+    const placement = this.placement(account.id, browserSettings)
     try {
-      entry.process.postMessage({ type: 'apply-settings', settings, placement })
+      entry.process.postMessage({ type: 'apply-settings', settings, browserSettings, placement })
     } catch {
       // open command below will surface worker failure.
     }
@@ -167,7 +173,7 @@ export class ZaloBrowserRuntime {
       entry,
       reused,
       OPEN_TIMEOUT_MS,
-      { type: 'open', accountId: account.id, settings, placement },
+      { type: 'open', accountId: account.id, settings, browserSettings, placement },
       'Zalo browser quá thời gian chờ session evidence.'
     )
   }
@@ -254,10 +260,11 @@ export class ZaloBrowserRuntime {
   }
 
   applySettingsToOpenBrowsers(settings: ZaloBrowserSettings): void {
+    const browserSettings = asBrowserSettings(settings, this.getBrowserSettings())
     for (const [accountId, entry] of this.workers) {
       if (entry.closing) continue
-      const placement = this.placement(accountId, settings)
-      try { entry.process.postMessage({ type: 'apply-settings', settings, placement }) } catch { /* exit cleanup owns state */ }
+      const placement = this.placement(accountId, browserSettings)
+      try { entry.process.postMessage({ type: 'apply-settings', settings, browserSettings, placement }) } catch { /* exit cleanup owns state */ }
     }
   }
 
@@ -355,9 +362,9 @@ export class ZaloBrowserRuntime {
     })
   }
 
-  private placement(accountId: number, settings: ZaloBrowserSettings): BrowserWindowPlacement | null {
+  private placement(accountId: number, browserSettings: BrowserSettings): BrowserWindowPlacement | null {
     this.windowLayout.claim(accountId, 'profile')
-    return this.windowLayout.placementFor(accountId, settings.layout, asBrowserSettings(settings))
+    return this.windowLayout.placementFor(accountId, this.getWindowLayoutSettings(), browserSettings)
   }
 
   private async spawn(accountId: number, profileDirectory: string, lease: ZaloAccountLease): Promise<WorkerEntry> {

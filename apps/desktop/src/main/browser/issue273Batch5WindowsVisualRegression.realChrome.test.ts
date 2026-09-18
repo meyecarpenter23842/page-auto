@@ -213,16 +213,19 @@ realChromeDescribe('Issue #273 Batch 5 Windows visual recovery matrix', () => {
       const localPage = await startLocalPageServer()
       server = localPage.server
 
-      ;[normalContext, compactContext] = await Promise.all([
-        chromium.launchPersistentContext(normalProfile, {
-          ...normalLaunchShape(),
-          viewport: null
-        }),
-        chromium.launchPersistentContext(compactProfile, {
-          ...compactLaunchShape(),
-          viewport: null
-        })
-      ])
+      // Windows GitHub runners can starve one of two simultaneous persistent Chrome
+      // startups. Launch sequentially: the test still keeps both account-like contexts
+      // alive together for the isolation/recovery matrix, without racing Chrome startup.
+      normalContext = await chromium.launchPersistentContext(normalProfile, {
+        ...normalLaunchShape(),
+        timeout: 60_000,
+        viewport: null
+      })
+      compactContext = await chromium.launchPersistentContext(compactProfile, {
+        ...compactLaunchShape(),
+        timeout: 60_000,
+        viewport: null
+      })
 
       const [normalPage, compactPage] = await Promise.all([
         openPage(normalContext, localPage.url),
@@ -361,5 +364,5 @@ realChromeDescribe('Issue #273 Batch 5 Windows visual recovery matrix', () => {
       await rm(normalProfile, { recursive: true, force: true })
       await rm(compactProfile, { recursive: true, force: true })
     }
-  }, 120_000)
+  }, 180_000)
 })
