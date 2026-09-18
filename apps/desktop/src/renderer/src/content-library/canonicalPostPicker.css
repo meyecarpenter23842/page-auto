@@ -27,7 +27,7 @@ html[data-theme='dark'] .canonical-post-picker {
 .canonical-post-picker-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 130;
+  z-index: 1700;
   display: grid;
   place-items: center;
   padding: 24px;

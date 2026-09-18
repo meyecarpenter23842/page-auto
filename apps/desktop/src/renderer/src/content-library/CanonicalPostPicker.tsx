@@ -21,6 +21,7 @@ interface CanonicalPostPickerProps {
   title?: string
   initialSelection?: readonly CanonicalPostPickerValue[]
   disabledPostIds?: readonly number[]
+  getDisabledReason?: (item: ContentLibraryItem) => string | null
   onApply: (values: CanonicalPostPickerValue[]) => void
   onClose: () => void
 }
@@ -67,6 +68,7 @@ export function CanonicalPostPicker({
   title = 'Chọn bài từ Thư viện',
   initialSelection = [],
   disabledPostIds = [],
+  getDisabledReason,
   onApply,
   onClose
 }: CanonicalPostPickerProps) {
@@ -262,7 +264,12 @@ export function CanonicalPostPicker({
               {detailLoading ? <div className="canonical-post-picker-empty">Đang tải bài viết…</div> : null}
               {!detailLoading && visibleItems.map((item) => {
                 const postId = canonicalPostId(item)
-                const isDisabled = postId === null || disabled.has(postId)
+                const disabledReason = postId === null
+                  ? 'Post không hợp lệ'
+                  : disabled.has(postId)
+                    ? 'Đang dùng'
+                    : getDisabledReason?.(item) ?? null
+                const isDisabled = Boolean(disabledReason)
                 const isSelected = postId !== null && selectedPostIds.has(postId)
                 return (
                   <article
@@ -293,8 +300,8 @@ export function CanonicalPostPicker({
                         {!item.enabled ? <small>Tắt trong thư mục</small> : null}
                       </span>
                     </button>
-                    <b className="canonical-post-picker-state">
-                      {isDisabled ? 'Đang dùng' : isSelected ? 'Đã chọn' : 'Chọn'}
+                    <b className="canonical-post-picker-state" title={disabledReason ?? undefined}>
+                      {disabledReason ?? (isSelected ? 'Đã chọn' : 'Chọn')}
                     </b>
                   </article>
                 )

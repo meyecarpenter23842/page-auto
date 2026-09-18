@@ -17,6 +17,10 @@ import {
   type PageWallFinitePlanView
 } from '../../../shared/pageWallFiniteRuntime'
 import type { PageWallPlanPostSource, PageWallPlanStatus } from '../../../shared/pageWallPlans'
+import {
+  CanonicalPostPicker,
+  type CanonicalPostPickerValue
+} from '../content-library/CanonicalPostPicker'
 import { AccountSelectionMenu } from '../accounts/AccountSelectionMenu'
 import { useExcelRowRange } from '../accounts/accountTableSelection'
 import './pageWallWorkspace.css'
@@ -78,7 +82,7 @@ function localDateInput(): string { const now = new Date(); const shifted = new 
 function resultTone(result: PageWallRunNowResult): string { return result.status === 'success' ? 'success' : result.status === 'needs_login' ? 'attention' : 'error' }
 function isWallAccountSelectable(account: WallAccount): boolean { return account.status !== 'disabled' }
 function canonicalPostId(item: ContentLibraryItem): number | null {
-  if (item.contentSetId !== CANONICAL_CONTENT_LIBRARY_SET_ID || !Number.isSafeInteger(item.id) || item.id >= 0) return null
+  if (!Number.isSafeInteger(item.id) || item.id >= 0) return null
   return Math.abs(item.id)
 }
 function postRefFromItem(item: ContentLibraryItem, variantIndex: number): PostRef | null {
@@ -142,27 +146,6 @@ function groupSchedulePlans(plans: PageWallFinitePlanView[]): ScheduleGroup[] {
     const rightDate = right.scheduleKind === 'daily' ? '9999-12-31' : right.localDate ?? ''
     return leftDate.localeCompare(rightDate) || (left.minutes[0] ?? 0) - (right.minutes[0] ?? 0)
   })
-}
-
-function LibraryPicker({ items, onClose, onPick }: { items: ContentLibraryItem[]; onClose: () => void; onPick: (item: ContentLibraryItem, variantIndex: number) => void }) {
-  const [query, setQuery] = useState('')
-  const [variants, setVariants] = useState<Record<number, number>>({})
-  const filtered = items.filter((item) => !query.trim() || [item.name, ...item.variants].join(' ').toLocaleLowerCase('vi').includes(query.trim().toLocaleLowerCase('vi')))
-  return <div className="page-wall-modal-backdrop picker" role="presentation" onMouseDown={onClose}>
-    <section className="page-wall-library" role="dialog" aria-modal="true" aria-label="Chọn bài từ Thư viện" onMouseDown={(event) => event.stopPropagation()}>
-      <header><div><small>THƯ VIỆN BÀI VIẾT CHUNG</small><h3>Chọn bài đăng</h3></div><button type="button" onClick={onClose}>×</button></header>
-      <input className="page-wall-library-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Tìm theo tên hoặc nội dung…" autoFocus />
-      <div className="page-wall-library-list">{filtered.map((item) => {
-        const postId = canonicalPostId(item)
-        const variantIndex = Math.min(variants[item.id] ?? 0, Math.max(0, item.variants.length - 1))
-        const blocked = Boolean(item.image.folderPath.trim()) && item.image.mode === 'filename_match'
-        return <article key={item.id} className="page-wall-library-item">
-          <div><strong>{item.name}</strong><p>{item.variants[variantIndex] || (item.image.folderPath ? 'Bài chỉ có ảnh' : 'Không có nội dung')}</p><small>{postId ? `Post #${postId}` : 'Không có canonical id'} · {item.variants.length || 1} biến thể · {item.image.folderPath ? `${item.image.imagesPerPost} ảnh/lượt` : 'Không ảnh'}</small></div>
-          <div>{item.variants.length > 1 ? <select value={variantIndex} onChange={(event) => setVariants((current) => ({ ...current, [item.id]: Number(event.target.value) }))}>{item.variants.map((_value, index) => <option key={index} value={index}>Biến thể {index + 1}</option>)}</select> : null}<button className="pt-button primary" type="button" disabled={!postId || blocked} onClick={() => onPick(item, variantIndex)}>Chọn bài này</button></div>
-        </article>
-      })}{!filtered.length ? <p className="page-wall-empty-copy">Không có bài phù hợp.</p> : null}</div>
-    </section>
-  </div>
 }
 
 function PostEditorModal({ item, variantIndex, onClose, onSaved }: { item: ContentLibraryItem | null; variantIndex: number; onClose: () => void; onSaved: (item: ContentLibraryItem, variantIndex: number) => void }) {
@@ -233,11 +216,14 @@ function ScheduleModal({ draft, accounts, libraryItems, busy, onChange, onChoose
   const uniqueMinutes = (() => { try { return normalizePageWallScheduleMinutes(rawMinutes) } catch { return [] } })()
   const timesValid = rawMinutes.every((minute) => minute >= 0) && uniqueMinutes.length === draft.times.length
   const canSave = Boolean(draft.post && draft.accountIds.length && draft.weekdays.length && timesValid && uniqueMinutes.length && !busy)
-  const postSummary = draft.post ? `#${draft.post.postId} · ${draft.post.postName} · Biến thể ${draft.post.variantIndex + 1}` : 'Chưa chọn bài'
+  const postSummary = draft.post ? `#${draft.post.postId} · ${draft.post.postName}` : 'Chưa chọn bài'
+  const postMeta = !draft.post
+    ? 'Chọn bài trước khi lưu lịch'
+    : `${postItem?.variants.length || 1} biến thể · ${postItem?.image.folderPath ? `${postItem.image.imagesPerPost} ảnh/lượt · ${postItem.image.folderPath}` : 'Không ảnh'}`
   return <div className="page-wall-modal-backdrop schedule" role="presentation" onMouseDown={onClose}>
     <section className="page-wall-schedule-dialog" role="dialog" aria-modal="true" aria-label="Thiết lập lịch đăng" onMouseDown={(event) => event.stopPropagation()}>
       <header><div><small>LỊCH ĐĂNG TƯỜNG</small><h3>{draft.planIds.length ? 'Sửa lịch đăng' : 'Hẹn giờ đăng bài'}</h3></div><button type="button" onClick={onClose}>×</button></header>
-      <div className="page-wall-schedule-step"><b>1. Chọn bài viết</b><div className={`page-wall-selected-post compact ${draft.post ? 'ready' : 'empty'}`}><div><small>BÀI ĐANG CHỌN</small><strong>{postSummary}</strong>{postItem?.image.folderPath ? <span>{postItem.image.imagesPerPost} ảnh/lượt · {postItem.image.folderPath}</span> : <span>{draft.post ? 'Không ảnh' : 'Chọn bài trước khi lưu lịch'}</span>}</div><div><button className="pt-button secondary" type="button" onClick={onChoosePost}>Chọn</button><button type="button" onClick={onAddPost}>Thêm</button><button type="button" disabled={!draft.post || !postItem} onClick={onEditPost}>Sửa</button></div></div></div>
+      <div className="page-wall-schedule-step"><b>1. Chọn bài viết</b><div className={`page-wall-selected-post compact ${draft.post ? 'ready' : 'empty'}`}><div><small>BÀI ĐANG CHỌN</small><strong>{postSummary}</strong><span>{postMeta}</span></div><div><button className="pt-button secondary" type="button" onClick={onChoosePost}>Chọn</button><button type="button" onClick={onAddPost}>Thêm</button><button type="button" disabled={!draft.post || !postItem} onClick={onEditPost}>Sửa</button></div></div></div>
       <div className="page-wall-schedule-step"><b>2. Ngày và giờ đăng bài</b><div className="page-wall-plan-kind">{WEEKDAY_OPTIONS.map((day) => <label key={day.value}><input aria-label={day.label} type="checkbox" checked={draft.weekdays.includes(day.value)} onChange={() => toggleWeekday(day.value)} /> {day.label}</label>)}</div>{!draft.weekdays.length ? <small className="page-wall-time-error">Hãy chọn ít nhất một ngày chạy.</small> : null}<div className="page-wall-time-list">{draft.times.map((time, index) => <div className="page-wall-time-chip" key={`${index}-${time}`}><input type="time" value={time} onChange={(event) => setTime(index, event.target.value)} /><button type="button" aria-label={`Xóa giờ ${time}`} disabled={draft.times.length === 1} onClick={() => onChange({ ...draft, times: draft.times.filter((_value, current) => current !== index) })}>×</button></div>)}<button className="page-wall-add-time" type="button" disabled={draft.times.length >= 12} onClick={() => onChange({ ...draft, times: [...draft.times, '12:00'] })}>+ Thêm giờ</button></div>{!timesValid ? <small className="page-wall-time-error">Giờ chạy phải hợp lệ và không được trùng nhau.</small> : null}</div>
       <div className="page-wall-schedule-step accounts"><div className="page-wall-step-title"><b>3. Chọn tài khoản muốn đăng</b><span>{draft.accountIds.length}/{runnable.length} TK</span></div><div className="page-wall-mini-account-tools"><button type="button" onClick={() => onChange({ ...draft, accountIds: runnable.map((account) => account.accountId) })}>Chọn tất cả</button><button type="button" onClick={() => onChange({ ...draft, accountIds: [] })}>Bỏ chọn</button><label><span>TK song song</span><input type="number" min={1} max={20} value={draft.accountConcurrency} onChange={(event) => onChange({ ...draft, accountConcurrency: Math.max(1, Math.min(20, Number(event.target.value) || 1)) })} /></label></div><div className="page-wall-schedule-account-table"><table><thead><tr><th></th><th>UID</th><th>Tên</th><th>Trạng thái</th></tr></thead><tbody>{accounts.map((account) => { const canUse = isWallAccountSelectable(account); const selected = draft.accountIds.includes(account.accountId); const ranged = accountRange.rangeIds.has(account.accountId); return <tr key={account.accountId} className={`${selected ? 'selected ' : ''}${ranged ? 'range-row ' : ''}${!canUse ? 'disabled' : ''}`.trim()} onPointerDown={(event) => { if (canUse && !busy) accountRange.onRowPointerDown(event, account.accountId) }} onPointerEnter={() => { if (canUse && !busy) accountRange.onRowPointerEnter(account.accountId) }} onContextMenu={(event) => { if (!canUse || busy) return; event.preventDefault(); accountRange.ensureContextRow(account.accountId); setAccountMenu({ x: event.clientX, y: event.clientY }) }}><td><input type="checkbox" checked={selected} disabled={!canUse || busy} onPointerDown={(event) => event.stopPropagation()} onChange={() => toggle(account.accountId)} /></td><td><b>{account.uid}</b></td><td>{account.name || '—'}</td><td>{account.status}</td></tr> })}</tbody></table></div>{accountMenu ? <AccountSelectionMenu x={accountMenu.x} y={accountMenu.y} checkedCount={draft.accountIds.filter((id) => runnableIds.includes(id)).length} rangeCount={accountRange.rangeIds.size} totalCount={runnableIds.length} onCheckRange={() => { const next = new Set(draft.accountIds); for (const id of accountRange.rangeIds) if (runnableIds.includes(id)) next.add(id); onChange({ ...draft, accountIds: [...next] }); setAccountMenu(null) }} onCheckAll={() => { onChange({ ...draft, accountIds: [...runnableIds] }); setAccountMenu(null) }} onClearChecked={() => { onChange({ ...draft, accountIds: [] }); setAccountMenu(null) }} onDismiss={() => setAccountMenu(null)} /> : null}</div>
       {draft.hasHistory ? <small className="page-wall-history-note">Lịch đã có lượt chạy. Thay đổi chỉ áp dụng cho lượt kế tiếp; lịch sử cũ được giữ nguyên.</small> : null}
@@ -319,7 +305,7 @@ export function PageWallWorkspace({ activePageId: controlledPageId, scoped = fal
     try { await refreshLibrary(); setPickerTarget(target) }
     catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)) }
   }
-  const applyPickedPost = (target: PickerTarget, item: ContentLibraryItem, variantIndex: number) => {
+  const applyPostItem = (target: PickerTarget, item: ContentLibraryItem, variantIndex: number) => {
     if (target === 'workspace') {
       const selection = canonicalFromItem(item, variantIndex)
       if (selection) setCanonical(selection)
@@ -328,6 +314,12 @@ export function PageWallWorkspace({ activePageId: controlledPageId, scoped = fal
       if (ref) setScheduleDraft((current) => current ? { ...current, post: ref } : current)
     }
     setPickerTarget(null)
+  }
+  const applyPickerSelection = (target: PickerTarget, value: CanonicalPostPickerValue) => {
+    const previous = target === 'workspace' ? canonical : scheduleDraft?.post ?? null
+    const previousIndex = previous?.postId === value.postId ? previous.variantIndex : 0
+    const variantIndex = Math.min(Math.max(0, previousIndex), Math.max(0, value.item.variants.length - 1))
+    applyPostItem(target, value.item, variantIndex)
   }
   const openPostEditor = (target: PickerTarget, create: boolean) => {
     const ref = target === 'workspace'
@@ -339,7 +331,7 @@ export function PageWallWorkspace({ activePageId: controlledPageId, scoped = fal
   const handlePostSaved = async (item: ContentLibraryItem, variantIndex: number) => {
     await refreshLibrary()
     const target = postEditor?.target ?? 'workspace'
-    applyPickedPost(target, item, variantIndex)
+    applyPostItem(target, item, variantIndex)
     setPostEditor(null)
   }
 
@@ -422,7 +414,7 @@ export function PageWallWorkspace({ activePageId: controlledPageId, scoped = fal
     if (!source) return 'Không rõ bài'
     if (source.kind === 'manual') return 'Bài nhập tay (legacy)'
     const item = libraryItems.find((candidate) => canonicalPostId(candidate) === source.postId)
-    return `#${source.postId} · ${item?.name ?? 'Bài thư viện'} · BT ${source.variantIndex + 1}`
+    return `#${source.postId} · ${item?.name ?? 'Bài thư viện'} · ${item?.variants.length || 1} biến thể`
   }
 
   if (!config) return <section className="page-wall-workspace page-wall-empty"><strong>{tabs.length ? 'Đang tải Đăng Tường…' : 'Chưa có Page'}</strong></section>
@@ -441,7 +433,7 @@ export function PageWallWorkspace({ activePageId: controlledPageId, scoped = fal
 
       <section className="pt-panel page-wall-region content" data-testid="page-wall-region-content">
         <div className="page-wall-region-head"><div><p className="eyebrow">2 · BÀI VIẾT</p><h3>Bài đang chọn</h3></div></div>
-        <div className={`page-wall-selected-post ${canonical ? 'ready' : 'empty'}`} data-testid="page-wall-selected-post"><div><small>{canonical ? 'ĐÃ CHỌN' : 'CHƯA CHỌN BÀI'}</small><strong>{canonical ? `#${canonical.postId} · ${canonical.postName}` : 'Chọn một bài trước khi chạy'}</strong><span>{canonical ? `Biến thể ${canonical.variantIndex + 1} · ${canonical.image.folderPath ? `${canonical.image.imagesPerPost} ảnh/lượt` : 'Không ảnh'}` : 'Bài được dùng cho Đăng ngay; lịch sẽ tự snapshot bài riêng.'}</span></div><div className="page-wall-post-actions"><button className="pt-button secondary" type="button" disabled={busy} onClick={() => void chooseFromLibrary('workspace')}>Chọn từ Thư viện</button><button type="button" disabled={busy} onClick={() => openPostEditor('workspace', true)}>Thêm bài</button><button type="button" disabled={busy || !canonical || !selectedItem} onClick={() => openPostEditor('workspace', false)}>Sửa bài</button><button type="button" disabled={busy || !canonical} onClick={() => setCanonical(null)}>Bỏ chọn</button></div></div>
+        <div className={`page-wall-selected-post ${canonical ? 'ready' : 'empty'}`} data-testid="page-wall-selected-post"><div><small>{canonical ? 'ĐÃ CHỌN' : 'CHƯA CHỌN BÀI'}</small><strong>{canonical ? `#${canonical.postId} · ${canonical.postName}` : 'Chọn một bài trước khi chạy'}</strong><span>{canonical ? `${selectedItem?.variants.length || 1} biến thể · ${canonical.image.folderPath ? `${canonical.image.imagesPerPost} ảnh/lượt` : 'Không ảnh'}` : 'Bài được dùng cho Đăng ngay; lịch sẽ tự snapshot bài riêng.'}</span></div><div className="page-wall-post-actions"><button className="pt-button secondary" type="button" disabled={busy} onClick={() => void chooseFromLibrary('workspace')}>Chọn từ Thư viện</button><button type="button" disabled={busy} onClick={() => openPostEditor('workspace', true)}>Thêm bài</button><button type="button" disabled={busy || !canonical || !selectedItem} onClick={() => openPostEditor('workspace', false)}>Sửa bài</button><button type="button" disabled={busy || !canonical} onClick={() => setCanonical(null)}>Bỏ chọn</button></div></div>
         {canonical ? <div className="page-wall-post-preview"><p>{canonical.content || 'Bài chỉ có ảnh.'}</p>{canonical.image.folderPath ? <small>Folder ảnh: {canonical.image.folderPath}</small> : <small>Không dùng ảnh.</small>}</div> : <div className="page-wall-post-empty"><b>1.</b><span>Bấm <strong>Chọn từ Thư viện</strong> để dùng bài có sẵn, hoặc <strong>Thêm bài</strong> để tạo bài mới vào thư viện chung.</span></div>}
       </section>
 
@@ -461,7 +453,7 @@ export function PageWallWorkspace({ activePageId: controlledPageId, scoped = fal
     </div>
     <footer className="page-wall-finite-footer"><span><b>Finite Wall:</b> mỗi giờ đã chọn = 1 plan-slot → occurrence → page_wall_jobs</span><span>Mỗi slot chạy tối đa 1 lần trong từng ngày đã chọn.</span></footer>
 
-    {pickerTarget ? <LibraryPicker items={libraryItems} onClose={() => setPickerTarget(null)} onPick={(item, variantIndex) => applyPickedPost(pickerTarget, item, variantIndex)} /> : null}
+    {pickerTarget ? <CanonicalPostPicker mode="single" title={pickerTarget === 'schedule' ? 'Chọn bài cho lịch Đăng Tường' : 'Chọn bài cho Đăng Tường'} getDisabledReason={(item) => item.image.folderPath.trim() && item.image.mode === 'filename_match' ? 'Không hỗ trợ ảnh khớp Group' : null} onClose={() => setPickerTarget(null)} onApply={(values) => { const value = values[0]; if (value) applyPickerSelection(pickerTarget, value) }} /> : null}
     {postEditor ? <PostEditorModal item={postEditor.item} variantIndex={postEditor.variantIndex} onClose={() => setPostEditor(null)} onSaved={(item, variantIndex) => void handlePostSaved(item, variantIndex)} /> : null}
     {scheduleDraft ? <ScheduleModal draft={scheduleDraft} accounts={accounts} libraryItems={libraryItems} busy={busy} onChange={setScheduleDraft} onChoosePost={() => void chooseFromLibrary('schedule')} onAddPost={() => openPostEditor('schedule', true)} onEditPost={() => openPostEditor('schedule', false)} onClose={() => setScheduleDraft(null)} onSave={() => void saveSchedule()} /> : null}
   </section>
