@@ -30,6 +30,7 @@ describe('Zalo Batch 3 action modules', () => {
     const root = join(process.cwd(), 'src/main/zalo')
     const resolver = readFileSync(join(root, 'actions/zaloTargetResolver.ts'), 'utf8')
     const sendMessage = readFileSync(join(root, 'actions/sendMessage.ts'), 'utf8')
+    const sendAttachment = readFileSync(join(root, 'actions/sendAttachment.ts'), 'utf8')
     expect(resolver).toContain("page.locator('#contact-search-input')")
     expect(resolver).toContain("input[data-id=\"txt_Main_Search\"]")
     expect(resolver).toContain("page.locator('#richInput')")
@@ -37,6 +38,9 @@ describe('Zalo Batch 3 action modules', () => {
     expect(sendMessage).toContain("composer.getAttribute('contenteditable')")
     expect(sendMessage).toContain('page.keyboard.insertText(content)')
     expect(sendMessage).toContain('#richInput chưa chuyển sang trạng thái nhập được')
+    expect(sendMessage.indexOf("page.locator('#chat-input-container-id').click")).toBeLessThan(sendMessage.indexOf("composer.click"))
+    expect(sendAttachment).toContain("page.waitForEvent('filechooser'")
+    expect(sendAttachment).toContain('fileChooser.setFiles(path)')
   })
 
   it('matches formatted phone evidence without weakening target verification', () => {
