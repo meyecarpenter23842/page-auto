@@ -17,6 +17,7 @@ import { PAGE_BUSINESS_BINDING_SCHEMA_VERSION, applyPageBusinessBindingMigration
 import { applyPageJoinGroupOwnershipRepair } from './pageJoinGroupOwnershipMigration'
 import { PAGE_SCENARIO_SCHEDULE_SCHEMA_VERSION, applyPageScenarioScheduleMigration } from './pageScenarioScheduleMigration'
 import { PAGE_WALL_FINITE_PLAN_SCHEMA_VERSION, applyPageWallFinitePlanMigration } from './pageWallFinitePlanMigration'
+import { PAGE_WALL_POST_POOL_SCHEMA_VERSION, applyPageWallPostPoolMigration } from './pageWallPostPoolMigration'
 import { PAGE_WALL_SCHEMA_VERSION, applyPageWallMigration } from './pageWallMigration'
 import { PAGE_WALL_RECURRING_SCHEMA_VERSION, applyPageWallRecurringMigration } from './pageWallRecurringMigration'
 import { PAGE_WALL_WEEKLY_SCHEDULE_SCHEMA_VERSION, applyPageWallWeeklyScheduleMigration } from './pageWallWeeklyScheduleMigration'
@@ -88,6 +89,7 @@ export function initializeDatabase(databaseFile: string): DatabaseRuntime {
   applyPageAvatarMigration(client)
   applyScannerMigration(client)
   applyPageWallWeeklyScheduleMigration(client)
+  applyPageWallPostPoolMigration(client)
   applyZaloMigration(client)
   applyZaloPostBindingMigration(client)
 
@@ -110,6 +112,7 @@ export function initializeDatabase(databaseFile: string): DatabaseRuntime {
     PAGE_AVATAR_SCHEMA_VERSION,
     SCANNER_SCHEMA_VERSION,
     PAGE_WALL_WEEKLY_SCHEDULE_SCHEMA_VERSION,
+    PAGE_WALL_POST_POOL_SCHEMA_VERSION,
     ZALO_SCHEMA_VERSION,
     ZALO_POST_BINDING_SCHEMA_VERSION
   )

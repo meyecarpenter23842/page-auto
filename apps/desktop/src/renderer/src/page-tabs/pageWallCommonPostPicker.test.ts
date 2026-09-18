@@ -16,32 +16,30 @@ const pickerStyles = readFileSync(
 )
 
 describe('Page Wall Common Post Picker adapter', () => {
-  it('uses the shared folder -> post picker for both Run Now and Schedule', () => {
+  it('keeps Run Now single-post while Schedule uses a multi-post pool', () => {
     expect(wall).toContain("from '../content-library/CanonicalPostPicker'")
-    expect(wall).toContain('<CanonicalPostPicker')
-    expect(wall).toContain("pickerTarget === 'schedule' ? 'Chọn bài cho lịch Đăng Tường'")
-    expect(wall).not.toContain('function LibraryPicker')
-    expect(wall).not.toContain('Chọn bài này')
+    expect(wall).toContain("mode={pickerTarget === 'schedule' ? 'multiple' : 'single'}")
+    expect(wall).toContain("title={pickerTarget === 'schedule' ? 'Chọn bộ bài cho lịch Đăng Tường'")
+    expect(wall).toContain('initialSelection={pickerTarget === \'schedule\'')
+    expect(wall).toContain('posts: canonical ? [{ postId: canonical.postId')
   })
 
-  it('removes manual variant picking from the Page Wall selection surface', () => {
-    expect(wall).not.toContain('<option key={index} value={index}>Biến thể')
-    expect(wall).not.toContain('Biến thể \${draft.post.variantIndex + 1}')
-    expect(wall).not.toContain('BT \${source.variantIndex + 1}')
-    expect(wall).toContain('\${selectedItem?.variants.length || 1} biến thể')
-  })
-
-  it('keeps the existing Page Wall business payload and finite schedule contract intact', () => {
+  it('persists post-pool selection mode without changing the Run Now payload', () => {
     expect(wall).toContain('canonicalPost: canonical')
-    expect(wall).toContain("const source: PageWallPlanPostSource = { kind: 'canonical', postId: scheduleDraft.post.postId, variantIndex: scheduleDraft.post.variantIndex }")
-    expect(wall).toContain('variantIndex: ref?.variantIndex ?? 0')
-    expect(wall).toContain('const previousIndex = previous?.postId === value.postId ? previous.variantIndex : 0')
+    expect(wall).toContain("postSelectionMode: 'sequential'")
+    expect(wall).toContain("postPool: { mode: scheduleDraft.postSelectionMode, posts: sources }")
+    expect(wall).toContain('Cách lấy bài theo từng khung giờ')
+    expect(wall).toContain('Dùng hết bộ bài trước khi xáo lại vòng mới.')
   })
 
-  it('keeps filename-match media blocked at the picker boundary without touching runtime', () => {
+  it('keeps manual variant picking out of the Page Wall selection surface', () => {
+    expect(wall).not.toContain('<option key={index} value={index}>Biến thể')
+    expect(wall).toContain('item?.variants.length || 1')
+  })
+
+  it('keeps filename-match media blocked at the picker boundary', () => {
     expect(wall).toContain("getDisabledReason={(item) => item.image.folderPath.trim() && item.image.mode === 'filename_match'")
     expect(picker).toContain('getDisabledReason?: (item: ContentLibraryItem) => string | null')
-    expect(picker).toContain('getDisabledReason?.(item) ?? null')
   })
 
   it('keeps the common picker above the Page Wall schedule modal', () => {

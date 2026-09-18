@@ -855,6 +855,97 @@ html[data-theme='dark'] .page-wall-mode-tabs button.active {
   background: var(--wall-panel);
 }
 
+.page-wall-post-pool-mode {
+  display: grid;
+  grid-template-columns: minmax(160px, auto) auto minmax(180px, 1fr);
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  padding: 7px 8px;
+  border: 1px solid var(--wall-border);
+  border-radius: 7px;
+  background: var(--wall-panel);
+  font-size: 10px;
+}
+
+.page-wall-post-pool-mode > span {
+  font-weight: 800;
+}
+
+.page-wall-post-pool-mode > div {
+  display: flex;
+  gap: 12px;
+}
+
+.page-wall-post-pool-mode label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 800;
+}
+
+.page-wall-post-pool-mode small {
+  color: var(--wall-muted);
+}
+
+.page-wall-schedule-post-pool {
+  display: grid;
+  gap: 4px;
+  max-height: 138px;
+  margin-top: 7px;
+  overflow: auto;
+}
+
+.page-wall-schedule-post-pool > div {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) 28px;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 7px;
+  border: 1px solid var(--wall-border);
+  border-radius: 7px;
+  background: var(--wall-panel);
+}
+
+.page-wall-schedule-post-pool > div > b {
+  color: var(--wall-accent);
+  font-size: 10px;
+  text-align: center;
+}
+
+.page-wall-schedule-post-pool > div > span {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.page-wall-schedule-post-pool strong,
+.page-wall-schedule-post-pool small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.page-wall-schedule-post-pool strong {
+  font-size: 10px;
+}
+
+.page-wall-schedule-post-pool small {
+  color: var(--wall-muted);
+  font-size: 9px;
+}
+
+.page-wall-schedule-post-pool button {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--wall-border);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--wall-muted);
+  cursor: pointer;
+}
+
 .page-wall-plan-kind {
   display: flex;
   gap: 15px;

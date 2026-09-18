@@ -1,5 +1,6 @@
 import { ipcMain } from 'electron'
 import type Database from 'better-sqlite3'
+import { randomUUID } from 'node:crypto'
 import type { PageWallRunNowPayload } from '../shared/pageWall'
 import {
   PAGE_WALL_FINITE_IPC,
@@ -19,6 +20,10 @@ import {
   type SetPageWallFiniteScheduleEnabledPayload
 } from '../shared/pageWallFiniteRuntime'
 import type { PageWallPlanRecord, PageWallPlanTaskDefinition, SavePageWallPlanInput } from '../shared/pageWallPlans'
+import {
+  normalizePageWallSchedulePostPool,
+  selectPageWallSchedulePost
+} from '../shared/pageWallPostPool'
 import { AppSettingsRepository } from './database/appSettingsRepository'
 import { BrowserWindowLayoutRepository } from './database/browserWindowLayoutRepository'
 import { CanonicalPostRepository } from './database/canonicalPostRepository'
@@ -141,8 +146,12 @@ export function registerPageWallFiniteRuntime(database: Database.Database, dataD
 
   const concreteJobsForPlan = async (plan: PageWallPlanRecord, scheduledAt: number): Promise<CreatePageWallJobInput[]> => {
     const concrete: CreatePageWallJobInput[] = []
+    const pool = plans.getSchedulePostPool(plan.id)
+    const pooledSource = pool
+      ? selectPageWallSchedulePost(pool, plans.countScheduleGroupOccurrencesBefore(pool.groupKey, scheduledAt))
+      : null
     for (const task of plan.tasks) {
-      const preparation = await runNow.prepare(sourcePayload(plan.pageTabId, task.accountId, task.source))
+      const preparation = await runNow.prepare(sourcePayload(plan.pageTabId, task.accountId, pooledSource ?? task.source))
       if (!preparation.ok) throw new Error(preparation.result.message)
       const prepared = preparation.prepared
       concrete.push({
@@ -245,7 +254,7 @@ export function registerPageWallFiniteRuntime(database: Database.Database, dataD
     const nowDate = new Date(now)
     const localDate = localDateKey(nowDate)
     try {
-      const rows = database.prepare("SELECT id FROM page_wall_plans WHERE status = 'active' ORDER BY id").all() as Array<{ id: number }>
+      const rows = database.prepare("SELECT id FROM page_wall_plans WHERE status = 'active' ORDER BY minute_of_day, id").all() as Array<{ id: number }>
       for (const row of rows) {
         const plan = plans.get(row.id)
         if (!plan) continue
@@ -266,7 +275,12 @@ export function registerPageWallFiniteRuntime(database: Database.Database, dataD
     const pageTabId = payload.pageTabId
     const pagePlans = plans.listByPage(pageTabId)
     return {
-      plans: pagePlans.map((plan) => ({ ...plan, weekdays: readPlanWeekdays(plan.id), latestOccurrence: plans.listOccurrences(plan.id, 1)[0] ?? null })),
+      plans: pagePlans.map((plan) => ({
+        ...plan,
+        weekdays: readPlanWeekdays(plan.id),
+        latestOccurrence: plans.listOccurrences(plan.id, 1)[0] ?? null,
+        postPool: plans.getSchedulePostPool(plan.id)
+      })),
       jobs: jobs.list(500).filter((job) => job.pageTabId === pageTabId)
     }
   }
@@ -318,6 +332,19 @@ export function registerPageWallFiniteRuntime(database: Database.Database, dataD
     const minuteOfDays = normalizePageWallScheduleMinutes(payload.input.minuteOfDays)
     const weekdays = normalizePageWallScheduleWeekdays(payload.input.weekdays)
     const planIds = positiveUniqueIds(payload.planIds ?? [])
+    const normalizedPool = payload.input.postPool
+      ? normalizePageWallSchedulePostPool(payload.input.postPool)
+      : null
+    if (normalizedPool) {
+      for (const source of normalizedPool.posts) {
+        const post = posts.get(source.postId)
+        if (!post) throw new Error(`Không tìm thấy bài canonical #${source.postId} trong bộ bài của lịch.`)
+        const hasVariant = source.variantIndex < post.variants.length
+          || (source.variantIndex === 0 && post.variants.length === 0)
+        if (!hasVariant) throw new Error(`Bài canonical #${source.postId} không còn biến thể ${source.variantIndex + 1}.`)
+      }
+    }
+
     return database.transaction(() => {
       for (const planId of planIds) {
         const existing = plans.get(planId)
@@ -331,12 +358,26 @@ export function registerPageWallFiniteRuntime(database: Database.Database, dataD
         }
       }
 
+      const existingGroupKeys = [...new Set(planIds
+        .map((planId) => plans.getSchedulePostPool(planId)?.groupKey)
+        .filter((value): value is string => Boolean(value)))]
+      const groupKey = normalizedPool
+        ? (existingGroupKeys.length === 1 ? existingGroupKeys[0]! : `wall-pool:${randomUUID()}`)
+        : null
+
       const saved: PageWallPlanRecord[] = []
       for (let index = 0; index < minuteOfDays.length; index += 1) {
         const input = singleSlotInput(payload, minuteOfDays[index]!)
         const existingId = planIds[index]
         const record = existingId ? plans.update(existingId, input) : plans.create(input)
         writePlanWeekdays(record.id, weekdays)
+        if (normalizedPool && groupKey) {
+          plans.saveSchedulePostPool(record.id, {
+            ...normalizedPool,
+            groupKey,
+            slotOrder: index
+          })
+        }
         saved.push(record)
       }
       for (const staleId of planIds.slice(minuteOfDays.length)) {

@@ -1,6 +1,7 @@
 import type { PageWallCanonicalPostSelection, PageWallRunNowResult } from './pageWall'
 import type { PageWallJobRecord } from './pageWallJobs'
 import type { PageWallPlanOccurrenceRecord, PageWallPlanRecord, SavePageWallPlanInput } from './pageWallPlans'
+import type { PageWallSchedulePostPoolInput, PageWallSchedulePostPoolRecord } from './pageWallPostPool'
 
 export const PAGE_WALL_FINITE_IPC = {
   dashboard: 'page-wall-finite:dashboard',
@@ -44,6 +45,8 @@ export interface SavePageWallFiniteScheduleInput extends Omit<SavePageWallPlanIn
   minuteOfDays: number[]
   /** Recurring local weekdays. 0=CN, 1=T2 ... 6=T7. Missing means all days for legacy callers. */
   weekdays?: number[]
+  /** Optional post pool for one-post-per-slot rotation. Missing keeps legacy single-source semantics. */
+  postPool?: PageWallSchedulePostPoolInput
 }
 
 export interface SavePageWallFiniteSchedulePayload {
@@ -61,6 +64,7 @@ export interface SetPageWallFiniteScheduleEnabledPayload {
 export interface PageWallFinitePlanView extends PageWallPlanRecord {
   weekdays: number[]
   latestOccurrence: PageWallPlanOccurrenceRecord | null
+  postPool: PageWallSchedulePostPoolRecord | null
 }
 
 export interface PageWallFiniteDashboard {
