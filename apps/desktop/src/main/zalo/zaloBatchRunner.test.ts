@@ -66,7 +66,7 @@ describe('Zalo structural automation contracts', () => {
     expect(runner).toContain('runRollingAccountPool')
     expect(runner).toContain('spinContent')
     expect(runner).toContain('selectZaloMedia')
-    expect(runner).toContain('browser.executeAction')
+    expect(runner).toContain('browser.executePreparedAction')
     expect(runner).not.toMatch(/playwright|chromium\.launch|better-sqlite3/)
     expect(runner).not.toContain('attachmentPaths')
     expect(ipc).toContain('ZaloPostRepository')

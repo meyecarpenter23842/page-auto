@@ -39,7 +39,8 @@ async function inspectZaloSessionOnce(page: Page): Promise<ZaloSessionEvidence> 
       'input[placeholder*="Tìm kiếm" i]',
       'input[placeholder*="Tìm bạn" i]',
       'input[aria-label*="Tìm kiếm" i]',
-      '[contenteditable="true"][data-placeholder*="Tìm kiếm" i]'
+      '[contenteditable="true"][data-placeholder*="Tìm" i]',
+      '[contenteditable="true"][aria-label*="Tìm" i]'
     ].join(','))
     const composerSurface = hasVisible([
       '[contenteditable="true"][role="textbox"]',

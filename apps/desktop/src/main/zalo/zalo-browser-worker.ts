@@ -123,10 +123,16 @@ function asBrowserSettings(settings: ZaloBrowserSettings): BrowserSettings {
 }
 
 async function activeZaloPage(context: BrowserContext, navigationTimeoutMs: number): Promise<Page> {
-  const page = context.pages()[0] ?? await context.newPage()
-  if (!page.url().startsWith('https://chat.zalo.me')) {
-    await page.goto('https://chat.zalo.me/', { waitUntil: 'domcontentloaded', timeout: navigationTimeoutMs }).catch(() => undefined)
+  const pages = context.pages().filter((page) => !page.isClosed())
+  const existingZalo = [...pages].reverse().find((page) => page.url().startsWith('https://chat.zalo.me'))
+  if (existingZalo) {
+    await existingZalo.bringToFront().catch(() => undefined)
+    return existingZalo
   }
+
+  const page = pages.find((candidate) => candidate.url() === 'about:blank') ?? pages[0] ?? await context.newPage()
+  await page.goto('https://chat.zalo.me/', { waitUntil: 'domcontentloaded', timeout: navigationTimeoutMs })
+  await page.bringToFront().catch(() => undefined)
   return page
 }
 

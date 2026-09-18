@@ -45,7 +45,7 @@ function phoneVariants(phone: string): string[] {
   return [...new Set(variants)]
 }
 
-function digitsMatch(text: string, targetPhone: string): boolean {
+export function digitsMatch(text: string, targetPhone: string): boolean {
   const textDigits = text.replace(/\D/g, '')
   if (!textDigits) return false
   return phoneVariants(targetPhone).some((variant) => {
@@ -69,16 +69,29 @@ async function searchInput(page: Page): Promise<Locator | null> {
     page.locator('input[type="search"]'),
     page.locator('input[placeholder*="Tìm kiếm" i]'),
     page.locator('input[placeholder*="Tìm bạn" i]'),
-    page.locator('input[aria-label*="Tìm kiếm" i]')
+    page.locator('input[aria-label*="Tìm kiếm" i]'),
+    page.locator('[contenteditable="true"][data-placeholder*="Tìm" i]'),
+    page.locator('[contenteditable="true"][aria-label*="Tìm" i]')
   ])
 }
 
 async function phoneCandidate(page: Page, targetPhone: string): Promise<Locator | null> {
+  const candidates = await page.locator('button, a, li, [role="button"], [role="listitem"]').all()
+  for (const candidate of candidates.slice(0, 160)) {
+    if (!await candidate.isVisible().catch(() => false)) continue
+    const text = [
+      (await candidate.innerText().catch(() => '')) || '',
+      (await candidate.getAttribute('aria-label').catch(() => null)) || '',
+      (await candidate.getAttribute('title').catch(() => null)) || ''
+    ].join('\n')
+    if (digitsMatch(text, targetPhone)) return candidate
+  }
+
   for (const variant of phoneVariants(targetPhone)) {
     const texts = await page.getByText(variant, { exact: false }).all()
     for (const text of texts.slice(0, 12)) {
       if (!await text.isVisible().catch(() => false)) continue
-      const clickable = text.locator('xpath=ancestor-or-self::*[self::button or self::a or self::li or @role="button"][1]')
+      const clickable = text.locator('xpath=ancestor-or-self::*[self::button or self::a or self::li or @role="button" or @role="listitem"][1]')
       if (await clickable.isVisible().catch(() => false)) return clickable
       return text
     }
@@ -143,7 +156,11 @@ export async function resolveZaloTarget(
     return { ok: false, code: 'target_not_found', message: `Không tìm thấy target Zalo theo SĐT ${normalized}.` }
   }
 
-  const candidateText = (await candidate.innerText().catch(() => '')) || (await candidate.textContent().catch(() => '')) || ''
+  const candidateText = [
+    (await candidate.innerText().catch(() => '')) || (await candidate.textContent().catch(() => '')) || '',
+    (await candidate.getAttribute('aria-label').catch(() => null)) || '',
+    (await candidate.getAttribute('title').catch(() => null)) || ''
+  ].join('\n')
   if (!digitsMatch(candidateText, normalized)) {
     return { ok: false, code: 'target_unverified', message: 'Kết quả tìm kiếm không có bằng chứng SĐT khớp target; action bị chặn.' }
   }

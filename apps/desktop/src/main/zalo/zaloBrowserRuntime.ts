@@ -215,8 +215,20 @@ export class ZaloBrowserRuntime {
     )
   }
 
+  async prepareActionSession(account: ZaloAccountRecord): Promise<ZaloOpenResult> {
+    return this.open(account)
+  }
+
+  async executePreparedAction(accountId: number, action: ZaloActionInput): Promise<ZaloActionResult> {
+    const entry = this.workers.get(accountId)
+    if (!entry || entry.closing) {
+      return zaloActionResult(accountId, action.type, action.targetPhone, 'failed', 'session_not_ready', 'Zalo profile đã chuẩn bị không còn mở; action không tự đổi sang worker/profile khác.')
+    }
+    return this.requestAction(accountId, entry, action)
+  }
+
   async executeAction(account: ZaloAccountRecord, action: ZaloActionInput): Promise<ZaloActionResult> {
-    const opened = await this.open(account)
+    const opened = await this.prepareActionSession(account)
     if (opened.status !== 'ready') {
       return zaloActionResult(
         account.id,
@@ -227,12 +239,7 @@ export class ZaloBrowserRuntime {
         `Không chạy ${action.type}: ${opened.message}`
       )
     }
-
-    const entry = this.workers.get(account.id)
-    if (!entry || entry.closing) {
-      return zaloActionResult(account.id, action.type, action.targetPhone, 'failed', 'session_not_ready', 'Zalo browser không còn khả dụng để chạy action.')
-    }
-    return this.requestAction(account.id, entry, action)
+    return this.executePreparedAction(account.id, action)
   }
 
   controlAction(accountId: number, operation: 'pause' | 'resume' | 'stop'): boolean {
