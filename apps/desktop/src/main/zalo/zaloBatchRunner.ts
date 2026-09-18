@@ -206,6 +206,7 @@ export class ZaloBatchRunner {
 
   private async execute(run: MutableRun, selectedAccounts: ZaloAccountRecord[]): Promise<void> {
     let nextTargetIndex = 0
+    const preparationFailures: Array<{ accountId: number; phone: string; message: string }> = []
 
     await runRollingAccountPool({
       items: selectedAccounts,
@@ -217,7 +218,14 @@ export class ZaloBatchRunner {
         run.runningAccountIds.add(account.id)
         try {
           const prepared = await this.browser.prepareActionSession(account)
-          if (prepared.status !== 'ready') return
+          if (prepared.status !== 'ready') {
+            preparationFailures.push({
+              accountId: account.id,
+              phone: account.phone,
+              message: prepared.message
+            })
+            return
+          }
 
           while (!run.stopRequested) {
             if (!await this.waitUntilRunnable(run)) break
@@ -241,11 +249,17 @@ export class ZaloBatchRunner {
     })
 
     if (!run.stopRequested) {
+      const preparationFailureMessage = preparationFailures.length
+        ? 'Không thể dùng Zalo account: ' + preparationFailures
+            .map((failure) => failure.phone + ' — ' + failure.message)
+            .join(' | ')
+        : 'Không còn Zalo profile/session sẵn sàng để xử lý SĐT này.'
+
       for (const target of run.snapshot.progress) {
         if (target.state !== 'pending') continue
         target.state = 'failed'
         target.completedAt = Date.now()
-        target.message = 'Không còn Zalo profile/session sẵn sàng để xử lý SĐT này.'
+        target.message = preparationFailureMessage
         run.snapshot.completedTargets += 1
         run.snapshot.failedTargets += 1
       }
@@ -263,7 +277,12 @@ export class ZaloBatchRunner {
       run.snapshot.message = 'Batch Zalo đã dừng.'
     } else {
       run.snapshot.state = 'completed'
-      run.snapshot.message = 'Hoàn tất ' + run.snapshot.completedTargets + '/' + run.snapshot.totalTargets + ' target.'
+      const preparationNote = preparationFailures.length
+        ? ' · Account bị loại: ' + preparationFailures
+            .map((failure) => failure.phone + ' — ' + failure.message)
+            .join(' | ')
+        : ''
+      run.snapshot.message = 'Hoàn tất ' + run.snapshot.completedTargets + '/' + run.snapshot.totalTargets + ' target.' + preparationNote
     }
     run.snapshot.completedAt = Date.now()
   }
