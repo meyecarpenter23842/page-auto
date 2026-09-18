@@ -26,7 +26,9 @@ function firstAddress(cidr: string | undefined): string | null {
 
 function isPublicIpv4(value: string): boolean {
   if (isIP(value) !== 4) return false
-  const [a, b] = value.split('.').map(Number)
+  const octets = value.split('.').map(Number)
+  const a = octets[0] ?? -1
+  const b = octets[1] ?? -1
   if (a === 10 || a === 127 || a === 0) return false
   if (a === 169 && b === 254) return false
   if (a === 172 && b >= 16 && b <= 31) return false
@@ -176,20 +178,27 @@ export async function auditProxyBuilderVps(input: ProxyBuilderAuditInput): Promi
   try {
     const output = await new Promise<string>((resolve, reject) => {
       let settled = false
+      const succeed = (value: string) => {
+        if (settled) return
+        settled = true
+        resolve(value)
+      }
+      const fail = (error: unknown) => {
+        if (settled) return
+        settled = true
+        reject(error)
+      }
       client.once('ready', () => {
-        void execDiscovery(client, discoveryScript(input.startPort)).then(resolve, reject)
+        void execDiscovery(client, discoveryScript(input.startPort)).then(succeed, fail)
       })
-      client.once('error', (error) => {
-        if (!settled) reject(error)
-      })
+      client.once('error', fail)
       client.once('end', () => {
-        if (!settled) reject(new Error('SSH connection ended before discovery completed.'))
+        fail(new Error('SSH connection ended before discovery completed.'))
       })
       try {
         client.connect(config)
       } catch (error) {
-        settled = true
-        reject(error)
+        fail(error)
       }
     })
     return { ok: true, capability: parseProxyBuilderDiscovery(output) }
