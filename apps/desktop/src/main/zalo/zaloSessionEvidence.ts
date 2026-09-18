@@ -26,8 +26,15 @@ export interface WaitForZaloSessionOptions {
  */
 export function classifyZaloSessionEvidence(evidence: ZaloSessionEvidence): ZaloSessionStatus {
   if (evidence.attentionSurface) return 'needs_attention'
+
+  // Zalo Web is a SPA and can leave login controls mounted/visible while the
+  // authenticated workspace is already active. A visible chat search/composer
+  // is stronger live evidence than stale login DOM. Never let that stale DOM
+  // downgrade an authenticated account back to login_required.
+  if (evidence.chatSearchSurface || evidence.composerSurface) return 'ready'
+
   if (evidence.loginSurface) return evidence.qrSurface ? 'qr_waiting' : 'login_required'
-  if (evidence.authenticatedShell || evidence.chatSearchSurface || evidence.composerSurface) return 'ready'
+  if (evidence.authenticatedShell) return 'ready'
   if (evidence.qrSurface) return 'qr_waiting'
   return 'needs_attention'
 }

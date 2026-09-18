@@ -39,6 +39,26 @@ describe('Zalo Batch 2 login/session', () => {
     expect(status).toBe('login_required')
   })
 
+  it('treats the visible authenticated chat workspace as ready even when stale login controls remain mounted', () => {
+    expect(classifyZaloSessionEvidence({
+      authenticatedShell: false,
+      loginSurface: true,
+      qrSurface: false,
+      attentionSurface: false,
+      chatSearchSurface: true,
+      composerSurface: false
+    })).toBe('ready')
+
+    expect(classifyZaloSessionEvidence({
+      authenticatedShell: false,
+      loginSurface: true,
+      qrSurface: false,
+      attentionSurface: true,
+      chatSearchSurface: true,
+      composerSurface: false
+    })).toBe('needs_attention')
+  })
+
   it('stops on challenge/security evidence instead of bypassing it', async () => {
     expect(classifyZaloSessionEvidence({
       authenticatedShell: false,
