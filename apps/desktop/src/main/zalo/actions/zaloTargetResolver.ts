@@ -54,11 +54,25 @@ export function digitsMatch(text: string, targetPhone: string): boolean {
   })
 }
 
-function displayNameFromCandidate(text: string, targetPhone: string): string | null {
+function isGenericCandidateLine(line: string): boolean {
+  const normalized = line
+    .toLocaleLowerCase('vi-VN')
+    .replace(/\s+/g, ' ')
+    .replace(/[:：]+$/g, '')
+    .trim()
+  return /^(tất cả|liên hệ|tin nhắn|file|đóng|kết bạn|nhắn tin|tìm kiếm|kết quả tìm kiếm|số điện thoại|tìm bạn qua số điện thoại)$/.test(normalized)
+}
+
+export function displayNameFromCandidateText(text: string, targetPhone: string): string | null {
   const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
-  for (const line of lines) {
+  const phoneIndex = lines.findIndex((line) => digitsMatch(line, targetPhone))
+  const candidates = phoneIndex >= 0
+    ? [...lines.slice(0, phoneIndex).reverse(), ...lines.slice(phoneIndex + 1)]
+    : lines
+
+  for (const line of candidates) {
     if (digitsMatch(line, targetPhone)) continue
-    if (/^(kết bạn|nhắn tin|tìm kiếm|kết quả tìm kiếm|số điện thoại)$/i.test(line)) continue
+    if (isGenericCandidateLine(line)) continue
     if (line.length <= 120) return line
   }
   return null
@@ -80,14 +94,14 @@ async function candidateEvidenceText(candidate: Locator, targetPhone: string): P
     (await candidate.getAttribute('aria-label').catch(() => null)) || '',
     (await candidate.getAttribute('title').catch(() => null)) || ''
   ].join('\n')
-  if (displayNameFromCandidate(direct, targetPhone)) return direct
+  if (displayNameFromCandidateText(direct, targetPhone)) return direct
 
   let current = candidate
-  for (let depth = 0; depth < 4; depth += 1) {
+  for (let depth = 0; depth < 10; depth += 1) {
     current = current.locator('xpath=..')
     const text = (await current.innerText().catch(() => '')) || (await current.textContent().catch(() => '')) || ''
-    if (!text || text.length > 600 || !digitsMatch(text, targetPhone)) continue
-    if (displayNameFromCandidate(text, targetPhone)) return text
+    if (!text || text.length > 1_500 || !digitsMatch(text, targetPhone)) continue
+    if (displayNameFromCandidateText(text, targetPhone)) return text
   }
   return direct
 }
@@ -212,25 +226,36 @@ export async function resolveZaloTarget(
   if (!digitsMatch(candidateText, normalized)) {
     return { ok: false, code: 'target_unverified', message: 'Kết quả tìm kiếm không có bằng chứng SĐT khớp target; action bị chặn.' }
   }
-  const displayName = displayNameFromCandidate(candidateText, normalized)
+  const displayName = displayNameFromCandidateText(candidateText, normalized)
 
   await control.checkpoint()
   await candidate.click({ timeout: 5_000 })
-  await control.sleep(700)
-  const composer = await messageComposer(page)
-  const identityInTargetPane = await hasIdentityInTargetPane(page, search, composer, normalized, displayName)
-  const evidence: ZaloTargetEvidenceSnapshot = {
-    candidatePhoneMatch: true,
-    identityInTargetPane,
-    composerVisible: Boolean(composer)
-  }
 
-  if (!assessZaloTargetEvidence(evidence, options.requireConversation)) {
-    if (options.requireConversation && !composer) {
-      return { ok: false, code: 'composer_missing', message: 'Đã tìm thấy target nhưng chưa xác minh được khung chat/composer đúng target.' }
+  let composer: Locator | null = null
+  let identityInTargetPane = false
+  for (let attempt = 0; attempt < 24; attempt += 1) {
+    await control.checkpoint()
+    composer = await messageComposer(page)
+    identityInTargetPane = await hasIdentityInTargetPane(page, search, composer, normalized, displayName)
+    const evidence: ZaloTargetEvidenceSnapshot = {
+      candidatePhoneMatch: true,
+      identityInTargetPane,
+      composerVisible: Boolean(composer)
     }
-    return { ok: false, code: 'target_unverified', message: 'Không đủ bằng chứng identity trong vùng target sau khi mở kết quả; action bị chặn.' }
+    if (assessZaloTargetEvidence(evidence, options.requireConversation)) {
+      return { ok: true, targetPhone: normalized, displayName, composer }
+    }
+    await control.sleep(250)
   }
 
-  return { ok: true, targetPhone: normalized, displayName, composer }
+  if (options.requireConversation && !composer) {
+    return { ok: false, code: 'composer_missing', message: 'Đã click đúng kết quả SĐT nhưng sau 6 giây vẫn chưa thấy composer của conversation.' }
+  }
+  return {
+    ok: false,
+    code: 'target_unverified',
+    message: displayName
+      ? `Đã click đúng SĐT ${normalized} nhưng conversation chưa khớp tên "${displayName}" sau 6 giây.`
+      : `Đã click đúng SĐT ${normalized} nhưng không lấy được tên từ result để xác minh conversation.`
+  }
 }
