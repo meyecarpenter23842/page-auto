@@ -184,7 +184,7 @@ try {
   await windowPage.locator('.business-page_wall_post [data-testid="page-wall-plan-list"]').waitFor({ state: 'visible' })
   const schedulePanelText = await windowPage.locator('.business-page_wall_post .page-wall-schedule-panel').innerText()
   invariant(schedulePanelText.includes('+ Thêm lịch'), 'Lịch Tường thiếu nút Thêm lịch.')
-  invariant(schedulePanelText.includes('Mỗi lịch tự giữ bài + tài khoản + thứ/ngày chạy + giờ + concurrency.'), 'Lịch Tường chưa mô tả schedule self-contained.')
+  invariant(schedulePanelText.includes('Mỗi lịch tự giữ bộ bài + cách lấy bài + tài khoản + ngày chạy + giờ + concurrency.'), 'Lịch Tường chưa mô tả schedule self-contained.')
   invariant(!schedulePanelText.includes('Số task'), 'Lịch Tường vẫn lộ Số task kỹ thuật ra UI.')
   invariant(!schedulePanelText.includes('Lưu kế hoạch'), 'Lịch Tường vẫn còn editor kế hoạch inline cũ.')
 
@@ -192,7 +192,7 @@ try {
   const wallScheduleDialog = windowPage.getByRole('dialog', { name: 'Thiết lập lịch đăng' })
   await wallScheduleDialog.waitFor({ state: 'visible' })
   const wallScheduleText = await wallScheduleDialog.innerText()
-  for (const expected of ['1. Chọn bài viết', '2. Ngày và giờ đăng bài', '3. Chọn tài khoản muốn đăng', '+ Thêm giờ', 'TK song song']) {
+  for (const expected of ['1. Bộ bài cho lịch', '2. Ngày và giờ đăng bài', '3. Chọn tài khoản muốn đăng', '+ Thêm giờ', 'TK song song']) {
     invariant(wallScheduleText.includes(expected), `Popup lịch Đăng Tường thiếu ${expected}.`)
   }
   await wallScheduleDialog.getByRole('button', { name: '×', exact: true }).click()

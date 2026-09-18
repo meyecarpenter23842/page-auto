@@ -14,6 +14,11 @@ import {
   pageWallPlanOccurrenceKey
 } from '../../shared/pageWallPlans'
 import type { PageWallJobRecord } from '../../shared/pageWallJobs'
+import {
+  normalizePageWallSchedulePostPool,
+  type PageWallSchedulePostPoolInput,
+  type PageWallSchedulePostPoolRecord
+} from '../../shared/pageWallPostPool'
 import { PageWallJobRepository, type CreatePageWallJobInput } from './pageWallJobRepository'
 
 interface PageWallPlanRow {
@@ -44,6 +49,14 @@ interface PageWallPlanOccurrenceRow {
   startedAt: number | null
   finishedAt: number | null
   updatedAt: number
+}
+
+interface PageWallSchedulePostPoolRow {
+  planId: number
+  groupKey: string
+  selectionMode: PageWallSchedulePostPoolRecord['mode']
+  slotOrder: number
+  postsJson: string
 }
 
 export interface CreatePageWallPlanOccurrenceInput {
@@ -158,6 +171,78 @@ export class PageWallPlanRepository {
         COALESCE(local_date, '9999-12-31'), minute_of_day, id
     `).all(pageTabId) as PageWallPlanRow[]
     return rows.map(rowToPlan)
+  }
+
+  getSchedulePostPool(planId: number): PageWallSchedulePostPoolRecord | null {
+    if (!Number.isInteger(planId) || planId <= 0) throw new Error('Kế hoạch Đăng Tường không hợp lệ.')
+    const row = this.client.prepare(`
+      SELECT plan_id AS planId, group_key AS groupKey, selection_mode AS selectionMode,
+             slot_order AS slotOrder, posts_json AS postsJson
+      FROM page_wall_schedule_post_pools
+      WHERE plan_id = ?
+    `).get(planId) as PageWallSchedulePostPoolRow | undefined
+    if (!row) return null
+
+    let parsed: unknown
+    try { parsed = JSON.parse(row.postsJson) } catch { return null }
+    try {
+      const normalized = normalizePageWallSchedulePostPool({
+        mode: row.selectionMode,
+        posts: Array.isArray(parsed) ? (parsed as PageWallSchedulePostPoolInput['posts']) : []
+      })
+      return {
+        groupKey: row.groupKey,
+        slotOrder: row.slotOrder,
+        mode: normalized.mode,
+        posts: normalized.posts
+      }
+    } catch {
+      return null
+    }
+  }
+
+  saveSchedulePostPool(
+    planId: number,
+    input: PageWallSchedulePostPoolInput & { groupKey: string; slotOrder: number }
+  ): PageWallSchedulePostPoolRecord {
+    if (!this.get(planId)) throw new Error(`Không tìm thấy kế hoạch Đăng Tường #${planId}.`)
+    const groupKey = input.groupKey.trim()
+    if (!groupKey) throw new Error('Nhóm lịch Đăng Tường không hợp lệ.')
+    if (!Number.isSafeInteger(input.slotOrder) || input.slotOrder < 0) throw new Error('Thứ tự khung giờ Đăng Tường không hợp lệ.')
+    const normalized = normalizePageWallSchedulePostPool(input)
+    this.client.prepare(`
+      INSERT INTO page_wall_schedule_post_pools (
+        plan_id, group_key, selection_mode, slot_order, posts_json
+      ) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(plan_id) DO UPDATE SET
+        group_key = excluded.group_key,
+        selection_mode = excluded.selection_mode,
+        slot_order = excluded.slot_order,
+        posts_json = excluded.posts_json
+    `).run(planId, groupKey, normalized.mode, input.slotOrder, JSON.stringify(normalized.posts))
+    return {
+      groupKey,
+      slotOrder: input.slotOrder,
+      mode: normalized.mode,
+      posts: normalized.posts
+    }
+  }
+
+  clearSchedulePostPool(planId: number): boolean {
+    if (!Number.isInteger(planId) || planId <= 0) return false
+    return this.client.prepare('DELETE FROM page_wall_schedule_post_pools WHERE plan_id = ?').run(planId).changes > 0
+  }
+
+  countScheduleGroupOccurrencesBefore(groupKey: string, scheduledAt: number): number {
+    const key = groupKey.trim()
+    if (!key) return 0
+    const row = this.client.prepare(`
+      SELECT COUNT(*) AS count
+      FROM page_wall_plan_occurrences occurrence
+      INNER JOIN page_wall_schedule_post_pools pool ON pool.plan_id = occurrence.plan_id
+      WHERE pool.group_key = ? AND occurrence.scheduled_at < ?
+    `).get(key, scheduledAt) as { count: number }
+    return Number(row.count)
   }
 
   create(input: SavePageWallPlanInput, now = Date.now()): PageWallPlanRecord {

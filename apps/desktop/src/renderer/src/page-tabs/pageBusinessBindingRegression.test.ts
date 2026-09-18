@@ -81,12 +81,15 @@ describe('Page business binding regression', () => {
 
   it('uses a FPlus-style complete schedule dialog with post, accounts, multi-time and concurrency', () => {
     expect(wallSource).toContain('aria-label="Thiết lập lịch đăng"')
-    expect(wallSource).toContain('1. Chọn bài viết')
+    expect(wallSource).toContain('1. Bộ bài cho lịch')
     expect(wallSource).toContain('2. Ngày và giờ đăng bài')
     expect(wallSource).toContain('3. Chọn tài khoản muốn đăng')
     expect(wallSource).toContain('+ Thêm giờ')
     expect(wallSource).toContain('+ Thêm lịch')
     expect(wallSource).toContain('TK song song')
+    expect(wallSource).toContain('Cách lấy bài theo từng khung giờ')
+    expect(wallSource).toContain("postPool: { mode: scheduleDraft.postSelectionMode, posts: sources }")
+    expect(wallSource).toContain("mode={pickerTarget === 'schedule' ? 'multiple' : 'single'}")
     expect(wallSource).toContain('taskCount: scheduleDraft.accountIds.length')
     expect(wallSource).not.toContain('Số task')
     expect(wallSource).not.toContain('Lưu kế hoạch')

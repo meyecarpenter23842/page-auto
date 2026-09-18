@@ -53,6 +53,11 @@ try {
       variants: ['Nội dung smoke cho Đăng Tường'],
       image: { folderPath: '', mode: 'sequential', imagesPerPost: 1, missingPolicy: 'text_only' }
     })
+    await window.pageAuto.createContentLibraryItem({
+      contentSetId: -1, name: 'Smoke Wall Post B', enabled: true,
+      variants: ['Nội dung smoke thứ hai cho pool lịch'],
+      image: { folderPath: '', mode: 'sequential', imagesPerPost: 1, missingPolicy: 'text_only' }
+    })
     const bind = (type, label) => window.pageAuto.createActionWorkspace({ type: 'interaction', label: `${page.name} · ${label}`, configJson: JSON.stringify({ pageBusinessType: type, pageTabId: page.id }), accounts: [] })
     await bind('group_post', 'Đăng Nhóm')
     await bind('page_wall_post', 'Đăng Tường')
@@ -151,18 +156,21 @@ try {
   await scheduleDialog.getByLabel('T5', { exact: true }).uncheck()
   invariant(!(await scheduleDialog.getByLabel('T3', { exact: true }).isChecked()) && !(await scheduleDialog.getByLabel('T5', { exact: true }).isChecked()), 'Không chỉnh được ngày chạy tuần.')
 
-  await scheduleDialog.getByRole('button', { name: 'Chọn', exact: true }).click()
-  picker = windowPage.getByRole('dialog', { name: 'Chọn bài cho lịch Đăng Tường' })
+  await scheduleDialog.getByRole('button', { name: 'Chọn / quản lý', exact: true }).click()
+  picker = windowPage.getByRole('dialog', { name: 'Chọn bộ bài cho lịch Đăng Tường' })
   await picker.waitFor({ state: 'visible' })
   const layers = await windowPage.evaluate(() => ({ schedule: Number(getComputedStyle(document.querySelector('.page-wall-modal-backdrop.schedule')).zIndex || 0), picker: Number(getComputedStyle(document.querySelector('.canonical-post-picker-backdrop')).zIndex || 0) }))
   invariant(layers.picker > layers.schedule, `Post Picker của lịch vẫn nằm sau popup lịch: ${JSON.stringify(layers)}`)
-  await picker.getByLabel('Chọn Smoke Wall Post', { exact: true }).click()
-  await picker.getByRole('button', { name: 'Dùng bài đã chọn', exact: true }).click()
+  await picker.getByLabel('Chọn Smoke Wall Post B', { exact: true }).click()
+  await picker.getByRole('button', { name: 'Áp dụng 2 bài', exact: true }).click()
   await picker.waitFor({ state: 'detached' })
   scheduleDialog = windowPage.getByRole('dialog', { name: 'Thiết lập lịch đăng' })
-  invariant((await scheduleDialog.innerText()).includes('Smoke Wall Post'), 'Chọn bài trong popup lịch không set lại schedule draft.')
+  const schedulePoolText = await scheduleDialog.innerText()
+  invariant(schedulePoolText.includes('2 bài đã chọn') && schedulePoolText.includes('Smoke Wall Post') && schedulePoolText.includes('Smoke Wall Post B'), 'Chọn nhiều bài trong popup lịch không set đúng post pool.')
+  await scheduleDialog.locator('input[name="page-wall-post-pool-mode"]').nth(1).check()
+  invariant((await scheduleDialog.innerText()).includes('Dùng hết bộ bài trước khi xáo lại vòng mới.'), 'Mode Ngẫu nhiên của post pool không được áp dụng.')
 
-  await scheduleDialog.getByRole('button', { name: 'Thêm', exact: true }).click()
+  await scheduleDialog.getByRole('button', { name: 'Thêm bài', exact: true }).click()
   const editor = windowPage.getByRole('dialog', { name: 'Thêm bài viết' })
   await editor.waitFor({ state: 'visible' })
   const editorLayers = await windowPage.evaluate(() => ({ schedule: Number(getComputedStyle(document.querySelector('.page-wall-modal-backdrop.schedule')).zIndex || 0), editor: Number(getComputedStyle(document.querySelector('.page-wall-modal-backdrop.editor')).zIndex || 0) }))
@@ -181,7 +189,7 @@ try {
   invariant(savedImageCount === 4, `Số ảnh mỗi bài không được persist vào canonical post: ${savedImageCount}`)
 
   scheduleDialog = windowPage.getByRole('dialog', { name: 'Thiết lập lịch đăng' })
-  invariant((await scheduleDialog.innerText()).includes('Smoke Added Post'), 'Bài vừa thêm không được set lại vào schedule draft.')
+  invariant((await scheduleDialog.innerText()).includes('Smoke Added Post') && (await scheduleDialog.innerText()).includes('3 bài đã chọn'), 'Bài vừa thêm không được nối vào post pool của lịch.')
   await scheduleDialog.getByRole('button', { name: '+ Thêm giờ', exact: true }).click()
   invariant(await scheduleDialog.locator('input[type="time"]').count() === 2, 'Thêm giờ trong popup lịch không thêm slot thứ hai.')
 
@@ -201,7 +209,7 @@ try {
   const planRow = wallRoot.locator('.page-wall-plan-row').first()
   await planRow.waitFor({ state: 'visible' })
   const planText = await planRow.innerText()
-  invariant(planText.includes('Smoke Added Post') && planText.includes('1 TK'), `Lịch lưu xong không hiện đúng summary: ${planText}`)
+  invariant(planText.includes('3 bài') && planText.includes('Ngẫu nhiên') && planText.includes('1 TK'), `Lịch lưu xong không hiện đúng post-pool summary: ${planText}`)
   invariant(planText.includes('CN') && planText.includes('T2') && !planText.includes('T3') && !planText.includes('T5'), `Summary ngày tuần không đúng: ${planText}`)
 
   const persistedWeekdays = await windowPage.evaluate(async (pageId) => {
@@ -210,6 +218,17 @@ try {
   }, setup.pageId)
   invariant(persistedWeekdays.length === 2 && persistedWeekdays.every((days) => JSON.stringify(days) === JSON.stringify([0, 1, 3, 5, 6])), `Weekday mapping/persist sai: ${JSON.stringify(persistedWeekdays)}`)
 
+  const persistedPools = await windowPage.evaluate(async (pageId) => {
+    const dashboard = await window.pageWallFinite.getDashboard({ pageTabId: pageId })
+    return dashboard.plans.map((plan) => plan.postPool)
+  }, setup.pageId)
+  invariant(
+    persistedPools.length === 2
+      && persistedPools.every((pool) => pool?.mode === 'random' && pool.posts.length === 3)
+      && persistedPools[0]?.groupKey === persistedPools[1]?.groupKey,
+    `Post pool/mode/group persist sai: ${JSON.stringify(persistedPools)}`
+  )
+
   const editButton = planRow.getByRole('button', { name: 'Sửa', exact: true })
   invariant(!(await editButton.isDisabled()), 'Nút Sửa lịch đang bị khóa dù lịch không có occurrence đang chạy.')
   await editButton.click()
@@ -217,6 +236,7 @@ try {
   await scheduleDialog.waitFor({ state: 'visible' })
   invariant((await scheduleDialog.innerText()).includes('Sửa lịch đăng'), 'Nút Sửa không mở popup chỉnh lịch.')
   invariant(!(await scheduleDialog.getByLabel('T3', { exact: true }).isChecked()), 'Sửa lịch không đọc lại weekday đã lưu.')
+  invariant((await scheduleDialog.innerText()).includes('3 bài đã chọn') && (await scheduleDialog.innerText()).includes('Ngẫu nhiên không trùng vòng'), 'Sửa lịch không đọc lại post pool/mode đã lưu.')
   await scheduleDialog.getByRole('button', { name: '×', exact: true }).click()
   await scheduleDialog.waitFor({ state: 'detached' })
 
@@ -241,6 +261,8 @@ try {
     immediateDelayControl: true,
     weeklyScheduleControls: true,
     weeklyMappingPersisted: true,
+    schedulePostPoolMultiSelect: true,
+    schedulePostPoolModePersisted: true,
     scheduleEditOpens: true,
     schedulePauseResumePersists: true,
     layoutLeftPlusRightStack: true,

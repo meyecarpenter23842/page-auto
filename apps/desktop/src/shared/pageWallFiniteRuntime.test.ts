@@ -51,6 +51,7 @@ function plan(patch: Partial<PageWallFinitePlanView> = {}): PageWallFinitePlanVi
     updatedAt: 1,
     weekdays: [0, 1, 2, 3, 4, 5, 6],
     latestOccurrence: null,
+    postPool: null,
     ...patch
   }
 }
