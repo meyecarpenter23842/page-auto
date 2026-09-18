@@ -30,7 +30,10 @@ async function revealedFileInput(
   image: boolean,
   beforeCount: number
 ): Promise<Locator | null> {
-  const chatInputs = await page.locator('#chatInput input[type="file"]').all()
+  const chatInputs = await page.locator([
+    '#chat-box-bar-id input[type="file"]',
+    '#chat-input-container-id input[type="file"]'
+  ].join(', ')).all()
   for (const input of chatInputs) {
     if (await inputMatchesKind(input, image)) return input
   }
@@ -45,54 +48,66 @@ async function revealedFileInput(
 }
 
 async function attachmentTrigger(page: Page, image: boolean): Promise<Locator | null> {
-  return image
-    ? firstVisible([
-      page.locator('#chatInput [data-translate-title="STR_SEND_PHOTO"]'),
-      page.locator('#chatInput [icon="Photo_24_Line"]'),
-      page.locator('#chatInput [title="Gửi hình ảnh"]'),
-      page.locator('#chatInput i[class*="Photo_24_Line"]').locator('xpath=..'),
-      page.getByRole('button', { name: /Ảnh|Hình ảnh|Photo/i }),
-      page.locator('[aria-label*="Ảnh" i]'),
-      page.locator('[title*="Ảnh" i]')
-    ])
-    : firstVisible([
-      page.locator('#chatInput [data-translate-title="STR_SEND_FILE"]'),
-      page.locator('#chatInput [title*="Gửi file" i]'),
-      page.locator('#chatInput [title*="Tài liệu" i]'),
-      page.getByRole('button', { name: /Tài liệu|File/i }),
-      page.locator('[aria-label*="Tài liệu" i]'),
-      page.locator('[title*="Tài liệu" i]')
-    ])
+  const locators = image
+    ? [
+      page.locator('#chat-box-bar-id [data-translate-title="STR_SEND_PHOTO"][icon="Photo_24_Line"]'),
+      page.locator('#chat-box-bar-id [data-translate-title="STR_SEND_PHOTO"]'),
+      page.locator('#chat-box-bar-id [icon="Photo_24_Line"]'),
+      page.locator('#chat-box-bar-id i.fa-Photo_24_Line'),
+      page.locator('[data-translate-title="STR_SEND_PHOTO"][title="Gửi hình ảnh"]'),
+      page.locator('[icon="Photo_24_Line"][title="Gửi hình ảnh"]')
+    ]
+    : [
+      page.locator('#chat-box-bar-id [data-translate-title="STR_SEND_FILE"]'),
+      page.locator('#chat-box-bar-id [title*="Gửi file" i]'),
+      page.locator('#chat-box-bar-id [title*="Tài liệu" i]'),
+      page.locator('[data-translate-title="STR_SEND_FILE"]')
+    ]
+
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const trigger = await firstVisible(locators)
+    if (trigger) {
+      const tagName = await trigger.evaluate((element) => element.tagName.toLowerCase()).catch(() => '')
+      if (tagName === 'i' || tagName === 'svg' || tagName === 'span') {
+        const parent = trigger.locator('xpath=ancestor::*[@data-translate-title or contains(@class,"chat-box-toolbar-button")][1]')
+        if (await parent.isVisible().catch(() => false)) return parent
+      }
+      return trigger
+    }
+    await page.waitForTimeout(100)
+  }
+  return null
 }
+
+type AttachmentBindResult =
+  | { ok: true; method: 'filechooser' | 'revealed_input' }
+  | { ok: false; stage: 'trigger_missing' | 'trigger_click_failed' | 'chooser_missing' | 'set_files_failed' }
 
 async function setZaloAttachmentFile(
   page: Page,
   path: string,
   image: boolean,
   control: ZaloActionControl
-): Promise<boolean> {
+): Promise<AttachmentBindResult> {
   const trigger = await attachmentTrigger(page, image)
-  if (!trigger) return false
+  if (!trigger) return { ok: false, stage: 'trigger_missing' }
 
-  // Bind the upload to the exact live toolbar action. Never set a pre-existing
-  // page-wide file input before clicking the Zalo photo/file control: Zalo keeps
-  // unrelated hidden upload inputs in the DOM and they silently accept files.
   const beforeCount = await page.locator('input[type="file"]').count()
   const chooserPromise = page.waitForEvent('filechooser', { timeout: 5_000 }).catch(() => null)
   const clicked = await trigger.click({ timeout: 5_000 }).then(() => true).catch(() => false)
-  if (!clicked) return false
+  if (!clicked) return { ok: false, stage: 'trigger_click_failed' }
 
   const fileChooser = await chooserPromise
   if (fileChooser) {
-    await fileChooser.setFiles(path)
-    return true
+    const set = await fileChooser.setFiles(path).then(() => true).catch(() => false)
+    return set ? { ok: true, method: 'filechooser' } : { ok: false, stage: 'set_files_failed' }
   }
 
   await control.sleep(350)
   const revealedInput = await revealedFileInput(page, image, beforeCount)
-  if (!revealedInput) return false
-  await revealedInput.setInputFiles(path)
-  return true
+  if (!revealedInput) return { ok: false, stage: 'chooser_missing' }
+  const set = await revealedInput.setInputFiles(path).then(() => true).catch(() => false)
+  return set ? { ok: true, method: 'revealed_input' } : { ok: false, stage: 'set_files_failed' }
 }
 
 async function optionalSendButton(page: Page): Promise<Locator | null> {
@@ -134,11 +149,17 @@ export async function sendZaloAttachment(
     const beforeName = await page.getByText(basename(path), { exact: false }).count().catch(() => 0)
 
     const attached = await setZaloAttachmentFile(page, path, image, control)
-    if (!attached) {
-      return zaloActionResult(accountId, input.type, target.targetPhone, 'failed', 'attachment_control_missing', 'Không xác định được control upload ảnh/file trong conversation đã verify.', {
+    if (!attached.ok) {
+      const stageMessage: Record<typeof attached.stage, string> = {
+        trigger_missing: 'Không thấy nút ảnh/file trong #chat-box-bar-id.',
+        trigger_click_failed: 'Đã thấy nút ảnh/file nhưng click control thất bại.',
+        chooser_missing: 'Đã click nút ảnh/file nhưng Zalo không mở filechooser hoặc input upload trong vùng chat.',
+        set_files_failed: 'Đã mở control upload nhưng Playwright không set được file.'
+      }
+      return zaloActionResult(accountId, input.type, target.targetPhone, 'failed', 'attachment_control_missing', stageMessage[attached.stage], {
         verifiedTarget: true,
         targetDisplayName: target.displayName,
-        data: { sentCount, total: input.paths.length }
+        data: { sentCount, total: input.paths.length, stage: attached.stage, file: basename(path) }
       })
     }
     await control.sleep(400)
