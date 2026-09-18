@@ -75,6 +75,15 @@ function mediaSummary(post: ZaloPostLibraryItem): string {
   return source + ' · ' + post.media.imagesPerTarget + ' file/target · ' + mode
 }
 
+function libraryHasEnabledMedia(library: ZaloPostLibrary): boolean {
+  return library.posts.some((post) => (
+    post.enabled
+    && post.media.source !== 'none'
+    && post.media.folderPath.trim().length > 0
+    && post.media.imagesPerTarget > 0
+  ))
+}
+
 export interface ZaloBatchPanelProps {
   accounts: ZaloAccountView[]
   onAccountsChanged?: () => void | Promise<void>
@@ -104,7 +113,13 @@ export function ZaloBatchPanel({ accounts, onAccountsChanged }: ZaloBatchPanelPr
 
   useEffect(() => {
     void window.pageAutoZalo.getPostLibrary()
-      .then((library) => setPostLibrary({ mode: library.mode, posts: library.posts.map(copyPost) }))
+      .then((library) => {
+        const next = { mode: library.mode, posts: library.posts.map(copyPost) }
+        setPostLibrary(next)
+        // A bound post with media should not silently reopen in text-only mode.
+        // Operators can still turn the attachment action off explicitly afterwards.
+        setSendAttachment(libraryHasEnabledMedia(next))
+      })
       .catch((error) => setNotice(error instanceof Error ? error.message : String(error)))
   }, [])
 
@@ -168,10 +183,14 @@ export function ZaloBatchPanel({ accounts, onAccountsChanged }: ZaloBatchPanelPr
           postId: post.postId, enabled: post.enabled, sortOrder: index, media: { ...post.media }
         }))
       })
-      setPostLibrary({ mode: saved.mode, posts: saved.posts.map(copyPost) })
+      const next = { mode: saved.mode, posts: saved.posts.map(copyPost) }
+      setPostLibrary(next)
+      setSendAttachment(libraryHasEnabledMedia(next))
       setPostModalOpen(false)
       setCanonicalOpen(false)
-      setNotice('Đã lưu Bài Zalo đang dùng.')
+      setNotice(libraryHasEnabledMedia(next)
+        ? 'Đã lưu Bài Zalo · Gửi ảnh/file đã bật theo media của bài.'
+        : 'Đã lưu Bài Zalo đang dùng.')
     } catch (error) {
       setNotice(error instanceof Error ? error.message : String(error))
     }
