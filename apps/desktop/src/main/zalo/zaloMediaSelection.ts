@@ -1,11 +1,55 @@
 import { readdir } from 'node:fs/promises'
-import { extname, join, parse } from 'node:path'
+import { extname, join, parse, relative } from 'node:path'
 import type { ZaloBatchMediaSnapshot } from '../../shared/zalo'
 
 const mediaExtensions = new Set([
-  '.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp',
+  '.jpg', '.jpeg', '.jfif', '.png', '.webp', '.gif', '.bmp', '.avif', '.heic', '.heif',
   '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.txt', '.zip', '.rar', '.7z'
 ])
+
+const MAX_MEDIA_SCAN_DEPTH = 5
+const MAX_MEDIA_FILES = 5_000
+
+interface MediaFile {
+  absolutePath: string
+  relativePath: string
+  name: string
+}
+
+async function listMediaFiles(root: string): Promise<MediaFile[]> {
+  const files: MediaFile[] = []
+  const stack: Array<{ directory: string; depth: number }> = [{ directory: root, depth: 0 }]
+
+  while (stack.length && files.length < MAX_MEDIA_FILES) {
+    const current = stack.pop()!
+    const entries = await readdir(current.directory, { withFileTypes: true })
+
+    for (const entry of entries) {
+      if (files.length >= MAX_MEDIA_FILES) break
+      const absolutePath = join(current.directory, entry.name)
+
+      if (entry.isFile()) {
+        if (!mediaExtensions.has(extname(entry.name).toLowerCase())) continue
+        files.push({
+          absolutePath,
+          relativePath: relative(root, absolutePath),
+          name: entry.name
+        })
+        continue
+      }
+
+      if (entry.isDirectory() && current.depth < MAX_MEDIA_SCAN_DEPTH) {
+        stack.push({ directory: absolutePath, depth: current.depth + 1 })
+      }
+    }
+  }
+
+  return files.sort((left, right) => left.relativePath.localeCompare(
+    right.relativePath,
+    undefined,
+    { numeric: true, sensitivity: 'base' }
+  ))
+}
 
 function hashSeed(value: string): number {
   let hash = 2166136261
@@ -30,6 +74,8 @@ export interface ZaloMediaSelectionInput {
 export interface ZaloMediaSelection {
   paths: string[]
   missing: boolean
+  reason: 'none' | 'folder_unreadable' | 'no_supported_files' | 'insufficient_files'
+  discoveredCount: number
 }
 
 export async function selectZaloMedia(
@@ -37,40 +83,51 @@ export async function selectZaloMedia(
   input: ZaloMediaSelectionInput
 ): Promise<ZaloMediaSelection> {
   const folder = media.folderPath.trim()
-  if (!folder) return { paths: [], missing: false }
+  if (!folder) return { paths: [], missing: false, reason: 'none', discoveredCount: 0 }
 
-  let names: string[]
+  let files: MediaFile[]
   try {
-    names = (await readdir(folder, { withFileTypes: true }))
-      .filter((entry) => entry.isFile() && mediaExtensions.has(extname(entry.name).toLowerCase()))
-      .map((entry) => entry.name)
-      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }))
+    files = await listMediaFiles(folder)
   } catch {
-    return { paths: [], missing: true }
+    return { paths: [], missing: true, reason: 'folder_unreadable', discoveredCount: 0 }
   }
 
   if (media.mode === 'filename_match') {
-    const matched = names.filter((name) => parse(name).name.includes(input.targetPhone))
+    const matched = files.filter((file) => parse(file.name).name.includes(input.targetPhone))
+    const selected = matched.slice(0, media.imagesPerTarget).map((file) => file.absolutePath)
     return {
-      paths: matched.slice(0, media.imagesPerTarget).map((name) => join(folder, name)),
-      missing: matched.length < media.imagesPerTarget
+      paths: selected,
+      missing: selected.length < media.imagesPerTarget,
+      reason: selected.length === 0
+        ? 'no_supported_files'
+        : selected.length < media.imagesPerTarget
+          ? 'insufficient_files'
+          : 'none',
+      discoveredCount: files.length
     }
   }
 
-  if (!names.length) return { paths: [], missing: true }
+  if (!files.length) {
+    return { paths: [], missing: true, reason: 'no_supported_files', discoveredCount: 0 }
+  }
 
   const start = media.mode === 'random'
     ? deterministicIndex(
         input.runId + ':' + input.targetIndex + ':' + input.postIndex + ':' + input.targetPhone,
-        names.length
+        files.length
       )
-    : (input.targetIndex * media.imagesPerTarget) % names.length
+    : (input.targetIndex * media.imagesPerTarget) % files.length
 
   const selected: string[] = []
-  for (let offset = 0; offset < Math.min(media.imagesPerTarget, names.length); offset += 1) {
-    const name = names[(start + offset) % names.length]
-    if (name) selected.push(join(folder, name))
+  for (let offset = 0; offset < Math.min(media.imagesPerTarget, files.length); offset += 1) {
+    const file = files[(start + offset) % files.length]
+    if (file) selected.push(file.absolutePath)
   }
 
-  return { paths: selected, missing: selected.length < media.imagesPerTarget }
+  return {
+    paths: selected,
+    missing: selected.length < media.imagesPerTarget,
+    reason: selected.length < media.imagesPerTarget ? 'insufficient_files' : 'none',
+    discoveredCount: files.length
+  }
 }
