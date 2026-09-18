@@ -6,13 +6,14 @@ import { ContentLibraryHub } from './content-library/ContentLibraryHub'
 import { HotmailAuto } from './hotmail/HotmailAuto'
 import { ExecutionLogs } from './logs/ExecutionLogs'
 import { PageBusinessWorkspace } from './page-tabs/PageBusinessWorkspace'
+import { ProxyBuilderWorkspace } from './proxy-builder/ProxyBuilderWorkspace'
 import { RotationWindowStatusPanel } from './page-tabs/RotationWindowStatusPanel'
 import { ScannerWorkspace } from './scanner/ScannerWorkspace'
 import { SettingsPanel } from './settings/SettingsPanel'
 import { ZaloWorkspace } from './zalo/ZaloWorkspace'
 import './globalBrowserDock.css'
 
-type RouteId = 'accounts' | 'hotmail' | 'content-library' | 'page-tabs' | 'actions' | 'scanner' | 'zalo' | 'logs' | 'settings'
+type RouteId = 'accounts' | 'hotmail' | 'content-library' | 'page-tabs' | 'actions' | 'scanner' | 'proxy-builder' | 'zalo' | 'logs' | 'settings'
 interface Route { id: RouteId; label: string }
 
 const routes: Route[] = [
@@ -22,6 +23,7 @@ const routes: Route[] = [
   { id: 'page-tabs', label: 'Page Tabs' },
   { id: 'actions', label: 'Hành động' },
   { id: 'scanner', label: 'Quét dữ liệu' },
+  { id: 'proxy-builder', label: 'Proxy Builder' },
   { id: 'zalo', label: 'Zalo' },
   { id: 'logs', label: 'Nhật ký' },
   { id: 'settings', label: 'Cài đặt' }
@@ -34,6 +36,7 @@ const routeDescriptions: Record<RouteId, { title: string; description: string }>
   'page-tabs': { title: 'Page Tabs', description: 'Mỗi Page UID là một workspace đa nghiệp vụ: Nhóm, Đăng Tường, Sửa Page và các tác vụ mở rộng dùng chung tầng Facebook.' },
   actions: { title: 'Hành động', description: 'Workspace nhiều tab nghiệp vụ; Kịch bản hiện tại là tab mặc định và các tab Hành động khác sẽ được bổ sung theo module dùng chung.' },
   scanner: { title: 'Quét dữ liệu', description: 'Workspace Scanner dùng chung job lifecycle, Account/session và Dataset; từng loại Nhóm/Page/User/Member là module nghiệp vụ độc lập.' },
+  'proxy-builder': { title: 'Proxy Builder', description: 'Workspace tạo và kiểm tra proxy IPv4/IPv6 trên VPS qua SSH, giữ giao diện gọn và tách phần provision khỏi Renderer.' },
   zalo: { title: 'Zalo', description: 'Tài khoản/session Zalo độc lập, action đơn và batch gửi tin/kết bạn hàng loạt theo nhiều account.' },
   logs: { title: 'Runtime Logs', description: 'Execution log chi tiết, screenshot evidence, retry disposition và manual-review cho kết quả publish chưa chắc chắn.' },
   settings: { title: 'Cài đặt', description: 'Cấu hình trình duyệt, session, mạng, vận hành và chẩn đoán dùng chung cho PAGE-AUTO.' }
@@ -46,6 +49,7 @@ function RouteIcon({ id }: { id: RouteId }) {
   if (id === 'page-tabs') return <svg {...common}><path d="M5 4.5h12.5v14H5z" /><path d="M8.5 7.5h12v12h-12" /><path d="M8 9h6" /></svg>
   if (id === 'actions') return <svg {...common}><rect x="4" y="4" width="6" height="5" rx="1" /><rect x="14" y="15" width="6" height="5" rx="1" /><path d="M10 6.5h4a3 3 0 0 1 3 3V15" /><path d="m14.5 12.5 2.5 2.5 2.5-2.5" /></svg>
   if (id === 'scanner') return <svg {...common}><circle cx="10" cy="10" r="5" /><path d="m14 14 5 5" /><path d="M7 10h6" /><path d="M10 7v6" /></svg>
+  if (id === 'proxy-builder') return <svg {...common}><circle cx="6" cy="12" r="2.5" /><circle cx="18" cy="7" r="2.5" /><circle cx="18" cy="17" r="2.5" /><path d="m8.3 10.9 7.4-3" /><path d="m8.3 13.1 7.4 3" /></svg>
   if (id === 'zalo') return <svg {...common}><path d="M4 5h16v11H9l-5 4z" /><path d="M8 9h8" /><path d="M8 12h5" /></svg>
   if (id === 'accounts') return <svg {...common}><circle cx="9" cy="8" r="3" /><path d="M3.5 18c.5-3 2.4-4.5 5.5-4.5s5 1.5 5.5 4.5" /><path d="M16 7.5a2.5 2.5 0 0 1 0 5" /><path d="M16.5 14c2.1.4 3.4 1.7 4 4" /></svg>
   if (id === 'logs') return <svg {...common}><path d="M6 5h12" /><path d="M6 10h12" /><path d="M6 15h8" /><path d="M6 20h10" /></svg>
@@ -99,10 +103,10 @@ export function App() {
       {activeRoute === 'page-tabs' ? <RotationWindowStatusPanel /> : null}
       <main key={activeRoute} className={`${workspaceClass} workspace-transition`}>
         <header className="topbar">
-          <div><p className="eyebrow">PAGE-AUTO / {activeRoute === 'hotmail' ? 'EMAIL' : activeRoute === 'actions' ? 'HÀNH ĐỘNG' : activeRoute === 'scanner' ? 'QUÉT DỮ LIỆU' : activeRoute === 'content-library' ? 'THƯ VIỆN' : activeRoute === 'zalo' ? 'ZALO' : activeRoute.toUpperCase()}</p><h1>{active.title}</h1></div>
+          <div><p className="eyebrow">PAGE-AUTO / {activeRoute === 'hotmail' ? 'EMAIL' : activeRoute === 'actions' ? 'HÀNH ĐỘNG' : activeRoute === 'scanner' ? 'QUÉT DỮ LIỆU' : activeRoute === 'proxy-builder' ? 'PROXY BUILDER' : activeRoute === 'content-library' ? 'THƯ VIỆN' : activeRoute === 'zalo' ? 'ZALO' : activeRoute.toUpperCase()}</p><h1>{active.title}</h1></div>
           <div className="topbar-actions"><button className="button secondary global-browser-dock-button" type="button" disabled={browserDockOpening} onClick={() => void openBrowserDock()}>{browserDockOpening ? 'Đang mở…' : 'Cửa sổ Chrome'}</button><div className="version-badge">{appInfo ? `v${appInfo.version}` : 'Loading...'}</div></div>
         </header>
-        {activeRoute === 'accounts' ? <AccountManager onOpenChangeInfoWorkspace={openChangeInfoWorkspace} /> : activeRoute === 'hotmail' ? <HotmailAuto /> : activeRoute === 'content-library' ? <ContentLibraryHub /> : activeRoute === 'page-tabs' ? <PageBusinessWorkspace /> : activeRoute === 'actions' ? <ActionWorkspace /> : activeRoute === 'scanner' ? <ScannerWorkspace /> : activeRoute === 'zalo' ? <ZaloWorkspace /> : activeRoute === 'logs' ? <ExecutionLogs /> : <SettingsPanel appInfo={appInfo} />}
+        {activeRoute === 'accounts' ? <AccountManager onOpenChangeInfoWorkspace={openChangeInfoWorkspace} /> : activeRoute === 'hotmail' ? <HotmailAuto /> : activeRoute === 'content-library' ? <ContentLibraryHub /> : activeRoute === 'page-tabs' ? <PageBusinessWorkspace /> : activeRoute === 'actions' ? <ActionWorkspace /> : activeRoute === 'scanner' ? <ScannerWorkspace /> : activeRoute === 'proxy-builder' ? <ProxyBuilderWorkspace /> : activeRoute === 'zalo' ? <ZaloWorkspace /> : activeRoute === 'logs' ? <ExecutionLogs /> : <SettingsPanel appInfo={appInfo} />}
       </main>
     </div>
   )

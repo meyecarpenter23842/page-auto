@@ -34,6 +34,7 @@
 .workspace > .page-tabs-route,
 .workspace > .scenario-runner-page,
 .workspace > .scenario-manager-mode,
+.workspace > .proxy-builder-shell,
 .workspace > .execution-logs-shell,
 .workspace > .settings-shell {
   flex: 1 1 auto;
