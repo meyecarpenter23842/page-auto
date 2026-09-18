@@ -26,6 +26,19 @@ describe('Zalo Batch 3 action modules', () => {
     })).toThrow(/ít nhất một/i)
   })
 
+  it('pins production actions to the live Zalo Web search/composer DOM', () => {
+    const root = join(process.cwd(), 'src/main/zalo')
+    const resolver = readFileSync(join(root, 'actions/zaloTargetResolver.ts'), 'utf8')
+    const sendMessage = readFileSync(join(root, 'actions/sendMessage.ts'), 'utf8')
+    expect(resolver).toContain("page.locator('#contact-search-input')")
+    expect(resolver).toContain("input[data-id=\"txt_Main_Search\"]")
+    expect(resolver).toContain("page.locator('#richInput')")
+    expect(sendMessage).toContain("page.locator('#chat-input-container-id')")
+    expect(sendMessage).toContain("composer.getAttribute('contenteditable')")
+    expect(sendMessage).toContain('page.keyboard.insertText(content)')
+    expect(sendMessage).toContain('#richInput chưa chuyển sang trạng thái nhập được')
+  })
+
   it('matches formatted phone evidence without weakening target verification', () => {
     expect(digitsMatch('Nguyễn A · 0912 345 678', '0912345678')).toBe(true)
     expect(digitsMatch('Nguyễn A · +84 912-345-678', '0912345678')).toBe(true)

@@ -39,6 +39,14 @@ describe('Zalo Batch 2 login/session', () => {
     expect(status).toBe('login_required')
   })
 
+  it('uses the live Zalo Web search/composer selectors as authenticated workspace evidence', () => {
+    const loginFlow = readFileSync(join(process.cwd(), 'src/main/zalo/zaloLoginFlow.ts'), 'utf8')
+    expect(loginFlow).toContain("'#contact-search-input'")
+    expect(loginFlow).toContain("'input[data-id=\"txt_Main_Search\"]'")
+    expect(loginFlow).toContain("'#richInput'")
+    expect(loginFlow).toContain("'#chat-input-container-id'")
+  })
+
   it('treats the visible authenticated chat workspace as ready even when stale login controls remain mounted', () => {
     expect(classifyZaloSessionEvidence({
       authenticatedShell: false,

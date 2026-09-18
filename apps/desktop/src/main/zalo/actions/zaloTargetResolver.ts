@@ -66,6 +66,8 @@ function displayNameFromCandidate(text: string, targetPhone: string): string | n
 
 async function searchInput(page: Page): Promise<Locator | null> {
   return firstVisible([
+    page.locator('#contact-search-input'),
+    page.locator('input[data-id="txt_Main_Search"]'),
     page.locator('input[type="search"]'),
     page.locator('input[placeholder*="Tìm kiếm" i]'),
     page.locator('input[placeholder*="Tìm bạn" i]'),
@@ -101,6 +103,8 @@ async function phoneCandidate(page: Page, targetPhone: string): Promise<Locator 
 
 async function messageComposer(page: Page): Promise<Locator | null> {
   return firstVisible([
+    page.locator('#richInput'),
+    page.locator('[data-keybinding-context^="mainChatInputFocus"]'),
     page.locator('[contenteditable="true"][role="textbox"]'),
     page.locator('[contenteditable="true"][data-placeholder*="tin nhắn" i]'),
     page.locator('textarea[placeholder*="tin nhắn" i]'),
