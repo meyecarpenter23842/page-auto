@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 const runtime = readFileSync(
-  fileURLToPath(new URL('../pageWallFiniteIpc.ts', import.meta.url)),
+  fileURLToPath(new URL('./pageWallFiniteIpc.ts', import.meta.url)),
   'utf8'
 )
 
