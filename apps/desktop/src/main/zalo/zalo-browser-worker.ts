@@ -18,7 +18,7 @@ import {
 import { ZaloActionControl } from './actions/zaloActionControl'
 import { runZaloAction } from './actions/zaloActionRunner'
 import { inspectZaloSession, runZaloPhonePasswordLogin, runZaloQrLogin } from './zaloLoginFlow'
-import { classifyZaloSessionEvidence } from './zaloSessionEvidence'
+import { classifyZaloSessionEvidence, waitForZaloSessionState } from './zaloSessionEvidence'
 
 interface OpenCommand {
   type: 'open'
@@ -195,7 +195,13 @@ async function run(): Promise<void> {
     if (currentScale === requestedScale) await applyBrowserPlacementToContext(active, command.placement)
 
     const page = await activeZaloPage(active, browserSettings.navigationTimeoutMs)
-    const status = classifyZaloSessionEvidence(await inspectZaloSession(page))
+    // A persisted Zalo session can briefly render the login shell while the SPA restores
+    // authenticated workspace state. Give live evidence a short stabilization window
+    // before declaring the profile logged out; real challenge evidence still returns immediately.
+    const status = await waitForZaloSessionState(() => inspectZaloSession(page), {
+      timeoutMs: 8_000,
+      pollIntervalMs: 300
+    })
     const message = status === 'ready'
       ? 'Zalo session đã xác thực.'
       : status === 'qr_waiting'

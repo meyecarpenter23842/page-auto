@@ -34,13 +34,37 @@ app.whenReady().then(() => {
   zaloRuntime = registerZaloIpc(finiteDatabase.client, dataDirectory)
 })
 
-app.on('before-quit', () => {
-  zaloRuntime?.dispose()
-  zaloRuntime = null
+let shuttingDown = false
+
+function disposeRemainingRuntimes(): void {
   updaterRuntime?.dispose()
   updaterRuntime = null
   finiteRuntime?.dispose()
   finiteRuntime = null
   finiteDatabase?.close()
   finiteDatabase = null
+}
+
+app.on('before-quit', (event) => {
+  if (shuttingDown) return
+
+  const runtime = zaloRuntime
+  zaloRuntime = null
+  if (!runtime) {
+    disposeRemainingRuntimes()
+    return
+  }
+
+  // Persistent Zalo profiles must close cleanly before Electron tears down utility
+  // processes, otherwise Chromium may not flush session storage to userDataDir.
+  event.preventDefault()
+  shuttingDown = true
+  void runtime.dispose()
+    .catch((error) => {
+      console.error('Zalo runtime graceful shutdown failed', error instanceof Error ? error.message : String(error))
+    })
+    .finally(() => {
+      disposeRemainingRuntimes()
+      app.quit()
+    })
 })

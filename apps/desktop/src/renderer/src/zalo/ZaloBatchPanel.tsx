@@ -112,7 +112,7 @@ export function ZaloBatchPanel({ accounts, onAccountsChanged }: ZaloBatchPanelPr
     setSelectedAccountIds((current) => {
       const valid = current.filter((id) => accounts.some((account) => account.id === id))
       if (valid.length) return valid
-      return accounts.filter((account) => account.sessionStatus === 'ready').map((account) => account.id)
+      return accounts.map((account) => account.id)
     })
   }, [accounts])
 
@@ -130,7 +130,7 @@ export function ZaloBatchPanel({ accounts, onAccountsChanged }: ZaloBatchPanelPr
   const running = Boolean(run && !terminal(run.state))
   const targets = useMemo(() => targetAnalysis(targetsText), [targetsText])
   const selectedAccounts = useMemo(() => accounts.filter((account) => selectedAccountIds.includes(account.id)), [accounts, selectedAccountIds])
-  const runnableAccounts = useMemo(() => selectedAccounts.filter((account) => account.sessionStatus === 'ready'), [selectedAccounts])
+  const runnableAccounts = selectedAccounts
   const enabledPosts = useMemo(() => postLibrary.posts.filter((post) => post.enabled), [postLibrary])
   const variantCount = enabledPosts.reduce((sum, post) => sum + post.variants.length, 0)
   const safeConcurrency = Math.min(Math.max(1, concurrency), Math.max(1, runnableAccounts.length))
@@ -271,7 +271,7 @@ export function ZaloBatchPanel({ accounts, onAccountsChanged }: ZaloBatchPanelPr
   }
 
   const start = async () => {
-    if (!runnableAccounts.length) { setNotice('Không có tài khoản Sẵn sàng.'); return }
+    if (!runnableAccounts.length) { setNotice('Chưa chọn tài khoản Zalo.'); return }
     if (!targets.valid.length) { setNotice('Chưa có SĐT hợp lệ. Bấm + Nhập SĐT.'); setConfigModal('targets'); return }
     if (!sendMessage && !sendAttachment && !addFriend) { setNotice('Chưa bật action.'); return }
     if ((sendMessage || sendAttachment) && !enabledPosts.length) { setNotice('Chưa có Bài Zalo đang bật.'); openPosts(); return }
@@ -345,7 +345,7 @@ export function ZaloBatchPanel({ accounts, onAccountsChanged }: ZaloBatchPanelPr
 
       <div className="zalo-automation-grid">
         <section className="zalo-batch-card zalo-account-run-card">
-          <div className="zalo-batch-card-heading"><div><span>Tài khoản chạy</span><strong>Danh sách tài khoản</strong></div><small>{runnableAccounts.length}/{selectedAccounts.length} sẵn sàng</small></div>
+          <div className="zalo-batch-card-heading"><div><span>Tài khoản chạy</span><strong>Danh sách tài khoản</strong></div><small>{selectedAccounts.length} đã chọn · kiểm tra live khi Start</small></div>
           <div className="table-wrap zalo-batch-account-table-wrap">
             <table className="data-table zalo-batch-account-table">
               <thead><tr><th>Bật</th><th>SĐT</th><th>Tên</th><th>Session</th><th>Hoạt động</th></tr></thead>
