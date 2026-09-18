@@ -1,203 +1,66 @@
 .workspace-zalo {
-  background: #f3f6fb;
-  color: #18243a;
+  --zalo-bg: #f3f6fb;
+  --zalo-surface: #ffffff;
+  --zalo-surface-soft: #f7f9fc;
+  --zalo-border: #d7e0ec;
+  --zalo-border-soft: #e3e9f1;
+  --zalo-text: #18243a;
+  --zalo-text-strong: #15233a;
+  --zalo-muted: #66758b;
+  --zalo-faint: #7a8799;
+  --zalo-accent: #2563eb;
+  --zalo-accent-soft: #eef4ff;
+  --zalo-success: #147a42;
+  --zalo-success-bg: #ecfdf3;
+  --zalo-warning: #9a6700;
+  --zalo-warning-bg: #fff7df;
+  --zalo-danger: #b42318;
+  --zalo-danger-bg: #fff1f0;
+  background: var(--zalo-bg);
+  color: var(--zalo-text);
 }
 
-.workspace-zalo .topbar {
-  background: #f3f6fb;
-  border-bottom-color: #dfe6ef;
-}
+.workspace-zalo .topbar { background: var(--zalo-bg); border-bottom-color: var(--zalo-border); }
+.workspace-zalo .topbar h1, .workspace-zalo .topbar .eyebrow { color: var(--zalo-text-strong); }
 
-.workspace-zalo .topbar h1,
-.workspace-zalo .topbar .eyebrow {
-  color: #17243a;
-}
+.zalo-tool-shell { gap: 10px; }
+.zalo-workspace-titlebar, .zalo-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.zalo-workspace-titlebar > div:first-child, .zalo-section-heading > div { display: grid; gap: 2px; }
+.zalo-workspace-titlebar span, .zalo-section-heading span { color: var(--zalo-muted); font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.zalo-workspace-titlebar strong { color: var(--zalo-text-strong); font-size: 18px; }
+.zalo-section-heading strong { color: var(--zalo-text-strong); font-size: 14px; }
+.zalo-section-heading small { color: var(--zalo-muted); font-size: 11px; }
 
-.zalo-tool-shell {
-  gap: 10px;
-}
+.zalo-tool-counters { display: flex; gap: 6px; flex-wrap: wrap; }
+.zalo-tool-counters span { display: inline-flex; align-items: center; gap: 5px; min-height: 28px; padding: 4px 8px; border: 1px solid var(--zalo-border); border-radius: 999px; background: var(--zalo-surface); color: var(--zalo-muted); font-size: 11px; }
+.zalo-tool-counters strong { color: var(--zalo-text); font-size: 12px; }
 
-.zalo-workspace-titlebar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 2px 2px 0;
-}
+.zalo-subtabs { display: flex; align-items: center; gap: 4px; padding: 4px; border: 1px solid var(--zalo-border); border-radius: 8px; background: var(--zalo-surface); }
+.zalo-subtabs button { min-height: 34px; padding: 7px 14px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--zalo-muted); font-weight: 700; cursor: pointer; }
+.zalo-subtabs button:hover { background: var(--zalo-surface-soft); color: var(--zalo-text); }
+.zalo-subtabs button.active { border-color: var(--zalo-accent); background: var(--zalo-accent-soft); color: var(--zalo-accent); }
 
-.zalo-workspace-titlebar > div:first-child {
-  display: grid;
-  gap: 2px;
-}
+.zalo-notice { margin: 0; }
+.zalo-account-workspace { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(320px, .55fr); gap: 10px; align-items: start; }
+.zalo-account-admin, .zalo-settings-panel { padding: 11px 12px; border: 1px solid var(--zalo-border); border-radius: 8px; background: var(--zalo-surface); color: var(--zalo-text); }
+.zalo-account-table-wrap { max-height: 480px; overflow: auto; margin-top: 8px; border: 1px solid var(--zalo-border-soft); border-radius: 7px; background: var(--zalo-surface); }
+.zalo-account-table { min-width: 720px; }
+.zalo-account-table th, .zalo-account-table td { padding-top: 8px; padding-bottom: 8px; vertical-align: middle; }
+.zalo-account-actions, .zalo-run-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.zalo-account-actions .button, .zalo-run-actions .button { min-height: 30px; padding: 6px 9px; }
 
-.zalo-workspace-titlebar > div:first-child span {
-  color: #738198;
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: .08em;
-  text-transform: uppercase;
-}
+.zalo-status { display: inline-flex; align-items: center; min-height: 24px; padding: 3px 7px; border-radius: 999px; background: var(--zalo-surface-soft); color: var(--zalo-muted); font-size: 10px; font-weight: 700; white-space: nowrap; }
+.zalo-status-ready { color: var(--zalo-success); background: var(--zalo-success-bg); }
+.zalo-status-needs_attention, .zalo-status-login_required, .zalo-status-qr_waiting { color: var(--zalo-warning); background: var(--zalo-warning-bg); }
+.zalo-status-browser_error, .zalo-status-profile_error { color: var(--zalo-danger); background: var(--zalo-danger-bg); }
 
-.zalo-workspace-titlebar > div:first-child strong {
-  color: #17243a;
-  font-size: 18px;
-}
+.zalo-inline-details { margin-top: 10px; border-top: 1px solid var(--zalo-border-soft); padding-top: 9px; }
+.zalo-inline-details summary { cursor: pointer; color: var(--zalo-text); font-size: 12px; font-weight: 700; }
+.zalo-compact-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 10px; margin: 10px 0; }
+.zalo-compact-form label { display: grid; gap: 5px; color: var(--zalo-muted); font-size: 11px; font-weight: 650; }
+.zalo-compact-form input { width: 100%; min-height: 32px; border: 1px solid var(--zalo-border); border-radius: 6px; background: var(--zalo-surface); color: var(--zalo-text); }
+.zalo-check { display: flex !important; align-items: center; grid-template-columns: none !important; gap: 8px !important; }
+.zalo-check input { width: auto; }
 
-.zalo-tool-counters {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.zalo-tool-counters span {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  min-height: 28px;
-  padding: 4px 8px;
-  border: 1px solid #d7e0ec;
-  border-radius: 999px;
-  background: #fff;
-  color: #5f6d82;
-  font-size: 11px;
-}
-
-.zalo-tool-counters strong {
-  color: #18243a;
-  font-size: 12px;
-}
-
-.zalo-notice {
-  margin: 0;
-}
-
-.zalo-account-table-wrap {
-  max-height: 350px;
-  overflow: auto;
-  border: 1px solid #e0e6ef;
-  border-radius: 8px;
-  background: #fff;
-}
-
-.zalo-account-table {
-  min-width: 720px;
-}
-
-.zalo-account-table th,
-.zalo-account-table td {
-  padding-top: 8px;
-  padding-bottom: 8px;
-  vertical-align: middle;
-}
-
-.zalo-account-actions,
-.zalo-run-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.zalo-account-actions .button,
-.zalo-run-actions .button {
-  min-height: 30px;
-  padding: 6px 9px;
-}
-
-.zalo-status {
-  display: inline-flex;
-  align-items: center;
-  min-height: 24px;
-  padding: 3px 7px;
-  border-radius: 999px;
-  background: #eef2f7;
-  color: #59677b;
-  font-size: 10px;
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-.zalo-status-ready {
-  color: #147a42;
-  background: #ecfdf3;
-}
-
-.zalo-status-needs_attention,
-.zalo-status-login_required,
-.zalo-status-qr_waiting {
-  color: #9a6700;
-  background: #fff7df;
-}
-
-.zalo-status-browser_error,
-.zalo-status-profile_error {
-  color: #b42318;
-  background: #fff1f0;
-}
-
-.zalo-inline-details,
-.zalo-settings-panel {
-  margin-top: 0;
-}
-
-.zalo-settings-panel {
-  padding: 10px 12px;
-  border: 1px solid #d7e0ec;
-  border-radius: 8px;
-  background: #fff;
-  color: #18243a;
-}
-
-.zalo-settings-panel summary,
-.zalo-inline-details summary {
-  cursor: pointer;
-  color: #243149;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.zalo-compact-form {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px 10px;
-  margin: 10px 0;
-}
-
-.zalo-compact-form label {
-  display: grid;
-  gap: 5px;
-  color: #56657a;
-  font-size: 11px;
-  font-weight: 650;
-}
-
-.zalo-compact-form input {
-  width: 100%;
-  min-height: 32px;
-  border: 1px solid #ccd6e3;
-  border-radius: 6px;
-  background: #fff;
-  color: #18243a;
-}
-
-.zalo-check {
-  display: flex !important;
-  align-items: center;
-  grid-template-columns: none !important;
-  gap: 8px !important;
-}
-
-.zalo-check input {
-  width: auto;
-}
-
-@media (max-width: 900px) {
-  .zalo-workspace-titlebar {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .zalo-compact-form {
-    grid-template-columns: 1fr;
-  }
-}
+@media (max-width: 1100px) { .zalo-account-workspace { grid-template-columns: 1fr; } }
+@media (max-width: 900px) { .zalo-workspace-titlebar { align-items: flex-start; flex-direction: column; } .zalo-compact-form { grid-template-columns: 1fr; } .zalo-subtabs { overflow-x: auto; } }

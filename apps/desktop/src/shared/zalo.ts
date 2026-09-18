@@ -1,4 +1,13 @@
 import type { BrowserWindowLayoutSettings } from './browserWindowLayout'
+import {
+  IMAGE_MODES,
+  MISSING_IMAGE_POLICIES,
+  POST_SELECTION_MODES,
+  type ImageMode,
+  type MissingImagePolicy,
+  type PageTabImageConfig,
+  type PostSelectionMode
+} from './pageTabs'
 
 export const ZALO_IPC = {
   list: 'zalo:accounts:list',
@@ -17,6 +26,8 @@ export const ZALO_IPC = {
   batchPause: 'zalo:batch:pause',
   batchResume: 'zalo:batch:resume',
   batchStop: 'zalo:batch:stop',
+  postLibraryGet: 'zalo:posts:get',
+  postLibrarySave: 'zalo:posts:save',
   settingsGet: 'zalo:settings:get',
   settingsSave: 'zalo:settings:save'
 } as const
@@ -127,15 +138,61 @@ export interface ZaloActionResult {
   data?: Record<string, unknown>
 }
 
+export type ZaloPostMediaSource = 'canonical' | 'folder' | 'none'
+
+export interface ZaloPostMediaConfig {
+  source: ZaloPostMediaSource
+  folderPath: string
+  mode: ImageMode
+  imagesPerTarget: number
+  missingPolicy: MissingImagePolicy
+}
+
+export interface ZaloPostLibraryItem {
+  bindingId: number
+  postId: number
+  name: string
+  enabled: boolean
+  sortOrder: number
+  variants: string[]
+  canonicalImage: PageTabImageConfig
+  media: ZaloPostMediaConfig
+}
+
+export interface ZaloPostLibrary {
+  mode: PostSelectionMode
+  posts: ZaloPostLibraryItem[]
+}
+
+export interface SaveZaloPostItemInput {
+  postId: number
+  enabled: boolean
+  sortOrder: number
+  media: ZaloPostMediaConfig
+}
+
+export interface SaveZaloPostLibraryInput {
+  mode: PostSelectionMode
+  posts: SaveZaloPostItemInput[]
+}
+
 export type ZaloBatchState = 'running' | 'paused' | 'stopping' | 'completed' | 'stopped' | 'failed'
 export type ZaloBatchTargetState = 'pending' | 'running' | 'success' | 'partial' | 'failed' | 'stopped'
 export type ZaloBatchContentMode = 'sequential' | 'random'
 export type ZaloBatchFailurePolicy = 'continue' | 'stop_run'
 
+export interface ZaloBatchMediaSnapshot {
+  folderPath: string
+  mode: ImageMode
+  imagesPerTarget: number
+  missingPolicy: MissingImagePolicy
+}
+
 export interface ZaloBatchContentItemSnapshot {
   sourceItemId: number | null
   name: string
   variants: string[]
+  media: ZaloBatchMediaSnapshot
 }
 
 export interface ZaloBatchStartPayload {
@@ -148,7 +205,6 @@ export interface ZaloBatchStartPayload {
   }
   contentItems: ZaloBatchContentItemSnapshot[]
   contentMode: ZaloBatchContentMode
-  attachmentPaths: string[]
   friendMessage: string | null
   concurrency: number
   delayMinMs: number
@@ -167,6 +223,12 @@ export interface ZaloBatchTargetProgress {
   completedAt: number | null
   results: ZaloActionResult[]
   message: string
+  postId: number | null
+  postName: string | null
+  variantIndex: number | null
+  contentPreview: string
+  mediaPaths: string[]
+  currentAction: ZaloActionType | null
 }
 
 export interface ZaloBatchRunSnapshot {
@@ -175,6 +237,7 @@ export interface ZaloBatchRunSnapshot {
   startedAt: number
   completedAt: number | null
   accountIds: number[]
+  actions: ZaloActionType[]
   totalTargets: number
   completedTargets: number
   successTargets: number
@@ -221,7 +284,7 @@ export const DEFAULT_ZALO_BROWSER_SETTINGS: Readonly<ZaloBrowserSettings> = {
 export function normalizeZaloPhone(input: string): string {
   const digits = input.replace(/\D/g, '')
   if (digits.length < 8 || digits.length > 15) throw new Error('Số điện thoại Zalo phải có 8-15 chữ số.')
-  if (digits.startsWith('84') && digits.length >= 10) return `0${digits.slice(2)}`
+  if (digits.startsWith('84') && digits.length >= 10) return '0' + digits.slice(2)
   return digits
 }
 
@@ -244,13 +307,25 @@ export function normalizeZaloActionInput(input: ZaloActionInput): ZaloActionInpu
   return { type: input.type, targetPhone, message }
 }
 
+function normalizeBatchMedia(input: ZaloBatchMediaSnapshot): ZaloBatchMediaSnapshot {
+  const mode = IMAGE_MODES.includes(input.mode) ? input.mode : 'sequential'
+  const missingPolicy = MISSING_IMAGE_POLICIES.includes(input.missingPolicy) ? input.missingPolicy : 'text_only'
+  const imagesPerTarget = Math.max(1, Math.min(Math.floor(input.imagesPerTarget || 1), 50))
+  return {
+    folderPath: input.folderPath.trim(),
+    mode,
+    imagesPerTarget,
+    missingPolicy
+  }
+}
+
 export function normalizeZaloBatchStartPayload(input: ZaloBatchStartPayload): ZaloBatchStartPayload {
   const accountIds = [...new Set(input.accountIds.filter((id) => Number.isInteger(id) && id > 0))]
   if (!accountIds.length) throw new Error('Phải chọn ít nhất một tài khoản Zalo cho batch.')
 
   const targets = [...new Set(input.targets.map(normalizeZaloPhone))]
-  if (!targets.length) throw new Error('Phải nhập ít nhất một SĐT target cho batch.')
-  if (targets.length > 10_000) throw new Error('Một batch Zalo hỗ trợ tối đa 10.000 target.')
+  if (!targets.length) throw new Error('Phải nhập ít nhất một SĐT cho batch.')
+  if (targets.length > 10_000) throw new Error('Một batch Zalo hỗ trợ tối đa 10.000 SĐT.')
 
   const actions = {
     sendMessage: Boolean(input.actions.sendMessage),
@@ -264,15 +339,21 @@ export function normalizeZaloBatchStartPayload(input: ZaloBatchStartPayload): Za
   const contentItems = input.contentItems
     .map((item) => ({
       sourceItemId: Number.isInteger(item.sourceItemId) ? item.sourceItemId : null,
-      name: item.name.trim() || 'Bài viết',
-      variants: item.variants.map((variant) => variant.trim()).filter(Boolean)
+      name: item.name.trim() || 'Bài Zalo',
+      variants: item.variants.map((variant) => variant.trim()).filter(Boolean),
+      media: normalizeBatchMedia(item.media)
     }))
-    .filter((item) => item.variants.length > 0)
-  if (actions.sendMessage && !contentItems.length) throw new Error('Batch gửi tin phải có ít nhất một nội dung.')
+    .filter((item) => item.variants.length > 0 || item.media.folderPath.length > 0)
 
-  const attachmentPaths = input.attachmentPaths.map((path) => path.trim()).filter(Boolean)
-  if (actions.sendAttachment && !attachmentPaths.length) throw new Error('Batch gửi file phải có ít nhất một đường dẫn attachment.')
-  if (attachmentPaths.length > 20) throw new Error('Batch Zalo chỉ nhận tối đa 20 attachment cho mỗi target.')
+  if ((actions.sendMessage || actions.sendAttachment) && !contentItems.length) {
+    throw new Error('Batch phải có ít nhất một Bài Zalo đang bật.')
+  }
+  if (actions.sendMessage && !contentItems.some((item) => item.variants.length > 0)) {
+    throw new Error('Gửi tin đang bật nhưng Bài Zalo chưa có nội dung.')
+  }
+  if (actions.sendAttachment && !contentItems.some((item) => item.media.folderPath.length > 0)) {
+    throw new Error('Gửi ảnh/file đang bật nhưng Bài Zalo chưa có media.')
+  }
 
   const friendMessage = input.friendMessage?.trim() || null
   if (friendMessage && friendMessage.length > 300) throw new Error('Lời nhắn kết bạn Zalo quá dài.')
@@ -287,13 +368,16 @@ export function normalizeZaloBatchStartPayload(input: ZaloBatchStartPayload): Za
     actions,
     contentItems,
     contentMode: input.contentMode === 'random' ? 'random' : 'sequential',
-    attachmentPaths,
     friendMessage,
     concurrency,
     delayMinMs,
     delayMaxMs,
     failurePolicy: input.failurePolicy === 'stop_run' ? 'stop_run' : 'continue'
   }
+}
+
+export function normalizeZaloPostSelectionMode(mode: PostSelectionMode): PostSelectionMode {
+  return POST_SELECTION_MODES.includes(mode) ? mode : 'sequential'
 }
 
 export function zaloActionResult(

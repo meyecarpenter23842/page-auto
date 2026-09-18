@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import {
   ZALO_IPC,
+  type SaveZaloPostLibraryInput,
   type ZaloAccountDraft,
   type ZaloAccountIdPayload,
   type ZaloAccountUpdatePayload,
@@ -14,7 +15,8 @@ import {
   type ZaloBrowserSettings,
   type ZaloLoginMode,
   type ZaloLoginPayload,
-  type ZaloOpenResult
+  type ZaloOpenResult,
+  type ZaloPostLibrary
 } from '../shared/zalo'
 
 export interface ZaloPreloadApi {
@@ -34,6 +36,8 @@ export interface ZaloPreloadApi {
   pauseBatch: (runId: string) => Promise<ZaloBatchRunSnapshot | null>
   resumeBatch: (runId: string) => Promise<ZaloBatchRunSnapshot | null>
   stopBatch: (runId: string) => Promise<ZaloBatchRunSnapshot | null>
+  getPostLibrary: () => Promise<ZaloPostLibrary>
+  savePostLibrary: (input: SaveZaloPostLibraryInput) => Promise<ZaloPostLibrary>
   getSettings: () => Promise<ZaloBrowserSettings>
   saveSettings: (input: ZaloBrowserSettings) => Promise<ZaloBrowserSettings>
 }
@@ -60,6 +64,8 @@ const api: ZaloPreloadApi = {
   pauseBatch: (runId) => ipcRenderer.invoke(ZALO_IPC.batchPause, batchPayload(runId)),
   resumeBatch: (runId) => ipcRenderer.invoke(ZALO_IPC.batchResume, batchPayload(runId)),
   stopBatch: (runId) => ipcRenderer.invoke(ZALO_IPC.batchStop, batchPayload(runId)),
+  getPostLibrary: () => ipcRenderer.invoke(ZALO_IPC.postLibraryGet),
+  savePostLibrary: (input) => ipcRenderer.invoke(ZALO_IPC.postLibrarySave, input),
   getSettings: () => ipcRenderer.invoke(ZALO_IPC.settingsGet),
   saveSettings: (input) => ipcRenderer.invoke(ZALO_IPC.settingsSave, input)
 }

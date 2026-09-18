@@ -1232,3 +1232,34 @@ Mailbox Router / typed contract
 - Provider không được quyết định Microsoft đã authenticated; Microsoft Auth không được điều khiển provider internals.
 
 Audit hiện tại xác nhận source **chưa migrate xong**: `mailboxCodeService.ts` còn biết implementation Inboxes/Fvia và `microsoftRecoveryChallenge.ts` còn branch theo provider/timeouts/lifecycle. Đây là technical debt phải tách theo E-MOD-1..E-MOD-6 trong `EMAIL_ARCHITECTURE.md`, không được nhân rộng.
+
+---
+
+## Zalo post consumer binding + per-post media
+
+Zalo automation consumes the canonical `posts` registry through a dedicated binding layer; it does **not** own a second article library.
+
+```text
+Canonical Post Library (posts)
+        |
+        v
+zalo_post_bindings + zalo_automation_config
+        |
+        | enabled / order / selection mode / media override
+        v
+immutable Zalo run snapshot
+        |
+        v
+Zalo action runtime
+```
+
+Ownership/invariants:
+
+- `zalo_post_bindings.post_id` references canonical `posts.id`; unlinking a Zalo post never deletes the canonical row.
+- `zalo_automation_config` owns the Zalo consumer post-selection mode only.
+- Per-post media resolves as one of: canonical media, a Zalo-only folder override, or no media. A folder override carries images/files per target, sequential/random mode and missing-media policy.
+- Renderer folder selection goes through existing typed Electron IPC; renderer does not read the filesystem.
+- Batch Start copies enabled bound posts, variants and resolved media into an immutable payload. Runtime never reads live canonical/binding rows after Start.
+- Global Zalo batch `attachmentPaths` is not a content source. Attachment actions receive media resolved from the selected post snapshot for the current target.
+- Zalo account/profile/session ownership remains independent from Facebook; this binding change does not alter Facebook post/content semantics.
+

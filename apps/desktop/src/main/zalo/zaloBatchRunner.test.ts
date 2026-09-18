@@ -3,15 +3,19 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { normalizeZaloBatchStartPayload } from '../../shared/zalo'
 
-describe('Zalo Batch 4 contracts', () => {
-  it('normalizes multi-account targets, immutable content input and runtime limits', () => {
+describe('Zalo structural automation contracts', () => {
+  it('normalizes multi-account targets and snapshots media inside each Zalo post', () => {
     const normalized = normalizeZaloBatchStartPayload({
       accountIds: [2, 2, 5],
       targets: ['+84 912 345 678', '0912345678', '0987654321'],
-      actions: { sendMessage: true, sendAttachment: false, addFriend: true },
-      contentItems: [{ sourceItemId: -7, name: ' Bài A ', variants: [' {Xin chào|Chào bạn} ', ''] }],
+      actions: { sendMessage: true, sendAttachment: true, addFriend: true },
+      contentItems: [{
+        sourceItemId: 7,
+        name: ' Bài A ',
+        variants: [' {Xin chào|Chào bạn} ', ''],
+        media: { folderPath: 'D:/zalo/a', mode: 'random', imagesPerTarget: 2, missingPolicy: 'skip' }
+      }],
       contentMode: 'random',
-      attachmentPaths: [],
       friendMessage: ' kết bạn nhé ',
       concurrency: 99,
       delayMinMs: 2_000,
@@ -21,31 +25,38 @@ describe('Zalo Batch 4 contracts', () => {
 
     expect(normalized.accountIds).toEqual([2, 5])
     expect(normalized.targets).toEqual(['0912345678', '0987654321'])
-    expect(normalized.contentItems).toEqual([{ sourceItemId: -7, name: 'Bài A', variants: ['{Xin chào|Chào bạn}'] }])
+    expect(normalized.contentItems).toEqual([{
+      sourceItemId: 7,
+      name: 'Bài A',
+      variants: ['{Xin chào|Chào bạn}'],
+      media: { folderPath: 'D:/zalo/a', mode: 'random', imagesPerTarget: 2, missingPolicy: 'skip' }
+    }])
     expect(normalized.concurrency).toBe(2)
     expect(normalized.delayMinMs).toBe(2_000)
     expect(normalized.delayMaxMs).toBe(2_000)
     expect(normalized.friendMessage).toBe('kết bạn nhé')
+    expect(normalized).not.toHaveProperty('attachmentPaths')
   })
 
-  it('rejects missing batch business inputs', () => {
+  it('rejects missing batch business inputs and media when attachment action has no usable post media', () => {
     expect(() => normalizeZaloBatchStartPayload({
       accountIds: [], targets: ['0912345678'],
       actions: { sendMessage: true, sendAttachment: false, addFriend: false },
-      contentItems: [{ sourceItemId: null, name: 'A', variants: ['x'] }],
-      contentMode: 'sequential', attachmentPaths: [], friendMessage: null,
+      contentItems: [{ sourceItemId: 1, name: 'A', variants: ['x'], media: { folderPath: '', mode: 'sequential', imagesPerTarget: 1, missingPolicy: 'text_only' } }],
+      contentMode: 'sequential', friendMessage: null,
       concurrency: 1, delayMinMs: 0, delayMaxMs: 0, failurePolicy: 'continue'
     })).toThrow(/tài khoản/i)
 
     expect(() => normalizeZaloBatchStartPayload({
       accountIds: [1], targets: ['0912345678'],
-      actions: { sendMessage: false, sendAttachment: false, addFriend: false },
-      contentItems: [], contentMode: 'sequential', attachmentPaths: [], friendMessage: null,
+      actions: { sendMessage: false, sendAttachment: true, addFriend: false },
+      contentItems: [{ sourceItemId: 1, name: 'A', variants: ['x'], media: { folderPath: '', mode: 'sequential', imagesPerTarget: 1, missingPolicy: 'text_only' } }],
+      contentMode: 'sequential', friendMessage: null,
       concurrency: 1, delayMinMs: 0, delayMaxMs: 0, failurePolicy: 'continue'
-    })).toThrow(/action/i)
+    })).toThrow(/media/i)
   })
 
-  it('reuses production action runtime, rolling pool and canonical library surface', () => {
+  it('reuses production action runtime while Zalo posts own their binding/media UX', () => {
     const root = process.cwd()
     const runner = readFileSync(join(root, 'src/main/zalo/zaloBatchRunner.ts'), 'utf8')
     const ipc = readFileSync(join(root, 'src/main/zaloIpc.ts'), 'utf8')
@@ -54,23 +65,23 @@ describe('Zalo Batch 4 contracts', () => {
 
     expect(runner).toContain('runRollingAccountPool')
     expect(runner).toContain('spinContent')
+    expect(runner).toContain('selectZaloMedia')
     expect(runner).toContain('browser.executeAction')
     expect(runner).not.toMatch(/playwright|chromium\.launch|better-sqlite3/)
-    expect(ipc).toContain('ZaloBatchRunner')
-    expect(preload).toContain('startBatch')
-    expect(preload).toContain('pauseBatch')
-    expect(preload).toContain('resumeBatch')
-    expect(preload).toContain('stopBatch')
-    expect(panel).toContain('getContentLibrary')
-    expect(panel).toContain('CANONICAL_CONTENT_LIBRARY_SET_ID')
-    expect(panel).toContain('zalo-run-facts')
-    expect(panel).toContain('Danh sách chạy')
-    expect(panel).toContain('zalo-config-toolbar')
-    expect(panel).toContain('zalo-config-modal')
-    expect(panel).toContain('Tiến độ từng target')
-    expect(panel).toContain("account.sessionStatus === 'ready'")
-    expect(panel).toContain('assignedAccountId')
-    expect(panel).not.toContain('Tóm tắt lượt chạy')
-    expect(panel).not.toContain('Batch 4 ·')
+    expect(runner).not.toContain('attachmentPaths')
+    expect(ipc).toContain('ZaloPostRepository')
+    expect(preload).toContain('getPostLibrary')
+    expect(preload).toContain('savePostLibrary')
+    expect(panel).toContain('getPostLibrary')
+    expect(panel).toContain('+ Nhập SĐT')
+    expect(panel).toContain('Bài Zalo đang dùng')
+    expect(panel).toContain('+ Chọn từ Thư viện bài viết')
+    expect(panel).toContain('pickContentLibraryImageFolder')
+    expect(panel).toContain('Gửi ảnh/file')
+    expect(panel).toContain('Tiến độ từng SĐT')
+    expect(panel).toContain('currentProgress?.postName')
+    expect(panel).toContain('currentProgress?.variantIndex')
+    expect(panel).toContain('currentProgress?.mediaPaths')
+    expect(panel).not.toContain('attachmentPaths')
   })
 })

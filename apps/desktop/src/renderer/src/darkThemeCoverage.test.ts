@@ -23,7 +23,11 @@ const requiredDarkSurfaces = [
   '.action-picker-modal',
   '.k41-action-config-modal',
   '.post-config-block',
-  '.copy-post-source-card'
+  '.copy-post-source-card',
+  '.workspace-zalo',
+  '.zalo-config-modal',
+  '.zalo-post-library-modal',
+  '.zalo-runtime-preview'
 ] as const
 
 describe('dark theme coverage', () => {
