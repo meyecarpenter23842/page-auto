@@ -20,28 +20,49 @@ async function composerText(composer: Locator): Promise<string> {
   }).catch(() => '')
 }
 
+async function activateZaloComposer(
+  page: Page,
+  composer: Locator,
+  control: ZaloActionControl
+): Promise<void> {
+  // The live Zalo DOM can expose #richInput as contenteditable="false" until the
+  // chat input receives a real focus transition. Activate the container first,
+  // then leave the final focus/click on #richInput; clicking the container last
+  // can immediately blur/deactivate the editor again.
+  await page.locator('#chat-input-container-id').click({ timeout: 2_000 }).catch(() => undefined)
+  await control.sleep(80)
+  await composer.click({ timeout: 5_000 }).catch(() => undefined)
+  await composer.focus().catch(() => undefined)
+}
+
 async function typeIntoZaloComposer(
   page: Page,
   composer: Locator,
   content: string,
   control: ZaloActionControl
 ): Promise<boolean> {
-  await composer.click({ timeout: 5_000 }).catch(() => undefined)
-  await page.locator('#chat-input-container-id').click({ timeout: 2_000 }).catch(() => undefined)
+  await activateZaloComposer(page, composer, control)
 
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    await control.sleep(100)
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    if (attempt > 0 && attempt % 10 === 0) {
+      await activateZaloComposer(page, composer, control)
+    }
+
     const editable = await composer.isEditable().catch(() => false)
     const contentEditable = await composer.getAttribute('contenteditable').catch(() => null)
     if (editable || contentEditable === 'true') {
-      await composer.fill(content)
-      return (await composerText(composer)).trim().length > 0
+      const filled = await composer.fill(content).then(() => true).catch(() => false)
+      if (filled) {
+        await control.sleep(80)
+        if ((await composerText(composer)).trim().length > 0) return true
+      }
     }
+    await control.sleep(100)
   }
 
-  await composer.focus().catch(() => undefined)
+  await activateZaloComposer(page, composer, control)
   await page.keyboard.insertText(content)
-  await control.sleep(120)
+  await control.sleep(150)
   return (await composerText(composer)).trim().length > 0
 }
 

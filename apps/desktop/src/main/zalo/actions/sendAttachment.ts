@@ -29,19 +29,52 @@ async function chooseFileInput(page: Page, image: boolean): Promise<Locator | nu
   return inputs[inputs.length - 1] ?? null
 }
 
-async function revealAttachmentInput(page: Page, image: boolean): Promise<void> {
-  const trigger = image
-    ? await firstVisible([
+async function attachmentTrigger(page: Page, image: boolean): Promise<Locator | null> {
+  return image
+    ? firstVisible([
       page.getByRole('button', { name: /Ảnh|Hình ảnh|Photo/i }),
       page.locator('[aria-label*="Ảnh" i]'),
       page.locator('[title*="Ảnh" i]')
     ])
-    : await firstVisible([
+    : firstVisible([
       page.getByRole('button', { name: /Tài liệu|File/i }),
       page.locator('[aria-label*="Tài liệu" i]'),
       page.locator('[title*="Tài liệu" i]')
     ])
-  if (trigger) await trigger.click({ timeout: 5_000 }).catch(() => undefined)
+}
+
+async function setZaloAttachmentFile(
+  page: Page,
+  path: string,
+  image: boolean,
+  control: ZaloActionControl
+): Promise<boolean> {
+  const directInput = await chooseFileInput(page, image)
+  if (directInput) {
+    await directInput.setInputFiles(path)
+    return true
+  }
+
+  const trigger = await attachmentTrigger(page, image)
+  if (!trigger) return false
+
+  // Some live Zalo builds keep no file input in the DOM until the toolbar
+  // control is clicked and instead emit a native filechooser event.
+  const chooserPromise = page.waitForEvent('filechooser', { timeout: 3_000 }).catch(() => null)
+  const clicked = await trigger.click({ timeout: 5_000 }).then(() => true).catch(() => false)
+  if (!clicked) return false
+
+  const fileChooser = await chooserPromise
+  if (fileChooser) {
+    await fileChooser.setFiles(path)
+    return true
+  }
+
+  await control.sleep(300)
+  const revealedInput = await chooseFileInput(page, image)
+  if (!revealedInput) return false
+  await revealedInput.setInputFiles(path)
+  return true
 }
 
 async function optionalSendButton(page: Page): Promise<Locator | null> {
@@ -69,21 +102,14 @@ export async function sendZaloAttachment(
     const beforeDelivery = await deliveryEvidenceCount(page)
     const beforeName = await page.getByText(basename(path), { exact: false }).count().catch(() => 0)
 
-    let inputElement = await chooseFileInput(page, image)
-    if (!inputElement) {
-      await revealAttachmentInput(page, image)
-      await control.sleep(300)
-      inputElement = await chooseFileInput(page, image)
-    }
-    if (!inputElement) {
+    const attached = await setZaloAttachmentFile(page, path, image, control)
+    if (!attached) {
       return zaloActionResult(accountId, input.type, target.targetPhone, 'failed', 'attachment_control_missing', 'Không xác định được control upload ảnh/file trong conversation đã verify.', {
         verifiedTarget: true,
         targetDisplayName: target.displayName,
         data: { sentCount, total: input.paths.length }
       })
     }
-
-    await inputElement.setInputFiles(path)
     await control.sleep(400)
     const send = await optionalSendButton(page)
     if (send && await send.isEnabled().catch(() => false)) {
