@@ -171,10 +171,20 @@ export async function auditProxyBuilderVps(input: ProxyBuilderAuditInput): Promi
     keepaliveInterval: 5_000,
     keepaliveCountMax: 2
   }
-  if (input.auth.type === 'password') config.password = input.auth.password
-  else config.privateKey = input.auth.privateKey
+  const password = input.auth.type === 'password' ? input.auth.password : null
+  if (password !== null) {
+    config.password = password
+    config.tryKeyboard = true
+  } else {
+    config.privateKey = input.auth.privateKey
+  }
 
   const client = new Client()
+  if (password !== null) {
+    client.on('keyboard-interactive', (_name, _instructions, _instructionsLang, prompts, finish) => {
+      finish(prompts.map(() => password))
+    })
+  }
   try {
     const output = await new Promise<string>((resolve, reject) => {
       let settled = false

@@ -38,6 +38,12 @@ describe('Proxy Builder Batch 3 safety contracts', () => {
     expect(assets).toContain("'outbound_ip': candidate['outbound_ip']")
   })
 
+  it('keeps password auth compatible with keyboard-interactive/PAM during provisioning', () => {
+    expect(service).toContain('config.tryKeyboard = true')
+    expect(service).toContain("this.client.on('keyboard-interactive'")
+    expect(service).toContain('finish(prompts.map(() => password))')
+  })
+
   it('keeps idempotency around the Page-Auto manifest and service', () => {
     expect(assets).toContain("MANIFEST = ETC_DIR / 'manifest.json'")
     expect(assets).toContain('old_manifest = load_json(MANIFEST, {})')

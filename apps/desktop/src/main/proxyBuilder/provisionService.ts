@@ -62,8 +62,12 @@ function connectConfig(input: Pick<ProxyBuilderProvisionInput, 'host' | 'usernam
     keepaliveInterval: 5_000,
     keepaliveCountMax: 2
   }
-  if (input.auth.type === 'password') config.password = input.auth.password
-  else config.privateKey = input.auth.privateKey
+  if (input.auth.type === 'password') {
+    config.password = input.auth.password
+    config.tryKeyboard = true
+  } else {
+    config.privateKey = input.auth.privateKey
+  }
   return config
 }
 
@@ -73,6 +77,12 @@ class SshSession {
   private currentChannel: ClientChannel | null = null
 
   async connect(config: ConnectConfig): Promise<void> {
+    const password = config.tryKeyboard && typeof config.password === 'string' ? config.password : null
+    if (password !== null) {
+      this.client.on('keyboard-interactive', (_name, _instructions, _instructionsLang, prompts, finish) => {
+        finish(prompts.map(() => password))
+      })
+    }
     await new Promise<void>((resolve, reject) => {
       let settled = false
       const done = (error?: Error) => {
