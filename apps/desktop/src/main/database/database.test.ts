@@ -114,9 +114,9 @@ describe('initializeDatabase', () => {
       { version: 28, name: 'zalo_foundation' },
       { version: 29, name: 'zalo_post_bindings' },
       { version: 30, name: 'page_wall_schedule_post_pool' },
-      { version: 31, name: 'canonical_post_hashtags' }
+      { version: 32, name: 'canonical_post_hashtags' }
     ])
-    expect(schemaVersion?.value).toBe('31')
+    expect(schemaVersion?.value).toBe('32')
     expect(executionLogsTable?.name).toBe('execution_logs')
     expect(postLibraryTable?.name).toBe('page_tab_posts')
     expect(pageTabColumns.some((column) => column.name === 'account_order_mode')).toBe(true)
