@@ -27,7 +27,8 @@
     "electron-updater": "6.8.9",
     "playwright-core": "1.55.0",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "ssh2": "1.17.0"
   },
   "devDependencies": {
     "@electron/rebuild": "4.2.0",
@@ -35,6 +36,7 @@
     "@types/node": "^22.15.0",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
+    "@types/ssh2": "1.15.6",
     "@vitejs/plugin-react": "5.2.0",
     "electron": "43.4.0",
     "electron-builder": "26.15.3",

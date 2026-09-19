@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { registerAppUpdaterIpc, type AppUpdaterIpcRuntime } from './appUpdaterIpc'
 import { initializeDatabase, type DatabaseRuntime } from './database'
 import { registerPageWallFiniteRuntime, type PageWallFiniteRuntime } from './pageWallFiniteIpc'
+import { registerProxyBuilderIpc, type ProxyBuilderIpcRuntime } from './proxyBuilderIpc'
 import { prepareDataDirectory } from './services/dataDirectory'
 import { registerZaloIpc, type ZaloIpcRuntime } from './zaloIpc'
 
@@ -11,9 +12,11 @@ let finiteDatabase: DatabaseRuntime | null = null
 let finiteRuntime: PageWallFiniteRuntime | null = null
 let updaterRuntime: AppUpdaterIpcRuntime | null = null
 let zaloRuntime: ZaloIpcRuntime | null = null
+let proxyBuilderRuntime: ProxyBuilderIpcRuntime | null = null
 
 app.whenReady().then(() => {
   updaterRuntime ??= registerAppUpdaterIpc()
+  proxyBuilderRuntime ??= registerProxyBuilderIpc()
 
   let dataDirectory: string
   try {
@@ -37,6 +40,8 @@ app.whenReady().then(() => {
 let shuttingDown = false
 
 function disposeRemainingRuntimes(): void {
+  proxyBuilderRuntime?.dispose()
+  proxyBuilderRuntime = null
   updaterRuntime?.dispose()
   updaterRuntime = null
   finiteRuntime?.dispose()
