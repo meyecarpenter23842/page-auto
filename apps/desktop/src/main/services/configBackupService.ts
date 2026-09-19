@@ -262,7 +262,8 @@ function validateV2(parsed: Record<string, unknown>): ConfigBackupPayload {
   const postKeys = new Set<string>()
   for (const post of parsed.posts) {
     if (!isRecord(post) || typeof post.key !== 'string' || !post.key.trim() || postKeys.has(post.key)
-      || typeof post.name !== 'string' || !Array.isArray(post.variants) || !post.variants.every((item) => typeof item === 'string') || !isImage(post.image)) {
+      || typeof post.name !== 'string' || !Array.isArray(post.variants) || !post.variants.every((item) => typeof item === 'string')
+      || (post.hashtags !== undefined && typeof post.hashtags !== 'string') || !isImage(post.image)) {
       throw new Error('Bài viết canonical trong backup v2 không hợp lệ.')
     }
     postKeys.add(post.key)
@@ -404,21 +405,41 @@ class ExportPostRegistry {
       const key = this.nextKey()
       this.keyByPostId.set(record.id, key)
       this.indexByKey.set(key, this.posts.length)
-      this.posts.push({ key, name: record.name, variants: [...record.variants], image: { ...record.image } })
+      this.posts.push({
+        key,
+        name: record.name,
+        variants: [...record.variants],
+        ...(record.hashtags ? { hashtags: record.hashtags } : {}),
+        image: { ...record.image }
+      })
     }
   }
 
   addDraft(draft: Omit<ConfigBackupCanonicalPost, 'key'>): string {
     const key = this.nextKey()
     this.indexByKey.set(key, this.posts.length)
-    this.posts.push({ key, name: draft.name, variants: [...draft.variants], image: { ...draft.image } })
+    this.posts.push({
+      key,
+      name: draft.name,
+      variants: [...draft.variants],
+      ...(draft.hashtags?.trim() ? { hashtags: draft.hashtags.trim() } : {}),
+      image: { ...draft.image }
+    })
     return key
   }
 
   replace(key: string, draft: Omit<ConfigBackupCanonicalPost, 'key'>): void {
     const index = this.indexByKey.get(key)
     if (index === undefined) return
-    this.posts[index] = { key, name: draft.name, variants: [...draft.variants], image: { ...draft.image } }
+    const current = this.posts[index]
+    const hashtags = draft.hashtags === undefined ? current?.hashtags : draft.hashtags.trim()
+    this.posts[index] = {
+      key,
+      name: draft.name,
+      variants: [...draft.variants],
+      ...(hashtags ? { hashtags } : {}),
+      image: { ...draft.image }
+    }
   }
 
   requireKey(postId: number): string {
@@ -664,7 +685,12 @@ export class ConfigBackupService {
       const restoredPostIds = new Map<string, number>()
       for (const post of payload.posts) {
         if (restoredPostIds.has(post.key)) throw new Error(`Portable post key bị trùng: ${post.key}.`)
-        const created = this.canonicalPosts.create({ name: post.name, variants: post.variants, image: post.image })
+        const created = this.canonicalPosts.create({
+          name: post.name,
+          variants: post.variants,
+          ...(post.hashtags !== undefined ? { hashtags: post.hashtags } : {}),
+          image: post.image
+        })
         restoredPostIds.set(post.key, created.id)
       }
       const postId = (key: string): number => {

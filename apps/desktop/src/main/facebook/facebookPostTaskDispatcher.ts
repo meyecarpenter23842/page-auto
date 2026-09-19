@@ -5,7 +5,7 @@ import {
   type GroupPostTaskJobRequest,
   type PageWallPostTaskJobRequest
 } from '../../shared/facebookTasks'
-import { spinContent } from '../../shared/contentSpin'
+import { composePageWallRuntimeContent } from '../../shared/pageWallHashtags'
 import type { PostingJobResult } from '../../shared/posting'
 import { executePostingJob } from '../browser/posting/postingEngine'
 import { executePageWallPostJob } from '../business/page-wall-post/executePageWallPostJob'
@@ -22,10 +22,10 @@ function isPageWallPostTaskJob(job: FacebookPostTaskJobRequest): job is PageWall
   return job.task.type === 'page_wall_post'
 }
 
-function spinJobContent<T extends FacebookPostTaskJobRequest>(job: T): T {
+function spinPageWallJobContent<T extends PageWallPostTaskJobRequest>(job: T): T {
   return {
     ...job,
-    content: spinContent(job.content)
+    content: composePageWallRuntimeContent(job.content, job.hashtags ?? '')
   }
 }
 
@@ -38,7 +38,7 @@ export async function executeFacebookPostTaskJob(job: FacebookPostTaskJobRequest
     return executePostingJob(legacyPostingJobFromGroupTask(job))
   }
   if (isPageWallPostTaskJob(job)) {
-    return executePageWallPostJob(spinJobContent(job))
+    return executePageWallPostJob(spinPageWallJobContent(job))
   }
 
   return invalidTask('Facebook posting worker nhận task type chưa được hỗ trợ.')

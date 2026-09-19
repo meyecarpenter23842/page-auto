@@ -114,11 +114,13 @@ export class PageWallRunNowService {
     }
 
     let content = payload.content
+    let hashtags = payload.hashtags?.trim() ?? ''
     let imagePaths = normalizeImagePaths(payload.imagePaths)
     if (payload.canonicalPost) {
       const resolved = await this.materialResolver.resolve(payload.canonicalPost)
       if (!resolved.ok) return { ok: false, result: failure(payload, resolved.message, resolved.code, accountRef.accountId) }
       content = resolved.material.content
+      hashtags = payload.canonicalPost.hashtags?.trim() ?? ''
       imagePaths = resolved.material.imagePaths
     } else {
       const unsupported = imagePaths.find((path) => !supportedImageExtensions.has(extname(path).toLowerCase()))
@@ -141,6 +143,7 @@ export class PageWallRunNowService {
           accountId: accountRef.accountId,
           pageUid,
           content,
+          ...(hashtags ? { hashtags } : {}),
           imagePaths
         },
         pageTabName: pageTab.name,
