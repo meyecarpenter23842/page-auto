@@ -7,7 +7,7 @@ const preload = readFileSync(new URL('../../../preload/proxyBuilderBridge.ts', i
 const textPreload = readFileSync(new URL('../../../preload/proxyBuilderTextBridge.ts', import.meta.url), 'utf8')
 const ipc = readFileSync(new URL('../../../main/proxyBuilderIpc.ts', import.meta.url), 'utf8')
 const checker = readFileSync(new URL('../../../main/proxyBuilder/checkerService.ts', import.meta.url), 'utf8')
-const packagedSmoke = readFileSync(new URL('../../../scripts/proxy-builder-packaged-ui-smoke.mjs', import.meta.url), 'utf8')
+const packagedSmoke = readFileSync(new URL('../../../../scripts/proxy-builder-packaged-ui-smoke.mjs', import.meta.url), 'utf8')
 
 describe('Proxy Builder Batch 4 checker/export', () => {
   it('keeps Proxy Builder visible as a top-level route', () => {

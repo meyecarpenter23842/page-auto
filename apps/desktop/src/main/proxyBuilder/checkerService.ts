@@ -97,10 +97,8 @@ export function parseProxyLine(rawLine: string): ParsedProxy {
   }
 
   const parts = line.split(':')
-  if (parts.length !== 2 && parts.length < 4) {
-    if (parts.length > 4) throw new CheckerError('IPv6 proxy host phải đặt trong dấu [ ].', false)
-    throw new CheckerError('Proxy phải có dạng host:port hoặc host:port:user:pass.', false)
-  }
+  if (parts.length === 3) throw new CheckerError('Proxy auth phải có đủ user và password.', false)
+  if (parts.length < 2) throw new CheckerError('Proxy phải có dạng host:port hoặc host:port:user:pass.', false)
   const host = parts[0]?.trim() ?? ''
   if (!host || /\s/.test(host)) throw new CheckerError('Host proxy không hợp lệ.', false)
   const port = validatePort(parts[1] ?? '')
