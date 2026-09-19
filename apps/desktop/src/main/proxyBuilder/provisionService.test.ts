@@ -61,7 +61,7 @@ describe('Proxy Builder Batch 3 safety contracts', () => {
     expect(service).toContain("from './checkerService'")
     expect(service).toContain('checkProxyLineNow(')
     expect(service).toContain("status: 'error'")
-    expect(service).toContain('inbound firewall / cloud Security List / Security Group')
+    expect(service).toContain('Cloud firewall / Security List / NSG đang chặn port.')
   })
 
   it('keeps idempotency around the Page-Auto manifest and service', () => {
@@ -70,4 +70,30 @@ describe('Proxy Builder Batch 3 safety contracts', () => {
     expect(assets).toContain("systemctl', 'enable', SERVICE_NAME")
     expect(assets).toContain('restore_files(backup_dir, existed)')
   })
+
+  it('opens the exact requested host-firewall range with Page-Auto ownership across supported backends', () => {
+    expect(assets).toContain("FIREWALL_MARKER = 'page-auto-proxy'")
+    expect(assets).toContain("if ufw_active():")
+    expect(assets).toContain("if firewalld_active():")
+    expect(assets).toContain("backend': 'nftables'")
+    expect(assets).toContain("else 'iptables'")
+    expect(assets).toContain("start_port + count - 1")
+    expect(assets).toContain("apply_firewall(start_port, start_port + count - 1)")
+    expect(assets).toContain("cleanup_firewall(old_firewall)")
+    expect(assets).toContain("cleanup_firewall(firewall_state)")
+    expect(assets).toContain("apply_firewall(")
+    expect(assets).not.toContain("--dport', '3128'")
+  })
+
+  it('persists managed iptables/nft firewall rules and classifies Windows timeout as cloud firewall blocking', () => {
+    expect(assets).toContain("def restore_firewall(manifest):")
+    expect(assets).toContain("driver == 'iptables'")
+    expect(assets).toContain("driver == 'nft-native'")
+    expect(assets).toContain("'firewall': firewall_state")
+    expect(service).toContain('isCloudFirewallTimeout')
+    expect(service).toContain('Cloud firewall / Security List / NSG đang chặn port.')
+    expect(service).toContain('remote.firewall.start_port')
+    expect(service).toContain('remote.firewall.end_port')
+  })
+
 })
