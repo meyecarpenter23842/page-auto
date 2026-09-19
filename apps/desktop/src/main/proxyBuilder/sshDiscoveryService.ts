@@ -1,5 +1,6 @@
 import { isIP } from 'node:net'
 import { Client, type ConnectConfig } from 'ssh2'
+import { applyProxyBuilderSshAuth } from './sshAuth'
 import type {
   ProxyBuilderAuditErrorCode,
   ProxyBuilderAuditInput,
@@ -80,7 +81,7 @@ function validate(input: ProxyBuilderAuditInput): string | null {
   if (!input.username.trim() || !/^[a-zA-Z0-9._-]+$/.test(input.username.trim())) return 'SSH User không hợp lệ.'
   if (!Number.isInteger(input.startPort) || input.startPort < 1 || input.startPort > 65535) return 'Start Port phải nằm trong 1-65535.'
   if (input.auth.type === 'password' && !input.auth.password) return 'Chưa nhập SSH Password.'
-  if (input.auth.type === 'key' && !input.auth.privateKey.trim()) return 'Chưa nhập SSH Private Key.'
+  if (input.auth.type === 'key' && !input.auth.privateKey.trim() && !input.auth.privateKeyPath?.trim()) return 'Chưa nhập hoặc chọn SSH Private Key.'
   return null
 }
 
@@ -113,11 +114,12 @@ function discoveryScript(startPort: number): string {
   ].join('\n')
 }
 
-function classifyError(error: unknown): { code: ProxyBuilderAuditErrorCode; message: string } {
+function classifyError(error: unknown, authType: ProxyBuilderAuditInput['auth']['type']): { code: ProxyBuilderAuditErrorCode; message: string } {
   const candidate = error as { level?: string; message?: string; code?: string }
   const message = clean(candidate?.message)
+  if (/SSH Private Key/i.test(message)) return { code: 'key_invalid', message }
   if (candidate?.level === 'client-authentication' || /authentication|all configured authentication methods failed/i.test(message)) {
-    return { code: 'auth_failed', message: 'SSH từ chối thông tin đăng nhập.' }
+    return { code: 'auth_failed', message: authType === 'key' ? 'VPS từ chối SSH Key cho user đã nhập.' : 'VPS từ chối SSH Password cho user đã nhập.' }
   }
   if (/timed out|timeout/i.test(message)) return { code: 'timeout', message: 'SSH timeout khi kết nối VPS.' }
   if (/ECONNREFUSED|ECONNRESET|ENETUNREACH|EHOSTUNREACH|ENOTFOUND/i.test(message) || candidate?.code) {
@@ -172,11 +174,10 @@ export async function auditProxyBuilderVps(input: ProxyBuilderAuditInput): Promi
     keepaliveCountMax: 2
   }
   const password = input.auth.type === 'password' ? input.auth.password : null
-  if (input.auth.type === 'password') {
-    config.password = input.auth.password
-    config.tryKeyboard = true
-  } else {
-    config.privateKey = input.auth.privateKey
+  try {
+    applyProxyBuilderSshAuth(config, input.auth)
+  } catch (error) {
+    return { ok: false, ...classifyError(error, input.auth.type) }
   }
 
   const client = new Client()
@@ -213,7 +214,7 @@ export async function auditProxyBuilderVps(input: ProxyBuilderAuditInput): Promi
     })
     return { ok: true, capability: parseProxyBuilderDiscovery(output) }
   } catch (error) {
-    const classified = classifyError(error)
+    const classified = classifyError(error, input.auth.type)
     return { ok: false, ...classified }
   } finally {
     client.end()

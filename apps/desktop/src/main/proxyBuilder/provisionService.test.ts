@@ -38,6 +38,11 @@ describe('Proxy Builder Batch 3 safety contracts', () => {
     expect(assets).toContain("'outbound_ip': candidate['outbound_ip']")
   })
 
+  it('uses the same Main-process SSH auth helper for provision/runtime connections', () => {
+    expect(service).toContain("from './sshAuth'")
+    expect(service).toContain('applyProxyBuilderSshAuth(config, input.auth)')
+  })
+
   it('keeps password auth compatible with keyboard-interactive/PAM during provisioning', () => {
     expect(service).toContain('config.tryKeyboard = true')
     expect(service).toContain("this.client.on('keyboard-interactive'")

@@ -62,6 +62,9 @@ export function ProxyBuilderWorkspace() {
   const [sshAuthMode, setSshAuthMode] = useState<SshAuthMode>('password')
   const [sshPassword, setSshPassword] = useState('')
   const [sshKey, setSshKey] = useState('')
+  const [sshKeyPath, setSshKeyPath] = useState('')
+  const [sshKeyFileName, setSshKeyFileName] = useState('')
+  const [sshKeyPassphrase, setSshKeyPassphrase] = useState('')
   const [proxyIpMode, setProxyIpMode] = useState<ProxyIpMode>('ipv6')
   const [proxyCount, setProxyCount] = useState(300)
   const [startPort, setStartPort] = useState(3128)
@@ -137,7 +140,27 @@ export function ProxyBuilderWorkspace() {
 
   const sshAuth = () => sshAuthMode === 'password'
     ? { type: 'password' as const, password: sshPassword }
-    : { type: 'key' as const, privateKey: sshKey }
+    : {
+        type: 'key' as const,
+        privateKey: sshKey,
+        privateKeyPath: sshKeyPath || undefined,
+        passphrase: sshKeyPassphrase || undefined
+      }
+
+  const pickSshKeyFile = async () => {
+    if (sshChecking || provisionRunning) return
+    setNotice(null)
+    try {
+      const result = await window.pageAutoProxyBuilder.pickPrivateKey()
+      if (result.cancelled || !result.path) return
+      setSshKeyPath(result.path)
+      setSshKeyFileName(result.fileName ?? 'SSH key')
+      setSshKey('')
+      setSshAudit(null)
+    } catch (error) {
+      setNotice(errorMessage(error))
+    }
+  }
 
   const checkSsh = async () => {
     if (sshChecking || provisionRunning) return
@@ -317,7 +340,14 @@ export function ProxyBuilderWorkspace() {
                   {sshAuthMode === 'password' ? (
                     <label>SSH Password<input type="password" value={sshPassword} onChange={(event) => setSshPassword(event.currentTarget.value)} placeholder="••••••••" autoComplete="off" /></label>
                   ) : (
-                    <label className="proxy-builder-field-wide">SSH Private Key<textarea value={sshKey} onChange={(event) => setSshKey(event.currentTarget.value)} placeholder="Paste private key..." rows={3} spellCheck={false} /></label>
+                    <>
+                      <label className="proxy-builder-field-wide">SSH Private Key<textarea value={sshKey} onChange={(event) => { setSshKey(event.currentTarget.value); setSshKeyPath(''); setSshKeyFileName('') }} placeholder={sshKeyFileName ? 'Đang dùng file key đã chọn trong Electron Main.' : 'Paste private key...'} rows={3} spellCheck={false} /></label>
+                      <div className="proxy-builder-field-wide proxy-builder-inline-actions">
+                        <button className="button secondary" type="button" disabled={sshChecking || provisionRunning} onClick={() => void pickSshKeyFile()}>Chọn file key</button>
+                        <span className="proxy-builder-muted">{sshKeyFileName ? `Đã chọn: ${sshKeyFileName}` : 'Có thể paste key hoặc chọn file trực tiếp.'}</span>
+                      </div>
+                      <label className="proxy-builder-field-wide">Key Passphrase (nếu có)<input type="password" value={sshKeyPassphrase} onChange={(event) => setSshKeyPassphrase(event.currentTarget.value)} placeholder="Để trống nếu key không mã hóa" autoComplete="off" /></label>
+                    </>
                   )}
                 </div>
                 <div className="proxy-builder-inline-actions">

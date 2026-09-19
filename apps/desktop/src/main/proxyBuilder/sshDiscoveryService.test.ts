@@ -26,6 +26,12 @@ describe('Proxy Builder SSH discovery parser', () => {
     expect(result.startPortAvailable).toBe(true)
   })
 
+  it('routes SSH key loading through the shared Main-process auth helper', () => {
+    expect(discoverySource).toContain("from './sshAuth'")
+    expect(discoverySource).toContain('applyProxyBuilderSshAuth(config, input.auth)')
+    expect(discoverySource).toContain("'key_invalid'")
+  })
+
   it('supports password servers that advertise keyboard-interactive instead of password auth', () => {
     expect(discoverySource).toContain('config.tryKeyboard = true')
     expect(discoverySource).toContain("client.on('keyboard-interactive'")

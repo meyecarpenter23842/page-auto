@@ -1,4 +1,5 @@
 export const PROXY_BUILDER_IPC = {
+  pickPrivateKey: 'proxy-builder:pick-private-key',
   auditVps: 'proxy-builder:audit-vps',
   provisionStart: 'proxy-builder:provision-start',
   provisionStatus: 'proxy-builder:provision-status',
@@ -11,7 +12,13 @@ export const PROXY_BUILDER_IPC = {
 
 export type ProxyBuilderSshAuth =
   | { type: 'password'; password: string }
-  | { type: 'key'; privateKey: string }
+  | { type: 'key'; privateKey: string; privateKeyPath?: string; passphrase?: string }
+
+export interface ProxyBuilderPrivateKeyPickResult {
+  cancelled: boolean
+  path?: string
+  fileName?: string
+}
 
 export interface ProxyBuilderAuditInput {
   host: string
@@ -37,6 +44,7 @@ export interface ProxyBuilderCapability {
 
 export type ProxyBuilderAuditErrorCode =
   | 'invalid_input'
+  | 'key_invalid'
   | 'auth_failed'
   | 'connection_failed'
   | 'timeout'

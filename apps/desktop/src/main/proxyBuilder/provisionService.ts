@@ -12,6 +12,7 @@ import type {
 } from '../../shared/proxyBuilder'
 
 import { PROXY_RUNTIME_PY, PROXY_RESTORE_PY, PROXY_PROVISIONER_PY, PROXY_SYSTEMD_SERVICE } from './remoteAssets'
+import { applyProxyBuilderSshAuth } from './sshAuth'
 
 const PROVISION_TIMEOUT_MS = 15 * 60_000
 const COMMAND_TIMEOUT_MS = 60_000
@@ -45,7 +46,7 @@ function validateInput(input: ProxyBuilderProvisionInput): string | null {
   if (input.startPort + input.count - 1 > 65535) return 'Dải port vượt quá 65535.'
   if (input.ipMode === 'both' && input.count < 2) return 'IPv4 + IPv6 cần tối thiểu 2 proxy.'
   if (input.auth.type === 'password' && !input.auth.password) return 'Chưa nhập SSH Password.'
-  if (input.auth.type === 'key' && !input.auth.privateKey.trim()) return 'Chưa nhập SSH Private Key.'
+  if (input.auth.type === 'key' && !input.auth.privateKey.trim() && !input.auth.privateKeyPath?.trim()) return 'Chưa nhập hoặc chọn SSH Private Key.'
   if (input.proxyAuth.type === 'basic') {
     if (!input.proxyAuth.username.trim() || input.proxyAuth.username.includes(':') || /[\r\n]/.test(input.proxyAuth.username)) return 'Proxy User không hợp lệ.'
     if (!input.proxyAuth.password || /[\r\n]/.test(input.proxyAuth.password)) return 'Proxy Password không hợp lệ.'
@@ -62,12 +63,7 @@ function connectConfig(input: Pick<ProxyBuilderProvisionInput, 'host' | 'usernam
     keepaliveInterval: 5_000,
     keepaliveCountMax: 2
   }
-  if (input.auth.type === 'password') {
-    config.password = input.auth.password
-    config.tryKeyboard = true
-  } else {
-    config.privateKey = input.auth.privateKey
-  }
+  applyProxyBuilderSshAuth(config, input.auth)
   return config
 }
 
