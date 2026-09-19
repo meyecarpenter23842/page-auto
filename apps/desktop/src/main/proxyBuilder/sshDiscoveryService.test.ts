@@ -27,6 +27,12 @@ describe('Proxy Builder SSH discovery parser', () => {
     expect(result.startPortAvailable).toBe(true)
   })
 
+  it('uses Windows native OpenSSH for selected key files before falling back to ssh2', () => {
+    expect(discoverySource).toContain("from './nativeOpenSsh'")
+    expect(discoverySource).toContain('shouldUseNativeOpenSsh(input.auth)')
+    expect(discoverySource).toContain("runNativeOpenSsh(input, 'sh -s'")
+  })
+
   it('routes SSH key loading through the shared Main-process auth helper', () => {
     expect(discoverySource).toContain("from './sshAuth'")
     expect(discoverySource).toContain('applyProxyBuilderSshAuth(config, input.auth)')

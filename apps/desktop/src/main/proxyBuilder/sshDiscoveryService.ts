@@ -1,6 +1,7 @@
 import { isIP } from 'node:net'
 import { Client, type ConnectConfig } from 'ssh2'
 import { applyProxyBuilderSshAuth } from './sshAuth'
+import { runNativeOpenSsh, shouldUseNativeOpenSsh } from './nativeOpenSsh'
 import type {
   ProxyBuilderAuditErrorCode,
   ProxyBuilderAuditInput,
@@ -164,6 +165,32 @@ function execDiscovery(client: Client, command: string): Promise<string> {
 export async function auditProxyBuilderVps(input: ProxyBuilderAuditInput): Promise<ProxyBuilderAuditResult> {
   const validationError = validate(input)
   if (validationError) return { ok: false, code: 'invalid_input', message: validationError }
+
+  if (shouldUseNativeOpenSsh(input.auth)) {
+    try {
+      const result = await runNativeOpenSsh(input, 'sh -s', {
+        stdin: discoveryScript(input.startPort),
+        timeoutMs: DISCOVERY_TIMEOUT_MS
+      })
+      if (result.code !== 0) {
+        const detail = (result.stderr || result.stdout).trim()
+        if (/Permission denied \(publickey\)|authentication failed/i.test(detail)) {
+          return { ok: false, code: 'auth_failed', message: 'VPS từ chối SSH Key cho user đã nhập.' }
+        }
+        if (/Host key verification failed/i.test(detail)) {
+          return { ok: false, code: 'connection_failed', message: 'Windows OpenSSH từ chối host key của VPS.' }
+        }
+        if (/Could not resolve hostname|Connection refused|Connection timed out|No route to host/i.test(detail)) {
+          return { ok: false, code: 'connection_failed', message: 'Không kết nối được tới VPS qua Windows OpenSSH.' }
+        }
+        return { ok: false, code: 'command_failed', message: detail ? `Windows OpenSSH lỗi: ${detail}` : 'Windows OpenSSH chạy thất bại.' }
+      }
+      return { ok: true, capability: parseProxyBuilderDiscovery(result.stdout) }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return { ok: false, code: /timeout/i.test(message) ? 'timeout' : 'connection_failed', message }
+    }
+  }
 
   const config: ConnectConfig = {
     host: input.host.trim().replace(/^\[|\]$/g, ''),
