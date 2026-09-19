@@ -47,6 +47,14 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+const RANDOM_AUTH_ALPHABET = 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+
+function randomAuthToken(length: number): string {
+  const bytes = new Uint8Array(length)
+  window.crypto.getRandomValues(bytes)
+  return Array.from(bytes, (value) => RANDOM_AUTH_ALPHABET[value % RANDOM_AUTH_ALPHABET.length]).join('')
+}
+
 function quoteDiagnosticArg(value: string): string {
   return /\s/.test(value) ? JSON.stringify(value) : value
 }
@@ -188,6 +196,11 @@ export function ProxyBuilderWorkspace() {
         ...(sshKeyPath ? { privateKeyPath: sshKeyPath } : {}),
         ...(sshKeyPassphrase ? { passphrase: sshKeyPassphrase } : {})
       }
+
+  const randomizeProxyAuth = () => {
+    setProxyUser('pa_' + randomAuthToken(8))
+    setProxyPassword(randomAuthToken(20))
+  }
 
   const pickSshKeyFile = async () => {
     if (sshChecking || provisionRunning) return
@@ -439,7 +452,7 @@ export function ProxyBuilderWorkspace() {
                 <div className="proxy-builder-section-heading"><strong>Authentication</strong><span>Xác thực client dùng proxy</span></div>
                 <div className="proxy-builder-fields proxy-builder-fields-auth">
                   <label>Chế độ<select value={proxyAuthMode} onChange={(event) => setProxyAuthMode(event.currentTarget.value as ProxyAuthMode)}><option value="basic">User / Password</option><option value="none">Không xác thực</option></select></label>
-                  {proxyAuthMode === 'basic' ? <><label>Proxy User<input value={proxyUser} onChange={(event) => setProxyUser(event.currentTarget.value)} autoComplete="off" /></label><label>Proxy Password<input type="password" value={proxyPassword} onChange={(event) => setProxyPassword(event.currentTarget.value)} placeholder="••••••••" autoComplete="off" /></label></> : null}
+                  {proxyAuthMode === 'basic' ? <><label>Proxy User<input value={proxyUser} onChange={(event) => setProxyUser(event.currentTarget.value)} autoComplete="off" /></label><label>Proxy Password<input type="password" value={proxyPassword} onChange={(event) => setProxyPassword(event.currentTarget.value)} placeholder="••••••••" autoComplete="off" /></label><div className="proxy-builder-inline-actions"><button className="button secondary" type="button" onClick={randomizeProxyAuth}>Random User/Pass</button></div></> : null}
                 </div>
               </div>
 
@@ -480,7 +493,7 @@ export function ProxyBuilderWorkspace() {
               <table className="data-table proxy-builder-table">
                 <thead><tr><th className="proxy-builder-check-column"><input type="checkbox" disabled={!results.length} checked={Boolean(results.length) && createdSelected.size === results.length} onChange={(event) => setCreatedSelected(event.currentTarget.checked ? new Set(results.map((item) => item.id)) : new Set())} aria-label="Chọn tất cả proxy" /></th><th>STT</th><th>Proxy</th><th>Type</th><th>Outbound IP</th><th>Status</th></tr></thead>
                 <tbody>
-                  {results.map((item, index) => <tr key={item.id}><td className="proxy-builder-check-column"><input type="checkbox" checked={createdSelected.has(item.id)} onChange={() => toggleCreated(item.id)} aria-label={`Chọn proxy ${index + 1}`} /></td><td>{index + 1}</td><td>{item.authMode === 'basic' ? `${item.listenHost}:${item.port}:${item.username}:••••` : `${item.listenHost}:${item.port}`}</td><td>{item.type === 'ipv4' ? 'IPv4' : 'IPv6'}</td><td>{item.outboundIp}</td><td>{runtimeActive === false ? 'Đã dừng' : 'Sẵn sàng'}</td></tr>)}
+                  {results.map((item, index) => <tr key={item.id}><td className="proxy-builder-check-column"><input type="checkbox" checked={createdSelected.has(item.id)} onChange={() => toggleCreated(item.id)} aria-label={`Chọn proxy ${index + 1}`} /></td><td>{index + 1}</td><td>{item.authMode === 'basic' ? `${item.listenHost}:${item.port}:${item.username}:••••` : `${item.listenHost}:${item.port}`}</td><td>{item.type === 'ipv4' ? 'IPv4' : 'IPv6'}</td><td>{item.outboundIp}</td><td>{runtimeActive === false ? 'Đã dừng' : item.status === 'ready' ? 'LIVE' : item.status === 'error' ? 'Không truy cập được' : 'Đã dừng'}</td></tr>)}
                   {!results.length ? <tr><td colSpan={6} className="proxy-builder-empty">Chưa có proxy. Danh sách sẽ xuất hiện tại đây sau khi VPS được provision.</td></tr> : null}
                 </tbody>
               </table>

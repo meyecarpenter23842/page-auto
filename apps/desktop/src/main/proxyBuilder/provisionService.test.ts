@@ -57,6 +57,13 @@ describe('Proxy Builder Batch 3 safety contracts', () => {
     expect(service).toContain('finish(prompts.map(() => password))')
   })
 
+  it('verifies newly created proxies from the desktop before reporting them ready', () => {
+    expect(service).toContain("from './checkerService'")
+    expect(service).toContain('checkProxyLineNow(')
+    expect(service).toContain("status: 'error'")
+    expect(service).toContain('inbound firewall / cloud Security List / Security Group')
+  })
+
   it('keeps idempotency around the Page-Auto manifest and service', () => {
     expect(assets).toContain("MANIFEST = ETC_DIR / 'manifest.json'")
     expect(assets).toContain('old_manifest = load_json(MANIFEST, {})')

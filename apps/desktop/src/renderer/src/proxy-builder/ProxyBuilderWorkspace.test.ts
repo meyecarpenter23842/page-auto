@@ -45,6 +45,18 @@ describe('Proxy Builder Batch 4 checker/export', () => {
     expect(preload).toContain('startChecker: (input) => ipcRenderer.invoke')
   })
 
+  it('can generate random proxy credentials locally', () => {
+    expect(workspace).toContain('Random User/Pass')
+    expect(workspace).toContain('window.crypto.getRandomValues')
+    expect(workspace).toContain("setProxyUser('pa_' + randomAuthToken(8))")
+    expect(workspace).toContain('setProxyPassword(randomAuthToken(20))')
+  })
+
+  it('shows external reachability instead of hard-coding every created proxy as ready', () => {
+    expect(workspace).toContain("'Không truy cập được'")
+    expect(workspace).toContain("item.status === 'ready' ? 'LIVE'")
+  })
+
   it('exposes selected/all test and LIVE copy/export without exposing credentials in checker snapshots', () => {
     for (const label of ['Test đã chọn', 'Test tất cả', 'Copy LIVE', 'Export LIVE']) expect(workspace).toContain(label)
     expect(workspace).toContain('maskedProxy')

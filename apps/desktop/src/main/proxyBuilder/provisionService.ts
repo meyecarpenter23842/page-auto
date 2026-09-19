@@ -6,6 +6,7 @@ import type {
   ProxyBuilderProvisionInput,
   ProxyBuilderProvisionPhase,
   ProxyBuilderProvisionSnapshot,
+  ProxyBuilderProxyAuth,
   ProxyBuilderProxyResult,
   ProxyBuilderRunIdPayload,
   ProxyBuilderRuntimeControlInput,
@@ -15,9 +16,12 @@ import type {
 import { PROXY_RUNTIME_PY, PROXY_RESTORE_PY, PROXY_PROVISIONER_PY, PROXY_SYSTEMD_SERVICE } from './remoteAssets'
 import { applyProxyBuilderSshAuth } from './sshAuth'
 import { runNativeOpenSsh, shouldUseNativeOpenSsh } from './nativeOpenSsh'
+import { checkProxyLineNow } from './checkerService'
 
 const PROVISION_TIMEOUT_MS = 15 * 60_000
 const COMMAND_TIMEOUT_MS = 60_000
+const EXTERNAL_VERIFY_TIMEOUT_MS = 12_000
+const EXTERNAL_VERIFY_CONCURRENCY = 100
 
 interface CommandResult { stdout: string; stderr: string; code: number }
 interface SshSessionLike {
@@ -235,6 +239,39 @@ function toProxyResults(remote: RemoteProvisionResult): ProxyBuilderProxyResult[
   }))
 }
 
+function externalProxyLine(item: ProxyBuilderProxyResult, auth: ProxyBuilderProxyAuth): string {
+  const host = item.listenHost.includes(':') ? '[' + item.listenHost + ']' : item.listenHost
+  if (auth.type !== 'basic') return host + ':' + item.port
+  return host + ':' + item.port + ':' + auth.username + ':' + auth.password
+}
+
+async function verifyProvisionedProxies(
+  remote: RemoteProvisionResult,
+  auth: ProxyBuilderProxyAuth
+): Promise<ProxyBuilderProxyResult[]> {
+  const results = toProxyResults(remote)
+  let cursor = 0
+
+  const worker = async () => {
+    while (true) {
+      const index = cursor
+      cursor += 1
+      const item = results[index]
+      if (!item) return
+      const checked = await checkProxyLineNow(externalProxyLine(item, auth), EXTERNAL_VERIFY_TIMEOUT_MS, 0)
+      results[index] = checked.live
+        ? { ...item, status: 'ready', outboundIp: checked.outboundIp ?? item.outboundIp }
+        : { ...item, status: 'error' }
+    }
+  }
+
+  await Promise.all(Array.from(
+    { length: Math.min(EXTERNAL_VERIFY_CONCURRENCY, Math.max(1, results.length)) },
+    () => worker()
+  ))
+  return results
+}
+
 async function privilegedPrefix(session: SshSessionLike): Promise<string> {
   const uid = await session.exec('id -u')
   if (uid.code !== 0) throw new Error('Không xác định được quyền user SSH.')
@@ -353,11 +390,18 @@ export class ProxyBuilderProvisionService {
       const command = `${prefix}python3 ${shellQuote(paths.provisioner)} ${shellQuote(paths.request)} ${shellQuote(paths.runtime)} ${shellQuote(paths.restore)} ${shellQuote(paths.service)} ${shellQuote(runId)}`
       const result = await session.exec(command, PROVISION_TIMEOUT_MS, (line) => {
         const progress = parseProgress(line)
-        if (progress) this.update(runId, progress)
+        if (progress && progress.phase !== 'complete') this.update(runId, progress)
       })
       if (result.code !== 0) throw new Error((result.stderr || result.stdout || 'Provision command failed.').trim().slice(-2200))
       const remote = parseProvisionResult(result.stdout)
-      this.update(runId, { status: 'completed', phase: 'complete', percent: 100, message: `Đã tạo ${remote.mappings.length} proxy và xác minh outbound IP.`, results: toProxyResults(remote) })
+      if (this.active?.cancelRequested) throw new Error('Provision cancelled')
+      this.update(runId, { phase: 'self_test', percent: 94, message: 'Đang kiểm tra khả năng truy cập proxy từ máy Windows…' })
+      const verified = await verifyProvisionedProxies(remote, input.proxyAuth)
+      const externalDead = verified.filter((item) => item.status === 'error').length
+      const message = externalDead
+        ? 'Đã tạo ' + remote.mappings.length + ' proxy nhưng ' + externalDead + ' proxy chưa truy cập được từ máy này. Listener nội bộ đã chạy; hãy kiểm tra inbound firewall / cloud Security List / Security Group.'
+        : 'Đã tạo ' + remote.mappings.length + ' proxy và xác minh LIVE từ máy này.'
+      this.update(runId, { status: 'completed', phase: 'complete', percent: 100, message, results: verified })
     } catch (error) {
       const cancelled = this.active?.runId === runId && this.active.cancelRequested
       this.update(runId, {
