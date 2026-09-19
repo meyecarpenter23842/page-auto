@@ -2,7 +2,10 @@ import { useEffect, useMemo, useState } from 'react'
 import type {
   ProxyBuilderAuditResult,
   ProxyBuilderCapability,
+  ProxyBuilderCheckerSnapshot,
   ProxyBuilderProvisionSnapshot,
+  ProxyBuilderProxyAuth,
+  ProxyBuilderProxyResult,
   ProxyBuilderRuntimeAction
 } from '../../../shared/proxyBuilder'
 import './proxyBuilder.css'
@@ -72,6 +75,12 @@ export function ProxyBuilderWorkspace() {
   const [runtimeBusy, setRuntimeBusy] = useState(false)
   const [runtimeActive, setRuntimeActive] = useState<boolean | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [createdExportAuth, setCreatedExportAuth] = useState<ProxyBuilderProxyAuth | null>(null)
+  const [createdSelected, setCreatedSelected] = useState<Set<string>>(new Set())
+  const [checker, setChecker] = useState<ProxyBuilderCheckerSnapshot | null>(null)
+  const [checkerSubmitted, setCheckerSubmitted] = useState<string[]>([])
+  const [checkerSelected, setCheckerSelected] = useState<Set<number>>(new Set())
+  const [textBusy, setTextBusy] = useState(false)
 
   const checkerCount = useMemo(
     () => checkerInput.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).length,
@@ -83,6 +92,8 @@ export function ProxyBuilderWorkspace() {
   const progressPercent = provision?.percent ?? (sshChecking ? 20 : capability ? 40 : 0)
   const progressLabel = provision?.message ?? (sshChecking ? 'Đang audit VPS' : capability ? 'SSH + capability OK' : sshAudit ? 'Audit lỗi' : 'Chưa chạy')
   const results = provision?.results ?? []
+  const checkerResults = checker?.results ?? []
+  const checkerRunning = checker?.status === 'running'
   const selectedModeReady = proxyIpMode === 'ipv4'
     ? Boolean(capability?.supportsIpv4)
     : proxyIpMode === 'ipv6'
@@ -96,13 +107,33 @@ export function ProxyBuilderWorkspace() {
         .then((next) => {
           if (!next) return
           setProvision(next)
-          if (next.status === 'completed') setRuntimeActive(true)
+          if (next.status === 'completed') {
+            setRuntimeActive(true)
+            setCreatedSelected(new Set(next.results.map((item) => item.id)))
+          }
           if (next.status === 'failed' || next.status === 'cancelled') setNotice(next.message)
         })
         .catch((error) => setNotice(errorMessage(error)))
     }, 500)
     return () => window.clearInterval(timer)
   }, [provision?.runId, provisionRunning])
+
+  useEffect(() => {
+    if (!checkerRunning || !checker) return
+    const timer = window.setInterval(() => {
+      void window.pageAutoProxyBuilder.getCheckerStatus(checker.runId)
+        .then((next) => {
+          if (!next) return
+          setChecker(next)
+          if (next.status !== 'running') {
+            const liveIndexes = next.results.filter((item) => item.status === 'live').map((item) => item.index)
+            setCheckerSelected(new Set(liveIndexes))
+          }
+        })
+        .catch((error) => setNotice(errorMessage(error)))
+    }, 350)
+    return () => window.clearInterval(timer)
+  }, [checker?.runId, checkerRunning])
 
   const sshAuth = () => sshAuthMode === 'password'
     ? { type: 'password' as const, password: sshPassword }
@@ -130,9 +161,9 @@ export function ProxyBuilderWorkspace() {
     if (!capability || provisionRunning) return
     setNotice(null)
     try {
-      const proxyAuth = proxyAuthMode === 'basic'
-        ? { type: 'basic' as const, username: proxyUser, password: proxyPassword }
-        : { type: 'none' as const }
+      const proxyAuth: ProxyBuilderProxyAuth = proxyAuthMode === 'basic'
+        ? { type: 'basic', username: proxyUser, password: proxyPassword }
+        : { type: 'none' }
       const next = await window.pageAutoProxyBuilder.startProvision({
         host,
         username: sshUser,
@@ -143,6 +174,8 @@ export function ProxyBuilderWorkspace() {
         proxyAuth
       })
       setProvision(next)
+      setCreatedExportAuth(proxyAuth)
+      setCreatedSelected(new Set())
       setRuntimeActive(null)
     } catch (error) {
       setNotice(errorMessage(error))
@@ -172,6 +205,96 @@ export function ProxyBuilderWorkspace() {
     } finally {
       setRuntimeBusy(false)
     }
+  }
+
+  const formatCreatedProxy = (item: ProxyBuilderProxyResult): string => {
+    if (item.authMode !== 'basic') return `${item.listenHost}:${item.port}`
+    if (createdExportAuth?.type !== 'basic') return ''
+    return `${item.listenHost}:${item.port}:${createdExportAuth.username}:${createdExportAuth.password}`
+  }
+
+  const normalizeCheckerInput = (): string[] =>
+    checkerInput.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+
+  const startChecker = async (lines: string[]) => {
+    const proxies = lines.map((line) => line.trim()).filter(Boolean)
+    if (!proxies.length || checkerRunning) return
+    setNotice(null)
+    setActiveTab('checker')
+    try {
+      const next = await window.pageAutoProxyBuilder.startChecker({ proxies, concurrency: 20, timeoutMs: 12_000, retries: 1 })
+      setCheckerSubmitted(proxies)
+      setChecker(next)
+      setCheckerSelected(new Set(next.results.map((item) => item.index)))
+    } catch (error) {
+      setNotice(errorMessage(error))
+    }
+  }
+
+  const cancelChecker = async () => {
+    if (!checkerRunning || !checker) return
+    try {
+      const next = await window.pageAutoProxyBuilder.cancelChecker(checker.runId)
+      if (next) setChecker(next)
+    } catch (error) {
+      setNotice(errorMessage(error))
+    }
+  }
+
+  const createdLines = (selectedOnly: boolean): string[] =>
+    results
+      .filter((item) => !selectedOnly || createdSelected.has(item.id))
+      .map(formatCreatedProxy)
+      .filter(Boolean)
+
+  const checkerLines = (onlyLive: boolean, selectedOnly: boolean): string[] =>
+    checkerResults
+      .filter((item) => (!onlyLive || item.status === 'live') && (!selectedOnly || checkerSelected.has(item.index)))
+      .map((item) => checkerSubmitted[item.index] ?? '')
+      .filter(Boolean)
+
+  const copyLines = async (lines: string[]) => {
+    if (!lines.length || textBusy) return
+    setTextBusy(true)
+    try {
+      await window.pageAutoProxyBuilderText.copy(lines.join('\n'))
+      setNotice(`Đã copy ${lines.length} proxy.`)
+    } catch (error) {
+      setNotice(errorMessage(error))
+    } finally {
+      setTextBusy(false)
+    }
+  }
+
+  const exportLines = async (lines: string[], suggestedName: string) => {
+    if (!lines.length || textBusy) return
+    setTextBusy(true)
+    try {
+      const result = await window.pageAutoProxyBuilderText.export(lines.join('\n'), suggestedName)
+      if (!result.cancelled) setNotice(`Đã xuất ${lines.length} proxy.`)
+    } catch (error) {
+      setNotice(errorMessage(error))
+    } finally {
+      setTextBusy(false)
+    }
+  }
+
+  const toggleCreated = (id: string) => {
+    setCreatedSelected((current) => {
+      const next = new Set(current)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleChecker = (index: number) => {
+    setCheckerSelected((current) => {
+      const next = new Set(current)
+      if (next.has(index)) next.delete(index)
+      else next.add(index)
+      return next
+    })
   }
 
   return (
@@ -247,14 +370,17 @@ export function ProxyBuilderWorkspace() {
               <div><strong>Danh sách Proxy</strong><span>{results.length} proxy</span></div>
               <div className="proxy-builder-inline-actions">
                 {results.length ? <><button className="button secondary" type="button" disabled={runtimeBusy || provisionRunning} onClick={() => void controlRuntime('start')}>Start service</button><button className="button secondary" type="button" disabled={runtimeBusy || provisionRunning} onClick={() => void controlRuntime('stop')}>Stop service</button><button className="button secondary" type="button" disabled={runtimeBusy || provisionRunning} onClick={() => void controlRuntime('restart')}>Restart</button></> : null}
-                <button className="button secondary" type="button" disabled>Test tất cả</button><button className="button secondary" type="button" disabled>Copy</button><button className="button secondary" type="button" disabled>Export TXT</button>
+                <button className="button secondary" type="button" disabled={!createdSelected.size || checkerRunning} onClick={() => void startChecker(createdLines(true))}>Test đã chọn</button>
+                <button className="button secondary" type="button" disabled={!results.length || checkerRunning} onClick={() => void startChecker(createdLines(false))}>Test tất cả</button>
+                <button className="button secondary" type="button" disabled={!results.length || textBusy} onClick={() => void copyLines(createdLines(Boolean(createdSelected.size)))}>Copy</button>
+                <button className="button secondary" type="button" disabled={!results.length || textBusy} onClick={() => void exportLines(createdLines(Boolean(createdSelected.size)), 'page-auto-proxies.txt')}>Export TXT</button>
               </div>
             </div>
             <div className="proxy-builder-table-wrap">
               <table className="data-table proxy-builder-table">
-                <thead><tr><th className="proxy-builder-check-column"><input type="checkbox" disabled aria-label="Chọn tất cả proxy" /></th><th>STT</th><th>Proxy</th><th>Type</th><th>Outbound IP</th><th>Status</th></tr></thead>
+                <thead><tr><th className="proxy-builder-check-column"><input type="checkbox" disabled={!results.length} checked={Boolean(results.length) && createdSelected.size === results.length} onChange={(event) => setCreatedSelected(event.currentTarget.checked ? new Set(results.map((item) => item.id)) : new Set())} aria-label="Chọn tất cả proxy" /></th><th>STT</th><th>Proxy</th><th>Type</th><th>Outbound IP</th><th>Status</th></tr></thead>
                 <tbody>
-                  {results.map((item, index) => <tr key={item.id}><td className="proxy-builder-check-column"><input type="checkbox" disabled aria-label={`Chọn proxy ${index + 1}`} /></td><td>{index + 1}</td><td>{item.authMode === 'basic' ? `${item.listenHost}:${item.port}:${item.username}:••••` : `${item.listenHost}:${item.port}`}</td><td>{item.type === 'ipv4' ? 'IPv4' : 'IPv6'}</td><td>{item.outboundIp}</td><td>{runtimeActive === false ? 'Đã dừng' : 'Sẵn sàng'}</td></tr>)}
+                  {results.map((item, index) => <tr key={item.id}><td className="proxy-builder-check-column"><input type="checkbox" checked={createdSelected.has(item.id)} onChange={() => toggleCreated(item.id)} aria-label={`Chọn proxy ${index + 1}`} /></td><td>{index + 1}</td><td>{item.authMode === 'basic' ? `${item.listenHost}:${item.port}:${item.username}:••••` : `${item.listenHost}:${item.port}`}</td><td>{item.type === 'ipv4' ? 'IPv4' : 'IPv6'}</td><td>{item.outboundIp}</td><td>{runtimeActive === false ? 'Đã dừng' : 'Sẵn sàng'}</td></tr>)}
                   {!results.length ? <tr><td colSpan={6} className="proxy-builder-empty">Chưa có proxy. Danh sách sẽ xuất hiện tại đây sau khi VPS được provision.</td></tr> : null}
                 </tbody>
               </table>
@@ -265,13 +391,35 @@ export function ProxyBuilderWorkspace() {
       ) : (
         <section className="proxy-builder-checker-layout">
           <div className="proxy-builder-panel proxy-builder-checker-input">
-            <div className="proxy-builder-result-toolbar"><div><strong>Proxy Checker</strong><span>{checkerCount} proxy đã nhập</span></div><div className="proxy-builder-inline-actions"><button className="button primary" type="button" disabled title="Proxy Checker network runtime được triển khai ở Batch 4.">Test</button><button className="button secondary" type="button" disabled>Dừng</button></div></div>
-            <label>Danh sách proxy<textarea value={checkerInput} onChange={(event) => setCheckerInput(event.currentTarget.value)} placeholder="host:port:user:pass&#10;host:port" rows={7} spellCheck={false} /></label>
+            <div className="proxy-builder-result-toolbar">
+              <div><strong>Proxy Checker</strong><span>{checkerCount} proxy đã nhập · 20 luồng · timeout 12s · retry 1</span></div>
+              <div className="proxy-builder-inline-actions">
+                <button className="button primary" type="button" disabled={!checkerCount || checkerRunning} onClick={() => void startChecker(normalizeCheckerInput())}>Test tất cả</button>
+                <button className="button secondary" type="button" disabled={!checkerSelected.size || checkerRunning} onClick={() => void startChecker(checkerLines(false, true))}>Test đã chọn</button>
+                <button className="button secondary" type="button" disabled={!checkerRunning} onClick={() => void cancelChecker()}>Dừng</button>
+              </div>
+            </div>
+            <label>Danh sách proxy<textarea value={checkerInput} onChange={(event) => setCheckerInput(event.currentTarget.value)} disabled={checkerRunning} placeholder="host:port:user:pass&#10;host:port&#10;http://user:pass@host:port" rows={7} spellCheck={false} /></label>
           </div>
           <section className="proxy-builder-panel proxy-builder-results-panel">
-            <div className="proxy-builder-result-toolbar"><div><strong>Kết quả kiểm tra</strong><span>LIVE / DEAD · outbound IP · latency</span></div><div className="proxy-builder-inline-actions"><button className="button secondary" type="button" disabled>Copy LIVE</button><button className="button secondary" type="button" disabled>Export TXT</button></div></div>
-            <div className="proxy-builder-table-wrap"><table className="data-table proxy-builder-table"><thead><tr><th className="proxy-builder-check-column"><input type="checkbox" disabled aria-label="Chọn tất cả kết quả proxy" /></th><th>Proxy</th><th>Live</th><th>Type</th><th>Outbound IP</th><th>Latency</th></tr></thead><tbody><tr><td colSpan={6} className="proxy-builder-empty">Chưa có kết quả kiểm tra.</td></tr></tbody></table></div>
+            <div className="proxy-builder-result-toolbar">
+              <div><strong>Kết quả kiểm tra</strong><span>{checker ? `${checker.live} LIVE · ${checker.dead} DEAD · ${checker.completed}/${checker.total}` : 'LIVE / DEAD · outbound IP · latency'}</span></div>
+              <div className="proxy-builder-inline-actions">
+                <button className="button secondary" type="button" disabled={!checkerResults.some((item) => item.status === 'live') || textBusy} onClick={() => void copyLines(checkerLines(true, false))}>Copy LIVE</button>
+                <button className="button secondary" type="button" disabled={!checkerResults.some((item) => item.status === 'live') || textBusy} onClick={() => void exportLines(checkerLines(true, false), 'page-auto-live-proxies.txt')}>Export LIVE</button>
+              </div>
+            </div>
+            <div className="proxy-builder-table-wrap">
+              <table className="data-table proxy-builder-table">
+                <thead><tr><th className="proxy-builder-check-column"><input type="checkbox" disabled={!checkerResults.length} checked={Boolean(checkerResults.length) && checkerSelected.size === checkerResults.length} onChange={(event) => setCheckerSelected(event.currentTarget.checked ? new Set(checkerResults.map((item) => item.index)) : new Set())} aria-label="Chọn tất cả kết quả proxy" /></th><th>Proxy</th><th>Live</th><th>Type</th><th>Outbound IP</th><th>Latency / lỗi</th></tr></thead>
+                <tbody>
+                  {checkerResults.map((item) => <tr key={item.index}><td className="proxy-builder-check-column"><input type="checkbox" checked={checkerSelected.has(item.index)} onChange={() => toggleChecker(item.index)} aria-label={`Chọn kết quả ${item.index + 1}`} /></td><td>{item.maskedProxy}</td><td><span className={`proxy-builder-live-badge ${item.status}`}>{item.status === 'live' ? 'LIVE' : item.status === 'dead' ? 'DEAD' : 'WAIT'}</span></td><td>{item.type ? item.type.toUpperCase() : '-'}</td><td>{item.outboundIp ?? '-'}</td><td>{item.latencyMs !== null ? `${item.latencyMs} ms` : item.error ?? '-'}</td></tr>)}
+                  {!checkerResults.length ? <tr><td colSpan={6} className="proxy-builder-empty">Paste proxy rồi bấm Test tất cả. Checker sẽ request HTTPS thật xuyên proxy.</td></tr> : null}
+                </tbody>
+              </table>
+            </div>
           </section>
+          {notice ? <div className="proxy-builder-notice">{notice}</div> : null}
         </section>
       )}
     </section>
