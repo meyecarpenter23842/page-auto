@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { buildNativeOpenSshArgs } from './nativeOpenSsh'
+import { buildNativeOpenSshArgs, resolveWindowsOpenSshExecutable } from './nativeOpenSsh'
 
 describe('Proxy Builder Windows OpenSSH transport', () => {
+  it('pins the Windows system OpenSSH binary before PATH fallback', () => {
+    const expected = 'C:\\Windows\\System32\\OpenSSH\\ssh.exe'
+    expect(resolveWindowsOpenSshExecutable('C:\\Windows', (candidate) => candidate === expected)).toBe(expected)
+  })
+
+  it('falls back to PATH only when Windows system OpenSSH is unavailable', () => {
+    expect(resolveWindowsOpenSshExecutable('C:\\Windows', () => false)).toBe('ssh.exe')
+  })
+
   it('pins the exact selected identity and publickey-only authentication', () => {
     const args = buildNativeOpenSshArgs({
       host: '140.238.155.28',

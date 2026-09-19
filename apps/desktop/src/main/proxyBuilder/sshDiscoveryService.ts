@@ -175,7 +175,11 @@ export async function auditProxyBuilderVps(input: ProxyBuilderAuditInput): Promi
       if (result.code !== 0) {
         const detail = (result.stderr || result.stdout).trim()
         if (/Permission denied \(publickey\)|authentication failed/i.test(detail)) {
-          return { ok: false, code: 'auth_failed', message: 'VPS từ chối SSH Key cho user đã nhập.' }
+          return {
+            ok: false,
+            code: 'auth_failed',
+            message: `VPS từ chối SSH Key. OpenSSH: ${result.version}; binary: ${result.executable}`
+          }
         }
         if (/Host key verification failed/i.test(detail)) {
           return { ok: false, code: 'connection_failed', message: 'Windows OpenSSH từ chối host key của VPS.' }
