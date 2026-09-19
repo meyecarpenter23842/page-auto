@@ -15,6 +15,13 @@ describe('Proxy Builder Batch 4 checker/export', () => {
     expect(app).toContain("activeRoute === 'proxy-builder' ? <ProxyBuilderWorkspace />")
   })
 
+  it('does not silently default SSH User to root', () => {
+    expect(workspace).toContain("const [sshUser, setSshUser] = useState('')")
+    expect(workspace).not.toContain("const [sshUser, setSshUser] = useState('root')")
+    expect(workspace).toContain('ubuntu / root / ec2-user')
+    expect(workspace).toContain('!sshUser.trim()')
+  })
+
   it('selects SSH key files through typed IPC without exposing file contents from Main', () => {
     expect(workspace).toContain('window.pageAutoProxyBuilder.pickPrivateKey')
     expect(workspace).toContain('Chọn file key')

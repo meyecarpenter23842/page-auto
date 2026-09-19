@@ -98,7 +98,7 @@ function phaseStep(snapshot: ProxyBuilderProvisionSnapshot | null, index: number
 export function ProxyBuilderWorkspace() {
   const [activeTab, setActiveTab] = useState<ProxyBuilderTab>('create')
   const [host, setHost] = useState('')
-  const [sshUser, setSshUser] = useState('root')
+  const [sshUser, setSshUser] = useState('')
   const [sshAuthMode, setSshAuthMode] = useState<SshAuthMode>('password')
   const [sshPassword, setSshPassword] = useState('')
   const [sshKey, setSshKey] = useState('')
@@ -393,7 +393,7 @@ export function ProxyBuilderWorkspace() {
                 <div className="proxy-builder-section-heading"><strong>VPS / SSH</strong><span>Thông tin kết nối máy chủ</span></div>
                 <div className="proxy-builder-fields proxy-builder-fields-vps">
                   <label>VPS IP / Host<input value={host} onChange={(event) => setHost(event.currentTarget.value)} placeholder="103.x.x.x" autoComplete="off" /></label>
-                  <label>SSH User<input value={sshUser} onChange={(event) => setSshUser(event.currentTarget.value)} placeholder="root" autoComplete="off" /></label>
+                  <label>SSH User<input value={sshUser} onChange={(event) => setSshUser(event.currentTarget.value)} placeholder="ubuntu / root / ec2-user" autoComplete="off" /></label>
                   <label>SSH Auth<select value={sshAuthMode} onChange={(event) => setSshAuthMode(event.currentTarget.value as SshAuthMode)}><option value="password">Mật khẩu</option><option value="key">SSH Key</option></select></label>
                   {sshAuthMode === 'password' ? (
                     <label>SSH Password<input type="password" value={sshPassword} onChange={(event) => setSshPassword(event.currentTarget.value)} placeholder="••••••••" autoComplete="off" /></label>
@@ -409,7 +409,7 @@ export function ProxyBuilderWorkspace() {
                   )}
                 </div>
                 <div className="proxy-builder-inline-actions">
-                  <button className="button secondary" type="button" disabled={sshChecking || provisionRunning} onClick={() => void checkSsh()}>Kiểm tra SSH</button>
+                  <button className="button secondary" type="button" disabled={sshChecking || provisionRunning || !host.trim() || !sshUser.trim()} onClick={() => void checkSsh()}>Kiểm tra SSH</button>
                   <span className="proxy-builder-muted">{sshStatus}</span>
                 </div>
                 {sshDiagnostic ? (
