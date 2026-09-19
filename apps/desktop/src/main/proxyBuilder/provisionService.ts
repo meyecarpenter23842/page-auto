@@ -22,7 +22,7 @@ interface RemoteProvisionResult {
   listenHost: string
   authMode: 'none' | 'basic'
   username: string | null
-  mappings: Array<{ port: number; type: 'ipv4' | 'ipv6'; source_ip: string }>
+  mappings: Array<{ port: number; type: 'ipv4' | 'ipv6'; source_ip: string; outbound_ip?: string }>
 }
 
 function cloneSnapshot(snapshot: ProxyBuilderProvisionSnapshot): ProxyBuilderProvisionSnapshot {
@@ -168,7 +168,7 @@ function toProxyResults(remote: RemoteProvisionResult): ProxyBuilderProxyResult[
     listenHost: remote.listenHost,
     port: mapping.port,
     type: mapping.type,
-    outboundIp: mapping.source_ip,
+    outboundIp: mapping.outbound_ip ?? mapping.source_ip,
     status: 'ready',
     authMode: remote.authMode,
     username: remote.username

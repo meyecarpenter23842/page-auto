@@ -23,7 +23,19 @@ describe('Proxy Builder Batch 3 safety contracts', () => {
     expect(assets).toContain("if mode == 'ipv4'")
     expect(assets).toContain("if mode == 'ipv6'")
     expect(assets).toContain('Chế độ IPv4 + IPv6')
-    expect(assets).toContain('return ipaddress.ip_address(result.stdout.strip()) == ipaddress.ip_address(address)')
+    expect(assets).toContain('def probe_outbound(address, family):')
+    expect(assets).toContain("observed = probe_outbound(address, 4)")
+    expect(assets).toContain('seen_outbound = set()')
+    expect(assets).toContain("result.append({'source_ip': address, 'outbound_ip': observed})")
+    expect(assets).toContain("expected = mapping.get('outbound_ip', mapping['source_ip'])")
+    expect(service).toContain('outboundIp: mapping.outbound_ip ?? mapping.source_ip')
+  })
+
+  it('accepts one NAT IPv4 egress while deduplicating multiple local addresses behind the same public IP', () => {
+    expect(assets).toContain('if not observed or observed in seen_outbound:')
+    expect(assets).toContain('seen_outbound.add(observed)')
+    expect(assets).toContain("'source_ip': candidate['source_ip']")
+    expect(assets).toContain("'outbound_ip': candidate['outbound_ip']")
   })
 
   it('keeps idempotency around the Page-Auto manifest and service', () => {

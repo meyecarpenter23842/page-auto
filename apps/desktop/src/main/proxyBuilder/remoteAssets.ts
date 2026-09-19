@@ -247,14 +247,27 @@ def run(args, check=True, timeout=60, text=True):
     return result
 
 
-def source_probe(address, family):
+def probe_outbound(address, family):
     endpoint = 'https://api64.ipify.org' if family == 6 else 'https://api.ipify.org'
     args = ['curl', '-6' if family == 6 else '-4', '-fsS', '--interface', address, '--connect-timeout', '3', '--max-time', '7', endpoint]
     result = run(args, check=False, timeout=10)
     if result.returncode != 0:
+        return None
+    try:
+        observed = ipaddress.ip_address(result.stdout.strip())
+    except ValueError:
+        return None
+    if observed.version != family:
+        return None
+    return str(observed)
+
+
+def source_probe(address, family):
+    observed = probe_outbound(address, family)
+    if not observed:
         return False
     try:
-        return ipaddress.ip_address(result.stdout.strip()) == ipaddress.ip_address(address)
+        return ipaddress.ip_address(observed) == ipaddress.ip_address(address)
     except ValueError:
         return False
 
@@ -353,13 +366,17 @@ def allocate_ipv6(count, interface, old_manifest, newly_added):
 
 def usable_ipv4():
     result = []
+    seen_outbound = set()
     for cidr in current_addresses(4):
         try:
             address = str(ipaddress.ip_interface(cidr).ip)
         except ValueError:
             continue
-        if source_probe(address, 4):
-            result.append(address)
+        observed = probe_outbound(address, 4)
+        if not observed or observed in seen_outbound:
+            continue
+        seen_outbound.add(observed)
+        result.append({'source_ip': address, 'outbound_ip': observed})
     return result
 
 
@@ -392,7 +409,8 @@ def self_test(mapping, auth):
     if result.returncode != 0:
         return False
     try:
-        return ipaddress.ip_address(result.stdout.strip()) == ipaddress.ip_address(mapping['source_ip'])
+        expected = mapping.get('outbound_ip', mapping['source_ip'])
+        return ipaddress.ip_address(result.stdout.strip()) == ipaddress.ip_address(expected)
     except ValueError:
         return False
 
@@ -467,11 +485,16 @@ def main():
 
         mappings = []
         port = start_port
-        for address in ipv4_pool[:ipv4_count]:
-            mappings.append({'port': port, 'type': 'ipv4', 'source_ip': address})
+        for candidate in ipv4_pool[:ipv4_count]:
+            mappings.append({
+                'port': port,
+                'type': 'ipv4',
+                'source_ip': candidate['source_ip'],
+                'outbound_ip': candidate['outbound_ip'],
+            })
             port += 1
         for address in ipv6_pool:
-            mappings.append({'port': port, 'type': 'ipv6', 'source_ip': address})
+            mappings.append({'port': port, 'type': 'ipv6', 'source_ip': address, 'outbound_ip': address})
             port += 1
         if len(mappings) != count:
             raise RuntimeError(f'Provision plan chỉ tạo được {len(mappings)}/{count} mapping.')
@@ -506,7 +529,8 @@ def main():
         progress('self_test', 88, 'Đang self-test từng listener qua proxy thật')
         for mapping in mappings:
             if not self_test(mapping, auth):
-                raise RuntimeError(f"Self-test port {mapping['port']} không ra đúng {mapping['source_ip']}.")
+                expected = mapping.get('outbound_ip', mapping['source_ip'])
+                raise RuntimeError(f"Self-test port {mapping['port']} không ra đúng outbound {expected}.")
 
         new_managed = set(ipv6_cidrs)
         for cidr in old_managed:
