@@ -143,8 +143,8 @@ export function ProxyBuilderWorkspace() {
     : {
         type: 'key' as const,
         privateKey: sshKey,
-        privateKeyPath: sshKeyPath || undefined,
-        passphrase: sshKeyPassphrase || undefined
+        ...(sshKeyPath ? { privateKeyPath: sshKeyPath } : {}),
+        ...(sshKeyPassphrase ? { passphrase: sshKeyPassphrase } : {})
       }
 
   const pickSshKeyFile = async () => {
