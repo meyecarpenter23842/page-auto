@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { Buffer } from 'node:buffer'
+import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { Client, type ClientChannel, type ConnectConfig, type SFTPWrapper } from 'ssh2'
 import type {
   ProxyBuilderProvisionInput,
@@ -13,12 +14,20 @@ import type {
 
 import { PROXY_RUNTIME_PY, PROXY_RESTORE_PY, PROXY_PROVISIONER_PY, PROXY_SYSTEMD_SERVICE } from './remoteAssets'
 import { applyProxyBuilderSshAuth } from './sshAuth'
+import { runNativeOpenSsh, shouldUseNativeOpenSsh } from './nativeOpenSsh'
 
 const PROVISION_TIMEOUT_MS = 15 * 60_000
 const COMMAND_TIMEOUT_MS = 60_000
 
 interface CommandResult { stdout: string; stderr: string; code: number }
-interface ActiveRun { runId: string; session: SshSession | null; cancelRequested: boolean }
+interface SshSessionLike {
+  connect(config: ConnectConfig): Promise<void>
+  exec(command: string, timeoutMs?: number, onLine?: (line: string) => void): Promise<CommandResult>
+  writeFile(path: string, content: string, mode: number): Promise<void>
+  cancel(): void
+  end(): void
+}
+interface ActiveRun { runId: string; session: SshSessionLike | null; cancelRequested: boolean }
 interface RemoteProvisionResult {
   listenHost: string
   authMode: 'none' | 'basic'
@@ -67,7 +76,7 @@ function connectConfig(input: Pick<ProxyBuilderProvisionInput, 'host' | 'usernam
   return config
 }
 
-class SshSession {
+class Ssh2Session implements SshSessionLike {
   private readonly client = new Client()
   private sftp: SFTPWrapper | null = null
   private currentChannel: ClientChannel | null = null
@@ -151,6 +160,51 @@ class SshSession {
   }
 }
 
+
+class NativeOpenSshSession implements SshSessionLike {
+  private currentProcess: ChildProcessWithoutNullStreams | null = null
+
+  constructor(private readonly input: Pick<ProxyBuilderProvisionInput, 'host' | 'username' | 'auth'>) {}
+
+  async connect(_config: ConnectConfig): Promise<void> {
+    const result = await runNativeOpenSsh(this.input, 'true', {
+      timeoutMs: 20_000,
+      onChild: (child) => { this.currentProcess = child }
+    })
+    if (result.code !== 0) throw new Error((result.stderr || result.stdout || 'Windows OpenSSH authentication failed.').trim())
+  }
+
+  async exec(command: string, timeoutMs: number = COMMAND_TIMEOUT_MS, onLine?: (line: string) => void): Promise<CommandResult> {
+    return await runNativeOpenSsh(this.input, command, {
+      timeoutMs,
+      onLine,
+      onChild: (child) => { this.currentProcess = child }
+    })
+  }
+
+  async writeFile(path: string, content: string, mode: number): Promise<void> {
+    const command = `umask 077; cat > ${shellQuote(path)} && chmod ${mode.toString(8)} ${shellQuote(path)}`
+    const result = await runNativeOpenSsh(this.input, command, {
+      stdin: content,
+      timeoutMs: COMMAND_TIMEOUT_MS,
+      onChild: (child) => { this.currentProcess = child }
+    })
+    if (result.code !== 0) throw new Error((result.stderr || result.stdout || `Không ghi được file ${path} qua Windows OpenSSH.`).trim())
+  }
+
+  cancel(): void {
+    try { this.currentProcess?.kill() } catch { /* ignore */ }
+  }
+
+  end(): void {
+    this.currentProcess = null
+  }
+}
+
+function createSshSession(input: Pick<ProxyBuilderProvisionInput, 'host' | 'username' | 'auth'>): SshSessionLike {
+  return shouldUseNativeOpenSsh(input.auth) ? new NativeOpenSshSession(input) : new Ssh2Session()
+}
+
 function parseProgress(line: string): { phase: ProxyBuilderProvisionPhase; percent: number; message: string } | null {
   if (!line.startsWith('PA_PROGRESS=')) return null
   const [phase, percentText, ...messageParts] = line.slice('PA_PROGRESS='.length).split('|')
@@ -181,7 +235,7 @@ function toProxyResults(remote: RemoteProvisionResult): ProxyBuilderProxyResult[
   }))
 }
 
-async function privilegedPrefix(session: SshSession): Promise<string> {
+async function privilegedPrefix(session: SshSessionLike): Promise<string> {
   const uid = await session.exec('id -u')
   if (uid.code !== 0) throw new Error('Không xác định được quyền user SSH.')
   if (uid.stdout.trim() === '0') return ''
@@ -230,7 +284,7 @@ export class ProxyBuilderProvisionService {
   async controlRuntime(input: ProxyBuilderRuntimeControlInput): Promise<ProxyBuilderRuntimeControlResult> {
     const validationError = validateInput({ ...input, ipMode: 'ipv4', count: 1, proxyAuth: { type: 'none' } })
     if (validationError) throw new Error(validationError)
-    const session = new SshSession()
+    const session = createSshSession(input)
     try {
       await session.connect(connectConfig(input))
       const prefix = await privilegedPrefix(session)
@@ -256,7 +310,7 @@ export class ProxyBuilderProvisionService {
   }
 
   private async execute(runId: string, input: ProxyBuilderProvisionInput): Promise<void> {
-    const session = new SshSession()
+    const session = createSshSession(input)
     if (this.active?.runId === runId) this.active.session = session
     const tempBase = `/tmp/page-auto-proxy-${runId}`
     const paths = {
