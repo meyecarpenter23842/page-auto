@@ -25,6 +25,52 @@ export function resolvePageWallUsePageDecision(candidateCount: number): PageWall
   return 'skip'
 }
 
+export interface PageWallUsePageProbeOptions {
+  resolve: () => Promise<PageWallUsePageResolution>
+  wait: (delayMs: number) => Promise<void>
+  graceMs?: number
+  pollMs?: number
+}
+
+/**
+ * Facebook can render the optional Use Page interstitial shortly after the
+ * wall DOM has already settled. Probe for a short bounded window even when
+ * the first sample has no dialog; otherwise a late popup is missed entirely.
+ */
+export async function probePageWallUsePagePrompt(
+  options: PageWallUsePageProbeOptions
+): Promise<PageWallUsePageResolution> {
+  const graceMs = Math.max(0, Math.floor(options.graceMs ?? PAGE_WALL_USE_PAGE_GRACE_MS))
+  const pollMs = Math.max(1, Math.floor(options.pollMs ?? PAGE_WALL_USE_PAGE_POLL_MS))
+  let resolution = await options.resolve()
+  if (resolution.candidateCount > 0 || graceMs === 0) return resolution
+
+  const attempts = Math.max(1, Math.ceil(graceMs / pollMs))
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    await options.wait(Math.min(pollMs, graceMs))
+    resolution = await options.resolve()
+    if (resolution.candidateCount > 0) return resolution
+  }
+  return resolution
+}
+
+export async function waitForPageWallUsePageDismissal(
+  options: PageWallUsePageProbeOptions
+): Promise<boolean> {
+  const graceMs = Math.max(0, Math.floor(options.graceMs ?? PAGE_WALL_USE_PAGE_DISMISS_MS))
+  const pollMs = Math.max(1, Math.floor(options.pollMs ?? PAGE_WALL_USE_PAGE_POLL_MS))
+  let resolution = await options.resolve()
+  if (resolution.candidateCount === 0) return true
+
+  const attempts = Math.max(1, Math.ceil(graceMs / pollMs))
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    await options.wait(Math.min(pollMs, graceMs))
+    resolution = await options.resolve()
+    if (resolution.candidateCount === 0) return true
+  }
+  return false
+}
+
 async function visibleItems(candidate: Locator): Promise<Locator[]> {
   const items: Locator[] = []
   const count = await candidate.count().catch(() => 0)
@@ -98,22 +144,14 @@ export class PageWallUsePagePrompt {
 
   private async observe(): Promise<PageWallUsePageResolution> {
     const pageRoot = this.runtime.page.locator('body')
-    let resolution = await resolvePageWallUsePagePrompt(pageRoot)
-
-    // No dialog means there is nothing to wait for. This keeps the optional
-    // interstitial from becoming a mandatory delay on normal Page loads.
-    if (resolution.candidateCount > 0 || resolution.visibleDialogCount === 0) return resolution
-
-    const deadline = Date.now() + Math.min(
-      PAGE_WALL_USE_PAGE_GRACE_MS,
-      this.runtime.browser.navigationTimeoutMs
-    )
-    while (Date.now() < deadline) {
-      await this.runtime.page.waitForTimeout(PAGE_WALL_USE_PAGE_POLL_MS).catch(() => undefined)
-      resolution = await resolvePageWallUsePagePrompt(pageRoot)
-      if (resolution.candidateCount > 0) return resolution
-    }
-    return resolution
+    return probePageWallUsePagePrompt({
+      resolve: () => resolvePageWallUsePagePrompt(pageRoot),
+      wait: async (delayMs) => {
+        await this.runtime.page.waitForTimeout(delayMs).catch(() => undefined)
+      },
+      graceMs: Math.min(PAGE_WALL_USE_PAGE_GRACE_MS, this.runtime.browser.navigationTimeoutMs),
+      pollMs: PAGE_WALL_USE_PAGE_POLL_MS
+    })
   }
 
   async complete(): Promise<FacebookCommonStepResult> {
@@ -163,10 +201,15 @@ export class PageWallUsePagePrompt {
       await this.runtime.page.waitForTimeout(this.runtime.browser.pageSettleDelayMs).catch(() => undefined)
     }
 
-    const dismissed = await button.waitFor({
-      state: 'hidden',
-      timeout: Math.min(PAGE_WALL_USE_PAGE_DISMISS_MS, this.runtime.browser.navigationTimeoutMs)
-    }).then(() => true).catch(() => false)
+    const pageRoot = this.runtime.page.locator('body')
+    const dismissed = await waitForPageWallUsePageDismissal({
+      resolve: () => resolvePageWallUsePagePrompt(pageRoot),
+      wait: async (delayMs) => {
+        await this.runtime.page.waitForTimeout(delayMs).catch(() => undefined)
+      },
+      graceMs: Math.min(PAGE_WALL_USE_PAGE_DISMISS_MS, this.runtime.browser.navigationTimeoutMs),
+      pollMs: PAGE_WALL_USE_PAGE_POLL_MS
+    })
     if (!dismissed) {
       return {
         status: 'failed',
