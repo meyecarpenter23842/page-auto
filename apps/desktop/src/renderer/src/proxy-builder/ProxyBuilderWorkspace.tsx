@@ -6,7 +6,8 @@ import type {
   ProxyBuilderProvisionSnapshot,
   ProxyBuilderProxyAuth,
   ProxyBuilderProxyResult,
-  ProxyBuilderRuntimeAction
+  ProxyBuilderRuntimeAction,
+  ProxyBuilderSshDiagnostic
 } from '../../../shared/proxyBuilder'
 import './proxyBuilder.css'
 
@@ -46,6 +47,45 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+function quoteDiagnosticArg(value: string): string {
+  return /\s/.test(value) ? JSON.stringify(value) : value
+}
+
+function formatSshDiagnostic(diagnostic: ProxyBuilderSshDiagnostic): string {
+  const lines = [
+    '=== Page-Auto SSH Diagnostic ===',
+    `OpenSSH: ${diagnostic.version}`,
+    `Binary: ${diagnostic.executable}`,
+    `Key path: ${diagnostic.keyPath}`,
+    `Key exists: ${diagnostic.keyExists ? 'yes' : 'no'}`,
+    `Key size: ${diagnostic.keySize ?? 'unknown'}`,
+    `Key fingerprint: ${diagnostic.keyFingerprint ?? 'unknown'}`,
+    '',
+    'Environment:',
+    `SystemRoot=${diagnostic.environment.SystemRoot ?? ''}`,
+    `WINDIR=${diagnostic.environment.WINDIR ?? ''}`,
+    `PATH=${diagnostic.environment.PATH ?? ''}`,
+    `USERPROFILE=${diagnostic.environment.USERPROFILE ?? ''}`,
+    `HOME=${diagnostic.environment.HOME ?? ''}`
+  ]
+
+  for (const probe of diagnostic.probes) {
+    lines.push(
+      '',
+      `--- ${probe.name} ---`,
+      `Command: ${[diagnostic.executable, ...probe.args].map(quoteDiagnosticArg).join(' ')}`,
+      `Exit code: ${probe.exitCode}`,
+      `Offering: ${probe.offeredFingerprints.join(', ') || 'none'}`,
+      `Server accepts: ${probe.acceptedFingerprints.join(', ') || 'none'}`,
+      `Authenticated: ${probe.authenticated ? 'yes' : 'no'}`,
+      'stderr:',
+      probe.stderr || '(empty)'
+    )
+  }
+
+  return lines.join('\n')
+}
+
 function phaseStep(snapshot: ProxyBuilderProvisionSnapshot | null, index: number): string {
   if (!snapshot) return index >= 2 ? 'Chờ' : 'Xong'
   const rank = { connecting: 0, preflight: 1, provisioning: 2, service: 3, self_test: 3, complete: 4, rollback: 3 }[snapshot.phase]
@@ -74,6 +114,7 @@ export function ProxyBuilderWorkspace() {
   const [checkerInput, setCheckerInput] = useState('')
   const [sshChecking, setSshChecking] = useState(false)
   const [sshAudit, setSshAudit] = useState<ProxyBuilderAuditResult | null>(null)
+  const [sshDiagnosticOpen, setSshDiagnosticOpen] = useState(false)
   const [provision, setProvision] = useState<ProxyBuilderProvisionSnapshot | null>(null)
   const [runtimeBusy, setRuntimeBusy] = useState(false)
   const [runtimeActive, setRuntimeActive] = useState<boolean | null>(null)
@@ -90,6 +131,7 @@ export function ProxyBuilderWorkspace() {
     [checkerInput]
   )
   const capability = sshAudit?.ok ? sshAudit.capability : null
+  const sshDiagnostic = sshAudit?.diagnostic ?? null
   const provisionRunning = provision?.status === 'running'
   const sshStatus = sshChecking ? 'Đang kiểm tra…' : sshAudit?.ok ? 'SSH OK · capability đã cập nhật' : sshAudit ? sshAudit.message : 'Chưa kết nối'
   const progressPercent = provision?.percent ?? (sshChecking ? 20 : capability ? 40 : 0)
@@ -157,6 +199,7 @@ export function ProxyBuilderWorkspace() {
       setSshKeyFileName(result.fileName ?? 'SSH key')
       setSshKey('')
       setSshAudit(null)
+      setSshDiagnosticOpen(false)
     } catch (error) {
       setNotice(errorMessage(error))
     }
@@ -170,10 +213,12 @@ export function ProxyBuilderWorkspace() {
     try {
       const result = await window.pageAutoProxyBuilder.auditVps({ host, username: sshUser, auth: sshAuth(), startPort })
       setSshAudit(result)
+      setSshDiagnosticOpen(Boolean(result.diagnostic && !result.ok))
       if (!result.ok) setNotice(result.message)
     } catch (error) {
       const message = errorMessage(error)
       setSshAudit({ ok: false, code: 'unknown', message })
+      setSshDiagnosticOpen(false)
       setNotice(message)
     } finally {
       setSshChecking(false)
@@ -289,6 +334,19 @@ export function ProxyBuilderWorkspace() {
     }
   }
 
+  const copySshDiagnostic = async () => {
+    if (!sshDiagnostic || textBusy) return
+    setTextBusy(true)
+    try {
+      await window.pageAutoProxyBuilderText.copy(formatSshDiagnostic(sshDiagnostic))
+      setNotice('Đã copy log SSH.')
+    } catch (error) {
+      setNotice(errorMessage(error))
+    } finally {
+      setTextBusy(false)
+    }
+  }
+
   const exportLines = async (lines: string[], suggestedName: string) => {
     if (!lines.length || textBusy) return
     setTextBusy(true)
@@ -354,6 +412,18 @@ export function ProxyBuilderWorkspace() {
                   <button className="button secondary" type="button" disabled={sshChecking || provisionRunning} onClick={() => void checkSsh()}>Kiểm tra SSH</button>
                   <span className="proxy-builder-muted">{sshStatus}</span>
                 </div>
+                {sshDiagnostic ? (
+                  <div className="proxy-builder-ssh-diagnostic">
+                    <div className="proxy-builder-inline-actions">
+                      <button className="button secondary" type="button" onClick={() => setSshDiagnosticOpen((value) => !value)}>
+                        {sshDiagnosticOpen ? 'Ẩn chi tiết SSH' : 'Chi tiết SSH'}
+                      </button>
+                      <button className="button secondary" type="button" disabled={textBusy} onClick={() => void copySshDiagnostic()}>Copy log SSH</button>
+                      <span className="proxy-builder-muted">Fingerprint: {sshDiagnostic.keyFingerprint ?? 'không đọc được'}</span>
+                    </div>
+                    {sshDiagnosticOpen ? <pre>{formatSshDiagnostic(sshDiagnostic)}</pre> : null}
+                  </div>
+                ) : null}
               </div>
 
               <div className="proxy-builder-section">

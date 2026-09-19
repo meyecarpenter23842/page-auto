@@ -42,6 +42,36 @@ export interface ProxyBuilderCapability {
   startPortAvailable: boolean
 }
 
+export type ProxyBuilderSshProbeName = 'auth_true' | 'shell_empty' | 'discovery'
+
+export interface ProxyBuilderSshProbeDiagnostic {
+  name: ProxyBuilderSshProbeName
+  remoteCommand: string
+  args: string[]
+  exitCode: number
+  offeredFingerprints: string[]
+  acceptedFingerprints: string[]
+  authenticated: boolean
+  stderr: string
+}
+
+export interface ProxyBuilderSshDiagnostic {
+  executable: string
+  version: string
+  environment: {
+    SystemRoot: string | null
+    WINDIR: string | null
+    PATH: string | null
+    USERPROFILE: string | null
+    HOME: string | null
+  }
+  keyPath: string
+  keyExists: boolean
+  keySize: number | null
+  keyFingerprint: string | null
+  probes: ProxyBuilderSshProbeDiagnostic[]
+}
+
 export type ProxyBuilderAuditErrorCode =
   | 'invalid_input'
   | 'key_invalid'
@@ -52,8 +82,8 @@ export type ProxyBuilderAuditErrorCode =
   | 'unknown'
 
 export type ProxyBuilderAuditResult =
-  | { ok: true; capability: ProxyBuilderCapability }
-  | { ok: false; code: ProxyBuilderAuditErrorCode; message: string }
+  | { ok: true; capability: ProxyBuilderCapability; diagnostic?: ProxyBuilderSshDiagnostic }
+  | { ok: false; code: ProxyBuilderAuditErrorCode; message: string; diagnostic?: ProxyBuilderSshDiagnostic }
 
 export type ProxyBuilderIpMode = 'ipv4' | 'ipv6' | 'both'
 export type ProxyBuilderProxyAuth =

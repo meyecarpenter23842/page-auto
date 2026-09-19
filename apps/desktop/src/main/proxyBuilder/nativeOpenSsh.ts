@@ -1,7 +1,16 @@
+import { createHash } from 'node:crypto'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import type { ProxyBuilderAuditInput, ProxyBuilderSshAuth } from '../../shared/proxyBuilder'
+import { utils } from 'ssh2'
+import type {
+  ProxyBuilderAuditInput,
+  ProxyBuilderSshAuth,
+  ProxyBuilderSshProbeDiagnostic,
+  ProxyBuilderSshProbeName
+} from '../../shared/proxyBuilder'
+
+const MAX_TRACE_CHARS = 120_000
 
 export interface NativeOpenSshResult {
   stdout: string
@@ -9,13 +18,21 @@ export interface NativeOpenSshResult {
   code: number
   executable: string
   version: string
+  args: string[]
 }
 
 export interface NativeOpenSshRunOptions {
   stdin?: string
   timeoutMs?: number
+  verbose?: boolean
   onLine?: (line: string) => void
   onChild?: (child: ChildProcessWithoutNullStreams | null) => void
+}
+
+export interface NativeOpenSshKeyInfo {
+  exists: boolean
+  size: number | null
+  fingerprint: string | null
 }
 
 type SshTargetInput = Pick<ProxyBuilderAuditInput, 'host' | 'username' | 'auth'>
@@ -48,6 +65,44 @@ async function readOpenSshVersion(executable: string): Promise<string> {
   })
 }
 
+function clipTrace(value: string): string {
+  if (value.length <= MAX_TRACE_CHARS) return value
+  const half = Math.floor(MAX_TRACE_CHARS / 2)
+  return value.slice(0, half) + '\n...[trace truncated]...\n' + value.slice(-half)
+}
+
+function sanitizeSshText(input: SshTargetInput, value: string): string {
+  let sanitized = value
+  const secrets: string[] = []
+  if (input.auth.type === 'password') {
+    if (input.auth.password) secrets.push(input.auth.password)
+  } else {
+    if (input.auth.privateKey.trim()) secrets.push(input.auth.privateKey.trim())
+    if (input.auth.passphrase) secrets.push(input.auth.passphrase)
+  }
+  for (const secret of secrets) {
+    if (!secret) continue
+    sanitized = sanitized.split(secret).join('[redacted]')
+  }
+  return clipTrace(sanitized)
+}
+
+export function inspectNativeOpenSshKey(keyPath: string): NativeOpenSshKeyInfo {
+  if (!keyPath || !existsSync(keyPath)) return { exists: false, size: null, fingerprint: null }
+  try {
+    const stat = statSync(keyPath)
+    if (!stat.isFile()) return { exists: true, size: null, fingerprint: null }
+    const parsed = utils.parseKey(readFileSync(keyPath))
+    if (parsed instanceof Error) return { exists: true, size: stat.size, fingerprint: null }
+    const first = Array.isArray(parsed) ? parsed[0] : parsed
+    if (!first) return { exists: true, size: stat.size, fingerprint: null }
+    const digest = createHash('sha256').update(first.getPublicSSH()).digest('base64').replace(/=+$/, '')
+    return { exists: true, size: stat.size, fingerprint: `SHA256:${digest}` }
+  } catch {
+    return { exists: true, size: null, fingerprint: null }
+  }
+}
+
 export function shouldUseNativeOpenSsh(auth: ProxyBuilderSshAuth): boolean {
   return process.platform === 'win32'
     && auth.type === 'key'
@@ -55,13 +110,18 @@ export function shouldUseNativeOpenSsh(auth: ProxyBuilderSshAuth): boolean {
     && !auth.passphrase
 }
 
-export function buildNativeOpenSshArgs(input: SshTargetInput, remoteCommand: string): string[] {
+export function buildNativeOpenSshArgs(
+  input: SshTargetInput,
+  remoteCommand: string,
+  options: Pick<NativeOpenSshRunOptions, 'verbose'> = {}
+): string[] {
   if (input.auth.type !== 'key' || !input.auth.privateKeyPath?.trim()) {
     throw new Error('Native OpenSSH cần SSH key file đã chọn.')
   }
   const host = input.host.trim().replace(/^\[|\]$/g, '')
   const user = input.username.trim()
   return [
+    ...(options.verbose ? ['-vvv'] : []),
     '-T',
     '-o', 'BatchMode=yes',
     '-o', 'IdentitiesOnly=yes',
@@ -78,13 +138,42 @@ export function buildNativeOpenSshArgs(input: SshTargetInput, remoteCommand: str
   ]
 }
 
+function fingerprintsForMarker(trace: string, marker: string): string[] {
+  const values = trace
+    .split(/\r?\n/)
+    .filter((line) => line.includes(marker))
+    .flatMap((line) => line.match(/SHA256:[A-Za-z0-9+/]+/g) ?? [])
+  return [...new Set(values)]
+}
+
+export function summarizeNativeOpenSshProbe(
+  name: ProxyBuilderSshProbeName,
+  remoteCommand: string,
+  result: NativeOpenSshResult
+): ProxyBuilderSshProbeDiagnostic {
+  return {
+    name,
+    remoteCommand,
+    args: [...result.args],
+    exitCode: result.code,
+    offeredFingerprints: fingerprintsForMarker(result.stderr, 'Offering public key'),
+    acceptedFingerprints: fingerprintsForMarker(result.stderr, 'Server accepts key'),
+    authenticated: /Authenticated to .+ using "publickey"/i.test(result.stderr),
+    stderr: result.stderr
+  }
+}
+
 export async function runNativeOpenSsh(
   input: SshTargetInput,
   remoteCommand: string,
   options: NativeOpenSshRunOptions = {}
 ): Promise<NativeOpenSshResult> {
   const timeoutMs = options.timeoutMs ?? 60_000
-  const args = buildNativeOpenSshArgs(input, remoteCommand)
+  const args = buildNativeOpenSshArgs(
+    input,
+    remoteCommand,
+    options.verbose === undefined ? {} : { verbose: options.verbose }
+  )
   const executable = resolveWindowsOpenSshExecutable()
   const version = await readOpenSshVersion(executable)
 
@@ -105,7 +194,14 @@ export async function runNativeOpenSsh(
       clearTimeout(timer)
       options.onChild?.(null)
       if (error) reject(error)
-      else resolve({ stdout, stderr, code: code ?? 255, executable, version })
+      else resolve({
+        stdout: sanitizeSshText(input, stdout),
+        stderr: sanitizeSshText(input, stderr),
+        code: code ?? 255,
+        executable,
+        version,
+        args
+      })
     }
 
     const timer = setTimeout(() => {

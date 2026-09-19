@@ -1,12 +1,20 @@
 import { isIP } from 'node:net'
 import { Client, type ConnectConfig } from 'ssh2'
 import { applyProxyBuilderSshAuth } from './sshAuth'
-import { runNativeOpenSsh, shouldUseNativeOpenSsh } from './nativeOpenSsh'
+import {
+  inspectNativeOpenSshKey,
+  runNativeOpenSsh,
+  shouldUseNativeOpenSsh,
+  summarizeNativeOpenSshProbe,
+  type NativeOpenSshResult
+} from './nativeOpenSsh'
 import type {
   ProxyBuilderAuditErrorCode,
   ProxyBuilderAuditInput,
   ProxyBuilderAuditResult,
-  ProxyBuilderCapability
+  ProxyBuilderCapability,
+  ProxyBuilderSshDiagnostic,
+  ProxyBuilderSshProbeDiagnostic
 } from '../../shared/proxyBuilder'
 
 const SSH_READY_TIMEOUT_MS = 15_000
@@ -162,37 +170,109 @@ function execDiscovery(client: Client, command: string): Promise<string> {
   })
 }
 
+
+function nativeSshEnvironment(): ProxyBuilderSshDiagnostic['environment'] {
+  return {
+    SystemRoot: process.env.SystemRoot ?? null,
+    WINDIR: process.env.WINDIR ?? null,
+    PATH: process.env.PATH ?? null,
+    USERPROFILE: process.env.USERPROFILE ?? null,
+    HOME: process.env.HOME ?? null
+  }
+}
+
+function buildNativeSshDiagnostic(
+  input: ProxyBuilderAuditInput,
+  lastResult: NativeOpenSshResult,
+  probes: ProxyBuilderSshProbeDiagnostic[]
+): ProxyBuilderSshDiagnostic {
+  const keyPath = input.auth.type === 'key' ? input.auth.privateKeyPath?.trim() ?? '' : ''
+  const keyInfo = inspectNativeOpenSshKey(keyPath)
+  return {
+    executable: lastResult.executable,
+    version: lastResult.version,
+    environment: nativeSshEnvironment(),
+    keyPath,
+    keyExists: keyInfo.exists,
+    keySize: keyInfo.size,
+    keyFingerprint: keyInfo.fingerprint,
+    probes: [...probes]
+  }
+}
+
+function classifyNativeProbeFailure(
+  result: NativeOpenSshResult,
+  diagnostic: ProxyBuilderSshDiagnostic,
+  stage: 'auth' | 'shell' | 'discovery'
+): ProxyBuilderAuditResult {
+  const detail = (result.stderr || result.stdout).trim()
+  if (/Host key verification failed/i.test(detail)) {
+    return { ok: false, code: 'connection_failed', message: 'Windows OpenSSH từ chối host key của VPS.', diagnostic }
+  }
+  if (/Could not resolve hostname|Connection refused|Connection timed out|No route to host/i.test(detail)) {
+    return { ok: false, code: 'connection_failed', message: 'Không kết nối được tới VPS qua Windows OpenSSH.', diagnostic }
+  }
+  if (/no such identity|identity file .+ type -1|load key .+:|bad permissions/i.test(detail)) {
+    return { ok: false, code: 'key_invalid', message: 'Windows OpenSSH không dùng được file key đã chọn. Mở Chi tiết SSH để xem trace.', diagnostic }
+  }
+  if (stage === 'auth' && /Permission denied \(publickey\)|authentication failed/i.test(detail)) {
+    return { ok: false, code: 'auth_failed', message: 'Probe SSH "true" chưa xác thực được. Mở Chi tiết SSH để xem Offering/Server accepts/exit code.', diagnostic }
+  }
+  const message = stage === 'shell'
+    ? 'SSH auth đã qua probe "true" nhưng remote "sh -s" thất bại. Mở Chi tiết SSH để xem trace.'
+    : stage === 'discovery'
+      ? 'SSH auth + "sh -s" đã qua nhưng discovery stdin thất bại. Mở Chi tiết SSH để xem trace.'
+      : 'Probe SSH "true" thất bại. Mở Chi tiết SSH để xem trace.'
+  return { ok: false, code: 'command_failed', message, diagnostic }
+}
+
 export async function auditProxyBuilderVps(input: ProxyBuilderAuditInput): Promise<ProxyBuilderAuditResult> {
   const validationError = validate(input)
   if (validationError) return { ok: false, code: 'invalid_input', message: validationError }
 
   if (shouldUseNativeOpenSsh(input.auth)) {
+    const probes: ProxyBuilderSshProbeDiagnostic[] = []
+    let lastResult: NativeOpenSshResult | null = null
     try {
-      const result = await runNativeOpenSsh(input, 'sh -s', {
-        stdin: discoveryScript(input.startPort),
-        timeoutMs: DISCOVERY_TIMEOUT_MS
+      const authResult = await runNativeOpenSsh(input, 'true', {
+        timeoutMs: DISCOVERY_TIMEOUT_MS,
+        verbose: true
       })
-      if (result.code !== 0) {
-        const detail = (result.stderr || result.stdout).trim()
-        if (/Permission denied \(publickey\)|authentication failed/i.test(detail)) {
-          return {
-            ok: false,
-            code: 'auth_failed',
-            message: `VPS từ chối SSH Key. OpenSSH: ${result.version}; binary: ${result.executable}`
-          }
-        }
-        if (/Host key verification failed/i.test(detail)) {
-          return { ok: false, code: 'connection_failed', message: 'Windows OpenSSH từ chối host key của VPS.' }
-        }
-        if (/Could not resolve hostname|Connection refused|Connection timed out|No route to host/i.test(detail)) {
-          return { ok: false, code: 'connection_failed', message: 'Không kết nối được tới VPS qua Windows OpenSSH.' }
-        }
-        return { ok: false, code: 'command_failed', message: detail ? `Windows OpenSSH lỗi: ${detail}` : 'Windows OpenSSH chạy thất bại.' }
-      }
-      return { ok: true, capability: parseProxyBuilderDiscovery(result.stdout) }
+      lastResult = authResult
+      probes.push(summarizeNativeOpenSshProbe('auth_true', 'true', authResult))
+      let diagnostic = buildNativeSshDiagnostic(input, authResult, probes)
+      if (authResult.code !== 0) return classifyNativeProbeFailure(authResult, diagnostic, 'auth')
+
+      const shellResult = await runNativeOpenSsh(input, 'sh -s', {
+        stdin: '',
+        timeoutMs: DISCOVERY_TIMEOUT_MS,
+        verbose: true
+      })
+      lastResult = shellResult
+      probes.push(summarizeNativeOpenSshProbe('shell_empty', 'sh -s', shellResult))
+      diagnostic = buildNativeSshDiagnostic(input, shellResult, probes)
+      if (shellResult.code !== 0) return classifyNativeProbeFailure(shellResult, diagnostic, 'shell')
+
+      const discoveryResult = await runNativeOpenSsh(input, 'sh -s', {
+        stdin: discoveryScript(input.startPort),
+        timeoutMs: DISCOVERY_TIMEOUT_MS,
+        verbose: true
+      })
+      lastResult = discoveryResult
+      probes.push(summarizeNativeOpenSshProbe('discovery', 'sh -s', discoveryResult))
+      diagnostic = buildNativeSshDiagnostic(input, discoveryResult, probes)
+      if (discoveryResult.code !== 0) return classifyNativeProbeFailure(discoveryResult, diagnostic, 'discovery')
+
+      return { ok: true, capability: parseProxyBuilderDiscovery(discoveryResult.stdout), diagnostic }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      return { ok: false, code: /timeout/i.test(message) ? 'timeout' : 'connection_failed', message }
+      const diagnostic = lastResult ? buildNativeSshDiagnostic(input, lastResult, probes) : undefined
+      return {
+        ok: false,
+        code: /timeout/i.test(message) ? 'timeout' : 'connection_failed',
+        message,
+        ...(diagnostic ? { diagnostic } : {})
+      }
     }
   }
 
