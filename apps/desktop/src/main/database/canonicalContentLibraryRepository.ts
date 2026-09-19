@@ -9,6 +9,7 @@ import {
   type UpdateContentLibraryItemInput
 } from '../../shared/contentLibrary'
 import { CanonicalPostRepository, type CanonicalPostRecord } from './canonicalPostRepository'
+import { CanonicalPostHashtagRepository, normalizeCanonicalPostHashtags } from './canonicalPostHashtagRepository'
 import { LegacyCanonicalPostBridge } from './legacyCanonicalPostBridge'
 
 function virtualItemId(postId: number): number {
@@ -20,13 +21,14 @@ function postIdFromVirtualItemId(itemId: number): number {
   return Math.abs(itemId)
 }
 
-function itemFromPost(post: CanonicalPostRecord, sortOrder: number): ContentLibraryItem {
+function itemFromPost(post: CanonicalPostRecord, sortOrder: number, hashtags = ''): ContentLibraryItem {
   return {
     id: virtualItemId(post.id),
     contentSetId: CANONICAL_CONTENT_LIBRARY_SET_ID,
     name: post.name,
     enabled: true,
     variants: [...post.variants],
+    ...(hashtags ? { hashtags } : {}),
     image: { ...post.image },
     sortOrder,
     createdAt: post.createdAt,
@@ -36,10 +38,12 @@ function itemFromPost(post: CanonicalPostRecord, sortOrder: number): ContentLibr
 
 export class CanonicalContentLibraryRepository {
   private readonly canonical: CanonicalPostRepository
+  private readonly hashtags: CanonicalPostHashtagRepository
   private readonly bridge: LegacyCanonicalPostBridge
 
   constructor(private readonly client: Database.Database) {
     this.canonical = new CanonicalPostRepository(client)
+    this.hashtags = new CanonicalPostHashtagRepository(client)
     this.bridge = new LegacyCanonicalPostBridge(client)
   }
 
@@ -52,7 +56,8 @@ export class CanonicalContentLibraryRepository {
   get(): ContentLibrarySetDetails {
     this.reconcileLegacyWriters()
     const posts = this.canonical.list()
-    const items = posts.map(itemFromPost)
+    const hashtagByPostId = this.hashtags.getMany(posts.map((post) => post.id))
+    const items = posts.map((post, sortOrder) => itemFromPost(post, sortOrder, hashtagByPostId.get(post.id) ?? ''))
     return {
       id: CANONICAL_CONTENT_LIBRARY_SET_ID,
       name: 'Tất cả bài viết',
@@ -65,21 +70,30 @@ export class CanonicalContentLibraryRepository {
   }
 
   create(input: CreateContentLibraryItemInput, now = Date.now()): ContentLibrarySetDetails {
-    this.canonical.create({
-      name: input.name,
-      variants: input.variants,
-      image: input.image
-    }, now)
+    const hashtagSource = normalizeCanonicalPostHashtags(input.hashtags)
+    this.client.transaction(() => {
+      const post = this.canonical.create({
+        name: input.name,
+        variants: input.variants,
+        image: input.image
+      }, now)
+      if (hashtagSource) this.hashtags.set(post.id, hashtagSource, now)
+    })()
     return this.get()
   }
 
   update(input: UpdateContentLibraryItemInput, now = Date.now()): ContentLibrarySetDetails {
     const postId = postIdFromVirtualItemId(input.id)
-    const post = this.canonical.update(postId, {
-      name: input.name,
-      variants: input.variants,
-      image: input.image
-    }, now)
+    const hashtagSource = input.hashtags === undefined ? undefined : normalizeCanonicalPostHashtags(input.hashtags)
+    const post = this.client.transaction(() => {
+      const updated = this.canonical.update(postId, {
+        name: input.name,
+        variants: input.variants,
+        image: input.image
+      }, now)
+      if (hashtagSource !== undefined) this.hashtags.set(postId, hashtagSource, now)
+      return updated
+    })()
     this.mirrorLegacyGlobalSource(postId, {
       name: post.name,
       enabled: input.enabled,

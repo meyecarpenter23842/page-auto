@@ -36,6 +36,8 @@ export interface PageWallExecutionInput {
   accountId: number
   pageUid: string
   content: string
+  /** Canonical hashtag source kept separate until the Page Wall worker spins/appends it. */
+  hashtags?: string
   imagePaths: string[]
 }
 

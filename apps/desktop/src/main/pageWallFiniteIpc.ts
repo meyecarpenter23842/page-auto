@@ -27,6 +27,7 @@ import {
 import { AppSettingsRepository } from './database/appSettingsRepository'
 import { BrowserWindowLayoutRepository } from './database/browserWindowLayoutRepository'
 import { CanonicalPostRepository } from './database/canonicalPostRepository'
+import { CanonicalPostHashtagRepository } from './database/canonicalPostHashtagRepository'
 import { PageTabRepository } from './database/pageTabRepository'
 import { PageWallJobRepository, type CreatePageWallJobInput } from './database/pageWallJobRepository'
 import { PageWallPlanRepository, type PageWallPlanOccurrenceWithJobs } from './database/pageWallPlanRepository'
@@ -84,6 +85,7 @@ export function registerPageWallFiniteRuntime(database: Database.Database, dataD
   const plans = new PageWallPlanRepository(database)
   const jobs = new PageWallJobRepository(database)
   const posts = new CanonicalPostRepository(database)
+  const postHashtags = new CanonicalPostHashtagRepository(database)
   const appSettings = new AppSettingsRepository(database)
   const layoutSettings = new BrowserWindowLayoutRepository(database)
   const windowLayout = new BrowserWindowLayoutManager()
@@ -101,7 +103,7 @@ export function registerPageWallFiniteRuntime(database: Database.Database, dataD
     () => layoutSettings.get()
   )
   const rawExecutor = { executePageWallPostNow: (input: Parameters<PostingService['executePageWallPostNow']>[0]) => posting.executePageWallPostNow(input) }
-  const runNow = new PageWallRunNowService(pageTabs, rawExecutor)
+  const runNow = new PageWallRunNowService(pageTabs, rawExecutor, undefined, postHashtags)
   const activeOccurrences = new Set<number>()
   let disposed = false
   let ticking = false
@@ -163,6 +165,7 @@ export function registerPageWallFiniteRuntime(database: Database.Database, dataD
         accountUid: prepared.accountUid,
         accountName: prepared.accountName,
         content: prepared.input.content,
+        ...(prepared.input.hashtags ? { hashtags: prepared.input.hashtags } : {}),
         imagePaths: [...prepared.input.imagePaths]
       })
     }
@@ -209,6 +212,7 @@ export function registerPageWallFiniteRuntime(database: Database.Database, dataD
             accountId: current.accountId,
             pageUid: current.pageUid,
             content: current.content,
+            ...(current.hashtags ? { hashtags: current.hashtags } : {}),
             imagePaths: [...current.imagePaths]
           })
           jobs.finish(current.id, result, Date.now())

@@ -55,6 +55,7 @@ export interface ConfigBackupCanonicalPost {
   key: string
   name: string
   variants: string[]
+  hashtags?: string
   image: PageTabImageConfig
 }
 

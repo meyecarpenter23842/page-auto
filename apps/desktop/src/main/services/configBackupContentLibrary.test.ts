@@ -8,6 +8,7 @@ import {
   ScenarioActionPostBindingRepository
 } from '../database/canonicalPostRepository'
 import { ContentLibraryRepository } from '../database/contentLibraryRepository'
+import { CanonicalPostHashtagRepository } from '../database/canonicalPostHashtagRepository'
 import { initializeDatabase } from '../database'
 import { PageTabPostRepository } from '../database/pageTabPostRepository'
 import { PageTabRepository } from '../database/pageTabRepository'
@@ -43,6 +44,7 @@ describe('Issue #188 canonical config backup v2', () => {
       variants: ['Nội dung gốc'],
       image: { folderPath: 'D:\\shared', mode: 'random', imagesPerPost: 2, missingPolicy: 'text_only' }
     })
+    new CanonicalPostHashtagRepository(source.client).set(post.id, '{#sale|#hot} #PageAuto')
     const pageBindings = new PageTabPostBindingRepository(source.client)
     pageBindings.bindExisting(pageA.id, post.id)
     pageBindings.bindExisting(pageB.id, post.id)
@@ -88,6 +90,7 @@ describe('Issue #188 canonical config backup v2', () => {
     const payload = new ConfigBackupService(source.client).createPayload('2.0.0')
     expect(payload.version).toBe(CONFIG_BACKUP_VERSION)
     expect(payload.posts).toHaveLength(1)
+    expect(payload.posts[0]?.hashtags).toBe('{#sale|#hot} #PageAuto')
     const sharedKey = payload.posts[0]!.key
     expect(payload.pageTabs.map((tab) => tab.postBindings[0]?.postKey)).toEqual([sharedKey, sharedKey])
     expect(payload.scenarios[0]?.actions[0]?.postBindings[0]?.postKey).toBe(sharedKey)
@@ -104,6 +107,7 @@ describe('Issue #188 canonical config backup v2', () => {
     const bindingA = restoredPageBindings.list(restoredA.id)[0]!
     const bindingB = restoredPageBindings.list(restoredB.id)[0]!
     expect(bindingA.postId).toBe(bindingB.postId)
+    expect(new CanonicalPostHashtagRepository(target.client).get(bindingA.postId)).toBe('{#sale|#hot} #PageAuto')
     expect(bindingA).toMatchObject({ name: 'Tên riêng Page A', variants: ['Nội dung riêng A'] })
     expect(bindingB).toMatchObject({ name: 'Bài gốc', variants: ['Nội dung gốc'] })
     expect(new PageTabPostRepository(target.client).get(restoredA.id).mode).toBe('random')

@@ -24,6 +24,7 @@ interface ItemEditorDraft {
   name: string
   enabled: boolean
   variants: string[]
+  hashtags: string
   image: ContentLibraryItemDraft['image']
 }
 
@@ -53,6 +54,7 @@ function editorFromItem(item: ContentLibraryItem): ItemEditorDraft {
     name: item.name,
     enabled: item.enabled,
     variants: ensureEditorVariants(item.variants),
+    hashtags: item.hashtags ?? '',
     image: { ...item.image }
   }
 }
@@ -63,6 +65,7 @@ function blankEditor(index: number): ItemEditorDraft {
     name: `Bài viết ${index + 1}`,
     enabled: true,
     variants: [''],
+    hashtags: '',
     image: { ...DEFAULT_CONTENT_LIBRARY_IMAGE }
   }
 }
@@ -313,6 +316,7 @@ export function ContentLibraryWorkspace() {
       name: editor.name,
       enabled: editor.enabled,
       variants: editor.variants.map((variant) => variant.trim()).filter(Boolean),
+      hashtags: editor.hashtags.trim(),
       image: { ...editor.image, folderPath: editor.image.folderPath.trim() }
     }
   }
@@ -358,6 +362,7 @@ export function ContentLibraryWorkspace() {
         name: `${source.name} Copy`,
         enabled: source.enabled,
         variants: [...source.variants],
+        hashtags: source.hashtags ?? '',
         image: { ...source.image }
       })
       const created = saved.items.find((item) => !previousIds.has(item.id)) ?? saved.items[0] ?? null
@@ -683,6 +688,16 @@ export function ContentLibraryWorkspace() {
                       onChange={(event) => setActiveVariantContent(event.target.value)}
                       placeholder={'Nhập nội dung bài...\n\nVí dụ Spin: {Giá tốt|Hàng mới|Ưu đãi hôm nay}'}
                     />
+                  </label>
+
+                  <label className="content-library-field content-library-hashtag-field">
+                    <span>Hashtag cuối bài</span>
+                    <input
+                      value={editor.hashtags}
+                      onChange={(event) => setEditor({ ...editor, hashtags: event.target.value })}
+                      placeholder="{#BillMafia|#fomo} #PageAuto"
+                    />
+                    <small>Thuộc bài trong Thư viện. Page Wall spin riêng sau nội dung, tự thêm dấu chấm cuối rồi mới ghép khi đăng.</small>
                   </label>
 
                   <div className="content-library-spinbar">

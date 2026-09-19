@@ -18,6 +18,14 @@ interface PageWallPostingExecutor {
   executePageWallPostNow(input: PageWallExecutionInput): Promise<PostingJobResult>
 }
 
+export interface PageWallHashtagSource {
+  get(postId: number): string
+}
+
+const EMPTY_HASHTAG_SOURCE: PageWallHashtagSource = {
+  get: () => ''
+}
+
 export interface PreparedPageWallExecution {
   input: PageWallExecutionInput
   pageTabName: string
@@ -78,7 +86,8 @@ export class PageWallRunNowService {
   constructor(
     private readonly pageTabs: PageWallPageTabSource,
     private readonly posting: PageWallPostingExecutor,
-    private readonly materialResolver = new PageWallMaterialResolver()
+    private readonly materialResolver = new PageWallMaterialResolver(),
+    private readonly hashtags: PageWallHashtagSource = EMPTY_HASHTAG_SOURCE
   ) {}
 
   async prepare(payload: PageWallRunNowPayload): Promise<PageWallPreparationResult> {
@@ -114,11 +123,13 @@ export class PageWallRunNowService {
     }
 
     let content = payload.content
+    let hashtagSource = ''
     let imagePaths = normalizeImagePaths(payload.imagePaths)
     if (payload.canonicalPost) {
       const resolved = await this.materialResolver.resolve(payload.canonicalPost)
       if (!resolved.ok) return { ok: false, result: failure(payload, resolved.message, resolved.code, accountRef.accountId) }
       content = resolved.material.content
+      hashtagSource = this.hashtags.get(payload.canonicalPost.postId)
       imagePaths = resolved.material.imagePaths
     } else {
       const unsupported = imagePaths.find((path) => !supportedImageExtensions.has(extname(path).toLowerCase()))
@@ -141,6 +152,7 @@ export class PageWallRunNowService {
           accountId: accountRef.accountId,
           pageUid,
           content,
+          ...(hashtagSource ? { hashtags: hashtagSource } : {}),
           imagePaths
         },
         pageTabName: pageTab.name,
