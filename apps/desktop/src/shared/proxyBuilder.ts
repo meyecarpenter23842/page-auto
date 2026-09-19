@@ -3,7 +3,10 @@ export const PROXY_BUILDER_IPC = {
   provisionStart: 'proxy-builder:provision-start',
   provisionStatus: 'proxy-builder:provision-status',
   provisionCancel: 'proxy-builder:provision-cancel',
-  runtimeControl: 'proxy-builder:runtime-control'
+  runtimeControl: 'proxy-builder:runtime-control',
+  checkerStart: 'proxy-builder:checker-start',
+  checkerStatus: 'proxy-builder:checker-status',
+  checkerCancel: 'proxy-builder:checker-cancel'
 } as const
 
 export type ProxyBuilderSshAuth =
@@ -100,4 +103,36 @@ export interface ProxyBuilderRuntimeControlInput extends ProxyBuilderAuditInput 
 export interface ProxyBuilderRuntimeControlResult {
   active: boolean
   message: string
+}
+
+export interface ProxyBuilderCheckerStartInput {
+  proxies: string[]
+  concurrency?: number
+  timeoutMs?: number
+  retries?: number
+}
+
+export type ProxyBuilderCheckerJobStatus = 'running' | 'completed' | 'cancelled'
+export type ProxyBuilderCheckerResultStatus = 'pending' | 'live' | 'dead'
+
+export interface ProxyBuilderCheckerResult {
+  index: number
+  maskedProxy: string
+  status: ProxyBuilderCheckerResultStatus
+  outboundIp: string | null
+  type: 'ipv4' | 'ipv6' | null
+  latencyMs: number | null
+  error: string | null
+}
+
+export interface ProxyBuilderCheckerSnapshot {
+  runId: string
+  status: ProxyBuilderCheckerJobStatus
+  total: number
+  completed: number
+  live: number
+  dead: number
+  createdAt: string
+  updatedAt: string
+  results: ProxyBuilderCheckerResult[]
 }

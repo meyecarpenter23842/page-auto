@@ -109,6 +109,17 @@ jobs:
       - name: Verify portable artifacts
         run: npm run verify:portable
 
+      - name: Proxy Builder packaged UI smoke
+        run: node apps/desktop/scripts/proxy-builder-packaged-ui-smoke.mjs
+
+      - name: Upload Proxy Builder packaged UI evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: PageAuto-proxy-builder-packaged-ui-${{ github.sha }}
+          path: dist/proxy-builder-packaged-ui-smoke.png
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Restore Node native dependency for packaged data smoke
         run: npm rebuild better-sqlite3
 

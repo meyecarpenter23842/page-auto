@@ -1,44 +1,44 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
+const app = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8')
 const workspace = readFileSync(new URL('./ProxyBuilderWorkspace.tsx', import.meta.url), 'utf8')
 const preload = readFileSync(new URL('../../../preload/proxyBuilderBridge.ts', import.meta.url), 'utf8')
+const textPreload = readFileSync(new URL('../../../preload/proxyBuilderTextBridge.ts', import.meta.url), 'utf8')
 const ipc = readFileSync(new URL('../../../main/proxyBuilderIpc.ts', import.meta.url), 'utf8')
-const service = readFileSync(new URL('../../../main/proxyBuilder/provisionService.ts', import.meta.url), 'utf8')
-const assets = readFileSync(new URL('../../../main/proxyBuilder/remoteAssets.ts', import.meta.url), 'utf8')
+const checker = readFileSync(new URL('../../../main/proxyBuilder/checkerService.ts', import.meta.url), 'utf8')
+const packagedSmoke = readFileSync(new URL('../../../scripts/proxy-builder-packaged-ui-smoke.mjs', import.meta.url), 'utf8')
 
-describe('Proxy Builder Batch 3 provision engine', () => {
-  it('keeps SSH and provisioning outside React behind typed IPC', () => {
-    expect(workspace).toContain('window.pageAutoProxyBuilder.startProvision')
-    expect(workspace).toContain('window.pageAutoProxyBuilder.getProvisionStatus')
-    expect(workspace).not.toContain("from 'ssh2'")
-    expect(preload).toContain('startProvision: (input) => ipcRenderer.invoke')
-    expect(ipc).toContain('new ProxyBuilderProvisionService()')
+describe('Proxy Builder Batch 4 checker/export', () => {
+  it('keeps Proxy Builder visible as a top-level route', () => {
+    expect(app).toContain("id: 'proxy-builder', label: 'Proxy Builder'")
+    expect(app).toContain("activeRoute === 'proxy-builder' ? <ProxyBuilderWorkspace />")
   })
 
-  it('enables Create/Stop and runtime service controls while checker stays Batch 4', () => {
-    expect(workspace).toContain('onClick={() => void createProxy()}>Tạo Proxy</button>')
-    expect(workspace).toContain('onClick={() => void cancelProvision()}>Dừng</button>')
-    expect(workspace).toContain("controlRuntime('start')")
-    expect(workspace).toContain("controlRuntime('stop')")
-    expect(workspace).toContain("controlRuntime('restart')")
-    expect(workspace).toMatch(/disabled[^>]*title="Proxy Checker network runtime được triển khai ở Batch 4\."[^>]*>Test<\/button>/)
+  it('runs checker networking in Electron Main, not React', () => {
+    expect(workspace).toContain('window.pageAutoProxyBuilder.startChecker')
+    expect(workspace).toContain('window.pageAutoProxyBuilder.cancelChecker')
+    expect(workspace).not.toContain("from 'node:net'")
+    expect(workspace).not.toContain("from 'node:tls'")
+    expect(ipc).toContain('new ProxyBuilderCheckerService()')
+    expect(checker).toContain("connectTls({ socket: tunnel")
+    expect(checker).toContain('CONNECT')
+    expect(checker).toContain("TARGET_HOST = 'api64.ipify.org'")
+    expect(preload).toContain('startChecker: (input) => ipcRenderer.invoke')
   })
 
-  it('provisions only source-probed IPs and persists the managed IPv6 pool', () => {
-    expect(assets).toContain('source_probe(address, family)')
-    expect(assets).toContain("ip', '-6', 'addr', 'add'")
-    expect(assets).toContain("'managed_ipv6': ipv6_cidrs")
-    expect(assets).toContain('ExecStartPre=/usr/bin/python3 /usr/local/lib/page-auto-proxy/restore.py')
-    expect(assets).toContain('Restart=always')
-    expect(assets).not.toContain('ens3')
+  it('exposes selected/all test and LIVE copy/export without exposing credentials in checker snapshots', () => {
+    for (const label of ['Test đã chọn', 'Test tất cả', 'Copy LIVE', 'Export LIVE']) expect(workspace).toContain(label)
+    expect(workspace).toContain('maskedProxy')
+    expect(textPreload).toContain("contextBridge.exposeInMainWorld('pageAutoProxyBuilderText', api)")
+    expect(checker).toContain("maskedProxy:")
   })
 
-  it('self-tests every listener and rolls back only resources managed by Page-Auto', () => {
-    expect(assets).toContain('self_test(mapping, auth)')
-    expect(assets).toContain("progress('rollback'")
-    expect(assets).toContain('for cidr in list(newly_added)')
-    expect(service).toContain('PA_RESULT_JSON=')
-    expect(service).toContain("status: 'completed'")
+  it('adds a packaged UI smoke that opens Proxy Builder and exercises a deterministic DEAD proxy', () => {
+    expect(packagedSmoke).toContain("name: 'Proxy Builder'")
+    expect(packagedSmoke).toContain("name: 'Proxy Checker'")
+    expect(packagedSmoke).toContain("server.listen(0, '127.0.0.1'")
+    expect(packagedSmoke).toContain("hasText: 'DEAD'")
+    expect(packagedSmoke).toContain('407 Proxy Authentication Required')
   })
 })
