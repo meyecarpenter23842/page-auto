@@ -17,6 +17,7 @@ import { PROXY_RUNTIME_PY, PROXY_RESTORE_PY, PROXY_PROVISIONER_PY, PROXY_SYSTEMD
 import { applyProxyBuilderSshAuth } from './sshAuth'
 import { runNativeOpenSsh, shouldUseNativeOpenSsh } from './nativeOpenSsh'
 import { checkProxyLineNow } from './checkerService'
+import { ensureOciSecurityListIngress } from './ociCloudFirewallService'
 
 const PROVISION_TIMEOUT_MS = 15 * 60_000
 const COMMAND_TIMEOUT_MS = 60_000
@@ -44,6 +45,11 @@ interface RemoteProvisionResult {
     end_port: number
     marker: string
   }
+  cloud?: {
+    provider: 'oci'
+    region: string
+    vnicId: string
+  } | null
 }
 
 interface ExternalProxyVerification {
@@ -414,6 +420,28 @@ export class ProxyBuilderProvisionService {
       })
       if (result.code !== 0) throw new Error((result.stderr || result.stdout || 'Provision command failed.').trim().slice(-2200))
       const remote = parseProvisionResult(result.stdout)
+      if (this.active?.cancelRequested) throw new Error('Provision cancelled')
+      if (remote.cloud?.provider === 'oci') {
+        if (!input.cloudFirewall?.configPath) {
+          throw new Error('Oracle Cloud VPS: chưa chọn OCI config để Page-Auto mở Security List.')
+        }
+        if (input.proxyAuth.type !== 'basic') {
+          throw new Error('Oracle Cloud auto-open chỉ bật khi proxy có User / Password để tránh mở proxy không xác thực ra Internet.')
+        }
+        this.update(runId, {
+          phase: 'self_test',
+          percent: 91,
+          message: 'Đang mở Oracle Cloud Security List cho đúng dải port…'
+        })
+        await ensureOciSecurityListIngress({
+          configPath: input.cloudFirewall.configPath,
+          ...(input.cloudFirewall.profile?.trim() ? { profile: input.cloudFirewall.profile.trim() } : {}),
+          region: remote.cloud.region,
+          vnicId: remote.cloud.vnicId,
+          startPort: input.startPort,
+          endPort: input.startPort + input.count - 1
+        })
+      }
       if (this.active?.cancelRequested) throw new Error('Provision cancelled')
       this.update(runId, { phase: 'self_test', percent: 94, message: 'Đang kiểm tra khả năng truy cập proxy từ máy Windows…' })
       const verified = await verifyProvisionedProxies(remote, input.proxyAuth)

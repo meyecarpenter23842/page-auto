@@ -96,4 +96,16 @@ describe('Proxy Builder Batch 3 safety contracts', () => {
     expect(service).toContain('remote.firewall.end_port')
   })
 
+
+  it('opens OCI Security List before Windows reachability verification', () => {
+    const ociIndex = service.indexOf('ensureOciSecurityListIngress({')
+    const verifyIndex = service.indexOf('verifyProvisionedProxies(remote, input.proxyAuth)')
+    expect(service).toContain("from './ociCloudFirewallService'")
+    expect(assets).toContain("oci_metadata_value('vnics/0/vnicId')")
+    expect(assets).toContain("'provider': 'oci'")
+    expect(service).toContain('Oracle Cloud Security List')
+    expect(ociIndex).toBeGreaterThan(0)
+    expect(verifyIndex).toBeGreaterThan(ociIndex)
+  })
+
 })

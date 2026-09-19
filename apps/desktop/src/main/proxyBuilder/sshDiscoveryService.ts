@@ -68,6 +68,8 @@ export function parseProxyBuilderDiscovery(output: string): ProxyBuilderCapabili
   const sourceBindIpv6 = values.get('PA_SOURCE6') === '1'
   const defaultInterface = clean(values.get('PA_IFACE')) || null
   const ipv6Prefix = ipv6Addresses[0] ?? null
+  const cloudProvider = values.get('PA_CLOUD_PROVIDER') === 'oci' ? 'oci' : null
+  const cloudRegion = clean(values.get('PA_OCI_REGION')) || null
 
   return {
     os: clean(values.get('PA_OS')) || 'Linux',
@@ -81,7 +83,9 @@ export function parseProxyBuilderDiscovery(output: string): ProxyBuilderCapabili
     supportsIpv6: Boolean(defaultInterface && ipv6Addresses.length > 0 && sourceBindIpv6),
     sourceBindIpv4,
     sourceBindIpv6,
-    startPortAvailable: values.get('PA_PORT_FREE') === '1'
+    startPortAvailable: values.get('PA_PORT_FREE') === '1',
+    cloudProvider,
+    cloudRegion
   }
 }
 
@@ -106,6 +110,11 @@ function discoveryScript(startPort: number): string {
     'PUBLIC4=""',
     'if command -v curl >/dev/null 2>&1; then PUBLIC4="$(curl -4 -fsS --connect-timeout 3 --max-time 5 https://api.ipify.org 2>/dev/null | tr -d "\\r\\n")"; fi',
     'if [ -z "$PUBLIC4" ] && command -v wget >/dev/null 2>&1; then PUBLIC4="$(wget -4 -qO- --timeout=5 https://api.ipify.org 2>/dev/null | tr -d "\\r\\n")"; fi',
+    'CLOUD_PROVIDER=""',
+    'OCI_REGION=""',
+    'OCI_VNIC=""',
+    'if command -v curl >/dev/null 2>&1; then OCI_REGION="$(curl -fsS --connect-timeout 2 --max-time 4 -H "Authorization: Bearer Oracle" http://169.254.169.254/opc/v2/instance/region 2>/dev/null | tr -d "\\r\\n\"")"; OCI_VNIC="$(curl -fsS --connect-timeout 2 --max-time 4 -H "Authorization: Bearer Oracle" http://169.254.169.254/opc/v2/vnics/0/vnicId 2>/dev/null | tr -d "\\r\\n\"")"; fi',
+    'case "$OCI_VNIC" in ocid1.vnic.*) CLOUD_PROVIDER="oci" ;; esac',
     'SOURCE4=0',
     'if command -v curl >/dev/null 2>&1; then for CIDR in $(ip -o -4 addr show scope global 2>/dev/null | awk \'{print $4}\' | head -n 8); do ADDR="${CIDR%/*}"; if curl -4 -fsS --interface "$ADDR" --connect-timeout 2 --max-time 4 https://api.ipify.org >/dev/null 2>&1; then SOURCE4=1; break; fi; done; fi',
     'SOURCE6=0',
@@ -119,7 +128,9 @@ function discoveryScript(startPort: number): string {
     'printf "PA_IPV6_GW=%s\\n" "$IPV6_GW"',
     'printf "PA_SOURCE4=%s\\n" "$SOURCE4"',
     'printf "PA_SOURCE6=%s\\n" "$SOURCE6"',
-    'printf "PA_PORT_FREE=%s\\n" "$PORT_FREE"'
+    'printf "PA_PORT_FREE=%s\\n" "$PORT_FREE"',
+    'printf "PA_CLOUD_PROVIDER=%s\\n" "$CLOUD_PROVIDER"',
+    'printf "PA_OCI_REGION=%s\\n" "$OCI_REGION"'
   ].join('\n')
 }
 

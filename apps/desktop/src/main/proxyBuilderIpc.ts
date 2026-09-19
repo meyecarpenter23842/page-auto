@@ -1,5 +1,7 @@
 import { dialog, ipcMain } from 'electron'
-import { basename } from 'node:path'
+import { existsSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { basename, join } from 'node:path'
 import {
   PROXY_BUILDER_IPC,
   type ProxyBuilderAuditInput,
@@ -22,6 +24,17 @@ export function registerProxyBuilderIpc(): ProxyBuilderIpcRuntime {
   ipcMain.handle(PROXY_BUILDER_IPC.pickPrivateKey, async () => {
     const result = await dialog.showOpenDialog({
       title: 'Chọn SSH Private Key',
+      properties: ['openFile']
+    })
+    const path = result.filePaths[0]
+    if (result.canceled || !path) return { cancelled: true }
+    return { cancelled: false, path, fileName: basename(path) }
+  })
+  ipcMain.handle(PROXY_BUILDER_IPC.pickOciConfig, async () => {
+    const defaultPath = join(homedir(), '.oci', 'config')
+    const result = await dialog.showOpenDialog({
+      title: 'Chọn OCI config',
+      ...(existsSync(defaultPath) ? { defaultPath } : {}),
       properties: ['openFile']
     })
     const path = result.filePaths[0]

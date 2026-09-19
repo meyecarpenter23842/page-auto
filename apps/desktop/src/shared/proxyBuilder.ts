@@ -1,5 +1,6 @@
 export const PROXY_BUILDER_IPC = {
   pickPrivateKey: 'proxy-builder:pick-private-key',
+  pickOciConfig: 'proxy-builder:pick-oci-config',
   auditVps: 'proxy-builder:audit-vps',
   provisionStart: 'proxy-builder:provision-start',
   provisionStatus: 'proxy-builder:provision-status',
@@ -15,6 +16,12 @@ export type ProxyBuilderSshAuth =
   | { type: 'key'; privateKey: string; privateKeyPath?: string; passphrase?: string }
 
 export interface ProxyBuilderPrivateKeyPickResult {
+  cancelled: boolean
+  path?: string
+  fileName?: string
+}
+
+export interface ProxyBuilderOciConfigPickResult {
   cancelled: boolean
   path?: string
   fileName?: string
@@ -40,6 +47,8 @@ export interface ProxyBuilderCapability {
   sourceBindIpv4: boolean
   sourceBindIpv6: boolean
   startPortAvailable: boolean
+  cloudProvider: 'oci' | null
+  cloudRegion: string | null
 }
 
 export type ProxyBuilderSshProbeName = 'auth_true' | 'shell_empty' | 'discovery'
@@ -90,10 +99,17 @@ export type ProxyBuilderProxyAuth =
   | { type: 'none' }
   | { type: 'basic'; username: string; password: string }
 
+export interface ProxyBuilderOciCloudFirewallConfig {
+  provider: 'oci'
+  configPath: string
+  profile?: string
+}
+
 export interface ProxyBuilderProvisionInput extends ProxyBuilderAuditInput {
   ipMode: ProxyBuilderIpMode
   count: number
   proxyAuth: ProxyBuilderProxyAuth
+  cloudFirewall?: ProxyBuilderOciCloudFirewallConfig
 }
 
 export type ProxyBuilderProvisionPhase =

@@ -267,6 +267,7 @@ import signal
 import subprocess
 import sys
 import time
+import urllib.request
 from pathlib import Path
 
 ETC_DIR = Path('/etc/page-auto-proxy')
@@ -719,6 +720,26 @@ def restore_files(backup_dir, existed):
             path.unlink()
 
 
+
+def oci_metadata_value(path):
+    url = 'http://169.254.169.254/opc/v2/' + path.lstrip('/')
+    request = urllib.request.Request(url, headers={'Authorization': 'Bearer Oracle'})
+    try:
+        with urllib.request.urlopen(request, timeout=2) as response:
+            value = response.read().decode('utf-8', errors='ignore').strip().strip('"')
+            return value
+    except Exception:
+        return ''
+
+
+def detect_cloud():
+    region = oci_metadata_value('instance/region')
+    vnic_id = oci_metadata_value('vnics/0/vnicId')
+    if region and vnic_id.startswith('ocid1.vnic.'):
+        return {'provider': 'oci', 'region': region, 'vnicId': vnic_id}
+    return None
+
+
 def main():
     if len(sys.argv) != 6:
         raise RuntimeError('invalid provisioner arguments')
@@ -743,6 +764,7 @@ def main():
     backup_dir = Path(f'/tmp/page-auto-proxy-backup-{run_id}')
     newly_added = []
     firewall_state = None
+    cloud_state = detect_cloud()
     existed = backup_files(backup_dir)
     completed = False
 
@@ -844,6 +866,7 @@ def main():
             'username': auth.get('username') if auth.get('type') == 'basic' else None,
             'mappings': mappings,
             'firewall': firewall_state,
+            'cloud': cloud_state,
         }
         encoded = base64.b64encode(json.dumps(result, separators=(',', ':')).encode('utf-8')).decode('ascii')
         progress('complete', 100, f'Đã tạo {len(mappings)} proxy và xác minh outbound IP')
