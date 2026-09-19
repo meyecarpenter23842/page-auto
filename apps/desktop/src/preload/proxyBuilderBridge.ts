@@ -5,6 +5,7 @@ import {
   type ProxyBuilderAuditResult,
   type ProxyBuilderCheckerSnapshot,
   type ProxyBuilderCheckerStartInput,
+  type ProxyBuilderPrivateKeyPickResult,
   type ProxyBuilderProvisionInput,
   type ProxyBuilderProvisionSnapshot,
   type ProxyBuilderRuntimeControlInput,
@@ -12,6 +13,7 @@ import {
 } from '../shared/proxyBuilder'
 
 export interface ProxyBuilderPreloadApi {
+  pickPrivateKey: () => Promise<ProxyBuilderPrivateKeyPickResult>
   auditVps: (input: ProxyBuilderAuditInput) => Promise<ProxyBuilderAuditResult>
   startProvision: (input: ProxyBuilderProvisionInput) => Promise<ProxyBuilderProvisionSnapshot>
   getProvisionStatus: (runId: string) => Promise<ProxyBuilderProvisionSnapshot | null>
@@ -23,6 +25,7 @@ export interface ProxyBuilderPreloadApi {
 }
 
 const api: ProxyBuilderPreloadApi = {
+  pickPrivateKey: () => ipcRenderer.invoke(PROXY_BUILDER_IPC.pickPrivateKey),
   auditVps: (input) => ipcRenderer.invoke(PROXY_BUILDER_IPC.auditVps, input),
   startProvision: (input) => ipcRenderer.invoke(PROXY_BUILDER_IPC.provisionStart, input),
   getProvisionStatus: (runId) => ipcRenderer.invoke(PROXY_BUILDER_IPC.provisionStatus, { runId }),

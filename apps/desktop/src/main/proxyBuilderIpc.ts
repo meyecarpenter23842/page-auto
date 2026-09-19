@@ -1,4 +1,5 @@
-import { ipcMain } from 'electron'
+import { dialog, ipcMain } from 'electron'
+import { basename } from 'node:path'
 import {
   PROXY_BUILDER_IPC,
   type ProxyBuilderAuditInput,
@@ -18,6 +19,15 @@ export function registerProxyBuilderIpc(): ProxyBuilderIpcRuntime {
   const checker = new ProxyBuilderCheckerService()
   for (const channel of Object.values(PROXY_BUILDER_IPC)) ipcMain.removeHandler(channel)
 
+  ipcMain.handle(PROXY_BUILDER_IPC.pickPrivateKey, async () => {
+    const result = await dialog.showOpenDialog({
+      title: 'Chọn SSH Private Key',
+      properties: ['openFile']
+    })
+    const path = result.filePaths[0]
+    if (result.canceled || !path) return { cancelled: true }
+    return { cancelled: false, path, fileName: basename(path) }
+  })
   ipcMain.handle(PROXY_BUILDER_IPC.auditVps, (_event, input: ProxyBuilderAuditInput) => auditProxyBuilderVps(input))
   ipcMain.handle(PROXY_BUILDER_IPC.provisionStart, (_event, input: ProxyBuilderProvisionInput) => provision.start(input))
   ipcMain.handle(PROXY_BUILDER_IPC.provisionStatus, (_event, payload: ProxyBuilderRunIdPayload) => provision.status(payload))

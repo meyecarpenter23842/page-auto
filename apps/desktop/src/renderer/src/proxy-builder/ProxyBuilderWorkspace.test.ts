@@ -15,6 +15,15 @@ describe('Proxy Builder Batch 4 checker/export', () => {
     expect(app).toContain("activeRoute === 'proxy-builder' ? <ProxyBuilderWorkspace />")
   })
 
+  it('selects SSH key files through typed IPC without exposing file contents from Main', () => {
+    expect(workspace).toContain('window.pageAutoProxyBuilder.pickPrivateKey')
+    expect(workspace).toContain('Chọn file key')
+    expect(workspace).toContain('Key Passphrase (nếu có)')
+    expect(preload).toContain('pickPrivateKey: () => ipcRenderer.invoke')
+    expect(ipc).toContain("dialog.showOpenDialog")
+    expect(ipc).toContain("return { cancelled: false, path, fileName: basename(path) }")
+  })
+
   it('runs checker networking in Electron Main, not React', () => {
     expect(workspace).toContain('window.pageAutoProxyBuilder.startChecker')
     expect(workspace).toContain('window.pageAutoProxyBuilder.cancelChecker')
