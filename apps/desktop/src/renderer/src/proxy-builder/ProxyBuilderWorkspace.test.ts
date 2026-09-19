@@ -71,4 +71,14 @@ describe('Proxy Builder Batch 4 checker/export', () => {
     expect(packagedSmoke).toContain("hasText: 'DEAD'")
     expect(packagedSmoke).toContain('407 Proxy Authentication Required')
   })
+
+  it('keeps OCI API credentials in Main and requires a local config for Oracle VPS', () => {
+    expect(workspace).toContain('Chọn OCI config')
+    expect(workspace).toContain('window.pageAutoProxyBuilder.pickOciConfig')
+    expect(workspace).toContain("cloudFirewall: { provider: 'oci' as const")
+    expect(workspace).toContain('Oracle VPS: chọn OCI config')
+    expect(preload).toContain('pickOciConfig: () => ipcRenderer.invoke')
+    expect(ipc).toContain("title: 'Chọn OCI config'")
+  })
+
 })

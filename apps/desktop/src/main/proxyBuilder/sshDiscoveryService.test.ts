@@ -25,6 +25,7 @@ describe('Proxy Builder SSH discovery parser', () => {
     expect(result.supportsIpv4).toBe(true)
     expect(result.supportsIpv6).toBe(true)
     expect(result.startPortAvailable).toBe(true)
+    expect(result.cloudProvider).toBeNull()
   })
 
   it('uses Windows native OpenSSH for selected key files before falling back to ssh2', () => {
@@ -69,4 +70,25 @@ describe('Proxy Builder SSH discovery parser', () => {
     expect(result.supportsIpv6).toBe(false)
     expect(result.startPortAvailable).toBe(false)
   })
+
+  it('detects OCI metadata without treating it as network capability', () => {
+    const result = parseProxyBuilderDiscovery([
+      'PA_OS=Ubuntu 26.04',
+      'PA_IFACE=enp0s6',
+      'PA_PUBLIC4=140.238.155.28',
+      'PA_IPV4=10.0.0.10/24',
+      'PA_IPV6=',
+      'PA_IPV6_GW=',
+      'PA_SOURCE4=1',
+      'PA_SOURCE6=0',
+      'PA_PORT_FREE=1',
+      'PA_CLOUD_PROVIDER=oci',
+      'PA_OCI_REGION=ap-singapore-1'
+    ].join('\n'))
+
+    expect(result.cloudProvider).toBe('oci')
+    expect(result.cloudRegion).toBe('ap-singapore-1')
+    expect(result.supportsIpv4).toBe(true)
+  })
+
 })
