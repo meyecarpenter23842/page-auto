@@ -83,7 +83,7 @@ describe('executeFacebookPostTaskJob', () => {
 
     expect(mocks.executeWall).toHaveBeenCalledWith({
       ...task,
-      content: 'Nội dung tường\\n\\n#BillMafia.'
+      content: 'Nội dung tường\n\n#BillMafia.'
     })
   })
 
