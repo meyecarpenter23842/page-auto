@@ -6,6 +6,7 @@ import {
   waitForComposerStage,
   type RobustComposerDetector
 } from '../../browser/posting/robustComposerDetector'
+import { PageWallComposerSuggestionGuard } from './pageWallComposerSuggestion'
 import type { PreparedPageWallRuntime } from './pageWallTask'
 
 const PAGE_WALL_ADVANCE_PATTERN = /^(next|tiếp|tiếp theo)$/i
@@ -259,6 +260,16 @@ export class PageWallPublishAction {
   }
 
   async click(container: Locator): Promise<PostingJobResult> {
+    const suggestionGuard = new PageWallComposerSuggestionGuard(
+      this.runtime.page,
+      this.networkTimeoutMs
+    )
+    const initialSuggestion = await suggestionGuard.dismissIfPresent(
+      this.composerDetector,
+      'before-publish-stage'
+    )
+    if (initialSuggestion.status !== 'success') return initialSuggestion
+
     let lastAdvanceDiagnostics = 'strategy=not-probed'
     const pageRoot = this.runtime.page.locator('body')
     const ready = await waitForPageWallPublishStage(
@@ -329,6 +340,12 @@ export class PageWallPublishAction {
       if (access.status !== 'success') return commonResult(access)
       this.diagnostic('stage=optional_cta_access ready')
     }
+
+    const finalSuggestion = await suggestionGuard.dismissIfPresent(
+      this.composerDetector,
+      'before-final-post-click'
+    )
+    if (finalSuggestion.status !== 'success') return finalSuggestion
 
     this.diagnostic('stage=final_publish_wait')
     return new PublishAction(
