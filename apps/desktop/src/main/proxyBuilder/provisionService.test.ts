@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 const shared = readFileSync(new URL('../../shared/proxyBuilder.ts', import.meta.url), 'utf8')
 const service = readFileSync(new URL('./provisionService.ts', import.meta.url), 'utf8')
 const assets = readFileSync(new URL('./remoteAssets.ts', import.meta.url), 'utf8')
+const sshAuth = readFileSync(new URL('./sshAuth.ts', import.meta.url), 'utf8')
 
 describe('Proxy Builder Batch 3 safety contracts', () => {
   it('does not expose proxy passwords in result contracts or runtime snapshots', () => {
@@ -44,7 +45,7 @@ describe('Proxy Builder Batch 3 safety contracts', () => {
   })
 
   it('keeps password auth compatible with keyboard-interactive/PAM during provisioning', () => {
-    expect(service).toContain('config.tryKeyboard = true')
+    expect(sshAuth).toContain('config.tryKeyboard = true')
     expect(service).toContain("this.client.on('keyboard-interactive'")
     expect(service).toContain('finish(prompts.map(() => password))')
   })

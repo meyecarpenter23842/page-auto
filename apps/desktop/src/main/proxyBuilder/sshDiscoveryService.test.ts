@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { parseProxyBuilderDiscovery } from './sshDiscoveryService'
 
 const discoverySource = readFileSync(new URL('./sshDiscoveryService.ts', import.meta.url), 'utf8')
+const sshAuthSource = readFileSync(new URL('./sshAuth.ts', import.meta.url), 'utf8')
 
 describe('Proxy Builder SSH discovery parser', () => {
   it('parses network capability without inventing addresses', () => {
@@ -33,7 +34,7 @@ describe('Proxy Builder SSH discovery parser', () => {
   })
 
   it('supports password servers that advertise keyboard-interactive instead of password auth', () => {
-    expect(discoverySource).toContain('config.tryKeyboard = true')
+    expect(sshAuthSource).toContain('config.tryKeyboard = true')
     expect(discoverySource).toContain("client.on('keyboard-interactive'")
     expect(discoverySource).toContain('finish(prompts.map(() => password))')
   })
