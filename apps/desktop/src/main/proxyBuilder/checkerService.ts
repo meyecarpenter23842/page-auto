@@ -337,6 +337,44 @@ async function checkWithRetry(endpoint: ParsedProxy, active: ActiveChecker, time
   throw lastError ?? new CheckerError('Proxy check thất bại.', false)
 }
 
+export interface ProxyBuilderDirectCheckResult {
+  live: boolean
+  outboundIp: string | null
+  latencyMs: number | null
+  error: string | null
+}
+
+export async function checkProxyLineNow(
+  rawLine: string,
+  timeoutMs: number = DEFAULT_TIMEOUT_MS,
+  retries: number = 0
+): Promise<ProxyBuilderDirectCheckResult> {
+  let endpoint: ParsedProxy
+  try {
+    endpoint = parseProxyLine(rawLine)
+  } catch (error) {
+    return { live: false, outboundIp: null, latencyMs: null, error: error instanceof Error ? error.message : 'Proxy không hợp lệ.' }
+  }
+
+  const active: ActiveChecker = { runId: 'direct-check', cancelled: false, sockets: new Set() }
+  try {
+    const checked = await checkWithRetry(
+      endpoint,
+      active,
+      clamp(timeoutMs, 3_000, 60_000, DEFAULT_TIMEOUT_MS),
+      clamp(retries, 0, 2, 0)
+    )
+    return { live: true, outboundIp: checked.outboundIp, latencyMs: checked.latencyMs, error: null }
+  } catch (error) {
+    const safe = safeNetworkError(error)
+    return { live: false, outboundIp: null, latencyMs: null, error: safe.message }
+  } finally {
+    active.cancelled = true
+    for (const socket of active.sockets) socket.destroy()
+    active.sockets.clear()
+  }
+}
+
 export class ProxyBuilderCheckerService {
   private readonly runs = new Map<string, ProxyBuilderCheckerSnapshot>()
   private active: ActiveChecker | null = null

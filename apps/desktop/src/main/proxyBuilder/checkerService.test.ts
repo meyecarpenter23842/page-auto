@@ -1,6 +1,6 @@
 import { createServer, type Server, type Socket } from 'node:net'
 import { describe, expect, it } from 'vitest'
-import { ProxyBuilderCheckerService, parseProxyLine } from './checkerService'
+import { ProxyBuilderCheckerService, checkProxyLineNow, parseProxyLine } from './checkerService'
 
 async function listen(server: Server): Promise<number> {
   await new Promise<void>((resolve, reject) => {
@@ -63,6 +63,17 @@ describe('Proxy Builder checker lifecycle', () => {
     expect(done?.results[0]?.maskedProxy).toBe(`127.0.0.1:${port}:user:••••`)
     expect(JSON.stringify(done)).not.toContain('secret-value')
     service.dispose()
+  })
+
+  it('supports one-shot external verification for newly provisioned proxies', async () => {
+    const reserved = createServer()
+    const port = await listen(reserved)
+    await close(reserved)
+
+    const checked = await checkProxyLineNow('127.0.0.1:' + port + ':user:secret-value', 3_000, 0)
+    expect(checked.live).toBe(false)
+    expect(checked.error).toMatch(/Kết nối proxy|Timeout/)
+    expect(JSON.stringify(checked)).not.toContain('secret-value')
   })
 
   it('cancels an in-flight CONNECT check and destroys its socket', async () => {
