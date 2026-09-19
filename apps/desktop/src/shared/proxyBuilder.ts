@@ -1,5 +1,9 @@
 export const PROXY_BUILDER_IPC = {
-  auditVps: 'proxy-builder:audit-vps'
+  auditVps: 'proxy-builder:audit-vps',
+  provisionStart: 'proxy-builder:provision-start',
+  provisionStatus: 'proxy-builder:provision-status',
+  provisionCancel: 'proxy-builder:provision-cancel',
+  runtimeControl: 'proxy-builder:runtime-control'
 } as const
 
 export type ProxyBuilderSshAuth =
@@ -39,3 +43,61 @@ export type ProxyBuilderAuditErrorCode =
 export type ProxyBuilderAuditResult =
   | { ok: true; capability: ProxyBuilderCapability }
   | { ok: false; code: ProxyBuilderAuditErrorCode; message: string }
+
+export type ProxyBuilderIpMode = 'ipv4' | 'ipv6' | 'both'
+export type ProxyBuilderProxyAuth =
+  | { type: 'none' }
+  | { type: 'basic'; username: string; password: string }
+
+export interface ProxyBuilderProvisionInput extends ProxyBuilderAuditInput {
+  ipMode: ProxyBuilderIpMode
+  count: number
+  proxyAuth: ProxyBuilderProxyAuth
+}
+
+export type ProxyBuilderProvisionPhase =
+  | 'connecting'
+  | 'preflight'
+  | 'provisioning'
+  | 'service'
+  | 'self_test'
+  | 'complete'
+  | 'rollback'
+
+export type ProxyBuilderProvisionStatus = 'running' | 'completed' | 'failed' | 'cancelled'
+export type ProxyBuilderProxyStatus = 'ready' | 'stopped' | 'error'
+
+export interface ProxyBuilderProxyResult {
+  id: string
+  listenHost: string
+  port: number
+  type: 'ipv4' | 'ipv6'
+  outboundIp: string
+  status: ProxyBuilderProxyStatus
+  authMode: 'none' | 'basic'
+  username: string | null
+}
+
+export interface ProxyBuilderProvisionSnapshot {
+  runId: string
+  status: ProxyBuilderProvisionStatus
+  phase: ProxyBuilderProvisionPhase
+  percent: number
+  message: string
+  createdAt: string
+  updatedAt: string
+  results: ProxyBuilderProxyResult[]
+}
+
+export interface ProxyBuilderRunIdPayload { runId: string }
+
+export type ProxyBuilderRuntimeAction = 'start' | 'stop' | 'restart'
+
+export interface ProxyBuilderRuntimeControlInput extends ProxyBuilderAuditInput {
+  action: ProxyBuilderRuntimeAction
+}
+
+export interface ProxyBuilderRuntimeControlResult {
+  active: boolean
+  message: string
+}

@@ -347,3 +347,19 @@ html[data-theme='dark'] .proxy-builder-progress-track { background: var(--pa-dar
   .proxy-builder-results-panel,
   .proxy-builder-checker-layout { min-width: 760px; }
 }
+
+.proxy-builder-notice {
+  flex: 0 0 auto;
+  padding: 7px 9px;
+  border: 1px solid #dfe5ec;
+  border-radius: 7px;
+  background: #fff;
+  color: #475569;
+  font-size: 10px;
+}
+
+html[data-theme='dark'] .proxy-builder-notice {
+  border-color: var(--pa-dark-border);
+  background: var(--pa-dark-surface);
+  color: var(--pa-dark-text-soft);
+}
