@@ -177,7 +177,7 @@ class NativeOpenSshSession implements SshSessionLike {
   async exec(command: string, timeoutMs: number = COMMAND_TIMEOUT_MS, onLine?: (line: string) => void): Promise<CommandResult> {
     return await runNativeOpenSsh(this.input, command, {
       timeoutMs,
-      onLine,
+      ...(onLine ? { onLine } : {}),
       onChild: (child) => { this.currentProcess = child }
     })
   }
