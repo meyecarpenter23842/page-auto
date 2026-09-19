@@ -98,7 +98,7 @@ function validate(input: ProxyBuilderAuditInput): string | null {
   return null
 }
 
-function discoveryScript(startPort: number): string {
+export function buildProxyBuilderDiscoveryScript(startPort: number): string {
   return [
     'set +e',
     'OS_NAME="$(if [ -r /etc/os-release ]; then . /etc/os-release; printf "%s %s" "$NAME" "$VERSION_ID"; else uname -sr; fi)"',
@@ -113,7 +113,10 @@ function discoveryScript(startPort: number): string {
     'CLOUD_PROVIDER=""',
     'OCI_REGION=""',
     'OCI_VNIC=""',
-    'if command -v curl >/dev/null 2>&1; then OCI_REGION="$(curl -fsS --connect-timeout 2 --max-time 4 -H "Authorization: Bearer Oracle" http://169.254.169.254/opc/v2/instance/region 2>/dev/null | tr -d "\\r\\n\"")"; OCI_VNIC="$(curl -fsS --connect-timeout 2 --max-time 4 -H "Authorization: Bearer Oracle" http://169.254.169.254/opc/v2/vnics/0/vnicId 2>/dev/null | tr -d "\\r\\n\"")"; fi',
+    'if command -v curl >/dev/null 2>&1; then',
+    '  OCI_REGION="$(curl -fsS --connect-timeout 2 --max-time 4 -H \'Authorization: Bearer Oracle\' http://169.254.169.254/opc/v2/instance/region 2>/dev/null | tr -d \'\\r\\n"\')"',
+    '  OCI_VNIC="$(curl -fsS --connect-timeout 2 --max-time 4 -H \'Authorization: Bearer Oracle\' http://169.254.169.254/opc/v2/vnics/0/vnicId 2>/dev/null | tr -d \'\\r\\n"\')"',
+    'fi',
     'case "$OCI_VNIC" in ocid1.vnic.*) CLOUD_PROVIDER="oci" ;; esac',
     'SOURCE4=0',
     'if command -v curl >/dev/null 2>&1; then for CIDR in $(ip -o -4 addr show scope global 2>/dev/null | awk \'{print $4}\' | head -n 8); do ADDR="${CIDR%/*}"; if curl -4 -fsS --interface "$ADDR" --connect-timeout 2 --max-time 4 https://api.ipify.org >/dev/null 2>&1; then SOURCE4=1; break; fi; done; fi',
@@ -265,7 +268,7 @@ export async function auditProxyBuilderVps(input: ProxyBuilderAuditInput): Promi
       if (shellResult.code !== 0) return classifyNativeProbeFailure(shellResult, diagnostic, 'shell')
 
       const discoveryResult = await runNativeOpenSsh(input, 'sh -s', {
-        stdin: discoveryScript(input.startPort),
+        stdin: buildProxyBuilderDiscoveryScript(input.startPort),
         timeoutMs: DISCOVERY_TIMEOUT_MS,
         verbose: true
       })
@@ -322,7 +325,7 @@ export async function auditProxyBuilderVps(input: ProxyBuilderAuditInput): Promi
         reject(error)
       }
       client.once('ready', () => {
-        void execDiscovery(client, discoveryScript(input.startPort)).then(succeed, fail)
+        void execDiscovery(client, buildProxyBuilderDiscoveryScript(input.startPort)).then(succeed, fail)
       })
       client.once('error', fail)
       client.once('end', () => {
