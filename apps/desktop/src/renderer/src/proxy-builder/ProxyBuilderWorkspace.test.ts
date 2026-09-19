@@ -1,37 +1,44 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
-const app = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8')
 const workspace = readFileSync(new URL('./ProxyBuilderWorkspace.tsx', import.meta.url), 'utf8')
 const preload = readFileSync(new URL('../../../preload/proxyBuilderBridge.ts', import.meta.url), 'utf8')
 const ipc = readFileSync(new URL('../../../main/proxyBuilderIpc.ts', import.meta.url), 'utf8')
-const css = readFileSync(new URL('./proxyBuilder.css', import.meta.url), 'utf8')
-const layout = readFileSync(new URL('../mainWorkspaceLayout.css', import.meta.url), 'utf8')
+const service = readFileSync(new URL('../../../main/proxyBuilder/provisionService.ts', import.meta.url), 'utf8')
+const assets = readFileSync(new URL('../../../main/proxyBuilder/remoteAssets.ts', import.meta.url), 'utf8')
 
-describe('Proxy Builder Batch 2 SSH discovery', () => {
-  it('keeps Proxy Builder as a top-level route', () => {
-    expect(app).toContain("id: 'proxy-builder', label: 'Proxy Builder'")
-    expect(app).toContain("activeRoute === 'proxy-builder' ? <ProxyBuilderWorkspace />")
-  })
-
-  it('wires SSH audit through typed preload/Main IPC instead of running SSH in React', () => {
-    expect(workspace).toContain('window.pageAutoProxyBuilder.auditVps')
+describe('Proxy Builder Batch 3 provision engine', () => {
+  it('keeps SSH and provisioning outside React behind typed IPC', () => {
+    expect(workspace).toContain('window.pageAutoProxyBuilder.startProvision')
+    expect(workspace).toContain('window.pageAutoProxyBuilder.getProvisionStatus')
     expect(workspace).not.toContain("from 'ssh2'")
-    expect(preload).toContain("contextBridge.exposeInMainWorld('pageAutoProxyBuilder', api)")
-    expect(ipc).toContain('auditProxyBuilderVps(input)')
+    expect(preload).toContain('startProvision: (input) => ipcRenderer.invoke')
+    expect(ipc).toContain('new ProxyBuilderProvisionService()')
   })
 
-  it('enables only SSH check while later batch actions remain disabled', () => {
-    expect(workspace).toContain('onClick={() => void checkSsh()}>Kiểm tra SSH</button>')
-    expect(workspace).toMatch(/disabled[^>]*>Tạo Proxy<\/button>/)
-    expect(workspace).toMatch(/disabled[^>]*>Test<\/button>/)
+  it('enables Create/Stop and runtime service controls while checker stays Batch 4', () => {
+    expect(workspace).toContain('onClick={() => void createProxy()}>Tạo Proxy</button>')
+    expect(workspace).toContain('onClick={() => void cancelProvision()}>Dừng</button>')
+    expect(workspace).toContain("controlRuntime('start')")
+    expect(workspace).toContain("controlRuntime('stop')")
+    expect(workspace).toContain("controlRuntime('restart')")
+    expect(workspace).toMatch(/disabled[^>]*title="Proxy Checker network runtime được triển khai ở Batch 4\."[^>]*>Test<\/button>/)
   })
 
-  it('renders discovered capability in the existing progress surface', () => {
-    for (const label of ['Public IPv4', 'Start Port', 'Outbound OK', 'Chưa đạt probe']) {
-      expect(workspace).toContain(label)
-    }
-    expect(css).toContain('.proxy-builder-capability-summary')
-    expect(layout).toContain('.workspace > .proxy-builder-shell')
+  it('provisions only source-probed IPs and persists the managed IPv6 pool', () => {
+    expect(assets).toContain('source_probe(address, family)')
+    expect(assets).toContain("ip', '-6', 'addr', 'add'")
+    expect(assets).toContain("'managed_ipv6': ipv6_cidrs")
+    expect(assets).toContain('ExecStartPre=/usr/bin/python3 /usr/local/lib/page-auto-proxy/restore.py')
+    expect(assets).toContain('Restart=always')
+    expect(assets).not.toContain('ens3')
+  })
+
+  it('self-tests every listener and rolls back only resources managed by Page-Auto', () => {
+    expect(assets).toContain('self_test(mapping, auth)')
+    expect(assets).toContain("progress('rollback'")
+    expect(assets).toContain('for cidr in list(newly_added)')
+    expect(service).toContain('PA_RESULT_JSON=')
+    expect(service).toContain("status: 'completed'")
   })
 })
