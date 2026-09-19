@@ -100,7 +100,6 @@ describe('PageWallRunNowService', () => {
         postName: 'Bài dùng chung',
         variantIndex: 1,
         content: 'Biến thể canonical số 2',
-        hashtags: '{#sale|#hot}',
         image: {
           folderPath: 'D:\\canonical',
           mode: 'sequential',
@@ -115,7 +114,6 @@ describe('PageWallRunNowService', () => {
       accountId: 11,
       pageUid: '90001',
       content: 'Biến thể canonical số 2',
-      hashtags: '{#sale|#hot}',
       imagePaths: ['D:\\canonical\\one.jpg']
     })
   })

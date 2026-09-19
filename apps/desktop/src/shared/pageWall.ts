@@ -11,8 +11,6 @@ export interface PageWallCanonicalPostSelection {
   postName: string
   variantIndex: number
   content: string
-  /** Optional spin-capable hashtag source appended by Page Wall only after content spin. */
-  hashtags?: string
   image: PageTabImageConfig
 }
 
@@ -25,8 +23,6 @@ export interface PageWallRunNowPayload {
    */
   accountId?: number
   content: string
-  /** Optional Page Wall hashtag source kept separate until the worker performs runtime spin. */
-  hashtags?: string
   imagePaths: string[]
   /**
    * When present, Main materializes this canonical-library selection immediately before
@@ -40,7 +36,6 @@ export interface PageWallExecutionInput {
   accountId: number
   pageUid: string
   content: string
-  hashtags?: string
   imagePaths: string[]
 }
 

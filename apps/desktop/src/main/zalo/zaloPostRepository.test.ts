@@ -12,7 +12,6 @@ function openDb(): Database.Database {
       id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
       name TEXT NOT NULL,
       variants_json TEXT NOT NULL DEFAULT '[]',
-      hashtags TEXT NOT NULL DEFAULT '',
       image_folder_path TEXT NOT NULL DEFAULT '',
       image_mode TEXT NOT NULL DEFAULT 'random',
       images_per_post INTEGER NOT NULL DEFAULT 1,

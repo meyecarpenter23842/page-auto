@@ -253,7 +253,7 @@ export class PostingService {
       }
     }
 
-    return this.executeFacebookPostTask(pageWallPostTaskFromBase(base, input.hashtags ?? ''))
+    return this.executeFacebookPostTask(pageWallPostTaskFromBase(base))
   }
 
   async executeFacebookPostTask(job: FacebookPostTaskJobRequest): Promise<PostingJobResult> {

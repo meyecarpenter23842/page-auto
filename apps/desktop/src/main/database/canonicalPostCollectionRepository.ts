@@ -55,7 +55,6 @@ function itemFromPost(
     name: post.name,
     enabled,
     variants: [...post.variants],
-    ...(post.hashtags ? { hashtags: post.hashtags } : {}),
     image: { ...post.image },
     sortOrder,
     createdAt: post.createdAt,
@@ -193,12 +192,7 @@ export class CanonicalPostCollectionRepository {
     now = Date.now()
   ): ContentLibrarySetDetails {
     const id = this.require(collectionId).id
-    const post = this.canonical.create({
-      name: input.name,
-      variants: input.variants,
-      ...(input.hashtags !== undefined ? { hashtags: input.hashtags } : {}),
-      image: input.image
-    }, now)
+    const post = this.canonical.create({ name: input.name, variants: input.variants, image: input.image }, now)
     const next = this.nextSortOrder(id)
     this.client.prepare(`
       INSERT INTO post_collection_bindings (collection_id, post_id, enabled, sort_order)

@@ -70,7 +70,6 @@ export class PageWallSchedulerService {
       accountUid: prepared.accountUid,
       accountName: prepared.accountName,
       content: prepared.input.content,
-      ...(prepared.input.hashtags ? { hashtags: prepared.input.hashtags } : {}),
       imagePaths: prepared.input.imagePaths
     }, this.now())
     void this.tick()
@@ -156,7 +155,6 @@ export class PageWallSchedulerService {
         accountUid: prepared.accountUid,
         accountName: prepared.accountName,
         content: prepared.input.content,
-        ...(prepared.input.hashtags ? { hashtags: prepared.input.hashtags } : {}),
         imagePaths: [...prepared.input.imagePaths]
       }, occurrenceKey, nowMs)
     }
@@ -183,7 +181,6 @@ export class PageWallSchedulerService {
         accountId: job.accountId,
         pageUid: job.pageUid,
         content: job.content,
-        ...(job.hashtags ? { hashtags: job.hashtags } : {}),
         imagePaths: [...job.imagePaths]
       })
     } catch (error) {
