@@ -139,7 +139,6 @@ export function registerPageWallFiniteRuntime(database: Database.Database, dataD
         postName: post.name,
         variantIndex: source.variantIndex,
         content,
-        ...(post.hashtags?.trim() ? { hashtags: post.hashtags.trim() } : {}),
         image: { ...post.image }
       }
     }
@@ -164,7 +163,6 @@ export function registerPageWallFiniteRuntime(database: Database.Database, dataD
         accountUid: prepared.accountUid,
         accountName: prepared.accountName,
         content: prepared.input.content,
-        ...(prepared.input.hashtags ? { hashtags: prepared.input.hashtags } : {}),
         imagePaths: [...prepared.input.imagePaths]
       })
     }
@@ -211,7 +209,6 @@ export function registerPageWallFiniteRuntime(database: Database.Database, dataD
             accountId: current.accountId,
             pageUid: current.pageUid,
             content: current.content,
-            ...(current.hashtags ? { hashtags: current.hashtags } : {}),
             imagePaths: [...current.imagePaths]
           })
           jobs.finish(current.id, result, Date.now())

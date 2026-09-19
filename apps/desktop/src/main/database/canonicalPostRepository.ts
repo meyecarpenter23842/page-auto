@@ -11,8 +11,6 @@ import type { RunSnapshotPost } from '../../shared/runs'
 export interface CanonicalPostDraft {
   name: string
   variants: readonly string[]
-  /** Optional spin-capable hashtag source. Consumers that do not support it ignore it. */
-  hashtags?: string
   image: PageTabImageConfig
 }
 
@@ -20,7 +18,6 @@ export interface CanonicalPostRecord {
   id: number
   name: string
   variants: string[]
-  hashtags?: string
   image: PageTabImageConfig
   createdAt: number
   updatedAt: number
@@ -59,7 +56,6 @@ interface CanonicalPostRow {
   id: number
   name: string
   variantsJson: string
-  hashtags: string
   imageFolderPath: string
   imageMode: string
   imagesPerPost: number
@@ -124,21 +120,14 @@ function normalizeImage(image: PageTabImageConfig): PageTabImageConfig {
   }
 }
 
-function normalizeHashtags(value: string | undefined, fallback = ''): string {
-  const normalized = (value ?? fallback).trim()
-  if (normalized.length > 2_000) throw new Error('Hashtag của bài viết tối đa 2000 ký tự.')
-  return normalized
-}
-
-function normalizeDraft(input: CanonicalPostDraft, fallbackHashtags = ''): CanonicalPostDraft & { hashtags: string } {
+function normalizeDraft(input: CanonicalPostDraft): CanonicalPostDraft {
   const name = normalizeName(input.name)
   const variants = normalizeVariants(input.variants)
-  const hashtags = normalizeHashtags(input.hashtags, fallbackHashtags)
   const image = normalizeImage(input.image)
   if (!variants.length && !image.folderPath) {
     throw new Error(`“${name}” cần có nội dung hoặc folder ảnh.`)
   }
-  return { name, variants, hashtags, image }
+  return { name, variants, image }
 }
 
 function parseVariants(raw: unknown): string[] {
@@ -171,7 +160,6 @@ function postFromRow(row: CanonicalPostRow): CanonicalPostRecord {
     id: Number(row.id),
     name: String(row.name),
     variants: parseVariants(row.variantsJson),
-    ...(String(row.hashtags ?? '').trim() ? { hashtags: String(row.hashtags).trim() } : {}),
     image: {
       folderPath: String(row.imageFolderPath ?? ''),
       mode: validImageMode(row.imageMode, 'random'),
@@ -184,7 +172,7 @@ function postFromRow(row: CanonicalPostRow): CanonicalPostRecord {
 }
 
 const canonicalColumns = `
-  id, name, variants_json AS variantsJson, hashtags,
+  id, name, variants_json AS variantsJson,
   image_folder_path AS imageFolderPath, image_mode AS imageMode,
   images_per_post AS imagesPerPost, missing_policy AS missingPolicy,
   created_at AS createdAt, updated_at AS updatedAt
@@ -216,13 +204,12 @@ export class CanonicalPostRepository {
     const post = normalizeDraft(input)
     const result = this.client.prepare(`
       INSERT INTO posts (
-        name, variants_json, hashtags, image_folder_path, image_mode,
+        name, variants_json, image_folder_path, image_mode,
         images_per_post, missing_policy, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       post.name,
       JSON.stringify(post.variants),
-      post.hashtags,
       post.image.folderPath,
       post.image.mode,
       post.image.imagesPerPost,
@@ -235,18 +222,17 @@ export class CanonicalPostRepository {
 
   update(id: number, input: CanonicalPostDraft, now = Date.now()): CanonicalPostRecord {
     const postId = positiveId(id, 'Post ID')
-    const current = this.require(postId)
-    const post = normalizeDraft(input, current.hashtags ?? '')
+    this.require(postId)
+    const post = normalizeDraft(input)
     this.client.prepare(`
       UPDATE posts
       SET
-        name = ?, variants_json = ?, hashtags = ?, image_folder_path = ?, image_mode = ?,
+        name = ?, variants_json = ?, image_folder_path = ?, image_mode = ?,
         images_per_post = ?, missing_policy = ?, updated_at = ?
       WHERE id = ?
     `).run(
       post.name,
       JSON.stringify(post.variants),
-      post.hashtags,
       post.image.folderPath,
       post.image.mode,
       post.image.imagesPerPost,
