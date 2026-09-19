@@ -1,10 +1,14 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
 import type { ProxyBuilderAuditInput, ProxyBuilderSshAuth } from '../../shared/proxyBuilder'
 
 export interface NativeOpenSshResult {
   stdout: string
   stderr: string
   code: number
+  executable: string
+  version: string
 }
 
 export interface NativeOpenSshRunOptions {
@@ -15,6 +19,34 @@ export interface NativeOpenSshRunOptions {
 }
 
 type SshTargetInput = Pick<ProxyBuilderAuditInput, 'host' | 'username' | 'auth'>
+
+export function resolveWindowsOpenSshExecutable(
+  systemRoot: string | undefined = process.env.SystemRoot ?? process.env.WINDIR,
+  exists: (path: string) => boolean = existsSync
+): string {
+  const root = systemRoot?.trim()
+  if (root) {
+    const candidates = [
+      join(root, 'System32', 'OpenSSH', 'ssh.exe'),
+      join(root, 'Sysnative', 'OpenSSH', 'ssh.exe')
+    ]
+    const resolved = candidates.find((candidate) => exists(candidate))
+    if (resolved) return resolved
+  }
+  return 'ssh.exe'
+}
+
+async function readOpenSshVersion(executable: string): Promise<string> {
+  return await new Promise<string>((resolve) => {
+    let stderr = ''
+    let stdout = ''
+    const child = spawn(executable, ['-V'], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
+    child.stdout?.on('data', (chunk: Buffer | string) => { stdout += chunk.toString() })
+    child.stderr?.on('data', (chunk: Buffer | string) => { stderr += chunk.toString() })
+    child.once('error', () => resolve('unknown'))
+    child.once('close', () => resolve((stderr || stdout).trim().split(/\r?\n/)[0] || 'unknown'))
+  })
+}
 
 export function shouldUseNativeOpenSsh(auth: ProxyBuilderSshAuth): boolean {
   return process.platform === 'win32'
@@ -53,13 +85,15 @@ export async function runNativeOpenSsh(
 ): Promise<NativeOpenSshResult> {
   const timeoutMs = options.timeoutMs ?? 60_000
   const args = buildNativeOpenSshArgs(input, remoteCommand)
+  const executable = resolveWindowsOpenSshExecutable()
+  const version = await readOpenSshVersion(executable)
 
   return await new Promise<NativeOpenSshResult>((resolve, reject) => {
     let settled = false
     let stdout = ''
     let stderr = ''
     let lineBuffer = ''
-    const child = spawn('ssh.exe', args, {
+    const child = spawn(executable, args, {
       windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe']
     })
@@ -71,7 +105,7 @@ export async function runNativeOpenSsh(
       clearTimeout(timer)
       options.onChild?.(null)
       if (error) reject(error)
-      else resolve({ stdout, stderr, code: code ?? 255 })
+      else resolve({ stdout, stderr, code: code ?? 255, executable, version })
     }
 
     const timer = setTimeout(() => {
@@ -81,7 +115,7 @@ export async function runNativeOpenSsh(
 
     child.once('error', (error) => {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        finish(new Error('Không tìm thấy Windows OpenSSH (ssh.exe).'))
+        finish(new Error(`Không tìm thấy Windows OpenSSH tại ${executable}.`))
         return
       }
       finish(error)
