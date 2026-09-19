@@ -37,6 +37,18 @@ interface RemoteProvisionResult {
   authMode: 'none' | 'basic'
   username: string | null
   mappings: Array<{ port: number; type: 'ipv4' | 'ipv6'; source_ip: string; outbound_ip?: string }>
+  firewall?: {
+    backend: 'ufw' | 'firewalld' | 'nftables' | 'iptables' | 'none'
+    driver: string
+    start_port: number
+    end_port: number
+    marker: string
+  }
+}
+
+interface ExternalProxyVerification {
+  results: ProxyBuilderProxyResult[]
+  errors: string[]
 }
 
 function cloneSnapshot(snapshot: ProxyBuilderProvisionSnapshot): ProxyBuilderProvisionSnapshot {
@@ -248,8 +260,9 @@ function externalProxyLine(item: ProxyBuilderProxyResult, auth: ProxyBuilderProx
 async function verifyProvisionedProxies(
   remote: RemoteProvisionResult,
   auth: ProxyBuilderProxyAuth
-): Promise<ProxyBuilderProxyResult[]> {
+): Promise<ExternalProxyVerification> {
   const results = toProxyResults(remote)
+  const errors = Array.from({ length: results.length }, () => '')
   let cursor = 0
 
   const worker = async () => {
@@ -262,6 +275,7 @@ async function verifyProvisionedProxies(
       results[index] = checked.live
         ? { ...item, status: 'ready', outboundIp: checked.outboundIp ?? item.outboundIp }
         : { ...item, status: 'error' }
+      if (!checked.live) errors[index] = checked.error ?? 'Proxy chưa LIVE từ máy Windows.'
     }
   }
 
@@ -269,7 +283,13 @@ async function verifyProvisionedProxies(
     { length: Math.min(EXTERNAL_VERIFY_CONCURRENCY, Math.max(1, results.length)) },
     () => worker()
   ))
-  return results
+  return { results, errors: errors.filter(Boolean) }
+}
+
+function isCloudFirewallTimeout(errors: string[]): boolean {
+  return errors.length > 0 && errors.every((message) =>
+    /Timeout khi kết nối proxy|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH/i.test(message)
+  )
 }
 
 async function privilegedPrefix(session: SshSessionLike): Promise<string> {
@@ -397,11 +417,16 @@ export class ProxyBuilderProvisionService {
       if (this.active?.cancelRequested) throw new Error('Provision cancelled')
       this.update(runId, { phase: 'self_test', percent: 94, message: 'Đang kiểm tra khả năng truy cập proxy từ máy Windows…' })
       const verified = await verifyProvisionedProxies(remote, input.proxyAuth)
-      const externalDead = verified.filter((item) => item.status === 'error').length
-      const message = externalDead
-        ? 'Đã tạo ' + remote.mappings.length + ' proxy nhưng ' + externalDead + ' proxy chưa truy cập được từ máy này. Listener nội bộ đã chạy; hãy kiểm tra inbound firewall / cloud Security List / Security Group.'
-        : 'Đã tạo ' + remote.mappings.length + ' proxy và xác minh LIVE từ máy này.'
-      this.update(runId, { status: 'completed', phase: 'complete', percent: 100, message, results: verified })
+      const externalDead = verified.results.filter((item) => item.status === 'error').length
+      const firewallRange = remote.firewall
+        ? remote.firewall.start_port + '-' + remote.firewall.end_port
+        : input.startPort + '-' + (input.startPort + input.count - 1)
+      const message = externalDead === 0
+        ? 'Đã tạo ' + remote.mappings.length + ' proxy và xác minh LIVE từ máy này.'
+        : isCloudFirewallTimeout(verified.errors)
+          ? 'Host firewall đã mở TCP ' + firewallRange + ' nhưng Windows vẫn timeout. Cloud firewall / Security List / NSG đang chặn port.'
+          : 'Host firewall đã xử lý TCP ' + firewallRange + ' nhưng ' + externalDead + ' proxy chưa LIVE từ Windows. ' + (verified.errors[0] ?? 'Hãy kiểm tra kết nối ngoài VPS.')
+      this.update(runId, { status: 'completed', phase: 'complete', percent: 100, message, results: verified.results })
     } catch (error) {
       const cancelled = this.active?.runId === runId && this.active.cancelRequested
       this.update(runId, {

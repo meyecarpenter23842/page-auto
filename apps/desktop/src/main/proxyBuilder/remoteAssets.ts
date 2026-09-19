@@ -195,7 +195,50 @@ MANIFEST = Path('/etc/page-auto-proxy/manifest.json')
 
 
 def run(*args):
-    return subprocess.run(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+    return subprocess.run(args, capture_output=True, text=True, check=False)
+
+
+def restore_firewall(manifest):
+    firewall = manifest.get('firewall') or {}
+    driver = firewall.get('driver')
+    marker = firewall.get('marker', 'page-auto-proxy')
+    start_port = int(firewall.get('start_port', 0) or 0)
+    end_port = int(firewall.get('end_port', 0) or 0)
+    if start_port < 1 or end_port < start_port:
+        return
+
+    if driver == 'iptables':
+        chain = 'PAGE_AUTO_PROXY'
+        while run('iptables', '-C', 'INPUT', '-m', 'comment', '--comment', marker, '-j', chain).returncode == 0:
+            run('iptables', '-D', 'INPUT', '-m', 'comment', '--comment', marker, '-j', chain)
+        run('iptables', '-F', chain)
+        run('iptables', '-X', chain)
+        run('iptables', '-N', chain)
+        port_value = str(start_port) if start_port == end_port else f'{start_port}:{end_port}'
+        run('iptables', '-A', chain, '-p', 'tcp', '--dport', port_value, '-m', 'comment', '--comment', marker, '-j', 'ACCEPT')
+        run('iptables', '-I', 'INPUT', '1', '-m', 'comment', '--comment', marker, '-j', chain)
+        return
+
+    if driver == 'nft-native':
+        chain_info = firewall.get('nft_chain') or {}
+        family, table, chain = chain_info.get('family'), chain_info.get('table'), chain_info.get('chain')
+        if not family or not table or not chain:
+            return
+        listed = run('nft', '-a', '-j', 'list', 'ruleset')
+        if listed.returncode == 0:
+            try:
+                payload = json.loads(listed.stdout or '{}')
+            except Exception:
+                payload = {}
+            for item in payload.get('nftables', []):
+                rule = item.get('rule') if isinstance(item, dict) else None
+                if not isinstance(rule, dict) or rule.get('comment') != marker:
+                    continue
+                handle = rule.get('handle')
+                if handle is not None:
+                    run('nft', 'delete', 'rule', str(rule.get('family')), str(rule.get('table')), str(rule.get('chain')), 'handle', str(handle))
+        port_value = str(start_port) if start_port == end_port else f'{start_port}-{end_port}'
+        run('nft', 'insert', 'rule', str(family), str(table), str(chain), 'tcp', 'dport', port_value, 'accept', 'comment', marker)
 
 
 def main():
@@ -207,6 +250,7 @@ def main():
         return
     for cidr in manifest.get('managed_ipv6', []):
         run('ip', '-6', 'addr', 'add', cidr, 'dev', interface)
+    restore_firewall(manifest)
 
 
 if __name__ == '__main__':
@@ -415,6 +459,243 @@ def self_test(mapping, auth):
         return False
 
 
+
+FIREWALL_MARKER = 'page-auto-proxy'
+IPTABLES_CHAIN = 'PAGE_AUTO_PROXY'
+FIREWALLD_SERVICE = 'page-auto-proxy'
+FIREWALLD_SERVICE_FILE = Path('/etc/firewalld/services/page-auto-proxy.xml')
+
+
+def command_exists(name):
+    return shutil.which(name) is not None
+
+
+def ufw_active():
+    if not command_exists('ufw'):
+        return False
+    result = run(['ufw', 'status'], check=False)
+    return result.returncode == 0 and 'Status: active' in (result.stdout or '')
+
+
+def firewalld_active():
+    if not command_exists('firewall-cmd'):
+        return False
+    result = run(['firewall-cmd', '--state'], check=False)
+    return result.returncode == 0 and (result.stdout or '').strip() == 'running'
+
+
+def iptables_driver():
+    if not command_exists('iptables'):
+        return None
+    result = run(['iptables', '-V'], check=False)
+    if result.returncode != 0:
+        return None
+    return 'iptables-nft' if 'nf_tables' in (result.stdout or '') else 'iptables'
+
+
+def nft_input_chain():
+    if not command_exists('nft'):
+        return None
+    result = run(['nft', '-a', '-j', 'list', 'ruleset'], check=False)
+    if result.returncode != 0:
+        return None
+    try:
+        payload = json.loads(result.stdout or '{}')
+    except Exception:
+        return None
+    candidates = []
+    for item in payload.get('nftables', []):
+        chain = item.get('chain') if isinstance(item, dict) else None
+        if not isinstance(chain, dict) or chain.get('hook') != 'input':
+            continue
+        priority = chain.get('prio', chain.get('priority', 0))
+        try:
+            priority = int(priority)
+        except Exception:
+            priority = 0
+        candidates.append((0 if chain.get('family') == 'inet' else 1, priority, chain))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: (item[0], item[1]))
+    chain = candidates[0][2]
+    return {'family': chain.get('family'), 'table': chain.get('table'), 'chain': chain.get('name')}
+
+
+def firewall_descriptor(start_port, end_port, preferred=None):
+    if preferred:
+        return {
+            'backend': preferred.get('backend', 'none'),
+            'driver': preferred.get('driver', 'none'),
+            'start_port': int(start_port),
+            'end_port': int(end_port),
+            'marker': FIREWALL_MARKER,
+            **({'zone': preferred.get('zone')} if preferred.get('zone') else {}),
+            **({'nft_chain': preferred.get('nft_chain')} if preferred.get('nft_chain') else {}),
+        }
+    if ufw_active():
+        return {'backend': 'ufw', 'driver': 'ufw', 'start_port': start_port, 'end_port': end_port, 'marker': FIREWALL_MARKER}
+    if firewalld_active():
+        zone = run(['firewall-cmd', '--get-default-zone'], check=False).stdout.strip() or 'public'
+        return {'backend': 'firewalld', 'driver': 'firewalld', 'zone': zone, 'start_port': start_port, 'end_port': end_port, 'marker': FIREWALL_MARKER}
+    ipt = iptables_driver()
+    if ipt:
+        return {
+            'backend': 'nftables' if ipt == 'iptables-nft' else 'iptables',
+            'driver': 'iptables',
+            'start_port': start_port,
+            'end_port': end_port,
+            'marker': FIREWALL_MARKER,
+        }
+    nft_chain = nft_input_chain()
+    if nft_chain:
+        return {'backend': 'nftables', 'driver': 'nft-native', 'nft_chain': nft_chain, 'start_port': start_port, 'end_port': end_port, 'marker': FIREWALL_MARKER}
+    return {'backend': 'none', 'driver': 'none', 'start_port': start_port, 'end_port': end_port, 'marker': FIREWALL_MARKER}
+
+
+def cleanup_ufw():
+    if not command_exists('ufw'):
+        return
+    result = run(['ufw', 'status', 'numbered'], check=False)
+    numbers = []
+    for line in (result.stdout or '').splitlines():
+        if FIREWALL_MARKER not in line:
+            continue
+        match = __import__('re').search(r'\[\s*(\d+)\]', line)
+        if match:
+            numbers.append(int(match.group(1)))
+    for number in sorted(numbers, reverse=True):
+        run(['ufw', '--force', 'delete', str(number)], check=False)
+
+
+def apply_ufw(start_port, end_port):
+    cleanup_ufw()
+    port_value = str(start_port) if start_port == end_port else f'{start_port}:{end_port}'
+    result = run(['ufw', 'allow', 'proto', 'tcp', 'from', 'any', 'to', 'any', 'port', port_value, 'comment', FIREWALL_MARKER], check=False)
+    if result.returncode != 0:
+        raise RuntimeError((result.stderr or result.stdout or 'Không mở được UFW rule.').strip())
+
+
+def cleanup_firewalld(zone=None):
+    if not command_exists('firewall-cmd'):
+        return
+    zones = [zone] if zone else []
+    if not zones:
+        result = run(['firewall-cmd', '--get-active-zones'], check=False)
+        for line in (result.stdout or '').splitlines():
+            if line and not line[0].isspace():
+                zones.append(line.strip().split()[0])
+        default_zone = run(['firewall-cmd', '--get-default-zone'], check=False).stdout.strip()
+        if default_zone:
+            zones.append(default_zone)
+    for candidate in dict.fromkeys(z for z in zones if z):
+        run(['firewall-cmd', '--zone', candidate, '--remove-service', FIREWALLD_SERVICE], check=False)
+        run(['firewall-cmd', '--permanent', '--zone', candidate, '--remove-service', FIREWALLD_SERVICE], check=False)
+    if FIREWALLD_SERVICE_FILE.exists():
+        FIREWALLD_SERVICE_FILE.unlink()
+    run(['firewall-cmd', '--reload'], check=False)
+
+
+def apply_firewalld(start_port, end_port, zone):
+    cleanup_firewalld(zone)
+    port_value = str(start_port) if start_port == end_port else f'{start_port}-{end_port}'
+    FIREWALLD_SERVICE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    FIREWALLD_SERVICE_FILE.write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<service>\n'
+        '  <short>Page-Auto Proxy</short>\n'
+        '  <description>Managed by Page-Auto Proxy Builder</description>\n'
+        f'  <port protocol="tcp" port="{port_value}"/>\n'
+        '</service>\n',
+        encoding='utf-8',
+    )
+    run(['firewall-cmd', '--reload'])
+    run(['firewall-cmd', '--permanent', '--zone', zone, '--add-service', FIREWALLD_SERVICE])
+    run(['firewall-cmd', '--zone', zone, '--add-service', FIREWALLD_SERVICE])
+
+
+def cleanup_iptables():
+    if not command_exists('iptables'):
+        return
+    while run(['iptables', '-C', 'INPUT', '-m', 'comment', '--comment', FIREWALL_MARKER, '-j', IPTABLES_CHAIN], check=False).returncode == 0:
+        run(['iptables', '-D', 'INPUT', '-m', 'comment', '--comment', FIREWALL_MARKER, '-j', IPTABLES_CHAIN], check=False)
+    run(['iptables', '-F', IPTABLES_CHAIN], check=False)
+    run(['iptables', '-X', IPTABLES_CHAIN], check=False)
+
+
+def apply_iptables(start_port, end_port):
+    cleanup_iptables()
+    run(['iptables', '-N', IPTABLES_CHAIN])
+    port_value = str(start_port) if start_port == end_port else f'{start_port}:{end_port}'
+    run(['iptables', '-A', IPTABLES_CHAIN, '-p', 'tcp', '--dport', port_value, '-m', 'comment', '--comment', FIREWALL_MARKER, '-j', 'ACCEPT'])
+    run(['iptables', '-I', 'INPUT', '1', '-m', 'comment', '--comment', FIREWALL_MARKER, '-j', IPTABLES_CHAIN])
+
+
+def nft_ruleset():
+    result = run(['nft', '-a', '-j', 'list', 'ruleset'], check=False)
+    if result.returncode != 0:
+        return {}
+    try:
+        return json.loads(result.stdout or '{}')
+    except Exception:
+        return {}
+
+
+def cleanup_nft_native():
+    if not command_exists('nft'):
+        return
+    payload = nft_ruleset()
+    for item in payload.get('nftables', []):
+        rule = item.get('rule') if isinstance(item, dict) else None
+        if not isinstance(rule, dict) or rule.get('comment') != FIREWALL_MARKER:
+            continue
+        family, table, chain, handle = rule.get('family'), rule.get('table'), rule.get('chain'), rule.get('handle')
+        if family and table and chain and handle is not None:
+            run(['nft', 'delete', 'rule', str(family), str(table), str(chain), 'handle', str(handle)], check=False)
+
+
+def apply_nft_native(start_port, end_port, chain_info):
+    cleanup_nft_native()
+    if not chain_info:
+        chain_info = nft_input_chain()
+    if not chain_info:
+        raise RuntimeError('Không tìm thấy nftables input chain để mở port.')
+    port_value = str(start_port) if start_port == end_port else f'{start_port}-{end_port}'
+    run([
+        'nft', 'insert', 'rule',
+        str(chain_info['family']), str(chain_info['table']), str(chain_info['chain']),
+        'tcp', 'dport', port_value, 'accept', 'comment', FIREWALL_MARKER,
+    ])
+
+
+def cleanup_firewall(descriptor):
+    if not isinstance(descriptor, dict):
+        return
+    driver = descriptor.get('driver')
+    if driver == 'ufw':
+        cleanup_ufw()
+    elif driver == 'firewalld':
+        cleanup_firewalld(descriptor.get('zone'))
+    elif driver == 'iptables':
+        cleanup_iptables()
+    elif driver == 'nft-native':
+        cleanup_nft_native()
+
+
+def apply_firewall(start_port, end_port, preferred=None):
+    descriptor = firewall_descriptor(start_port, end_port, preferred)
+    driver = descriptor.get('driver')
+    if driver == 'ufw':
+        apply_ufw(start_port, end_port)
+    elif driver == 'firewalld':
+        apply_firewalld(start_port, end_port, descriptor.get('zone') or 'public')
+    elif driver == 'iptables':
+        apply_iptables(start_port, end_port)
+    elif driver == 'nft-native':
+        apply_nft_native(start_port, end_port, descriptor.get('nft_chain'))
+    return descriptor
+
+
+
 def backup_files(backup_dir):
     backup_dir.mkdir(parents=True, exist_ok=True)
     files = {'manifest': MANIFEST, 'runtime': RUNTIME, 'restore': RESTORE, 'service': SERVICE}
@@ -458,8 +739,10 @@ def main():
 
     old_manifest = load_json(MANIFEST, {})
     old_managed = list(old_manifest.get('managed_ipv6', [])) if isinstance(old_manifest, dict) else []
+    old_firewall = old_manifest.get('firewall') if isinstance(old_manifest, dict) else None
     backup_dir = Path(f'/tmp/page-auto-proxy-backup-{run_id}')
     newly_added = []
+    firewall_state = None
     existed = backup_files(backup_dir)
     completed = False
 
@@ -499,6 +782,23 @@ def main():
         if len(mappings) != count:
             raise RuntimeError(f'Provision plan chỉ tạo được {len(mappings)}/{count} mapping.')
 
+        progress('service', 70, f'Đang mở host firewall TCP {start_port}-{start_port + count - 1}')
+        if old_firewall:
+            cleanup_firewall(old_firewall)
+        try:
+            firewall_state = apply_firewall(start_port, start_port + count - 1)
+        except BaseException:
+            if old_firewall:
+                try:
+                    apply_firewall(
+                        int(old_firewall.get('start_port', 0)),
+                        int(old_firewall.get('end_port', 0)),
+                        old_firewall,
+                    )
+                except BaseException:
+                    pass
+            raise
+
         manifest = {
             'version': 1,
             'interface': interface,
@@ -506,6 +806,7 @@ def main():
             'auth': auth,
             'managed_ipv6': ipv6_cidrs,
             'mappings': mappings,
+            'firewall': firewall_state,
             'updated_at': int(time.time()),
         }
         ETC_DIR.mkdir(parents=True, exist_ok=True)
@@ -516,7 +817,7 @@ def main():
         MANIFEST.write_text(json.dumps(manifest, ensure_ascii=False, separators=(',', ':')), encoding='utf-8')
         os.chmod(MANIFEST, 0o600)
 
-        progress('service', 75, 'Đang bật service và khôi phục IP pool')
+        progress('service', 75, f"Host firewall: {firewall_state.get('backend', 'none')}; đang bật proxy service")
         run(['systemctl', 'daemon-reload'])
         run(['systemctl', 'enable', SERVICE_NAME])
         run(['systemctl', 'restart', SERVICE_NAME])
@@ -542,6 +843,7 @@ def main():
             'authMode': auth.get('type', 'none'),
             'username': auth.get('username') if auth.get('type') == 'basic' else None,
             'mappings': mappings,
+            'firewall': firewall_state,
         }
         encoded = base64.b64encode(json.dumps(result, separators=(',', ':')).encode('utf-8')).decode('ascii')
         progress('complete', 100, f'Đã tạo {len(mappings)} proxy và xác minh outbound IP')
@@ -551,6 +853,17 @@ def main():
         run(['systemctl', 'stop', SERVICE_NAME], check=False)
         for cidr in list(newly_added):
             del_ipv6(cidr, interface)
+        if firewall_state:
+            cleanup_firewall(firewall_state)
+        if old_firewall:
+            try:
+                apply_firewall(
+                    int(old_firewall.get('start_port', 0)),
+                    int(old_firewall.get('end_port', 0)),
+                    old_firewall,
+                )
+            except BaseException:
+                pass
         restore_files(backup_dir, existed)
         run(['systemctl', 'daemon-reload'], check=False)
         if existed.get('service'):
