@@ -172,8 +172,8 @@ export async function auditProxyBuilderVps(input: ProxyBuilderAuditInput): Promi
     keepaliveCountMax: 2
   }
   const password = input.auth.type === 'password' ? input.auth.password : null
-  if (password !== null) {
-    config.password = password
+  if (input.auth.type === 'password') {
+    config.password = input.auth.password
     config.tryKeyboard = true
   } else {
     config.privateKey = input.auth.privateKey
