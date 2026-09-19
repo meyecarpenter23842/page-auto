@@ -31,6 +31,8 @@ export interface ContentLibraryItemDraft {
   name: string
   enabled: boolean
   variants: string[]
+  /** Optional canonical hashtag source. Page Wall spins/appends it at runtime; other consumers ignore it. */
+  hashtags?: string
   image: ContentLibraryImageConfig
 }
 

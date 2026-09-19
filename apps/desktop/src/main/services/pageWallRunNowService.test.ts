@@ -46,7 +46,7 @@ function payload(patch: Partial<PageWallRunNowPayload> = {}): PageWallRunNowPayl
   }
 }
 
-function setup(config: PageTabConfig | null = pageTab()) {
+function setup(config: PageTabConfig | null = pageTab(), hashtagSource = '') {
   const executePageWallPostNow = vi.fn(async (_input: PageWallExecutionInput): Promise<PostingJobResult> => ({
     status: 'success',
     message: 'published',
@@ -61,7 +61,8 @@ function setup(config: PageTabConfig | null = pageTab()) {
   const service = new PageWallRunNowService(
     { get: vi.fn(() => config) },
     { executePageWallPostNow },
-    materialResolver
+    materialResolver,
+    { get: vi.fn(() => hashtagSource) }
   )
   return { service, executePageWallPostNow }
 }
@@ -115,6 +116,34 @@ describe('PageWallRunNowService', () => {
       pageUid: '90001',
       content: 'Biến thể canonical số 2',
       imagePaths: ['D:\\canonical\\one.jpg']
+    })
+  })
+
+  it('keeps canonical hashtags separate until the Page Wall worker boundary', async () => {
+    const { service, executePageWallPostNow } = setup(pageTab(), '{#sale|#hot} #PageAuto')
+
+    const result = await service.execute(payload({
+      canonicalPost: {
+        postId: 101,
+        postName: 'Bài hashtag',
+        variantIndex: 0,
+        content: '{Nội dung A|Nội dung B}',
+        image: {
+          folderPath: '',
+          mode: 'sequential',
+          imagesPerPost: 1,
+          missingPolicy: 'text_only'
+        }
+      }
+    }))
+
+    expect(result.status).toBe('success')
+    expect(executePageWallPostNow).toHaveBeenCalledWith({
+      accountId: 11,
+      pageUid: '90001',
+      content: '{Nội dung A|Nội dung B}',
+      hashtags: '{#sale|#hot} #PageAuto',
+      imagePaths: []
     })
   })
 

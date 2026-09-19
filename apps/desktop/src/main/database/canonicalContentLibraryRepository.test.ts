@@ -88,6 +88,46 @@ describe('canonical content library workspace adapter', () => {
     expect(() => library.delete(virtualId)).toThrow(/đang được sử dụng/i)
   })
 
+  it('owns hashtag metadata in the shared library and preserves it when another editor omits the field', () => {
+    const db = runtime('page-auto-canonical-library-hashtag-')
+    const library = new CanonicalContentLibraryRepository(db.client)
+
+    const created = library.create({
+      contentSetId: CANONICAL_CONTENT_LIBRARY_SET_ID,
+      name: 'Bài có hashtag',
+      enabled: true,
+      variants: ['Nội dung gốc'],
+      hashtags: '{#sale|#hot} #PageAuto',
+      image: { folderPath: '', mode: 'sequential', imagesPerPost: 1, missingPolicy: 'text_only' }
+    }, 1000)
+    const item = created.items[0]!
+
+    expect(item.hashtags).toBe('{#sale|#hot} #PageAuto')
+
+    library.update({
+      id: item.id,
+      name: 'Bài sửa từ shortcut',
+      enabled: true,
+      variants: ['Nội dung mới'],
+      image: { folderPath: '', mode: 'sequential', imagesPerPost: 1, missingPolicy: 'text_only' }
+    }, 1100)
+
+    expect(library.get().items[0]).toMatchObject({
+      name: 'Bài sửa từ shortcut',
+      hashtags: '{#sale|#hot} #PageAuto'
+    })
+
+    library.update({
+      id: item.id,
+      name: 'Bài bỏ hashtag',
+      enabled: true,
+      variants: ['Nội dung mới'],
+      hashtags: '',
+      image: { folderPath: '', mode: 'sequential', imagesPerPost: 1, missingPolicy: 'text_only' }
+    }, 1200)
+    expect(library.get().items[0]?.hashtags).toBeUndefined()
+  })
+
   it('keeps a legacy global source in sync when its canonical post is edited from Tất cả bài viết', () => {
     const db = runtime('page-auto-canonical-library-legacy-')
     const legacy = new ContentLibraryRepository(db.client)

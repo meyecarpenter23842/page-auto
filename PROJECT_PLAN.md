@@ -20,6 +20,7 @@ Nguyên tắc cốt lõi:
 - Nhiều Page Tab/workspace khác nhau có thể chạy song song theo giới hạn cấu hình và account-level lock.
 - Group gốc không bị xóa; mỗi run Group clone snapshot riêng để chống trùng trong phiên.
 - Bài viết gốc nằm trong Thư viện Bài viết chung; consumer snapshot nội dung khi tạo run.
+- Hashtag cuối bài là metadata của bài canonical trong Thư viện Bài viết, không phải cấu hình riêng của Page Wall. Page Wall snapshot source hashtag riêng, worker spin nội dung và hashtag độc lập rồi mới ghép; consumer khác giữ behavior hiện tại.
 - React chỉ làm UI; renderer không truy cập DB/browser trực tiếp.
 - Electron Main quản lý SQLite, scheduler và worker lifecycle.
 - Playwright chạy ở worker/utility process riêng để browser lỗi không làm treo UI.

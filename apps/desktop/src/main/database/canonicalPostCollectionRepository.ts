@@ -9,6 +9,7 @@ import {
   type UpdateContentLibraryItemInput
 } from '../../shared/contentLibrary'
 import { CanonicalPostRepository, type CanonicalPostRecord } from './canonicalPostRepository'
+import { CanonicalPostHashtagRepository, normalizeCanonicalPostHashtags } from './canonicalPostHashtagRepository'
 import { LegacyCanonicalPostBridge } from './legacyCanonicalPostBridge'
 
 interface CollectionRow {
@@ -47,7 +48,8 @@ function itemFromPost(
   post: CanonicalPostRecord,
   collectionId: number,
   enabled: boolean,
-  sortOrder: number
+  sortOrder: number,
+  hashtags = ''
 ): ContentLibraryItem {
   return {
     id: -post.id,
@@ -55,6 +57,7 @@ function itemFromPost(
     name: post.name,
     enabled,
     variants: [...post.variants],
+    ...(hashtags ? { hashtags } : {}),
     image: { ...post.image },
     sortOrder,
     createdAt: post.createdAt,
@@ -64,10 +67,12 @@ function itemFromPost(
 
 export class CanonicalPostCollectionRepository {
   private readonly canonical: CanonicalPostRepository
+  private readonly hashtags: CanonicalPostHashtagRepository
   private readonly bridge: LegacyCanonicalPostBridge
 
   constructor(private readonly client: Database.Database) {
     this.canonical = new CanonicalPostRepository(client)
+    this.hashtags = new CanonicalPostHashtagRepository(client)
     this.bridge = new LegacyCanonicalPostBridge(client)
   }
 
@@ -117,7 +122,13 @@ export class CanonicalPostCollectionRepository {
     const items = bindings.flatMap((binding) => {
       const post = this.canonical.get(Number(binding.postId))
       return post
-        ? [itemFromPost(post, id, Number(binding.enabled) === 1, Number(binding.sortOrder))]
+        ? [itemFromPost(
+            post,
+            id,
+            Number(binding.enabled) === 1,
+            Number(binding.sortOrder),
+            this.hashtags.get(post.id)
+          )]
         : []
     })
 
@@ -192,13 +203,17 @@ export class CanonicalPostCollectionRepository {
     now = Date.now()
   ): ContentLibrarySetDetails {
     const id = this.require(collectionId).id
-    const post = this.canonical.create({ name: input.name, variants: input.variants, image: input.image }, now)
-    const next = this.nextSortOrder(id)
-    this.client.prepare(`
-      INSERT INTO post_collection_bindings (collection_id, post_id, enabled, sort_order)
-      VALUES (?, ?, ?, ?)
-    `).run(id, post.id, input.enabled ? 1 : 0, next)
-    this.touch(id, now)
+    const hashtagSource = normalizeCanonicalPostHashtags(input.hashtags)
+    this.client.transaction(() => {
+      const post = this.canonical.create({ name: input.name, variants: input.variants, image: input.image }, now)
+      if (hashtagSource) this.hashtags.set(post.id, hashtagSource, now)
+      const next = this.nextSortOrder(id)
+      this.client.prepare(`
+        INSERT INTO post_collection_bindings (collection_id, post_id, enabled, sort_order)
+        VALUES (?, ?, ?, ?)
+      `).run(id, post.id, input.enabled ? 1 : 0, next)
+      this.touch(id, now)
+    })()
     return this.require(id)
   }
 

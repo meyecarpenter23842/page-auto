@@ -521,6 +521,15 @@ html[data-theme='dark'] .content-library-page {
   gap: 6px;
 }
 
+.content-library-hashtag-field input {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.content-library-hashtag-field small {
+  color: var(--cl-muted);
+  line-height: 1.35;
+}
+
 .content-library-spinbar {
   display: flex;
   align-items: center;

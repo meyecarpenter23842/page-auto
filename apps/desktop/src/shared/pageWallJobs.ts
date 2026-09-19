@@ -32,6 +32,8 @@ export interface PageWallJobRecord {
   accountUid: string
   accountName: string | null
   content: string
+  /** Snapshot of canonical hashtag source; worker still performs runtime spin. */
+  hashtags?: string
   imagePaths: string[]
   /** Derived from the audit marker for recurring jobs; absent/null for one-shot jobs. */
   occurrenceKey?: string | null

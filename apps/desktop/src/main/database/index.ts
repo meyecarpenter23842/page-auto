@@ -18,6 +18,7 @@ import { applyPageJoinGroupOwnershipRepair } from './pageJoinGroupOwnershipMigra
 import { PAGE_SCENARIO_SCHEDULE_SCHEMA_VERSION, applyPageScenarioScheduleMigration } from './pageScenarioScheduleMigration'
 import { PAGE_WALL_FINITE_PLAN_SCHEMA_VERSION, applyPageWallFinitePlanMigration } from './pageWallFinitePlanMigration'
 import { PAGE_WALL_POST_POOL_SCHEMA_VERSION, applyPageWallPostPoolMigration } from './pageWallPostPoolMigration'
+import { CANONICAL_POST_HASHTAG_SCHEMA_VERSION, applyCanonicalPostHashtagMigration } from './canonicalPostHashtagMigration'
 import { PAGE_WALL_SCHEMA_VERSION, applyPageWallMigration } from './pageWallMigration'
 import { PAGE_WALL_RECURRING_SCHEMA_VERSION, applyPageWallRecurringMigration } from './pageWallRecurringMigration'
 import { PAGE_WALL_WEEKLY_SCHEDULE_SCHEMA_VERSION, applyPageWallWeeklyScheduleMigration } from './pageWallWeeklyScheduleMigration'
@@ -90,6 +91,7 @@ export function initializeDatabase(databaseFile: string): DatabaseRuntime {
   applyScannerMigration(client)
   applyPageWallWeeklyScheduleMigration(client)
   applyPageWallPostPoolMigration(client)
+  applyCanonicalPostHashtagMigration(client)
   applyZaloMigration(client)
   applyZaloPostBindingMigration(client)
 
@@ -113,6 +115,7 @@ export function initializeDatabase(databaseFile: string): DatabaseRuntime {
     SCANNER_SCHEMA_VERSION,
     PAGE_WALL_WEEKLY_SCHEDULE_SCHEMA_VERSION,
     PAGE_WALL_POST_POOL_SCHEMA_VERSION,
+    CANONICAL_POST_HASHTAG_SCHEMA_VERSION,
     ZALO_SCHEMA_VERSION,
     ZALO_POST_BINDING_SCHEMA_VERSION
   )
