@@ -27,6 +27,7 @@ function itemFromPost(post: CanonicalPostRecord, sortOrder: number): ContentLibr
     name: post.name,
     enabled: true,
     variants: [...post.variants],
+    ...(post.hashtags ? { hashtags: post.hashtags } : {}),
     image: { ...post.image },
     sortOrder,
     createdAt: post.createdAt,
@@ -68,6 +69,7 @@ export class CanonicalContentLibraryRepository {
     this.canonical.create({
       name: input.name,
       variants: input.variants,
+      ...(input.hashtags !== undefined ? { hashtags: input.hashtags } : {}),
       image: input.image
     }, now)
     return this.get()
@@ -78,6 +80,7 @@ export class CanonicalContentLibraryRepository {
     const post = this.canonical.update(postId, {
       name: input.name,
       variants: input.variants,
+      ...(input.hashtags !== undefined ? { hashtags: input.hashtags } : {}),
       image: input.image
     }, now)
     this.mirrorLegacyGlobalSource(postId, {

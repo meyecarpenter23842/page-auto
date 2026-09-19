@@ -76,6 +76,22 @@ describe('Issue #188 canonical post repositories', () => {
     expect(canonical.get(created.postId)).toBeNull()
   })
 
+  it('stores optional hashtags and preserves them when a non-Page-Wall editor omits the field', () => {
+    const { canonical } = setup()
+    const created = canonical.create({
+      ...draft('Có hashtag', 'Nội dung'),
+      hashtags: '{#sale|#hot}'
+    }, 1000)
+
+    expect(canonical.get(created.id)?.hashtags).toBe('{#sale|#hot}')
+
+    canonical.update(created.id, draft('Sửa nội dung', 'Nội dung mới'), 1100)
+    expect(canonical.get(created.id)?.hashtags).toBe('{#sale|#hot}')
+
+    canonical.update(created.id, { ...draft('Xóa hashtag', 'Nội dung'), hashtags: '' }, 1200)
+    expect(canonical.get(created.id)?.hashtags).toBeUndefined()
+  })
+
   it('keeps Page overrides isolated while non-overridden fields follow canonical edits', () => {
     const { canonical, pages, pageTabs } = setup()
     const pageA = pageTabs.create({ name: 'Page A', pageUid: 'page-a' })

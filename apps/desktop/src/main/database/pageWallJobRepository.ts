@@ -15,6 +15,7 @@ export interface CreatePageWallJobInput {
   accountUid: string
   accountName: string | null
   content: string
+  hashtags?: string
   imagePaths: string[]
 }
 
@@ -34,6 +35,7 @@ interface PageWallJobRow {
   accountUid: string
   accountName: string | null
   content: string
+  hashtags: string
   imagePathsJson: string
   resultStatus: string | null
   resultCode: string | null
@@ -53,7 +55,7 @@ const selectColumns = `
   id, status, scheduled_at AS scheduledAt,
   page_tab_id AS pageTabId, page_tab_name AS pageTabName, page_uid AS pageUid,
   account_id AS accountId, account_uid AS accountUid, account_name AS accountName,
-  content, image_paths_json AS imagePathsJson,
+  content, hashtags, image_paths_json AS imagePathsJson,
   result_status AS resultStatus, result_code AS resultCode, result_message AS resultMessage,
   published_url AS publishedUrl, screenshot_path AS screenshotPath, trace_path AS tracePath,
   session_validation_json AS sessionValidationJson, logs_json AS logsJson,
@@ -114,6 +116,7 @@ function rowToRecord(row: PageWallJobRow): PageWallJobRecord {
     accountUid: row.accountUid,
     accountName: row.accountName,
     content: row.content,
+    ...(row.hashtags.trim() ? { hashtags: row.hashtags.trim() } : {}),
     imagePaths: parseStringArray(row.imagePathsJson),
     occurrenceKey: occurrenceKeyFromLogs(logs),
     resultStatus: row.resultStatus as PageWallJobRecord['resultStatus'],
@@ -310,9 +313,9 @@ export class PageWallJobRepository {
     const result = this.client.prepare(`
       INSERT INTO page_wall_jobs (
         status, scheduled_at, page_tab_id, page_tab_name, page_uid,
-        account_id, account_uid, account_name, content, image_paths_json,
+        account_id, account_uid, account_name, content, hashtags, image_paths_json,
         logs_json, created_at, updated_at
-      ) VALUES ('pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES ('pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       input.scheduledAt,
       input.pageTabId,
@@ -322,6 +325,7 @@ export class PageWallJobRepository {
       input.accountUid,
       input.accountName,
       input.content,
+      input.hashtags?.trim() ?? '',
       JSON.stringify(input.imagePaths),
       JSON.stringify([{ at: now, message: initialMessage } satisfies PageWallJobLogEntry]),
       now,

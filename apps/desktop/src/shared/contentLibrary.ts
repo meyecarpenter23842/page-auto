@@ -31,6 +31,8 @@ export interface ContentLibraryItemDraft {
   name: string
   enabled: boolean
   variants: string[]
+  /** Optional spin-capable hashtag source. Page Wall appends it only after runtime content spin. */
+  hashtags?: string
   image: ContentLibraryImageConfig
 }
 

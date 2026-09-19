@@ -73,6 +73,20 @@ describe('executeFacebookPostTaskJob', () => {
     expect(mocks.executeGroup).not.toHaveBeenCalled()
   })
 
+  it('spins separate Page Wall hashtags after content and forces a terminal period', async () => {
+    const task = pageWallPostTaskFromBase({
+      ...commonBase(),
+      content: '{Nội dung tường}'
+    }, '#BillMafia')
+
+    await executeFacebookPostTaskJob(task)
+
+    expect(mocks.executeWall).toHaveBeenCalledWith({
+      ...task,
+      content: 'Nội dung tường\\n\\n#BillMafia.'
+    })
+  })
+
   it('rejects a mismatched Page Wall target before either production executor runs', async () => {
     const task: PageWallPostTaskJobRequest = {
       ...commonBase(),

@@ -1021,6 +1021,7 @@ Các invariant bắt buộc:
 - Renderer không đọc SQLite hay filesystem trực tiếp; picker folder/file text đi qua Main.
 - Một nguồn global có thể được nhiều Page/Kịch Bản/nghiệp vụ dùng lại; không copy nguyên bài thành DB riêng cho từng consumer.
 - `sequential/random` là quyết định của consumer/run, không phải ownership của bản thân nguồn global.
+- Canonical Post có thể có `hashtags` tùy chọn. Field này chỉ là source metadata; `page_wall_post` snapshot riêng và chỉ ghép sau khi worker đã spin content + hashtag độc lập, đồng thời chuẩn hóa dấu chấm cuối hashtag. Group/Zalo/Scenario giữ behavior hiện tại và bỏ qua field nếu chưa opt-in.
 - Sau khi một run đã tạo snapshot, sửa/xóa nội dung gốc không được âm thầm thay đổi nội dung của run đang chạy.
 - `ContentLibraryRepository` chỉ được CRUD row global (`content_sets.page_tab_id IS NULL`) và không được mutate compatibility row của Page Tab cũ.
 - Migration v13 giữ row `page_tab_id != NULL` và `page_tab_posts` hiện hữu để Group/Page runtime đang chạy không bị đổi observable behavior trong K4.5.1.

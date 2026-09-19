@@ -28,6 +28,7 @@ function createJob(jobs: PageWallJobRepository, scheduledAt = 2_000) {
     accountUid: '10001',
     accountName: 'Operator',
     content: 'hello scheduled wall',
+    hashtags: '{#sale|#hot}',
     imagePaths: ['C:\\media\\one.jpg']
   }, 1_000)
 }
@@ -45,6 +46,7 @@ describe('PageWallJobRepository', () => {
       pageUid: '90001',
       accountUid: '10001',
       content: 'hello scheduled wall',
+      hashtags: '{#sale|#hot}',
       imagePaths: ['C:\\media\\one.jpg']
     })
     expect(job.logs.at(-1)?.message).toContain('Đã tạo lịch')

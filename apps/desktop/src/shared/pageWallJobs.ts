@@ -32,6 +32,8 @@ export interface PageWallJobRecord {
   accountUid: string
   accountName: string | null
   content: string
+  /** Runtime-spin source; omitted for legacy jobs without separate hashtags. */
+  hashtags?: string
   imagePaths: string[]
   /** Derived from the audit marker for recurring jobs; absent/null for one-shot jobs. */
   occurrenceKey?: string | null

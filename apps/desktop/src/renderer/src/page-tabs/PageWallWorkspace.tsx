@@ -95,7 +95,12 @@ function postRefFromItem(item: ContentLibraryItem, variantIndex: number): PostRe
 function canonicalFromItem(item: ContentLibraryItem, variantIndex: number): PageWallCanonicalPostSelection | null {
   const ref = postRefFromItem(item, variantIndex)
   if (!ref) return null
-  return { ...ref, content: item.variants[variantIndex] ?? '', image: { ...item.image } }
+  return {
+    ...ref,
+    content: item.variants[variantIndex] ?? '',
+    ...(item.hashtags?.trim() ? { hashtags: item.hashtags.trim() } : {}),
+    image: { ...item.image }
+  }
 }
 function sourceSignature(source: PageWallPlanPostSource): unknown {
   return source.kind === 'canonical'
@@ -157,6 +162,7 @@ function PostEditorModal({ item, variantIndex, onClose, onSaved }: { item: Conte
   const safeIndex = item ? Math.min(variantIndex, Math.max(0, item.variants.length - 1)) : 0
   const [name, setName] = useState(item?.name ?? '')
   const [text, setText] = useState(item?.variants[safeIndex] ?? '')
+  const [hashtags, setHashtags] = useState(item?.hashtags ?? '')
   const [image, setImage] = useState<ContentLibraryImageConfig>(() => item ? { ...item.image } : { ...DEFAULT_CONTENT_LIBRARY_IMAGE })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -174,8 +180,8 @@ function PostEditorModal({ item, variantIndex, onClose, onSaved }: { item: Conte
       if (!variants.length) variants.push('')
       variants[safeIndex] = text
       const details = item
-        ? await window.pageAuto.updateContentLibraryItem({ id: item.id, contentSetId: CANONICAL_CONTENT_LIBRARY_SET_ID, name: name.trim(), enabled: true, variants, image })
-        : await window.pageAuto.createContentLibraryItem({ contentSetId: CANONICAL_CONTENT_LIBRARY_SET_ID, name: name.trim(), enabled: true, variants: [text], image })
+        ? await window.pageAuto.updateContentLibraryItem({ id: item.id, contentSetId: CANONICAL_CONTENT_LIBRARY_SET_ID, name: name.trim(), enabled: true, variants, hashtags: hashtags.trim(), image })
+        : await window.pageAuto.createContentLibraryItem({ contentSetId: CANONICAL_CONTENT_LIBRARY_SET_ID, name: name.trim(), enabled: true, variants: [text], hashtags: hashtags.trim(), image })
       const saved = item
         ? details.items.find((candidate) => candidate.id === item.id)
         : [...details.items].sort((left, right) => right.updatedAt - left.updatedAt || Math.abs(right.id) - Math.abs(left.id))[0]
@@ -190,6 +196,7 @@ function PostEditorModal({ item, variantIndex, onClose, onSaved }: { item: Conte
       {error ? <div className="page-tab-error">{error}</div> : null}
       <label><span>Tên bài</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="Ví dụ: Khuyến mãi tháng 9" autoFocus /></label>
       <label><span>Nội dung{item && item.variants.length > 1 ? ` · biến thể ${safeIndex + 1}/${item.variants.length}` : ''}</span><textarea value={text} onChange={(event) => setText(event.target.value)} placeholder="Nhập nội dung bài…" /></label>
+      <label><span>Hashtag cuối bài</span><input value={hashtags} onChange={(event) => setHashtags(event.target.value)} placeholder="{#BillMafia|#fomo} #PageAuto" /><small>Spin riêng sau nội dung; khi đăng Tường sẽ tự thêm dấu chấm cuối rồi mới ghép vào bài.</small></label>
       <label><span>Số ảnh mỗi bài</span><input aria-label="Số ảnh mỗi bài" type="number" min={1} max={50} value={image.imagesPerPost} onChange={(event) => setImage((current) => ({ ...current, imagesPerPost: Math.max(1, Math.min(50, Number(event.target.value) || 1)) }))} /><small>Mỗi lượt đăng lấy tối đa số ảnh này từ folder đã chọn.</small></label>
       <div className="page-wall-folder-row"><div><span>Folder ảnh</span><b>{image.folderPath || 'Không dùng ảnh'}</b></div><button className="pt-button secondary" type="button" onClick={() => void pickFolder()}>Chọn folder</button><button type="button" disabled={!image.folderPath} onClick={() => setImage((current) => ({ ...current, folderPath: '' }))}>Bỏ ảnh</button></div>
       <footer><button type="button" onClick={onClose}>Hủy</button><button className="pt-button primary" type="button" disabled={!canSave} onClick={() => void save()}>{busy ? 'Đang lưu…' : 'Lưu vào Thư viện'}</button></footer>
@@ -486,7 +493,7 @@ export function PageWallWorkspace({ activePageId: controlledPageId, scoped = fal
       <section className="pt-panel page-wall-region content" data-testid="page-wall-region-content">
         <div className="page-wall-region-head"><div><p className="eyebrow">2 · BÀI VIẾT</p><h3>Bài đang chọn</h3></div></div>
         <div className={`page-wall-selected-post ${canonical ? 'ready' : 'empty'}`} data-testid="page-wall-selected-post"><div><small>{canonical ? 'ĐÃ CHỌN' : 'CHƯA CHỌN BÀI'}</small><strong>{canonical ? `#${canonical.postId} · ${canonical.postName}` : 'Chọn một bài trước khi chạy'}</strong><span>{canonical ? `${selectedItem?.variants.length || 1} biến thể · ${canonical.image.folderPath ? `${canonical.image.imagesPerPost} ảnh/lượt` : 'Không ảnh'}` : 'Bài được dùng cho Đăng ngay; lịch sẽ tự snapshot bài riêng.'}</span></div><div className="page-wall-post-actions"><button className="pt-button secondary" type="button" disabled={busy} onClick={() => void chooseFromLibrary('workspace')}>Chọn từ Thư viện</button><button type="button" disabled={busy} onClick={() => openPostEditor('workspace', true)}>Thêm bài</button><button type="button" disabled={busy || !canonical || !selectedItem} onClick={() => openPostEditor('workspace', false)}>Sửa bài</button><button type="button" disabled={busy || !canonical} onClick={() => setCanonical(null)}>Bỏ chọn</button></div></div>
-        {canonical ? <div className="page-wall-post-preview"><p>{canonical.content || 'Bài chỉ có ảnh.'}</p>{canonical.image.folderPath ? <small>Folder ảnh: {canonical.image.folderPath}</small> : <small>Không dùng ảnh.</small>}</div> : <div className="page-wall-post-empty"><b>1.</b><span>Bấm <strong>Chọn từ Thư viện</strong> để dùng bài có sẵn, hoặc <strong>Thêm bài</strong> để tạo bài mới vào thư viện chung.</span></div>}
+        {canonical ? <div className="page-wall-post-preview"><p>{canonical.content || 'Bài chỉ có ảnh.'}</p>{canonical.hashtags ? <small>Hashtag riêng: {canonical.hashtags}</small> : null}{canonical.image.folderPath ? <small>Folder ảnh: {canonical.image.folderPath}</small> : <small>Không dùng ảnh.</small>}</div> : <div className="page-wall-post-empty"><b>1.</b><span>Bấm <strong>Chọn từ Thư viện</strong> để dùng bài có sẵn, hoặc <strong>Thêm bài</strong> để tạo bài mới vào thư viện chung.</span></div>}
       </section>
 
       <section className="pt-panel page-wall-region control" data-testid="page-wall-region-control">
