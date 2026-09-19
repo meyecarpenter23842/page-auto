@@ -403,3 +403,30 @@ html[data-theme='dark'] .proxy-builder-live-badge.pending {
   background: var(--pa-dark-surface-2);
   color: var(--pa-dark-muted);
 }
+
+
+.proxy-builder-ssh-diagnostic {
+  grid-column: 2;
+  min-width: 0;
+  padding-top: 2px;
+}
+
+.proxy-builder-ssh-diagnostic pre {
+  max-height: 240px;
+  margin: 7px 0 0;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid #d7dee8;
+  border-radius: 7px;
+  background: #f8fafc;
+  color: #334155;
+  font: 10px/1.45 Consolas, 'Courier New', monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+html[data-theme='dark'] .proxy-builder-ssh-diagnostic pre {
+  border-color: var(--pa-dark-border);
+  background: var(--pa-dark-surface-2);
+  color: var(--pa-dark-text-soft);
+}

@@ -24,6 +24,15 @@ describe('Proxy Builder Batch 4 checker/export', () => {
     expect(ipc).toContain("return { cancelled: false, path, fileName: basename(path) }")
   })
 
+  it('exposes copyable SSH verbose diagnostics instead of collapsing native failures to one message', () => {
+    expect(workspace).toContain('Chi tiết SSH')
+    expect(workspace).toContain('Copy log SSH')
+    expect(workspace).toContain('Key fingerprint:')
+    expect(workspace).toContain('Offering:')
+    expect(workspace).toContain('Server accepts:')
+    expect(workspace).toContain('Exit code:')
+  })
+
   it('runs checker networking in Electron Main, not React', () => {
     expect(workspace).toContain('window.pageAutoProxyBuilder.startChecker')
     expect(workspace).toContain('window.pageAutoProxyBuilder.cancelChecker')
