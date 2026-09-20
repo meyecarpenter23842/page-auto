@@ -363,21 +363,57 @@ def install_file(src, dst, mode):
     os.chmod(dst, mode)
 
 
-def allocate_ipv6(count, interface, old_manifest, newly_added):
+def allocate_ipv6(count, interface, old_manifest, newly_added, allocated_cidr=None):
     if count <= 0:
         return []
     global_cidrs = current_addresses(6)
     old_managed = list(old_manifest.get('managed_ipv6', [])) if isinstance(old_manifest, dict) else []
     chosen = []
+
+    managed_network = None
+    if allocated_cidr:
+        try:
+            managed_network = ipaddress.ip_network(allocated_cidr, strict=False)
+        except ValueError:
+            raise RuntimeError('OCI Flexible IPv6 CIDR không hợp lệ.')
+        if managed_network.version != 6 or managed_network.prefixlen >= 128:
+            raise RuntimeError('OCI phải cấp một IPv6 CIDR rộng hơn /128 để tạo pool proxy.')
+
     for cidr in old_managed:
         try:
             iface = ipaddress.ip_interface(cidr)
         except ValueError:
             continue
+        if managed_network is not None and iface.ip not in managed_network:
+            continue
         if source_probe(str(iface.ip), 6):
             chosen.append(cidr)
             if len(chosen) == count:
                 return chosen
+
+    existing_ips = {str(ipaddress.ip_interface(cidr).ip) for cidr in global_cidrs}
+    if managed_network is not None:
+        # OCI routes the flexible CIDR to this VNIC. Bind proxy source addresses as /128 aliases;
+        # never derive a fake pool from the instance's ordinary /128 host address.
+        attempts = max(128, count * 3)
+        for offset in range(1, attempts + 1):
+            candidate_int = int(managed_network.network_address) + offset
+            if candidate_int > int(managed_network.broadcast_address):
+                break
+            address = str(ipaddress.ip_address(candidate_int))
+            if address in existing_ips:
+                continue
+            cidr = add_ipv6(address, 128, interface)
+            newly_added.append(cidr)
+            existing_ips.add(address)
+            if source_probe(address, 6):
+                chosen.append(cidr)
+                if len(chosen) == count:
+                    return chosen
+            else:
+                del_ipv6(cidr, interface)
+                newly_added.remove(cidr)
+        raise RuntimeError(f'OCI CIDR đã cấp nhưng chỉ xác minh được {len(chosen)}/{count} IPv6 source-bind.')
 
     seeds = [cidr for cidr in global_cidrs if cidr not in old_managed]
     if not seeds:
@@ -386,7 +422,8 @@ def allocate_ipv6(count, interface, old_manifest, newly_added):
         raise RuntimeError('VPS không có IPv6 global để xây pool.')
     seed = ipaddress.ip_interface(seeds[0])
     network = seed.network
-    existing_ips = {str(ipaddress.ip_interface(cidr).ip) for cidr in global_cidrs}
+    if network.prefixlen >= 128 and count > 1:
+        raise RuntimeError('Provider chỉ cấp IPv6 /128; cần một routed IPv6 CIDR/prefix để tạo nhiều proxy.')
     start_host = max(256, int(seed.ip) - int(network.network_address) + 256)
     attempts = max(128, count * 12)
     for offset in range(attempts):
@@ -804,6 +841,7 @@ def main():
     mode = request.get('ipMode')
     listen_host = request.get('listenHost') or request.get('host')
     auth = request.get('proxyAuth') or {'type': 'none'}
+    oci_ipv6_cidr = request.get('ociIpv6Cidr')
     if count < 1 or start_port < 1 or start_port + count - 1 > 65535:
         raise RuntimeError('Số lượng proxy hoặc dải port không hợp lệ.')
     if mode not in ('ipv4', 'ipv6', 'both'):
@@ -836,7 +874,7 @@ def main():
         ipv4_pool = usable_ipv4()
         ipv4_count, ipv6_count = choose_counts(mode, count, ipv4_pool)
         progress('provisioning', 55, f'IPv4 usable: {len(ipv4_pool)}; cần IPv6: {ipv6_count}')
-        ipv6_cidrs = allocate_ipv6(ipv6_count, interface, old_manifest, newly_added)
+        ipv6_cidrs = allocate_ipv6(ipv6_count, interface, old_manifest, newly_added, oci_ipv6_cidr)
         ipv6_pool = [str(ipaddress.ip_interface(cidr).ip) for cidr in ipv6_cidrs]
 
         mappings = []

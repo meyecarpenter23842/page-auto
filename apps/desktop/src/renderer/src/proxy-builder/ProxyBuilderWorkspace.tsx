@@ -42,6 +42,9 @@ function ipv6Summary(capability: ProxyBuilderCapability | null): string {
   if (!capability) return 'Chưa kiểm tra'
   if (!capability.ipv6Addresses.length) return 'Không có'
   const prefixLength = capability.ipv6Prefix?.split('/')[1]
+  if (!capability.supportsIpv6 && capability.cloudProvider === 'oci') {
+    return `${prefixLength ? `/${prefixLength}` : 'Global'} · OCI CIDR bootstrap`
+  }
   return `${prefixLength ? `/${prefixLength}` : 'Global'} · ${capability.supportsIpv6 ? 'Outbound OK' : 'Chưa đạt probe'}`
 }
 
@@ -151,11 +154,18 @@ export function ProxyBuilderWorkspace() {
   const results = provision?.results ?? []
   const checkerResults = checker?.results ?? []
   const checkerRunning = checker?.status === 'running'
+  const needsOciIpv6Bootstrap = Boolean(
+    capability?.cloudProvider === 'oci'
+    && capability.ipv6Addresses.length > 0
+    && !capability.supportsIpv6
+    && proxyIpMode !== 'ipv4'
+  )
+  const ipv6ModeReady = Boolean(capability?.supportsIpv6 || needsOciIpv6Bootstrap)
   const selectedModeReady = proxyIpMode === 'ipv4'
     ? Boolean(capability?.supportsIpv4)
     : proxyIpMode === 'ipv6'
-      ? Boolean(capability?.supportsIpv6)
-      : Boolean(capability?.supportsIpv4 && capability?.supportsIpv6)
+      ? ipv6ModeReady
+      : Boolean(capability?.supportsIpv4 && ipv6ModeReady)
   const cloudFirewallAction = provision?.cloudFirewallAction ?? null
 
   useEffect(() => {
@@ -518,14 +528,21 @@ export function ProxyBuilderWorkspace() {
                 <button className="button secondary" type="button" disabled={!provisionRunning} onClick={() => void cancelProvision()}>Dừng</button>
                 <span>{capability
                   ? selectedModeReady
-                    ? 'Capability hợp lệ; app tự tạo proxy, xử lý host firewall và test từ Windows.'
+                    ? needsOciIpv6Bootstrap
+                      ? 'OCI đang có IPv6 /128; Page-Auto sẽ cấp Flexible IPv6 CIDR trước khi tạo pool.'
+                      : 'Capability hợp lệ; app tự tạo proxy, xử lý host firewall và test từ Windows.'
                     : 'VPS chưa đạt capability cho loại proxy đang chọn.'
                   : 'Kiểm tra SSH trước khi tạo proxy.'}</span>
               </div>
-              {cloudFirewallAction?.provider === 'oci' ? (
+              {cloudFirewallAction?.provider === 'oci' || needsOciIpv6Bootstrap ? (
                 <div className="proxy-builder-inline-actions">
-                  <span className="proxy-builder-muted">{cloudFirewallAction.message}</span>
-                  <button className="button secondary" type="button" disabled={sshChecking || provisionRunning} onClick={() => void pickOciConfigFile(true)}>Cấu hình OCI</button>
+                  <span className="proxy-builder-muted">{cloudFirewallAction?.message ?? 'OCI IPv6 /128 cần Flexible IPv6 CIDR; chọn OCI config để app tự cấp dải hợp lệ.'}</span>
+                  <button
+                    className="button secondary"
+                    type="button"
+                    disabled={sshChecking || provisionRunning}
+                    onClick={() => void (cloudFirewallAction ? pickOciConfigFile(true) : pickOciConfigFile(false))}
+                  >Cấu hình OCI</button>
                   {ociConfigFileName ? <span className="proxy-builder-muted">Đã chọn: {ociConfigFileName}</span> : null}
                 </div>
               ) : null}
