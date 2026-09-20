@@ -1199,8 +1199,10 @@ if __name__ == '__main__':
     try:
         main()
     except oci.exceptions.ServiceError as error:
-        if error.status in (401, 403, 404):
+        if error.status in (401, 403):
             print('INSTANCE_PRINCIPAL_IAM: VPS chưa được cấp quyền OCI qua Dynamic Group/IAM Policy để quản lý IPv6/Security List.', file=sys.stderr)
+        elif error.status == 404:
+            print(f'OCI_NOT_FOUND: {error.message}', file=sys.stderr)
         else:
             print(f'OCI_SERVICE_ERROR {error.status}: {error.message}', file=sys.stderr)
         sys.exit(23)
