@@ -533,11 +533,6 @@ def firewall_descriptor(start_port, end_port, preferred=None):
             **({'zone': preferred.get('zone')} if preferred.get('zone') else {}),
             **({'nft_chain': preferred.get('nft_chain')} if preferred.get('nft_chain') else {}),
         }
-    if ufw_active():
-        return {'backend': 'ufw', 'driver': 'ufw', 'start_port': start_port, 'end_port': end_port, 'marker': FIREWALL_MARKER}
-    if firewalld_active():
-        zone = run(['firewall-cmd', '--get-default-zone'], check=False).stdout.strip() or 'public'
-        return {'backend': 'firewalld', 'driver': 'firewalld', 'zone': zone, 'start_port': start_port, 'end_port': end_port, 'marker': FIREWALL_MARKER}
     ipt = iptables_driver()
     if ipt:
         return {
@@ -547,6 +542,11 @@ def firewall_descriptor(start_port, end_port, preferred=None):
             'end_port': end_port,
             'marker': FIREWALL_MARKER,
         }
+    if ufw_active():
+        return {'backend': 'ufw', 'driver': 'ufw', 'start_port': start_port, 'end_port': end_port, 'marker': FIREWALL_MARKER}
+    if firewalld_active():
+        zone = run(['firewall-cmd', '--get-default-zone'], check=False).stdout.strip() or 'public'
+        return {'backend': 'firewalld', 'driver': 'firewalld', 'zone': zone, 'start_port': start_port, 'end_port': end_port, 'marker': FIREWALL_MARKER}
     nft_chain = nft_input_chain()
     if nft_chain:
         return {'backend': 'nftables', 'driver': 'nft-native', 'nft_chain': nft_chain, 'start_port': start_port, 'end_port': end_port, 'marker': FIREWALL_MARKER}
@@ -668,6 +668,39 @@ def apply_nft_native(start_port, end_port, chain_info):
     ])
 
 
+def verify_firewall(descriptor):
+    if not isinstance(descriptor, dict):
+        return False
+    driver = descriptor.get('driver')
+    start_port = int(descriptor.get('start_port', 0) or 0)
+    end_port = int(descriptor.get('end_port', 0) or 0)
+    if start_port < 1 or end_port < start_port:
+        return False
+    if driver == 'none':
+        return True
+    if driver == 'iptables':
+        port_value = str(start_port) if start_port == end_port else f'{start_port}:{end_port}'
+        jump = run(['iptables', '-C', 'INPUT', '-m', 'comment', '--comment', FIREWALL_MARKER, '-j', IPTABLES_CHAIN], check=False)
+        allow = run(['iptables', '-C', IPTABLES_CHAIN, '-p', 'tcp', '--dport', port_value, '-m', 'comment', '--comment', FIREWALL_MARKER, '-j', 'ACCEPT'], check=False)
+        return jump.returncode == 0 and allow.returncode == 0
+    if driver == 'ufw':
+        status = run(['ufw', 'status'], check=False)
+        return status.returncode == 0 and FIREWALL_MARKER in (status.stdout or '')
+    if driver == 'firewalld':
+        zone = descriptor.get('zone') or 'public'
+        status = run(['firewall-cmd', '--zone', zone, '--query-service', FIREWALLD_SERVICE], check=False)
+        return status.returncode == 0
+    if driver == 'nft-native':
+        payload = nft_ruleset()
+        return any(
+            isinstance(item, dict)
+            and isinstance(item.get('rule'), dict)
+            and item['rule'].get('comment') == FIREWALL_MARKER
+            for item in payload.get('nftables', [])
+        )
+    return False
+
+
 def cleanup_firewall(descriptor):
     if not isinstance(descriptor, dict):
         return
@@ -693,8 +726,26 @@ def apply_firewall(start_port, end_port, preferred=None):
         apply_iptables(start_port, end_port)
     elif driver == 'nft-native':
         apply_nft_native(start_port, end_port, descriptor.get('nft_chain'))
+    if not verify_firewall(descriptor):
+        raise RuntimeError(f"Host firewall không xác minh được rule TCP {start_port}-{end_port} sau khi áp dụng.")
     return descriptor
 
+
+def listeners_ready(mappings):
+    result = run(['ss', '-ltnH'], check=False)
+    if result.returncode != 0:
+        return False
+    listening_ports = set()
+    for line in (result.stdout or '').splitlines():
+        fields = line.split()
+        if len(fields) < 4:
+            continue
+        local = fields[3]
+        try:
+            listening_ports.add(int(local.rsplit(':', 1)[1]))
+        except (ValueError, IndexError):
+            continue
+    return all(int(mapping.get('port', 0) or 0) in listening_ports for mapping in mappings)
 
 
 def backup_files(backup_dir):
@@ -848,6 +899,10 @@ def main():
         if active.returncode != 0 or active.stdout.strip() != 'active':
             status = run(['systemctl', 'status', SERVICE_NAME, '--no-pager', '-n', '20'], check=False)
             raise RuntimeError((status.stdout or status.stderr or 'Proxy service không active.').strip()[-1600:])
+        if not listeners_ready(mappings):
+            sockets = run(['ss', '-ltnpH'], check=False)
+            detail = (sockets.stdout or sockets.stderr or '').strip()[-1200:]
+            raise RuntimeError('Proxy service active nhưng chưa LISTEN đủ port đã tạo. ' + detail)
 
         progress('self_test', 88, 'Đang self-test từng listener qua proxy thật')
         for mapping in mappings:
