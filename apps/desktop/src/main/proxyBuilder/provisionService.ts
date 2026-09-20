@@ -17,7 +17,7 @@ import { PROXY_RUNTIME_PY, PROXY_RESTORE_PY, PROXY_PROVISIONER_PY, PROXY_SYSTEMD
 import { applyProxyBuilderSshAuth } from './sshAuth'
 import { runNativeOpenSsh, shouldUseNativeOpenSsh } from './nativeOpenSsh'
 import { checkProxyLineNow } from './checkerService'
-import { ensureOciSecurityListIngress } from './ociCloudFirewallService'
+import { ensureOciSecurityListIngress, resolveOciConfigPath } from './ociCloudFirewallService'
 
 const PROVISION_TIMEOUT_MS = 15 * 60_000
 const COMMAND_TIMEOUT_MS = 60_000
@@ -421,40 +421,81 @@ export class ProxyBuilderProvisionService {
       if (result.code !== 0) throw new Error((result.stderr || result.stdout || 'Provision command failed.').trim().slice(-2200))
       const remote = parseProvisionResult(result.stdout)
       if (this.active?.cancelRequested) throw new Error('Provision cancelled')
-      if (remote.cloud?.provider === 'oci') {
-        if (!input.cloudFirewall?.configPath) {
-          throw new Error('Oracle Cloud VPS: chưa chọn OCI config để Page-Auto mở Security List.')
-        }
+      this.update(runId, { phase: 'self_test', percent: 92, message: 'Đang kiểm tra khả năng truy cập proxy từ máy Windows…' })
+      let verified = await verifyProvisionedProxies(remote, input.proxyAuth)
+      let externalDead = verified.results.filter((item) => item.status === 'error').length
+      let cloudFirewallAction: ProxyBuilderProvisionSnapshot['cloudFirewallAction']
+
+      if (externalDead > 0 && isCloudFirewallTimeout(verified.errors) && remote.cloud?.provider === 'oci') {
         if (input.proxyAuth.type !== 'basic') {
-          throw new Error('Oracle Cloud auto-open chỉ bật khi proxy có User / Password để tránh mở proxy không xác thực ra Internet.')
+          cloudFirewallAction = {
+            provider: 'oci',
+            status: 'required',
+            message: 'Oracle Cloud đang chặn port. Bật User / Password trước khi cấu hình OCI để tránh mở proxy không xác thực ra Internet.'
+          }
+        } else {
+          const ociConfigPath = resolveOciConfigPath(input.cloudFirewall?.configPath)
+          if (!ociConfigPath) {
+            cloudFirewallAction = {
+              provider: 'oci',
+              status: 'required',
+              message: 'Oracle Cloud đang chặn port. Máy này chưa có ~/.oci/config; chọn Cấu hình OCI để Page-Auto tự mở Security List.'
+            }
+          } else {
+            try {
+              this.update(runId, {
+                phase: 'self_test',
+                percent: 95,
+                message: 'Windows đang timeout; đã nhận OCI config và đang tự mở Security List…'
+              })
+              await ensureOciSecurityListIngress({
+                configPath: ociConfigPath,
+                ...(input.cloudFirewall?.profile?.trim() ? { profile: input.cloudFirewall.profile.trim() } : {}),
+                region: remote.cloud.region,
+                vnicId: remote.cloud.vnicId,
+                startPort: input.startPort,
+                endPort: input.startPort + input.count - 1
+              })
+              if (this.active?.cancelRequested) throw new Error('Provision cancelled')
+              this.update(runId, { phase: 'self_test', percent: 97, message: 'Đã xử lý Oracle Security List; đang test lại từ Windows…' })
+              verified = await verifyProvisionedProxies(remote, input.proxyAuth)
+              externalDead = verified.results.filter((item) => item.status === 'error').length
+              if (externalDead > 0 && isCloudFirewallTimeout(verified.errors)) {
+                cloudFirewallAction = {
+                  provider: 'oci',
+                  status: 'failed',
+                  message: 'Đã xử lý Oracle Security List nhưng Windows vẫn timeout. Có thể NSG hoặc cloud firewall khác vẫn đang chặn port.'
+                }
+              }
+            } catch (error) {
+              if (this.active?.cancelRequested) throw error
+              cloudFirewallAction = {
+                provider: 'oci',
+                status: 'failed',
+                message: 'Không tự mở được Oracle Cloud ingress: ' + errorMessage(error)
+              }
+            }
+          }
         }
-        this.update(runId, {
-          phase: 'self_test',
-          percent: 91,
-          message: 'Đang mở Oracle Cloud Security List cho đúng dải port…'
-        })
-        await ensureOciSecurityListIngress({
-          configPath: input.cloudFirewall.configPath,
-          ...(input.cloudFirewall.profile?.trim() ? { profile: input.cloudFirewall.profile.trim() } : {}),
-          region: remote.cloud.region,
-          vnicId: remote.cloud.vnicId,
-          startPort: input.startPort,
-          endPort: input.startPort + input.count - 1
-        })
       }
-      if (this.active?.cancelRequested) throw new Error('Provision cancelled')
-      this.update(runId, { phase: 'self_test', percent: 94, message: 'Đang kiểm tra khả năng truy cập proxy từ máy Windows…' })
-      const verified = await verifyProvisionedProxies(remote, input.proxyAuth)
-      const externalDead = verified.results.filter((item) => item.status === 'error').length
+
       const firewallRange = remote.firewall
         ? remote.firewall.start_port + '-' + remote.firewall.end_port
         : input.startPort + '-' + (input.startPort + input.count - 1)
       const message = externalDead === 0
         ? 'Đã tạo ' + remote.mappings.length + ' proxy và xác minh LIVE từ máy này.'
-        : isCloudFirewallTimeout(verified.errors)
-          ? 'Host firewall đã mở TCP ' + firewallRange + ' nhưng Windows vẫn timeout. Cloud firewall / Security List / NSG đang chặn port.'
-          : 'Host firewall đã xử lý TCP ' + firewallRange + ' nhưng ' + externalDead + ' proxy chưa LIVE từ Windows. ' + (verified.errors[0] ?? 'Hãy kiểm tra kết nối ngoài VPS.')
-      this.update(runId, { status: 'completed', phase: 'complete', percent: 100, message, results: verified.results })
+        : cloudFirewallAction?.message
+          ?? (isCloudFirewallTimeout(verified.errors)
+            ? 'Host firewall đã mở TCP ' + firewallRange + ' nhưng Windows vẫn timeout. Cloud firewall / Security List / NSG đang chặn port.'
+            : 'Host firewall đã xử lý TCP ' + firewallRange + ' nhưng ' + externalDead + ' proxy chưa LIVE từ Windows. ' + (verified.errors[0] ?? 'Hãy kiểm tra kết nối ngoài VPS.'))
+      this.update(runId, {
+        status: 'completed',
+        phase: 'complete',
+        percent: 100,
+        message,
+        results: verified.results,
+        ...(cloudFirewallAction ? { cloudFirewallAction } : {})
+      })
     } catch (error) {
       const cancelled = this.active?.runId === runId && this.active.cancelRequested
       this.update(runId, {

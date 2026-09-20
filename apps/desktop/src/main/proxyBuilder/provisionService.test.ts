@@ -5,6 +5,7 @@ const shared = readFileSync(new URL('../../shared/proxyBuilder.ts', import.meta.
 const service = readFileSync(new URL('./provisionService.ts', import.meta.url), 'utf8')
 const assets = readFileSync(new URL('./remoteAssets.ts', import.meta.url), 'utf8')
 const sshAuth = readFileSync(new URL('./sshAuth.ts', import.meta.url), 'utf8')
+const ociService = readFileSync(new URL('./ociCloudFirewallService.ts', import.meta.url), 'utf8')
 
 describe('Proxy Builder Batch 3 safety contracts', () => {
   it('does not expose proxy passwords in result contracts or runtime snapshots', () => {
@@ -97,15 +98,17 @@ describe('Proxy Builder Batch 3 safety contracts', () => {
   })
 
 
-  it('opens OCI Security List before Windows reachability verification', () => {
-    const ociIndex = service.indexOf('ensureOciSecurityListIngress({')
+  it('tests from Windows first and uses OCI only as a timeout fallback', () => {
     const verifyIndex = service.indexOf('verifyProvisionedProxies(remote, input.proxyAuth)')
-    expect(service).toContain("from './ociCloudFirewallService'")
-    expect(assets).toContain("oci_metadata_value('vnics/0/vnicId')")
-    expect(assets).toContain("'provider': 'oci'")
-    expect(service).toContain('Oracle Cloud Security List')
-    expect(ociIndex).toBeGreaterThan(0)
-    expect(verifyIndex).toBeGreaterThan(ociIndex)
+    const ociIndex = service.indexOf('ensureOciSecurityListIngress({')
+    expect(service).toContain("resolveOciConfigPath(input.cloudFirewall?.configPath)")
+    expect(service).toContain("remote.cloud?.provider === 'oci'")
+    expect(service).toContain("status: 'required'")
+    expect(service).toContain("status: 'failed'")
+    expect(service).not.toContain('Oracle Cloud VPS: chưa chọn OCI config để Page-Auto mở Security List.')
+    expect(ociService).toContain("join(homeDirectory, '.oci', 'config')")
+    expect(verifyIndex).toBeGreaterThan(0)
+    expect(ociIndex).toBeGreaterThan(verifyIndex)
   })
 
 })

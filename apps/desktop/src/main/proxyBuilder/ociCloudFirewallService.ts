@@ -1,7 +1,7 @@
 import { createHash, createSign } from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, isAbsolute, resolve } from 'node:path'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { request as httpsRequest } from 'node:https'
 
 interface OciCredentials {
@@ -102,6 +102,13 @@ export function parseOciConfig(content: string, profile = 'DEFAULT', configPath 
     keyFile: expandConfigPath(keyFileRaw, configPath),
     ...(selected.get('pass_phrase')?.trim() ? { passPhrase: selected.get('pass_phrase')!.trim() } : {})
   }
+}
+
+export function resolveOciConfigPath(selectedPath?: string, homeDirectory = homedir()): string | null {
+  const explicit = selectedPath?.trim()
+  if (explicit && existsSync(explicit)) return explicit
+  const defaultPath = join(homeDirectory, '.oci', 'config')
+  return existsSync(defaultPath) ? defaultPath : null
 }
 
 function loadCredentials(configPath: string, profile: string): OciCredentials {
