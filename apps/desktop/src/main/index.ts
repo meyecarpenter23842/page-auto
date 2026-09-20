@@ -18,7 +18,6 @@ let proxyBuilderTextRuntime: ProxyBuilderTextIpcRuntime | null = null
 
 app.whenReady().then(() => {
   updaterRuntime ??= registerAppUpdaterIpc()
-  proxyBuilderRuntime ??= registerProxyBuilderIpc()
   proxyBuilderTextRuntime ??= registerProxyBuilderTextIpc()
 
   let dataDirectory: string
@@ -36,6 +35,7 @@ app.whenReady().then(() => {
   }
 
   finiteDatabase = initializeDatabase(join(dataDirectory, 'page-auto.sqlite'))
+  proxyBuilderRuntime ??= registerProxyBuilderIpc(finiteDatabase.client)
   finiteRuntime = registerPageWallFiniteRuntime(finiteDatabase.client, dataDirectory)
   zaloRuntime = registerZaloIpc(finiteDatabase.client, dataDirectory)
 })

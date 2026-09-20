@@ -8,10 +8,12 @@ const textPreload = readFileSync(new URL('../../../preload/proxyBuilderTextBridg
 const ipc = readFileSync(new URL('../../../main/proxyBuilderIpc.ts', import.meta.url), 'utf8')
 const checker = readFileSync(new URL('../../../main/proxyBuilder/checkerService.ts', import.meta.url), 'utf8')
 const packagedSmoke = readFileSync(new URL('../../../../scripts/proxy-builder-packaged-ui-smoke.mjs', import.meta.url), 'utf8')
+const inventoryPanel = readFileSync(new URL('./ProxyInventoryPanel.tsx', import.meta.url), 'utf8')
+const bindingPanel = readFileSync(new URL('./ProxyAccountBindingPanel.tsx', import.meta.url), 'utf8')
 
-describe('Proxy Builder Batch 4 checker/export', () => {
-  it('keeps Proxy Builder visible as a top-level route', () => {
-    expect(app).toContain("id: 'proxy-builder', label: 'Proxy Builder'")
+describe('Proxy Center inventory/binding + checker/export', () => {
+  it('keeps Proxy Center visible as a top-level route', () => {
+    expect(app).toContain("id: 'proxy-builder', label: 'Proxy Center'")
     expect(app).toContain("activeRoute === 'proxy-builder' ? <ProxyBuilderWorkspace />")
   })
 
@@ -64,12 +66,23 @@ describe('Proxy Builder Batch 4 checker/export', () => {
     expect(checker).toContain("maskedProxy:")
   })
 
-  it('adds a packaged UI smoke that opens Proxy Builder and exercises a deterministic DEAD proxy', () => {
-    expect(packagedSmoke).toContain("name: 'Proxy Builder'")
+  it('adds a packaged UI smoke that opens Proxy Center and exercises a deterministic DEAD proxy', () => {
+    expect(packagedSmoke).toContain("name: 'Proxy Center'")
     expect(packagedSmoke).toContain("name: 'Proxy Checker'")
     expect(packagedSmoke).toContain("server.listen(0, '127.0.0.1'")
     expect(packagedSmoke).toContain("hasText: 'DEAD'")
     expect(packagedSmoke).toContain('407 Proxy Authentication Required')
+  })
+
+  it('adds persistent inventory and canonical Account proxy binding surfaces', () => {
+    expect(workspace).toContain('Kho Proxy')
+    expect(workspace).toContain('Gán Account')
+    expect(workspace).toContain('Lưu vào Kho')
+    expect(inventoryPanel).toContain('window.pageAutoProxyBuilder.upsertInventory')
+    expect(inventoryPanel).toContain('window.pageAutoProxyBuilder.checkInventory')
+    expect(bindingPanel).toContain('window.pageAutoProxyBuilder.assignInventoryProxy')
+    expect(bindingPanel).toContain('window.pageAutoProxyBuilder.clearAccountProxy')
+    expect(bindingPanel).toContain('proxy fields của Account Manager')
   })
 
   it('keeps OCI API credentials in Main and requires a local config for Oracle VPS', () => {
