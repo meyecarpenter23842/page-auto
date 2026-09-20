@@ -118,8 +118,6 @@ export function ProxyBuilderWorkspace() {
   const [sshKeyPath, setSshKeyPath] = useState('')
   const [sshKeyFileName, setSshKeyFileName] = useState('')
   const [sshKeyPassphrase, setSshKeyPassphrase] = useState('')
-  const [ociConfigPath, setOciConfigPath] = useState('')
-  const [ociConfigFileName, setOciConfigFileName] = useState('')
   const [proxyIpMode, setProxyIpMode] = useState<ProxyIpMode>('ipv6')
   const [proxyCount, setProxyCount] = useState(300)
   const [startPort, setStartPort] = useState(3128)
@@ -217,7 +215,7 @@ export function ProxyBuilderWorkspace() {
     setProxyPassword(randomAuthToken(20))
   }
 
-  const startProvisionRequest = async (cloudConfigPath?: string) => {
+  const startProvisionRequest = async () => {
     if (!capability || provisionRunning) return
     setNotice(null)
     try {
@@ -231,10 +229,7 @@ export function ProxyBuilderWorkspace() {
         startPort,
         ipMode: proxyIpMode,
         count: proxyCount,
-        proxyAuth,
-        ...(cloudConfigPath
-          ? { cloudFirewall: { provider: 'oci' as const, configPath: cloudConfigPath } }
-          : {})
+        proxyAuth
       })
       setProvision(next)
       setCreatedExportAuth(proxyAuth)
@@ -261,20 +256,6 @@ export function ProxyBuilderWorkspace() {
     }
   }
 
-  const pickOciConfigFile = async (retryAfterPick = false) => {
-    if (sshChecking || provisionRunning) return
-    setNotice(null)
-    try {
-      const result = await window.pageAutoProxyBuilder.pickOciConfig()
-      if (result.cancelled || !result.path) return
-      setOciConfigPath(result.path)
-      setOciConfigFileName(result.fileName ?? 'OCI config')
-      if (retryAfterPick) await startProvisionRequest(result.path)
-    } catch (error) {
-      setNotice(errorMessage(error))
-    }
-  }
-
   const checkSsh = async () => {
     if (sshChecking || provisionRunning) return
     setSshChecking(true)
@@ -295,7 +276,7 @@ export function ProxyBuilderWorkspace() {
     }
   }
 
-  const createProxy = async () => startProvisionRequest(ociConfigPath || undefined)
+  const createProxy = async () => startProvisionRequest()
 
   const cancelProvision = async () => {
     if (!provisionRunning || !provision) return
@@ -529,21 +510,18 @@ export function ProxyBuilderWorkspace() {
                 <span>{capability
                   ? selectedModeReady
                     ? needsOciIpv6Bootstrap
-                      ? 'OCI đang có IPv6 /128; Page-Auto sẽ cấp Flexible IPv6 CIDR trước khi tạo pool.'
+                      ? 'OCI đang có IPv6 /128; Page-Auto sẽ tự dùng quyền của VPS để cấp Flexible IPv6 CIDR.'
                       : 'Capability hợp lệ; app tự tạo proxy, xử lý host firewall và test từ Windows.'
                     : 'VPS chưa đạt capability cho loại proxy đang chọn.'
                   : 'Kiểm tra SSH trước khi tạo proxy.'}</span>
               </div>
-              {cloudFirewallAction?.provider === 'oci' || needsOciIpv6Bootstrap ? (
+              {needsOciIpv6Bootstrap ? (
                 <div className="proxy-builder-inline-actions">
-                  <span className="proxy-builder-muted">{cloudFirewallAction?.message ?? 'OCI IPv6 /128 cần Flexible IPv6 CIDR; chọn OCI config để app tự cấp dải hợp lệ.'}</span>
-                  <button
-                    className="button secondary"
-                    type="button"
-                    disabled={sshChecking || provisionRunning}
-                    onClick={() => void (cloudFirewallAction ? pickOciConfigFile(true) : pickOciConfigFile(false))}
-                  >Cấu hình OCI</button>
-                  {ociConfigFileName ? <span className="proxy-builder-muted">Đã chọn: {ociConfigFileName}</span> : null}
+                  <span className="proxy-builder-muted">Không cần file OCI; Page-Auto sẽ dùng Instance Principal của VPS.</span>
+                </div>
+              ) : cloudFirewallAction?.provider === 'oci' ? (
+                <div className="proxy-builder-inline-actions">
+                  <span className="proxy-builder-muted">{cloudFirewallAction.message}</span>
                 </div>
               ) : null}
             </section>
