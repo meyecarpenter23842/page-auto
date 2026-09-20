@@ -86,6 +86,19 @@ describe('Proxy Builder Batch 3 safety contracts', () => {
     expect(assets).not.toContain("--dport', '3128'")
   })
 
+  it('prefers a directly verifiable iptables INPUT guard ahead of distro firewall wrappers', () => {
+    const descriptorStart = assets.indexOf('def firewall_descriptor')
+    const descriptorEnd = assets.indexOf('def cleanup_ufw', descriptorStart)
+    const descriptor = assets.slice(descriptorStart, descriptorEnd)
+    expect(descriptor.indexOf("ipt = iptables_driver()")).toBeGreaterThanOrEqual(0)
+    expect(descriptor.indexOf("ipt = iptables_driver()")).toBeLessThan(descriptor.indexOf("if ufw_active():"))
+    expect(assets).toContain('def verify_firewall(descriptor):')
+    expect(assets).toContain("iptables', '-C', 'INPUT'")
+    expect(assets).toContain("raise RuntimeError(f\"Host firewall không xác minh được rule TCP")
+    expect(assets).toContain('def listeners_ready(mappings):')
+    expect(assets).toContain('Proxy service active nhưng chưa LISTEN đủ port đã tạo.')
+  })
+
   it('persists managed iptables/nft firewall rules and classifies Windows timeout as cloud firewall blocking', () => {
     expect(assets).toContain("def restore_firewall(manifest):")
     expect(assets).toContain("driver == 'iptables'")
@@ -107,6 +120,11 @@ describe('Proxy Builder Batch 3 safety contracts', () => {
     expect(service).toContain("status: 'failed'")
     expect(service).not.toContain('Oracle Cloud VPS: chưa chọn OCI config để Page-Auto mở Security List.')
     expect(ociService).toContain("join(homeDirectory, '.oci', 'config')")
+    expect(service).toContain('const ingress = await ensureOciSecurityListIngress')
+    expect(service).toContain("if (!ingress.verified)")
+    expect(service).toContain("status: externalDead === 0 ? 'completed' : 'failed'")
+    expect(service).toContain("phase: externalDead === 0 ? 'complete' : 'self_test'")
+    expect(service).not.toContain('Có thể NSG hoặc cloud firewall khác vẫn đang chặn port.')
     expect(verifyIndex).toBeGreaterThan(0)
     expect(ociIndex).toBeGreaterThan(verifyIndex)
   })

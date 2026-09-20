@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { parseOciConfig, reconcileOciIngressRules, resolveOciConfigPath } from './ociCloudFirewallService'
+import { hasOciIngressRule, parseOciConfig, reconcileOciIngressRules, resolveOciConfigPath } from './ociCloudFirewallService'
 
 describe('Proxy Builder OCI cloud firewall', () => {
   it('parses a selected OCI config profile without exposing key material', () => {
@@ -41,6 +41,20 @@ describe('Proxy Builder OCI cloud firewall', () => {
       sourceType: 'CIDR_BLOCK',
       tcpOptions: { destinationPortRange: { min: 6000, max: 6019 } }
     })
+  })
+
+  it('verifies the exact managed TCP ingress rule, not just its marker', () => {
+    const marker = 'page-auto-proxy:ocid1.vnic.oc1..abc'
+    const rules = [{
+      description: marker,
+      isStateless: false,
+      protocol: '6',
+      source: '0.0.0.0/0',
+      sourceType: 'CIDR_BLOCK',
+      tcpOptions: { destinationPortRange: { min: 3128, max: 3227 } }
+    }]
+    expect(hasOciIngressRule(rules, marker, 3128, 3227)).toBe(true)
+    expect(hasOciIngressRule(rules, marker, 3128, 3128)).toBe(false)
   })
 
   it('uses ~/.oci/config automatically when no file was selected', () => {

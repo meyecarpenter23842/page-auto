@@ -42,6 +42,7 @@ export interface EnsureOciIngressInput {
 export interface EnsureOciIngressResult {
   securityListId: string
   changed: boolean
+  verified: boolean
 }
 
 const RULE_MARKER_PREFIX = 'page-auto-proxy:'
@@ -214,6 +215,21 @@ async function sendOciRequest<T>(
   }
 }
 
+export function hasOciIngressRule(
+  existing: OciIngressRule[],
+  marker: string,
+  startPort: number,
+  endPort: number
+): boolean {
+  return existing.some((rule) =>
+    rule.description === marker
+    && rule.protocol === '6'
+    && rule.source === '0.0.0.0/0'
+    && rule.tcpOptions?.destinationPortRange?.min === startPort
+    && rule.tcpOptions?.destinationPortRange?.max === endPort
+  )
+}
+
 export function reconcileOciIngressRules(
   existing: OciIngressRule[],
   marker: string,
@@ -280,5 +296,24 @@ export async function ensureOciSecurityListIngress(input: EnsureOciIngressInput)
       { ingressSecurityRules: next }
     )
   }
-  return { securityListId, changed }
+
+  let verified = false
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const confirmed = await sendOciRequest<OciSecurityList>(
+      credentials,
+      region,
+      'GET',
+      `/20160918/securityLists/${encodeURIComponent(securityListId)}`
+    )
+    const rules = Array.isArray(confirmed.ingressSecurityRules) ? confirmed.ingressSecurityRules : []
+    if (hasOciIngressRule(rules, marker, input.startPort, input.endPort)) {
+      verified = true
+      break
+    }
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 500))
+  }
+  if (!verified) {
+    throw new Error(`OCI API đã cập nhật nhưng chưa xác minh được ingress TCP ${input.startPort}-${input.endPort} trên Security List.`)
+  }
+  return { securityListId, changed, verified }
 }
