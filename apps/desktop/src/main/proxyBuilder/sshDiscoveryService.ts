@@ -67,9 +67,10 @@ export function parseProxyBuilderDiscovery(output: string): ProxyBuilderCapabili
   const sourceBindIpv4 = values.get('PA_SOURCE4') === '1'
   const sourceBindIpv6 = values.get('PA_SOURCE6') === '1'
   const defaultInterface = clean(values.get('PA_IFACE')) || null
-  const ipv6Prefix = ipv6Addresses[0] ?? null
   const cloudProvider = values.get('PA_CLOUD_PROVIDER') === 'oci' ? 'oci' : null
   const cloudRegion = clean(values.get('PA_OCI_REGION')) || null
+  const ociIpv6Cidrs = list(values.get('PA_OCI_IPV6_CIDRS'))
+  const ipv6Prefix = ociIpv6Cidrs[0] ?? ipv6Addresses[0] ?? null
 
   return {
     os: clean(values.get('PA_OS')) || 'Linux',
@@ -85,7 +86,8 @@ export function parseProxyBuilderDiscovery(output: string): ProxyBuilderCapabili
     sourceBindIpv6,
     startPortAvailable: values.get('PA_PORT_FREE') === '1',
     cloudProvider,
-    cloudRegion
+    cloudRegion,
+    ociIpv6Cidrs
   }
 }
 
@@ -115,7 +117,10 @@ export function buildProxyBuilderDiscoveryScript(startPort: number): string {
     'OCI_VNIC=""',
     'if command -v curl >/dev/null 2>&1; then',
     '  OCI_REGION="$(curl -fsS --connect-timeout 2 --max-time 4 -H \'Authorization: Bearer Oracle\' http://169.254.169.254/opc/v2/instance/region 2>/dev/null | tr -d \'\\r\\n"\')"',
+    'OCI_IPV6_CIDRS=""',
     '  OCI_VNIC="$(curl -fsS --connect-timeout 2 --max-time 4 -H \'Authorization: Bearer Oracle\' http://169.254.169.254/opc/v2/vnics/0/vnicId 2>/dev/null | tr -d \'\\r\\n"\')"',
+    '  OCI_IPV6_CIDRS="$(curl -fsS --connect-timeout 2 --max-time 4 -H \'Authorization: Bearer Oracle\' http://169.254.169.254/opc/v2/vnics/0/ipv6AddressCidrs 2>/dev/null | tr -d \'[]"\\r\\n \')"',
+    '  if [ -z "$OCI_IPV6_CIDRS" ]; then OCI_IPV6_CIDRS="$(curl -fsS --connect-timeout 2 --max-time 4 http://169.254.169.254/opc/v1/vnics/0/ipv6AddressCidrs 2>/dev/null | tr -d \'[]"\\r\\n \')"; fi',
     'fi',
     'case "$OCI_VNIC" in ocid1.vnic.*) CLOUD_PROVIDER="oci" ;; esac',
     'SOURCE4=0',
@@ -133,7 +138,8 @@ export function buildProxyBuilderDiscoveryScript(startPort: number): string {
     'printf "PA_SOURCE6=%s\\n" "$SOURCE6"',
     'printf "PA_PORT_FREE=%s\\n" "$PORT_FREE"',
     'printf "PA_CLOUD_PROVIDER=%s\\n" "$CLOUD_PROVIDER"',
-    'printf "PA_OCI_REGION=%s\\n" "$OCI_REGION"'
+    'printf "PA_OCI_REGION=%s\\n" "$OCI_REGION"',
+    'printf "PA_OCI_IPV6_CIDRS=%s\\n" "$OCI_IPV6_CIDRS"'
   ].join('\n')
 }
 

@@ -398,24 +398,51 @@ async function probeRemoteRoutedIpv6Cidr(
   return null
 }
 
-async function detectRemoteOci(session: SshSessionLike): Promise<RemoteOciMetadata | null> {
+async function detectRemoteOci(session: SshSessionLike, interfaceName: string): Promise<RemoteOciMetadata | null> {
   const script = [
-    'import json, urllib.request',
-    "headers={'Authorization':'Bearer Oracle'}",
-    'def get(path):',
-    "    req=urllib.request.Request('http://169.254.169.254/opc/v2/'+path, headers=headers)",
+    'import json, sys, urllib.request',
+    "v2_headers={'Authorization':'Bearer Oracle'}",
+    'def get_v2(path):',
+    "    req=urllib.request.Request('http://169.254.169.254/opc/v2/'+path, headers=v2_headers)",
     '    with urllib.request.urlopen(req, timeout=4) as response: return json.load(response)',
-    "instance=get('instance/')",
-    "vnics=get('vnics/')",
-    'vnic=vnics[0] if isinstance(vnics, list) and vnics else {}',
+    'def get_v1(path):',
+    "    req=urllib.request.Request('http://169.254.169.254/opc/v1/'+path)",
+    '    with urllib.request.urlopen(req, timeout=4) as response: return json.load(response)',
+    'def safe(getter, path):',
+    '    try: return getter(path)',
+    '    except Exception: return None',
+    "instance=safe(get_v2, 'instance/') or {}",
+    "v2=safe(get_v2, 'vnics/') or []",
+    "v1=safe(get_v1, 'vnics/') or []",
+    'iface=sys.argv[1]',
+    'try:',
+    "    wanted_mac=open('/sys/class/net/'+iface+'/address').read().strip().lower()",
+    'except Exception:',
+    "    wanted_mac=''",
+    'records=[x for x in ((v2 if isinstance(v2, list) else []) + (v1 if isinstance(v1, list) else [])) if isinstance(x, dict)]',
+    "matched=[x for x in records if wanted_mac and str(x.get('macAddr') or '').lower() == wanted_mac]",
+    'pool=matched or records',
+    "vnic_id=next((str(x.get('vnicId') or '') for x in pool if str(x.get('vnicId') or '').startswith('ocid1.vnic.')), '')",
+    "same=[x for x in pool if not vnic_id or str(x.get('vnicId') or '') == vnic_id]",
+    'def uniq(key, fallback=None):',
+    '    values=[]',
+    '    for item in same:',
+    '        raw=item.get(key)',
+    '        seq=raw if isinstance(raw, list) else ([raw] if raw else [])',
+    '        if not seq and fallback:',
+    '            raw=item.get(fallback)',
+    '            seq=[raw] if raw else []',
+    '        for value in seq:',
+    '            text=str(value)',
+    '            if text and text not in values: values.append(text)',
+    '    return values',
     "print('REGION='+str(instance.get('region') or ''))",
-    "print('VNIC='+str(vnic.get('vnicId') or ''))",
-    "print('IPV6_CIDRS='+','.join(str(x) for x in (vnic.get('ipv6AddressCidrs') or [])))",
-    "subnets=vnic.get('ipv6SubnetCidrBlocks') or ([vnic.get('ipv6SubnetCidrBlock')] if vnic.get('ipv6SubnetCidrBlock') else [])",
-    "print('IPV6_SUBNETS='+','.join(str(x) for x in subnets if x))"
+    "print('VNIC='+vnic_id)",
+    "print('IPV6_CIDRS='+','.join(uniq('ipv6AddressCidrs')))",
+    "print('IPV6_SUBNETS='+','.join(uniq('ipv6SubnetCidrBlocks', 'ipv6SubnetCidrBlock')))"
   ].join('\n')
   const encoded = Buffer.from(script, 'utf8').toString('base64')
-  const command = `python3 -c ${shellQuote(`import base64;exec(base64.b64decode("${encoded}"))`)}`
+  const command = `python3 -c ${shellQuote(`import base64;exec(base64.b64decode("${encoded}"))`)} ${shellQuote(interfaceName)}`
   const result = await session.exec(command, 15_000)
   if (result.code !== 0) return null
   const values = new Map(
@@ -699,7 +726,7 @@ export class ProxyBuilderProvisionService {
       const listenHost = publicResult.stdout.trim() || input.host.trim().replace(/^\[|\]$/g, '')
 
       let ociIpv6Cidr: string | undefined
-      const remoteOci = await detectRemoteOci(session)
+      const remoteOci = await detectRemoteOci(session, interfaceName)
       if (remoteOci) await session.writeFile(paths.ociHelper, OCI_INSTANCE_PRINCIPAL_PY, 0o700)
       if (input.ipMode !== 'ipv4' && remoteOci) {
         const requiredAddressCount = input.ipMode === 'both' ? Math.max(1, input.count - 1) : input.count

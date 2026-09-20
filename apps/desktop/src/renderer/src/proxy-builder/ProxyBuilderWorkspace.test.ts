@@ -92,6 +92,8 @@ describe('Proxy Center inventory/binding + checker/export', () => {
     expect(workspace).not.toContain('Cấu hình OCI')
     expect(workspace).not.toContain('pickOciConfigFile')
     expect(workspace).toContain('Không cần chọn file OCI. App ưu tiên dải đã route/gán sẵn, sau đó mới dùng OCI API tự động.')
+    expect(workspace).toContain('capability.ociIpv6Cidrs ?? []')
+    expect(workspace).toContain('OCI CIDR sẵn')
     expect(workspace).toContain('disabled={!capability || !selectedModeReady || provisionRunning || sshChecking}')
     expect(workspace).toContain('startProvisionRequest()')
     expect(preload).toContain('pickOciConfig: () => ipcRenderer.invoke')

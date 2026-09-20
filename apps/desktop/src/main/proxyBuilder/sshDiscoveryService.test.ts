@@ -83,11 +83,14 @@ describe('Proxy Builder SSH discovery parser', () => {
       'PA_SOURCE6=0',
       'PA_PORT_FREE=1',
       'PA_CLOUD_PROVIDER=oci',
-      'PA_OCI_REGION=ap-singapore-1'
+      'PA_OCI_REGION=ap-singapore-1',
+      'PA_OCI_IPV6_CIDRS=2603:c021:6:f800:f324:d872:e4bb:0/116'
     ].join('\n'))
 
     expect(result.cloudProvider).toBe('oci')
     expect(result.cloudRegion).toBe('ap-singapore-1')
+    expect(result.ociIpv6Cidrs).toEqual(['2603:c021:6:f800:f324:d872:e4bb:0/116'])
+    expect(result.ipv6Prefix).toBe('2603:c021:6:f800:f324:d872:e4bb:0/116')
     expect(result.supportsIpv4).toBe(true)
   })
 
@@ -98,6 +101,9 @@ describe('Proxy Builder SSH discovery parser', () => {
     expect(script).toContain("tr -d '\\r\\n\"'")
     expect(script).not.toContain('tr -d "\\r\\n"")')
     expect(script).toContain('if command -v curl >/dev/null 2>&1; then\n')
+    expect(script).toContain('/opc/v2/vnics/0/ipv6AddressCidrs')
+    expect(script).toContain('/opc/v1/vnics/0/ipv6AddressCidrs')
+    expect(script).toContain('PA_OCI_IPV6_CIDRS=%s')
     expect(script).toContain('\nfi\ncase "$OCI_VNIC"')
   })
 
