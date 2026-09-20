@@ -1011,3 +1011,200 @@ NoNewPrivileges=true
 [Install]
 WantedBy=multi-user.target
 `
+
+
+export const OCI_INSTANCE_PRINCIPAL_PY = String.raw`#!/usr/bin/env python3
+import ipaddress
+import json
+import sys
+import time
+
+import oci
+
+MARKER_PREFIX = 'page-auto-proxy:'
+IPV6_DISPLAY_NAME = 'page-auto-proxy-cidr'
+
+
+def output(value):
+    print(json.dumps(value, separators=(',', ':')))
+
+
+def capacity(prefix):
+    if prefix < 80 or prefix > 128:
+        return 0
+    return max(0, (2 ** (128 - prefix)) - 1)
+
+
+def select_prefix(required):
+    if required < 1 or required > 10000:
+        raise RuntimeError('Số lượng IPv6 phải nằm trong 1-10000.')
+    for prefix in range(124, 79, -4):
+        if capacity(prefix) >= required:
+            return prefix
+    raise RuntimeError('Không tìm được Flexible IPv6 CIDR đủ lớn.')
+
+
+def client():
+    signer = oci.auth.signers.InstancePrincipalsSecurityTokenSigner()
+    region = getattr(signer, 'region', None)
+    if not region:
+        raise RuntimeError('Không xác định được OCI region từ Instance Principal.')
+    return oci.core.VirtualNetworkClient({'region': region}, signer=signer), region
+
+
+def all_ipv6s(network, vnic_id):
+    return oci.pagination.list_call_get_all_results(network.list_ipv6s, vnic_id=vnic_id).data
+
+
+def ensure_ipv6(network, vnic_id, required):
+    required_prefix = select_prefix(required)
+    managed = [
+        item for item in all_ipv6s(network, vnic_id)
+        if item.display_name == IPV6_DISPLAY_NAME
+        and item.lifecycle_state != 'TERMINATED'
+        and item.ip_address
+        and item.cidr_prefix_length is not None
+        and capacity(int(item.cidr_prefix_length)) >= required
+    ]
+    managed.sort(key=lambda item: int(item.cidr_prefix_length), reverse=True)
+    if managed:
+        item = managed[0]
+        network_value = ipaddress.ip_network(f'{item.ip_address}/{item.cidr_prefix_length}', strict=False)
+        return {
+            'ipv6Id': item.id,
+            'cidr': str(network_value),
+            'prefixLength': int(item.cidr_prefix_length),
+            'created': False,
+        }
+
+    vnic = network.get_vnic(vnic_id).data
+    subnet = network.get_subnet(vnic.subnet_id).data
+    prefixes = list(getattr(subnet, 'ipv6_cidr_blocks', None) or [])
+    if not prefixes and getattr(subnet, 'ipv6_cidr_block', None):
+        prefixes = [subnet.ipv6_cidr_block]
+    details = {
+        'vnic_id': vnic_id,
+        'display_name': IPV6_DISPLAY_NAME,
+        'cidr_prefix_length': required_prefix,
+        'lifetime': 'EPHEMERAL',
+    }
+    if len(prefixes) > 1:
+        details['ipv6_subnet_cidr'] = prefixes[0]
+    item = network.create_ipv6(oci.core.models.CreateIpv6Details(**details)).data
+    if not item.id:
+        raise RuntimeError('OCI CreateIpv6 không trả về OCID.')
+    for _ in range(30):
+        item = network.get_ipv6(item.id).data
+        if item.lifecycle_state == 'AVAILABLE' and item.ip_address and item.cidr_prefix_length is not None:
+            network_value = ipaddress.ip_network(f'{item.ip_address}/{item.cidr_prefix_length}', strict=False)
+            if capacity(int(item.cidr_prefix_length)) < required:
+                raise RuntimeError('Flexible IPv6 CIDR được cấp không đủ số địa chỉ.')
+            return {
+                'ipv6Id': item.id,
+                'cidr': str(network_value),
+                'prefixLength': int(item.cidr_prefix_length),
+                'created': True,
+            }
+        time.sleep(1)
+    raise RuntimeError('OCI đã tạo IPv6 CIDR nhưng chưa chuyển sang AVAILABLE.')
+
+
+def ensure_ingress(network, vnic_id, start_port, end_port):
+    marker = MARKER_PREFIX + vnic_id
+    vnic = network.get_vnic(vnic_id).data
+    subnet = network.get_subnet(vnic.subnet_id).data
+    security_ids = list(subnet.security_list_ids or [])
+    if not security_ids:
+        raise RuntimeError('OCI subnet không có Security List để Page-Auto mở port.')
+
+    target_id = security_ids[0]
+    target = None
+    for security_id in security_ids:
+        candidate = network.get_security_list(security_id).data
+        if any(getattr(rule, 'description', None) == marker for rule in (candidate.ingress_security_rules or [])):
+            target_id = security_id
+            target = candidate
+            break
+    if target is None:
+        target = network.get_security_list(target_id).data
+
+    def is_exact(rule):
+        tcp = getattr(rule, 'tcp_options', None)
+        destination = getattr(tcp, 'destination_port_range', None) if tcp else None
+        return (
+            getattr(rule, 'description', None) == marker
+            and getattr(rule, 'protocol', None) == '6'
+            and getattr(rule, 'source', None) == '0.0.0.0/0'
+            and destination is not None
+            and int(destination.min) == start_port
+            and int(destination.max) == end_port
+        )
+
+    existing = list(target.ingress_security_rules or [])
+    if any(is_exact(rule) for rule in existing):
+        return {'securityListId': target_id, 'changed': False, 'verified': True}
+
+    kept = [rule for rule in existing if getattr(rule, 'description', None) != marker]
+    kept.append(oci.core.models.IngressSecurityRule(
+        description=marker,
+        is_stateless=False,
+        protocol='6',
+        source='0.0.0.0/0',
+        source_type='CIDR_BLOCK',
+        tcp_options=oci.core.models.TcpOptions(
+            destination_port_range=oci.core.models.PortRange(min=start_port, max=end_port)
+        )
+    ))
+    network.update_security_list(
+        target_id,
+        oci.core.models.UpdateSecurityListDetails(ingress_security_rules=kept)
+    )
+    for _ in range(15):
+        confirmed = network.get_security_list(target_id).data
+        if any(is_exact(rule) for rule in (confirmed.ingress_security_rules or [])):
+            return {'securityListId': target_id, 'changed': True, 'verified': True}
+        time.sleep(1)
+    raise RuntimeError('OCI Security List chưa xác minh được ingress vừa tạo.')
+
+
+def main():
+    if len(sys.argv) < 2:
+        raise RuntimeError('Thiếu OCI helper operation.')
+    operation = sys.argv[1]
+    network, region = client()
+    if operation == 'ensure-ipv6':
+        if len(sys.argv) != 4:
+            raise RuntimeError('ensure-ipv6 cần vnicId và số lượng.')
+        result = ensure_ipv6(network, sys.argv[2], int(sys.argv[3]))
+        result['region'] = region
+        output(result)
+        return
+    if operation == 'delete-ipv6':
+        if len(sys.argv) != 3:
+            raise RuntimeError('delete-ipv6 cần IPv6 OCID.')
+        network.delete_ipv6(sys.argv[2])
+        output({'deleted': True})
+        return
+    if operation == 'ensure-ingress':
+        if len(sys.argv) != 5:
+            raise RuntimeError('ensure-ingress cần vnicId/startPort/endPort.')
+        result = ensure_ingress(network, sys.argv[2], int(sys.argv[3]), int(sys.argv[4]))
+        result['region'] = region
+        output(result)
+        return
+    raise RuntimeError('OCI helper operation không hỗ trợ: ' + operation)
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except oci.exceptions.ServiceError as error:
+        if error.status in (401, 403, 404):
+            print('INSTANCE_PRINCIPAL_IAM: VPS chưa được cấp quyền OCI qua Dynamic Group/IAM Policy để quản lý IPv6/Security List.', file=sys.stderr)
+        else:
+            print(f'OCI_SERVICE_ERROR {error.status}: {error.message}', file=sys.stderr)
+        sys.exit(23)
+    except Exception as error:
+        print(str(error), file=sys.stderr)
+        sys.exit(24)
+`

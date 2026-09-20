@@ -13,16 +13,16 @@ import type {
   ProxyBuilderRuntimeControlResult
 } from '../../shared/proxyBuilder'
 
-import { PROXY_RUNTIME_PY, PROXY_RESTORE_PY, PROXY_PROVISIONER_PY, PROXY_SYSTEMD_SERVICE } from './remoteAssets'
+import {
+  OCI_INSTANCE_PRINCIPAL_PY,
+  PROXY_RUNTIME_PY,
+  PROXY_RESTORE_PY,
+  PROXY_PROVISIONER_PY,
+  PROXY_SYSTEMD_SERVICE
+} from './remoteAssets'
 import { applyProxyBuilderSshAuth } from './sshAuth'
 import { runNativeOpenSsh, shouldUseNativeOpenSsh } from './nativeOpenSsh'
 import { checkProxyLineNow } from './checkerService'
-import {
-  deleteOciIpv6Cidr,
-  ensureOciIpv6Cidr,
-  ensureOciSecurityListIngress,
-  resolveOciConfigPath
-} from './ociCloudFirewallService'
 
 const PROVISION_TIMEOUT_MS = 15 * 60_000
 const COMMAND_TIMEOUT_MS = 60_000
@@ -317,6 +317,79 @@ async function detectRemoteOci(session: SshSessionLike): Promise<{ region: strin
   return { region, vnicId }
 }
 
+interface RemoteOciIpv6Lease {
+  ipv6Id: string
+  cidr: string
+  prefixLength: number
+  created: boolean
+  region?: string
+}
+
+interface RemoteOciIngressResult {
+  securityListId: string
+  changed: boolean
+  verified: boolean
+  region?: string
+}
+
+function parseRemoteOciJson<T>(result: CommandResult, action: string): T {
+  if (result.code !== 0) {
+    const detail = (result.stderr || result.stdout || '').trim()
+    if (/INSTANCE_PRINCIPAL_IAM/i.test(detail)) {
+      throw new Error('VPS chưa được cấp quyền OCI. Cần Dynamic Group + IAM Policy cho phép instance quản lý IPv6 và Security List.')
+    }
+    throw new Error(`${action} lỗi: ${detail || 'OCI helper thất bại.'}`)
+  }
+  const line = result.stdout.trim().split(/\r?\n/).filter(Boolean).at(-1)
+  if (!line) throw new Error(`${action} không trả dữ liệu.`)
+  try {
+    return JSON.parse(line) as T
+  } catch {
+    throw new Error(`${action} trả dữ liệu không hợp lệ.`)
+  }
+}
+
+async function ensureRemoteOciSdk(session: SshSessionLike, prefix: string): Promise<void> {
+  const python = '/opt/page-auto-oci-sdk/bin/python'
+  const probe = await session.exec(`${prefix}test -x ${python} && ${prefix}${python} -c "import oci" >/dev/null 2>&1`, 20_000)
+  if (probe.code === 0) return
+  const installScript = [
+    'set -e',
+    'if ! python3 -m venv /opt/page-auto-oci-sdk >/dev/null 2>&1; then',
+    '  if command -v apt-get >/dev/null 2>&1; then export DEBIAN_FRONTEND=noninteractive; apt-get update -y; apt-get install -y python3-venv python3-pip ca-certificates;',
+    '  elif command -v dnf >/dev/null 2>&1; then dnf install -y python3-pip python3;',
+    '  elif command -v yum >/dev/null 2>&1; then yum install -y python3-pip python3;',
+    '  elif command -v apk >/dev/null 2>&1; then apk add --no-cache python3 py3-pip py3-virtualenv ca-certificates;',
+    '  else exit 42; fi',
+    '  rm -rf /opt/page-auto-oci-sdk',
+    '  python3 -m venv /opt/page-auto-oci-sdk',
+    'fi',
+    '/opt/page-auto-oci-sdk/bin/python -m pip install --disable-pip-version-check --quiet "oci>=2.150,<3"',
+    '/opt/page-auto-oci-sdk/bin/python -c "import oci; print(oci.__version__)"'
+  ].join('\n')
+  const command = prefix
+    ? `${prefix}sh -c ${shellQuote(installScript)}`
+    : `sh -c ${shellQuote(installScript)}`
+  const installed = await session.exec(command, 5 * 60_000)
+  if (installed.code !== 0) {
+    throw new Error('Không tự cài được OCI SDK trên VPS: ' + (installed.stderr || installed.stdout || '').trim().slice(-1200))
+  }
+}
+
+async function runRemoteOciHelper<T>(
+  session: SshSessionLike,
+  prefix: string,
+  helperPath: string,
+  args: string[],
+  action: string
+): Promise<T> {
+  await ensureRemoteOciSdk(session, prefix)
+  const python = '/opt/page-auto-oci-sdk/bin/python'
+  const command = [`${prefix}${python}`, shellQuote(helperPath), ...args.map(shellQuote)].join(' ')
+  const result = await session.exec(command, 3 * 60_000)
+  return parseRemoteOciJson<T>(result, action)
+}
+
 function isCloudFirewallTimeout(errors: string[]): boolean {
   return errors.length > 0 && errors.every((message) =>
     /Timeout khi kết nối proxy|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH/i.test(message)
@@ -403,21 +476,18 @@ export class ProxyBuilderProvisionService {
     const tempBase = `/tmp/page-auto-proxy-${runId}`
     const paths = {
       request: `${tempBase}-request.json`, runtime: `${tempBase}-runtime.py`, restore: `${tempBase}-restore.py`,
-      provisioner: `${tempBase}-provision.py`, service: `${tempBase}.service`
+      provisioner: `${tempBase}-provision.py`, service: `${tempBase}.service`,
+      ociHelper: `${tempBase}-oci-instance-principal.py`
     }
-    let ociIpv6Lease: {
-      configPath: string
-      profile?: string
-      region: string
-      ipv6Id: string
-      created: boolean
-    } | null = null
+    let ociIpv6Lease: RemoteOciIpv6Lease | null = null
     let remoteProvisionSucceeded = false
+    let rootPrefix = ''
     try {
       await session.connect(connectConfig(input))
       if (this.active?.cancelRequested) throw new Error('Provision cancelled')
       this.update(runId, { phase: 'preflight', percent: 18, message: 'Đang kiểm tra quyền và runtime VPS…' })
       const prefix = await privilegedPrefix(session)
+      rootPrefix = prefix
       const systemd = await session.exec('command -v systemctl >/dev/null 2>&1')
       if (systemd.code !== 0) throw new Error('VPS cần systemd để giữ proxy runtime sau reboot.')
       let prereq = await session.exec('command -v python3 >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 && command -v ip >/dev/null 2>&1 && command -v ss >/dev/null 2>&1')
@@ -437,45 +507,24 @@ export class ProxyBuilderProvisionService {
       const listenHost = publicResult.stdout.trim() || input.host.trim().replace(/^\[|\]$/g, '')
 
       let ociIpv6Cidr: string | undefined
-      if (input.ipMode !== 'ipv4') {
-        const remoteOci = await detectRemoteOci(session)
-        if (remoteOci) {
-          const ociConfigPath = resolveOciConfigPath(input.cloudFirewall?.configPath)
-          if (!ociConfigPath) {
-            this.update(runId, {
-              status: 'failed',
-              phase: 'preflight',
-              percent: 100,
-              message: 'OCI IPv6 /128 cần cấp Flexible IPv6 CIDR trước khi tạo proxy. Chọn Cấu hình OCI để Page-Auto tự cấp dải.',
-              cloudFirewallAction: {
-                provider: 'oci',
-                status: 'required',
-                message: 'OCI IPv6 /128 cần OCI config để Page-Auto cấp Flexible IPv6 CIDR cho VNIC.'
-              }
-            })
-            return
-          }
-          this.update(runId, {
-            phase: 'provisioning',
-            percent: 25,
-            message: `Đang cấp OCI Flexible IPv6 CIDR cho ${input.count} proxy…`
-          })
-          const lease = await ensureOciIpv6Cidr({
-            configPath: ociConfigPath,
-            ...(input.cloudFirewall?.profile?.trim() ? { profile: input.cloudFirewall.profile.trim() } : {}),
-            region: remoteOci.region,
-            vnicId: remoteOci.vnicId,
-            requiredAddressCount: input.ipMode === 'both' ? Math.max(1, input.count - 1) : input.count
-          })
-          ociIpv6Cidr = lease.cidr
-          ociIpv6Lease = {
-            configPath: ociConfigPath,
-            ...(input.cloudFirewall?.profile?.trim() ? { profile: input.cloudFirewall.profile.trim() } : {}),
-            region: remoteOci.region,
-            ipv6Id: lease.ipv6Id,
-            created: lease.created
-          }
-        }
+      const remoteOci = await detectRemoteOci(session)
+      if (remoteOci) await session.writeFile(paths.ociHelper, OCI_INSTANCE_PRINCIPAL_PY, 0o700)
+      if (input.ipMode !== 'ipv4' && remoteOci) {
+        this.update(runId, {
+          phase: 'provisioning',
+          percent: 25,
+          message: `Đang dùng quyền OCI của VPS để cấp Flexible IPv6 CIDR cho ${input.count} proxy…`
+        })
+        const requiredAddressCount = input.ipMode === 'both' ? Math.max(1, input.count - 1) : input.count
+        const lease = await runRemoteOciHelper<RemoteOciIpv6Lease>(
+          session,
+          prefix,
+          paths.ociHelper,
+          ['ensure-ipv6', remoteOci.vnicId, String(requiredAddressCount)],
+          'Cấp OCI Flexible IPv6 CIDR'
+        )
+        ociIpv6Cidr = lease.cidr
+        ociIpv6Lease = lease
       }
 
       const request = JSON.stringify({
@@ -512,47 +561,38 @@ export class ProxyBuilderProvisionService {
             message: 'Oracle Cloud đang chặn port. Bật User / Password trước khi cấu hình OCI để tránh mở proxy không xác thực ra Internet.'
           }
         } else {
-          const ociConfigPath = resolveOciConfigPath(input.cloudFirewall?.configPath)
-          if (!ociConfigPath) {
-            cloudFirewallAction = {
-              provider: 'oci',
-              status: 'required',
-              message: 'Oracle Cloud đang chặn port. Máy này chưa có ~/.oci/config; chọn Cấu hình OCI để Page-Auto tự mở Security List.'
-            }
-          } else {
-            try {
-              this.update(runId, {
-                phase: 'self_test',
-                percent: 95,
-                message: 'Windows đang timeout; đã nhận OCI config và đang tự mở Security List…'
-              })
-              const ingress = await ensureOciSecurityListIngress({
-                configPath: ociConfigPath,
-                ...(input.cloudFirewall?.profile?.trim() ? { profile: input.cloudFirewall.profile.trim() } : {}),
-                region: remote.cloud.region,
-                vnicId: remote.cloud.vnicId,
-                startPort: input.startPort,
-                endPort: input.startPort + input.count - 1
-              })
-              if (!ingress.verified) throw new Error('OCI Security List chưa xác minh được ingress vừa tạo.')
-              if (this.active?.cancelRequested) throw new Error('Provision cancelled')
-              this.update(runId, { phase: 'self_test', percent: 97, message: 'OCI Security List đã xác minh port; đang test lại từ Windows…' })
-              verified = await verifyProvisionedProxies(remote, input.proxyAuth)
-              externalDead = verified.results.filter((item) => item.status === 'error').length
-              if (externalDead > 0 && isCloudFirewallTimeout(verified.errors)) {
-                cloudFirewallAction = {
-                  provider: 'oci',
-                  status: 'failed',
-                  message: 'OCI Security List đã xác minh đúng port nhưng Windows vẫn timeout. Proxy trên VPS đang chạy; còn blocker ở public route/ZPR hoặc lớp mạng OCI khác.'
-                }
-              }
-            } catch (error) {
-              if (this.active?.cancelRequested) throw error
+          try {
+            this.update(runId, {
+              phase: 'self_test',
+              percent: 95,
+              message: 'Windows đang timeout; Page-Auto đang dùng quyền OCI của VPS để tự mở Security List…'
+            })
+            if (!remoteOci) throw new Error('Không đọc được OCI instance metadata trên VPS.')
+            const ingress = await runRemoteOciHelper<RemoteOciIngressResult>(
+              session,
+              prefix,
+              paths.ociHelper,
+              ['ensure-ingress', remote.cloud.vnicId, String(input.startPort), String(input.startPort + input.count - 1)],
+              'Mở OCI Security List'
+            )
+            if (!ingress.verified) throw new Error('OCI Security List chưa xác minh được ingress vừa tạo.')
+            if (this.active?.cancelRequested) throw new Error('Provision cancelled')
+            this.update(runId, { phase: 'self_test', percent: 97, message: 'OCI Security List đã xác minh port; đang test lại từ Windows…' })
+            verified = await verifyProvisionedProxies(remote, input.proxyAuth)
+            externalDead = verified.results.filter((item) => item.status === 'error').length
+            if (externalDead > 0 && isCloudFirewallTimeout(verified.errors)) {
               cloudFirewallAction = {
                 provider: 'oci',
                 status: 'failed',
-                message: 'Không tự mở được Oracle Cloud ingress: ' + errorMessage(error)
+                message: 'OCI Security List đã xác minh đúng port nhưng Windows vẫn timeout. Proxy trên VPS đang chạy; còn blocker ở public route/ZPR hoặc lớp mạng OCI khác.'
               }
+            }
+          } catch (error) {
+            if (this.active?.cancelRequested) throw error
+            cloudFirewallAction = {
+              provider: 'oci',
+              status: 'failed',
+              message: 'Không tự mở được Oracle Cloud ingress: ' + errorMessage(error)
             }
           }
         }
@@ -580,12 +620,13 @@ export class ProxyBuilderProvisionService {
       let cleanupWarning = ''
       if (!remoteProvisionSucceeded && ociIpv6Lease?.created) {
         try {
-          await deleteOciIpv6Cidr({
-            configPath: ociIpv6Lease.configPath,
-            ...(ociIpv6Lease.profile ? { profile: ociIpv6Lease.profile } : {}),
-            region: ociIpv6Lease.region,
-            ipv6Id: ociIpv6Lease.ipv6Id
-          })
+          await runRemoteOciHelper(
+            session,
+            rootPrefix,
+            paths.ociHelper,
+            ['delete-ipv6', ociIpv6Lease.ipv6Id],
+            'Rollback OCI IPv6 CIDR'
+          )
         } catch (cleanupError) {
           cleanupWarning = ' Rollback OCI IPv6 CIDR lỗi: ' + errorMessage(cleanupError)
         }
