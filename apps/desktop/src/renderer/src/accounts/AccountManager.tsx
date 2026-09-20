@@ -31,6 +31,7 @@ import {
   defaultLayout,
   formatCellValue,
   maskSecret,
+  normalizeBulkUidFilter,
   normalizeLayout,
   type ColumnId,
   type ContextMenuState,
@@ -46,10 +47,58 @@ interface AccountManagerProps {
   onOpenChangeInfoWorkspace?: (workspaceId: number) => void
 }
 
+function BulkUidFilterDialog({
+  initialUids,
+  onApply,
+  onClose
+}: {
+  initialUids: readonly string[]
+  onApply: (uids: string[]) => void
+  onClose: () => void
+}) {
+  const [value, setValue] = useState(initialUids.join('\n'))
+  const normalized = useMemo(() => normalizeBulkUidFilter(value), [value])
+  const hasActiveFilter = initialUids.length > 0
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+      <section className="modal bulk-uid-filter-modal" role="dialog" aria-modal="true" aria-label="Lọc UID hàng loạt" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="modal-header">
+          <div>
+            <h2>Lọc UID hàng loạt</h2>
+            <p>Mỗi dòng 1 UID. Không cần dấu phân cách.</p>
+          </div>
+          <button className="icon-button" type="button" aria-label="Đóng" onClick={onClose}>×</button>
+        </div>
+        <textarea
+          className="bulk-uid-filter-textarea"
+          value={value}
+          autoFocus
+          spellCheck={false}
+          placeholder={'100001234567890\n100009876543210\n100005555555555'}
+          onChange={(event) => setValue(event.target.value)}
+        />
+        <div className="bulk-uid-filter-summary">
+          <span>{normalized.length} UID</span>
+          <small>Dòng trống và UID trùng được tự bỏ.</small>
+        </div>
+        <div className="modal-actions bulk-uid-filter-actions">
+          <button className="button secondary" type="button" disabled={!hasActiveFilter} onClick={() => onApply([])}>Xóa lọc</button>
+          <span />
+          <button className="button secondary" type="button" onClick={onClose}>Hủy</button>
+          <button className="button primary" type="button" disabled={normalized.length === 0} onClick={() => onApply(normalized)}>Áp dụng ({normalized.length})</button>
+        </div>
+      </section>
+    </div>
+  )
+}
+
 export function AccountManager({ onOpenChangeInfoWorkspace }: AccountManagerProps = {}) {
   const [accounts, setAccounts] = useState<AccountRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
+  const [bulkUidFilter, setBulkUidFilter] = useState<string[]>([])
+  const [bulkUidFilterOpen, setBulkUidFilterOpen] = useState(false)
   const [statusFilter, setStatusFilter] = useState<'all' | AccountRecord['status']>('all')
   const [categoryFilter, setCategoryFilter] = useState('')
   const [groupOverview, setGroupOverview] = useState<AccountGroupOverview>(EMPTY_GROUP_OVERVIEW)
@@ -81,12 +130,16 @@ export function AccountManager({ onOpenChangeInfoWorkspace }: AccountManagerProp
       const visible = categoryFilter === UNGROUPED_CATEGORY_FILTER
         ? next.filter((account) => !account.category?.trim())
         : next
-      setAccounts(visible)
-      setSelectedIds((current) => new Set([...current].filter((id) => visible.some((account) => account.id === id))))
+      const uidFilter = bulkUidFilter.length > 0 ? new Set(bulkUidFilter) : null
+      const filtered = uidFilter
+        ? visible.filter((account) => uidFilter.has(account.uid.trim()))
+        : visible
+      setAccounts(filtered)
+      setSelectedIds((current) => new Set([...current].filter((id) => filtered.some((account) => account.id === id))))
     } finally {
       if (!background) setLoading(false)
     }
-  }, [search, statusFilter, categoryFilter])
+  }, [search, statusFilter, categoryFilter, bulkUidFilter])
 
   const loadGroups = useCallback(async () => {
     const next = await window.pageAuto.getAccountGroupOverview()
@@ -364,6 +417,16 @@ export function AccountManager({ onOpenChangeInfoWorkspace }: AccountManagerProp
     setContextMenu({ x: event.clientX, y: event.clientY })
   }
 
+  const openBulkUidFilter = () => {
+    setContextMenu(null)
+    setBulkUidFilterOpen(true)
+  }
+
+  const applyBulkUidFilter = (uids: string[]) => {
+    setBulkUidFilter(uids)
+    setBulkUidFilterOpen(false)
+  }
+
   return (
     <section className="account-manager">
       <div className="account-grid-panel">
@@ -390,13 +453,20 @@ export function AccountManager({ onOpenChangeInfoWorkspace }: AccountManagerProp
 
         <div className="filter-row">
           <input className="search-input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Tìm UID, tên đăng nhập, tên, email, ghi chú…" />
+          <button
+            className={`button secondary bulk-uid-filter-button${bulkUidFilter.length ? ' active' : ''}`}
+            type="button"
+            title="Lọc UID hàng loạt"
+            aria-label="Lọc UID hàng loạt"
+            onClick={openBulkUidFilter}
+          >UID{bulkUidFilter.length ? ` · ${bulkUidFilter.length}` : ''}</button>
           <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}><option value="all">Tất cả trạng thái</option>{ACCOUNT_STATUSES.map((status) => <option key={status} value={status}>{accountStatusLabels[status]}</option>)}</select>
           <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
             <option value="">Tất cả nhóm ({groupOverview.groups.length})</option>
             <option value={UNGROUPED_CATEGORY_FILTER}>Chưa gán nhóm ({groupOverview.ungroupedCount})</option>
             {groupOverview.groups.map((group) => <option key={group.id} value={group.name}>{group.name} ({group.accountCount})</option>)}
           </select>
-          <span className="grid-state">{loading ? 'Đang tải…' : `${sortedAccounts.length}/${groupOverview.totalAccounts} tài khoản · tích ${selectedIds.size} · phủ ${excelRange.rangeIds.size}`}</span>
+          <span className="grid-state">{loading ? 'Đang tải…' : `${sortedAccounts.length}/${groupOverview.totalAccounts} tài khoản${bulkUidFilter.length ? ` · lọc UID ${bulkUidFilter.length}` : ''} · tích ${selectedIds.size} · phủ ${excelRange.rangeIds.size}`}</span>
         </div>
 
         {notice ? <div className="notice-bar"><span>{notice}</span><button type="button" onClick={() => setNotice(null)}>×</button></div> : null}
@@ -465,11 +535,19 @@ export function AccountManager({ onOpenChangeInfoWorkspace }: AccountManagerProp
           <button type="button" disabled={selectedIds.size === 0 || openingProfiles || checkingLive} onClick={() => void checkLiveSelected()}>{checkingLive ? 'Đang Check Live…' : 'Check Live'}</button>
           <button type="button" disabled={selectedIds.size === 0} onClick={openGroupPicker}>Gán / chuyển / bỏ nhóm…</button>
           <button type="button" disabled={selectedIds.size === 0} onClick={() => void copySelectedUids()}>Sao chép UID</button>
+          <button type="button" onClick={openBulkUidFilter}>Lọc UID hàng loạt…</button>
           <div className="context-menu-separator" />
           <button className="context-danger" type="button" disabled={selectedIds.size === 0} onClick={() => void deleteSelected()}>Xóa tài khoản</button>
         </AccountSelectionMenu>
       ) : null}
 
+      {bulkUidFilterOpen ? (
+        <BulkUidFilterDialog
+          initialUids={bulkUidFilter}
+          onApply={applyBulkUidFilter}
+          onClose={() => setBulkUidFilterOpen(false)}
+        />
+      ) : null}
       {groupPickerOpen ? (
         <AccountGroupPicker
           overview={groupOverview}
