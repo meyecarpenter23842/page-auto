@@ -117,6 +117,7 @@ export interface ProxyBuilderProvisionInput extends ProxyBuilderAuditInput {
   ipMode: ProxyBuilderIpMode
   count: number
   proxyAuth: ProxyBuilderProxyAuth
+  ipv6Cidr?: string
   cloudFirewall?: ProxyBuilderOciCloudFirewallConfig
 }
 
