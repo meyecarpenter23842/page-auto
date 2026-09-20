@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { Buffer } from 'node:buffer'
+import { isIP } from 'node:net'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { Client, type ClientChannel, type ConnectConfig, type SFTPWrapper } from 'ssh2'
 import type {
@@ -92,6 +93,13 @@ function validateInput(input: ProxyBuilderProvisionInput): string | null {
   if (!Number.isInteger(input.startPort) || input.startPort < 1 || input.startPort > 65535) return 'Start Port phải nằm trong 1-65535.'
   if (input.startPort + input.count - 1 > 65535) return 'Dải port vượt quá 65535.'
   if (input.ipMode === 'both' && input.count < 2) return 'IPv4 + IPv6 cần tối thiểu 2 proxy.'
+  const manualIpv6Cidr = input.ipv6Cidr?.trim()
+  if (input.ipMode !== 'ipv4' && manualIpv6Cidr) {
+    const requiredIpv6Count = input.ipMode === 'both' ? Math.max(1, input.count - 1) : input.count
+    if (ipv6CidrCapacity(manualIpv6Cidr) < requiredIpv6Count) {
+      return `IPv6 CIDR đã cấp không hợp lệ hoặc không đủ ${requiredIpv6Count} địa chỉ.`
+    }
+  }
   if (input.auth.type === 'password' && !input.auth.password) return 'Chưa nhập SSH Password.'
   if (input.auth.type === 'key' && !input.auth.privateKey.trim() && !input.auth.privateKeyPath?.trim()) return 'Chưa nhập hoặc chọn SSH Private Key.'
   if (input.proxyAuth.type === 'basic') {
@@ -310,7 +318,7 @@ async function verifyProvisionedProxies(
 
 function ipv6CidrCapacity(cidr: string): number {
   const match = cidr.trim().match(/^([^/]+)\/(\d{1,3})$/)
-  if (!match || !match[1]?.includes(':')) return 0
+  if (!match || !match[1] || isIP(match[1]) !== 6) return 0
   const prefix = Number(match[2])
   if (!Number.isInteger(prefix) || prefix < 0 || prefix >= 128) return 0
   const hostBits = 128 - prefix
@@ -665,8 +673,31 @@ export class ProxyBuilderProvisionService {
       let ociIpv6Cidr: string | undefined
       const remoteOci = await detectRemoteOci(session, interfaceName)
       if (remoteOci) await session.writeFile(paths.ociHelper, OCI_INSTANCE_PRINCIPAL_PY, 0o700)
-      if (input.ipMode !== 'ipv4' && remoteOci) {
-        const requiredAddressCount = input.ipMode === 'both' ? Math.max(1, input.count - 1) : input.count
+      const requiredAddressCount = input.ipMode === 'both' ? Math.max(1, input.count - 1) : input.count
+      const manualIpv6Cidr = input.ipMode === 'ipv4' ? '' : input.ipv6Cidr?.trim() ?? ''
+      if (manualIpv6Cidr) {
+        this.update(runId, {
+          phase: 'provisioning',
+          percent: 24,
+          message: `Đang xác minh CIDR IPv6 đã cấp trên cloud (${manualIpv6Cidr})…`
+        })
+        const verifiedCidr = await probeRemoteRoutedIpv6Cidr(
+          session,
+          prefix,
+          interfaceName,
+          [manualIpv6Cidr],
+          requiredAddressCount
+        )
+        if (!verifiedCidr) {
+          throw new Error(`CIDR IPv6 ${manualIpv6Cidr} chưa route/source-bind được trên VPS. Page-Auto không gọi OCI API khi đã nhập CIDR thủ công.`)
+        }
+        ociIpv6Cidr = verifiedCidr
+        this.update(runId, {
+          phase: 'provisioning',
+          percent: 25,
+          message: `CIDR IPv6 đã xác minh; đang tạo pool trong ${verifiedCidr}…`
+        })
+      } else if (input.ipMode !== 'ipv4' && remoteOci) {
         const assignedCidr = selectReusableIpv6Cidr(remoteOci.assignedIpv6Cidrs, requiredAddressCount)
         if (assignedCidr) {
           ociIpv6Cidr = assignedCidr

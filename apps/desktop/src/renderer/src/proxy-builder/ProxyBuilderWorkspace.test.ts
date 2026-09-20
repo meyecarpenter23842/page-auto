@@ -85,6 +85,13 @@ describe('Proxy Center inventory/binding + checker/export', () => {
     expect(bindingPanel).toContain('proxy fields của Account Manager')
   })
 
+  it('accepts a manually assigned cloud IPv6 CIDR when OCI IMDS omits ipv6AddressCidrs', () => {
+    expect(workspace).toContain('IPv6 CIDR đã cấp trên cloud (tùy chọn)')
+    expect(workspace).toContain('...(manualIpv6Cidr ? { ipv6Cidr: manualIpv6Cidr } : {})')
+    expect(workspace).toContain('!manualIpv6Cidr')
+    expect(workspace).toContain('không gọi CreateIpv6')
+  })
+
   it('keeps OCI IPv6 provisioning automatic and route-first without asking for a config file', () => {
     expect(workspace).not.toContain('OCI Profile')
     expect(workspace).not.toContain('cloudFirewallReady')

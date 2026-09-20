@@ -130,6 +130,7 @@ export function ProxyBuilderWorkspace() {
   const [proxyIpMode, setProxyIpMode] = useState<ProxyIpMode>('ipv6')
   const [proxyCount, setProxyCount] = useState(300)
   const [startPort, setStartPort] = useState(3128)
+  const [ipv6Cidr, setIpv6Cidr] = useState('')
   const [proxyAuthMode, setProxyAuthMode] = useState<ProxyAuthMode>('basic')
   const [proxyUser, setProxyUser] = useState('proxy')
   const [proxyPassword, setProxyPassword] = useState('')
@@ -162,6 +163,7 @@ export function ProxyBuilderWorkspace() {
   const checkerResults = checker?.results ?? []
   const checkerRunning = checker?.status === 'running'
   const requiredIpv6Count = proxyIpMode === 'both' ? Math.max(1, proxyCount - 1) : proxyCount
+  const manualIpv6Cidr = ipv6Cidr.trim()
   const assignedOciIpv6Cidr = capability?.cloudProvider === 'oci'
     ? (capability.ociIpv6Cidrs ?? []).find((cidr) => ipv6CidrCapacity(cidr) >= requiredIpv6Count) ?? null
     : null
@@ -169,9 +171,10 @@ export function ProxyBuilderWorkspace() {
     capability?.cloudProvider === 'oci'
     && capability.ipv6Addresses.length > 0
     && !assignedOciIpv6Cidr
+    && !manualIpv6Cidr
     && proxyIpMode !== 'ipv4'
   )
-  const ipv6ModeReady = Boolean(capability?.supportsIpv6 || assignedOciIpv6Cidr || needsOciIpv6Bootstrap)
+  const ipv6ModeReady = Boolean(capability?.supportsIpv6 || assignedOciIpv6Cidr || manualIpv6Cidr || needsOciIpv6Bootstrap)
   const selectedModeReady = proxyIpMode === 'ipv4'
     ? Boolean(capability?.supportsIpv4)
     : proxyIpMode === 'ipv6'
@@ -242,7 +245,8 @@ export function ProxyBuilderWorkspace() {
         startPort,
         ipMode: proxyIpMode,
         count: proxyCount,
-        proxyAuth
+        proxyAuth,
+        ...(manualIpv6Cidr ? { ipv6Cidr: manualIpv6Cidr } : {})
       })
       setProvision(next)
       setCreatedExportAuth(proxyAuth)
@@ -506,7 +510,13 @@ export function ProxyBuilderWorkspace() {
                   <label>Loại Proxy<select value={proxyIpMode} onChange={(event) => setProxyIpMode(event.currentTarget.value as ProxyIpMode)}><option value="ipv4">IPv4</option><option value="ipv6">IPv6</option><option value="both">IPv4 + IPv6</option></select></label>
                   <label>Số lượng<input type="number" min={1} max={10000} value={proxyCount} onChange={(event) => setProxyCount(clampInteger(event.currentTarget.value, 1, 10000, 1))} /></label>
                   <label>Start Port<input type="number" min={1} max={65535} value={startPort} onChange={(event) => setStartPort(clampInteger(event.currentTarget.value, 1, 65535, 3128))} /></label>
+                  {proxyIpMode !== 'ipv4' && capability?.cloudProvider === 'oci' && !assignedOciIpv6Cidr ? (
+                    <label className="proxy-builder-field-wide">IPv6 CIDR đã cấp trên cloud (tùy chọn)<input value={ipv6Cidr} onChange={(event) => setIpv6Cidr(event.currentTarget.value)} placeholder="2603:...:0/116" autoComplete="off" spellCheck={false} /></label>
+                  ) : null}
                 </div>
+                {proxyIpMode !== 'ipv4' && capability?.cloudProvider === 'oci' && !assignedOciIpv6Cidr ? (
+                  <span className="proxy-builder-muted">Nếu Oracle Console đã cấp CIDR nhưng VPS vẫn chỉ báo /128, dán CIDR tại đây. App sẽ test source-bind trước khi dùng và không gọi CreateIpv6.</span>
+                ) : null}
               </div>
 
               <div className="proxy-builder-section">
@@ -522,9 +532,11 @@ export function ProxyBuilderWorkspace() {
                 <button className="button secondary" type="button" disabled={!provisionRunning} onClick={() => void cancelProvision()}>Dừng</button>
                 <span>{capability
                   ? selectedModeReady
-                    ? needsOciIpv6Bootstrap
-                      ? 'OCI đang có IPv6 /128; Page-Auto sẽ tự kiểm tra route và tự cấp dải khi thật sự cần.'
-                      : 'Capability hợp lệ; app tự tạo proxy, xử lý host firewall và test từ Windows.'
+                    ? manualIpv6Cidr
+                      ? 'CIDR IPv6 thủ công sẽ được test source-bind trước khi tạo proxy; không gọi CreateIpv6.'
+                      : needsOciIpv6Bootstrap
+                        ? 'OCI đang có IPv6 /128; Page-Auto sẽ tự kiểm tra route và tự cấp dải khi thật sự cần.'
+                        : 'Capability hợp lệ; app tự tạo proxy, xử lý host firewall và test từ Windows.'
                     : 'VPS chưa đạt capability cho loại proxy đang chọn.'
                   : 'Kiểm tra SSH trước khi tạo proxy.'}</span>
               </div>
