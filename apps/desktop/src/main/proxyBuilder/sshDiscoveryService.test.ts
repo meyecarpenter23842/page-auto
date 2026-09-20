@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { parseProxyBuilderDiscovery } from './sshDiscoveryService'
+import { buildProxyBuilderDiscoveryScript, parseProxyBuilderDiscovery } from './sshDiscoveryService'
 
 const discoverySource = readFileSync(new URL('./sshDiscoveryService.ts', import.meta.url), 'utf8')
 const sshAuthSource = readFileSync(new URL('./sshAuth.ts', import.meta.url), 'utf8')
@@ -89,6 +89,16 @@ describe('Proxy Builder SSH discovery parser', () => {
     expect(result.cloudProvider).toBe('oci')
     expect(result.cloudRegion).toBe('ap-singapore-1')
     expect(result.supportsIpv4).toBe(true)
+  })
+
+
+  it('renders OCI metadata discovery as POSIX sh-safe commands', () => {
+    const script = buildProxyBuilderDiscoveryScript(3128)
+    expect(script).toContain("-H 'Authorization: Bearer Oracle'")
+    expect(script).toContain("tr -d '\\r\\n\"'")
+    expect(script).not.toContain('tr -d "\\r\\n"")')
+    expect(script).toContain('if command -v curl >/dev/null 2>&1; then\n')
+    expect(script).toContain('\nfi\ncase "$OCI_VNIC"')
   })
 
 })
