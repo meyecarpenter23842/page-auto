@@ -56,6 +56,7 @@ export interface ProxyBuilderCapability {
   startPortAvailable: boolean
   cloudProvider: 'oci' | null
   cloudRegion: string | null
+  ociIpv6Cidrs?: string[]
 }
 
 export type ProxyBuilderSshProbeName = 'auth_true' | 'shell_empty' | 'discovery'

@@ -38,10 +38,19 @@ function ipv4Summary(capability: ProxyBuilderCapability | null): string {
   return `${capability.ipv4Addresses.length} IP · ${capability.supportsIpv4 ? 'Outbound OK' : 'Chưa đạt probe'}`
 }
 
+function ipv6CidrCapacity(cidr: string): number {
+  const prefix = Number(cidr.split('/')[1])
+  if (!Number.isInteger(prefix) || prefix < 0 || prefix >= 128) return 0
+  const hostBits = 128 - prefix
+  return hostBits >= 53 ? Number.MAX_SAFE_INTEGER : Math.max(0, (2 ** hostBits) - 1)
+}
+
 function ipv6Summary(capability: ProxyBuilderCapability | null): string {
   if (!capability) return 'Chưa kiểm tra'
+  const assignedOciCidr = capability.ociIpv6Cidrs?.[0] ?? null
+  const prefixLength = (assignedOciCidr ?? capability.ipv6Prefix)?.split('/')[1]
+  if (assignedOciCidr) return `${prefixLength ? `/${prefixLength}` : 'Global'} · OCI CIDR sẵn`
   if (!capability.ipv6Addresses.length) return 'Không có'
-  const prefixLength = capability.ipv6Prefix?.split('/')[1]
   if (!capability.supportsIpv6 && capability.cloudProvider === 'oci') {
     return `${prefixLength ? `/${prefixLength}` : 'Global'} · OCI CIDR bootstrap`
   }
@@ -152,13 +161,17 @@ export function ProxyBuilderWorkspace() {
   const results = provision?.results ?? []
   const checkerResults = checker?.results ?? []
   const checkerRunning = checker?.status === 'running'
+  const requiredIpv6Count = proxyIpMode === 'both' ? Math.max(1, proxyCount - 1) : proxyCount
+  const assignedOciIpv6Cidr = capability?.cloudProvider === 'oci'
+    ? (capability.ociIpv6Cidrs ?? []).find((cidr) => ipv6CidrCapacity(cidr) >= requiredIpv6Count) ?? null
+    : null
   const needsOciIpv6Bootstrap = Boolean(
     capability?.cloudProvider === 'oci'
     && capability.ipv6Addresses.length > 0
-    && !capability.supportsIpv6
+    && !assignedOciIpv6Cidr
     && proxyIpMode !== 'ipv4'
   )
-  const ipv6ModeReady = Boolean(capability?.supportsIpv6 || needsOciIpv6Bootstrap)
+  const ipv6ModeReady = Boolean(capability?.supportsIpv6 || assignedOciIpv6Cidr || needsOciIpv6Bootstrap)
   const selectedModeReady = proxyIpMode === 'ipv4'
     ? Boolean(capability?.supportsIpv4)
     : proxyIpMode === 'ipv6'

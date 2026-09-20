@@ -22,8 +22,11 @@ describe('Proxy Builder Batch 3 safety contracts', () => {
   })
 
   it('uses route-first OCI IPv6 provisioning before any IAM-dependent API call', () => {
-    expect(service).toContain("vnic.get('ipv6AddressCidrs')")
-    expect(service).toContain("vnic.get('ipv6SubnetCidrBlocks')")
+    expect(service).toContain("uniq('ipv6AddressCidrs')")
+    expect(service).toContain("uniq('ipv6SubnetCidrBlocks', 'ipv6SubnetCidrBlock')")
+    expect(service).toContain("'http://169.254.169.254/opc/v1/'+path")
+    expect(service).toContain("wanted_mac=open('/sys/class/net/'+iface+'/address')")
+    expect(service).toContain('detectRemoteOci(session, interfaceName)')
     expect(service).toContain('probeRemoteRoutedIpv6Cidr(')
     expect(service).toContain('selectReusableIpv6Cidr(remoteOci.assignedIpv6Cidrs')
     expect(service).toContain('ensureOciIpv6Automatically(')
