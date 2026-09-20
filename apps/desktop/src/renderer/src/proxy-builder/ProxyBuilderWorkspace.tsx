@@ -510,14 +510,14 @@ export function ProxyBuilderWorkspace() {
                 <span>{capability
                   ? selectedModeReady
                     ? needsOciIpv6Bootstrap
-                      ? 'OCI đang có IPv6 /128; Page-Auto sẽ tự dùng quyền của VPS để cấp Flexible IPv6 CIDR.'
+                      ? 'OCI đang có IPv6 /128; Page-Auto sẽ tự kiểm tra route và tự cấp dải khi thật sự cần.'
                       : 'Capability hợp lệ; app tự tạo proxy, xử lý host firewall và test từ Windows.'
                     : 'VPS chưa đạt capability cho loại proxy đang chọn.'
                   : 'Kiểm tra SSH trước khi tạo proxy.'}</span>
               </div>
               {needsOciIpv6Bootstrap ? (
                 <div className="proxy-builder-inline-actions">
-                  <span className="proxy-builder-muted">Không cần file OCI; Page-Auto sẽ dùng Instance Principal của VPS.</span>
+                  <span className="proxy-builder-muted">Không cần chọn file OCI. App ưu tiên dải đã route/gán sẵn, sau đó mới dùng OCI API tự động.</span>
                 </div>
               ) : cloudFirewallAction?.provider === 'oci' ? (
                 <div className="proxy-builder-inline-actions">

@@ -21,21 +21,23 @@ describe('Proxy Builder Batch 3 safety contracts', () => {
     expect(assets).toContain('asyncio.gather(*(server.serve_forever() for server in servers))')
   })
 
-  it('bootstraps OCI /128 through the VPS Instance Principal instead of a Windows OCI config file', () => {
-    expect(service).toContain('runRemoteOciHelper<RemoteOciIpv6Lease>')
-    expect(service).toContain("['ensure-ipv6', remoteOci.vnicId")
-    expect(service).toContain('detectRemoteOci(session)')
+  it('uses route-first OCI IPv6 provisioning before any IAM-dependent API call', () => {
+    expect(service).toContain("vnic.get('ipv6AddressCidrs')")
+    expect(service).toContain("vnic.get('ipv6SubnetCidrBlocks')")
+    expect(service).toContain('probeRemoteRoutedIpv6Cidr(')
+    expect(service).toContain('selectReusableIpv6Cidr(remoteOci.assignedIpv6Cidrs')
+    expect(service).toContain('ensureOciIpv6Automatically(')
+    expect(service).toContain('resolveOciConfigPath()')
+    expect(service).toContain('ensureOciIpv6Cidr({')
+    expect(service).toContain("authSource: 'desktop-config'")
     expect(service).toContain("...(ociIpv6Cidr ? { ociIpv6Cidr } : {})")
     expect(service).toContain("['delete-ipv6', ociIpv6Lease.ipv6Id]")
-    expect(service).toContain('/opt/page-auto-oci-sdk/bin/python')
-    expect(service).not.toContain('resolveOciConfigPath(input.cloudFirewall?.configPath)')
     expect(assets).toContain('InstancePrincipalsSecurityTokenSigner')
     expect(assets).toContain("operation == 'ensure-ipv6'")
-    expect(assets).toContain("operation == 'ensure-ingress'")
-    expect(assets).toContain('cidr_prefix_length')
     expect(assets).toContain("oci_ipv6_cidr = request.get('ociIpv6Cidr')")
     expect(assets).toContain('managed_network = ipaddress.ip_network(allocated_cidr, strict=False)')
     expect(assets).toContain('cidr = add_ipv6(address, 128, interface)')
+    expect(assets).toContain('elif error.status == 404:')
   })
 
   it('supports IPv4, IPv6 and mixed allocation without inventing public IPv4', () => {
@@ -128,14 +130,14 @@ describe('Proxy Builder Batch 3 safety contracts', () => {
   })
 
 
-  it('tests from Windows first and opens OCI ingress through Instance Principal only on timeout', () => {
+  it('tests from Windows first and opens OCI ingress with automatic auth fallback only on timeout', () => {
     const verifyIndex = service.indexOf('verifyProvisionedProxies(remote, input.proxyAuth)')
-    const ociIndex = service.indexOf("['ensure-ingress', remote.cloud.vnicId")
+    const ociIndex = service.indexOf('const ingress = await ensureOciIngressAutomatically(', verifyIndex)
     expect(service).toContain("remote.cloud?.provider === 'oci'")
     expect(service).toContain("status: 'failed'")
     expect(service).not.toContain('Máy này chưa có ~/.oci/config')
-    expect(service).not.toContain('ensureOciSecurityListIngress')
-    expect(service).toContain('const ingress = await runRemoteOciHelper<RemoteOciIngressResult>')
+    expect(service).toContain('ensureOciSecurityListIngress({')
+    expect(service).toContain("['ensure-ingress', remoteOci.vnicId")
     expect(service).toContain("if (!ingress.verified)")
     expect(service).toContain("status: externalDead === 0 ? 'completed' : 'failed'")
     expect(service).toContain("phase: externalDead === 0 ? 'complete' : 'self_test'")

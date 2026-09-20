@@ -23,6 +23,12 @@ import {
 import { applyProxyBuilderSshAuth } from './sshAuth'
 import { runNativeOpenSsh, shouldUseNativeOpenSsh } from './nativeOpenSsh'
 import { checkProxyLineNow } from './checkerService'
+import {
+  deleteOciIpv6Cidr,
+  ensureOciIpv6Cidr,
+  ensureOciSecurityListIngress,
+  resolveOciConfigPath
+} from './ociCloudFirewallService'
 
 const PROVISION_TIMEOUT_MS = 15 * 60_000
 const COMMAND_TIMEOUT_MS = 60_000
@@ -297,12 +303,119 @@ async function verifyProvisionedProxies(
   return { results, errors: errors.filter(Boolean) }
 }
 
-async function detectRemoteOci(session: SshSessionLike): Promise<{ region: string; vnicId: string } | null> {
-  const command = [
-    "REGION=$(curl -fsS --connect-timeout 2 --max-time 4 -H 'Authorization: Bearer Oracle' http://169.254.169.254/opc/v2/instance/region 2>/dev/null | tr -d '\\r\\n\"')",
-    "VNIC=$(curl -fsS --connect-timeout 2 --max-time 4 -H 'Authorization: Bearer Oracle' http://169.254.169.254/opc/v2/vnics/0/vnicId 2>/dev/null | tr -d '\\r\\n\"')",
-    "printf 'REGION=%s\\nVNIC=%s\\n' \"$REGION\" \"$VNIC\""
-  ].join('; ')
+interface RemoteOciMetadata {
+  region: string
+  vnicId: string
+  assignedIpv6Cidrs: string[]
+  subnetIpv6Cidrs: string[]
+}
+
+function splitCsv(value: string | undefined): string[] {
+  return (value ?? '').split(',').map((item) => item.trim()).filter(Boolean)
+}
+
+function ipv6CidrCapacity(cidr: string): number {
+  const match = cidr.trim().match(/^([^/]+)\/(\d{1,3})$/)
+  if (!match || !match[1]?.includes(':')) return 0
+  const prefix = Number(match[2])
+  if (!Number.isInteger(prefix) || prefix < 0 || prefix >= 128) return 0
+  const hostBits = 128 - prefix
+  if (hostBits >= 53) return Number.MAX_SAFE_INTEGER
+  return Math.max(0, (2 ** hostBits) - 1)
+}
+
+function selectReusableIpv6Cidr(cidrs: string[], requiredAddressCount: number): string | null {
+  return [...new Set(cidrs)]
+    .filter((cidr) => ipv6CidrCapacity(cidr) >= requiredAddressCount)
+    .sort((left, right) => ipv6CidrCapacity(left) - ipv6CidrCapacity(right))[0] ?? null
+}
+
+const ROUTED_IPV6_PROBE_PY = String.raw`import hashlib
+import ipaddress
+import subprocess
+import sys
+import time
+
+network = ipaddress.ip_network(sys.argv[1], strict=False)
+interface = sys.argv[2]
+if network.version != 6 or network.prefixlen >= 128:
+    sys.exit(2)
+host_bits = 128 - network.prefixlen
+span = (1 << host_bits) - 2
+if span < 8:
+    sys.exit(3)
+seed = int.from_bytes(hashlib.sha256((str(network) + '|' + interface).encode()).digest()[:8], 'big')
+for attempt in range(2):
+    offset = 2 + ((seed + attempt * 0x9E3779B97F4A7C15) % span)
+    address = str(ipaddress.ip_address(int(network.network_address) + offset))
+    cidr = address + '/128'
+    added = subprocess.run(['ip', '-6', 'addr', 'add', cidr, 'dev', interface], capture_output=True, text=True)
+    if added.returncode != 0:
+        continue
+    try:
+        time.sleep(0.8)
+        status = subprocess.run(['ip', '-6', 'addr', 'show', 'dev', interface], capture_output=True, text=True)
+        if 'dadfailed' in status.stdout.lower():
+            continue
+        try:
+            probe = subprocess.run([
+                'curl', '-6', '-fsS', '--interface', address,
+                '--connect-timeout', '2', '--max-time', '4', 'https://api64.ipify.org'
+            ], capture_output=True, text=True, timeout=6)
+        except subprocess.TimeoutExpired:
+            continue
+        if probe.returncode == 0:
+            try:
+                if ipaddress.ip_address(probe.stdout.strip()) == ipaddress.ip_address(address):
+                    print(str(network))
+                    sys.exit(0)
+            except ValueError:
+                pass
+    finally:
+        subprocess.run(['ip', '-6', 'addr', 'del', cidr, 'dev', interface], capture_output=True, text=True)
+sys.exit(4)`
+
+async function probeRemoteRoutedIpv6Cidr(
+  session: SshSessionLike,
+  prefix: string,
+  interfaceName: string,
+  cidrs: string[],
+  requiredAddressCount: number
+): Promise<string | null> {
+  const candidates = [...new Set(cidrs)]
+    .filter((cidr) => ipv6CidrCapacity(cidr) >= requiredAddressCount)
+    .sort((left, right) => ipv6CidrCapacity(left) - ipv6CidrCapacity(right))
+  if (!candidates.length) return null
+  const encoded = Buffer.from(ROUTED_IPV6_PROBE_PY, 'utf8').toString('base64')
+  const runner = `import base64;exec(base64.b64decode("${encoded}"))`
+  for (const cidr of candidates) {
+    const result = await session.exec(
+      `${prefix}python3 -c ${shellQuote(runner)} ${shellQuote(cidr)} ${shellQuote(interfaceName)}`,
+      15_000
+    )
+    if (result.code === 0) return result.stdout.trim().split(/\r?\n/).filter(Boolean).at(-1) ?? cidr
+  }
+  return null
+}
+
+async function detectRemoteOci(session: SshSessionLike): Promise<RemoteOciMetadata | null> {
+  const script = [
+    'import json, urllib.request',
+    "headers={'Authorization':'Bearer Oracle'}",
+    'def get(path):',
+    "    req=urllib.request.Request('http://169.254.169.254/opc/v2/'+path, headers=headers)",
+    '    with urllib.request.urlopen(req, timeout=4) as response: return json.load(response)',
+    "instance=get('instance/')",
+    "vnics=get('vnics/')",
+    'vnic=vnics[0] if isinstance(vnics, list) and vnics else {}',
+    "print('REGION='+str(instance.get('region') or ''))",
+    "print('VNIC='+str(vnic.get('vnicId') or ''))",
+    "print('IPV6_CIDRS='+','.join(str(x) for x in (vnic.get('ipv6AddressCidrs') or [])))",
+    "subnets=vnic.get('ipv6SubnetCidrBlocks') or ([vnic.get('ipv6SubnetCidrBlock')] if vnic.get('ipv6SubnetCidrBlock') else [])",
+    "print('IPV6_SUBNETS='+','.join(str(x) for x in subnets if x))"
+  ].join('\n')
+  const encoded = Buffer.from(script, 'utf8').toString('base64')
+  const command = `python3 -c ${shellQuote(`import base64;exec(base64.b64decode("${encoded}"))`)}`
   const result = await session.exec(command, 15_000)
   if (result.code !== 0) return null
   const values = new Map(
@@ -314,7 +427,12 @@ async function detectRemoteOci(session: SshSessionLike): Promise<{ region: strin
   const region = values.get('REGION') ?? ''
   const vnicId = values.get('VNIC') ?? ''
   if (!/^[a-z0-9-]+$/i.test(region) || !/^ocid1\.vnic\./.test(vnicId)) return null
-  return { region, vnicId }
+  return {
+    region,
+    vnicId,
+    assignedIpv6Cidrs: splitCsv(values.get('IPV6_CIDRS')),
+    subnetIpv6Cidrs: splitCsv(values.get('IPV6_SUBNETS'))
+  }
 }
 
 interface RemoteOciIpv6Lease {
@@ -323,6 +441,8 @@ interface RemoteOciIpv6Lease {
   prefixLength: number
   created: boolean
   region?: string
+  authSource?: 'instance-principal' | 'desktop-config'
+  configPath?: string
 }
 
 interface RemoteOciIngressResult {
@@ -336,7 +456,7 @@ function parseRemoteOciJson<T>(result: CommandResult, action: string): T {
   if (result.code !== 0) {
     const detail = (result.stderr || result.stdout || '').trim()
     if (/INSTANCE_PRINCIPAL_IAM/i.test(detail)) {
-      throw new Error('VPS chưa được cấp quyền OCI. Cần Dynamic Group + IAM Policy cho phép instance quản lý IPv6 và Security List.')
+      throw new Error('Oracle Cloud từ chối quyền Instance Principal để tự quản lý IPv6/Security List.')
     }
     throw new Error(`${action} lỗi: ${detail || 'OCI helper thất bại.'}`)
   }
@@ -388,6 +508,78 @@ async function runRemoteOciHelper<T>(
   const command = [`${prefix}${python}`, shellQuote(helperPath), ...args.map(shellQuote)].join(' ')
   const result = await session.exec(command, 3 * 60_000)
   return parseRemoteOciJson<T>(result, action)
+}
+
+function isInstancePrincipalIamError(error: unknown): boolean {
+  return /Instance Principal|INSTANCE_PRINCIPAL_IAM/i.test(errorMessage(error))
+}
+
+function canFallbackToDesktopOci(error: unknown): boolean {
+  return isInstancePrincipalIamError(error) || /Không tự cài được OCI SDK/i.test(errorMessage(error))
+}
+
+async function ensureOciIpv6Automatically(
+  session: SshSessionLike,
+  prefix: string,
+  helperPath: string,
+  remoteOci: RemoteOciMetadata,
+  requiredAddressCount: number
+): Promise<RemoteOciIpv6Lease> {
+  try {
+    const lease = await runRemoteOciHelper<RemoteOciIpv6Lease>(
+      session,
+      prefix,
+      helperPath,
+      ['ensure-ipv6', remoteOci.vnicId, String(requiredAddressCount)],
+      'Cấp OCI Flexible IPv6 CIDR'
+    )
+    return { ...lease, region: lease.region ?? remoteOci.region, authSource: 'instance-principal' }
+  } catch (error) {
+    const configPath = resolveOciConfigPath()
+    if (!configPath || !canFallbackToDesktopOci(error)) throw error
+    const lease = await ensureOciIpv6Cidr({
+      configPath,
+      region: remoteOci.region,
+      vnicId: remoteOci.vnicId,
+      requiredAddressCount
+    })
+    return {
+      ...lease,
+      region: remoteOci.region,
+      authSource: 'desktop-config',
+      configPath
+    }
+  }
+}
+
+async function ensureOciIngressAutomatically(
+  session: SshSessionLike,
+  prefix: string,
+  helperPath: string,
+  remoteOci: RemoteOciMetadata,
+  startPort: number,
+  endPort: number
+): Promise<RemoteOciIngressResult> {
+  try {
+    return await runRemoteOciHelper<RemoteOciIngressResult>(
+      session,
+      prefix,
+      helperPath,
+      ['ensure-ingress', remoteOci.vnicId, String(startPort), String(endPort)],
+      'Mở OCI Security List'
+    )
+  } catch (error) {
+    const configPath = resolveOciConfigPath()
+    if (!configPath || !canFallbackToDesktopOci(error)) throw error
+    const ingress = await ensureOciSecurityListIngress({
+      configPath,
+      region: remoteOci.region,
+      vnicId: remoteOci.vnicId,
+      startPort,
+      endPort
+    })
+    return { ...ingress, region: remoteOci.region }
+  }
 }
 
 function isCloudFirewallTimeout(errors: string[]): boolean {
@@ -510,21 +702,52 @@ export class ProxyBuilderProvisionService {
       const remoteOci = await detectRemoteOci(session)
       if (remoteOci) await session.writeFile(paths.ociHelper, OCI_INSTANCE_PRINCIPAL_PY, 0o700)
       if (input.ipMode !== 'ipv4' && remoteOci) {
-        this.update(runId, {
-          phase: 'provisioning',
-          percent: 25,
-          message: `Đang dùng quyền OCI của VPS để cấp Flexible IPv6 CIDR cho ${input.count} proxy…`
-        })
         const requiredAddressCount = input.ipMode === 'both' ? Math.max(1, input.count - 1) : input.count
-        const lease = await runRemoteOciHelper<RemoteOciIpv6Lease>(
-          session,
-          prefix,
-          paths.ociHelper,
-          ['ensure-ipv6', remoteOci.vnicId, String(requiredAddressCount)],
-          'Cấp OCI Flexible IPv6 CIDR'
-        )
-        ociIpv6Cidr = lease.cidr
-        ociIpv6Lease = lease
+        const assignedCidr = selectReusableIpv6Cidr(remoteOci.assignedIpv6Cidrs, requiredAddressCount)
+        if (assignedCidr) {
+          ociIpv6Cidr = assignedCidr
+          this.update(runId, {
+            phase: 'provisioning',
+            percent: 24,
+            message: `Đang tái sử dụng dải IPv6 OCI đã gán sẵn cho VNIC (${assignedCidr})…`
+          })
+        } else {
+          this.update(runId, {
+            phase: 'provisioning',
+            percent: 24,
+            message: 'Đang kiểm tra xem subnet IPv6 hiện tại có được route trực tiếp tới VPS không…'
+          })
+          const routedCidr = await probeRemoteRoutedIpv6Cidr(
+            session,
+            prefix,
+            interfaceName,
+            remoteOci.subnetIpv6Cidrs,
+            requiredAddressCount
+          )
+          if (routedCidr) {
+            ociIpv6Cidr = routedCidr
+            this.update(runId, {
+              phase: 'provisioning',
+              percent: 25,
+              message: `Subnet IPv6 được route trực tiếp; đang tạo pool trong ${routedCidr}…`
+            })
+          } else {
+            this.update(runId, {
+              phase: 'provisioning',
+              percent: 25,
+              message: `Subnet không cho source-bind trực tiếp; Page-Auto đang tự cấp Flexible IPv6 CIDR cho ${requiredAddressCount} IPv6…`
+            })
+            const lease = await ensureOciIpv6Automatically(
+              session,
+              prefix,
+              paths.ociHelper,
+              remoteOci,
+              requiredAddressCount
+            )
+            ociIpv6Cidr = lease.cidr
+            ociIpv6Lease = lease
+          }
+        }
       }
 
       const request = JSON.stringify({
@@ -568,12 +791,13 @@ export class ProxyBuilderProvisionService {
               message: 'Windows đang timeout; Page-Auto đang dùng quyền OCI của VPS để tự mở Security List…'
             })
             if (!remoteOci) throw new Error('Không đọc được OCI instance metadata trên VPS.')
-            const ingress = await runRemoteOciHelper<RemoteOciIngressResult>(
+            const ingress = await ensureOciIngressAutomatically(
               session,
               prefix,
               paths.ociHelper,
-              ['ensure-ingress', remote.cloud.vnicId, String(input.startPort), String(input.startPort + input.count - 1)],
-              'Mở OCI Security List'
+              remoteOci,
+              input.startPort,
+              input.startPort + input.count - 1
             )
             if (!ingress.verified) throw new Error('OCI Security List chưa xác minh được ingress vừa tạo.')
             if (this.active?.cancelRequested) throw new Error('Provision cancelled')
@@ -620,13 +844,21 @@ export class ProxyBuilderProvisionService {
       let cleanupWarning = ''
       if (!remoteProvisionSucceeded && ociIpv6Lease?.created) {
         try {
-          await runRemoteOciHelper(
-            session,
-            rootPrefix,
-            paths.ociHelper,
-            ['delete-ipv6', ociIpv6Lease.ipv6Id],
-            'Rollback OCI IPv6 CIDR'
-          )
+          if (ociIpv6Lease.authSource === 'desktop-config' && ociIpv6Lease.configPath && ociIpv6Lease.region) {
+            await deleteOciIpv6Cidr({
+              configPath: ociIpv6Lease.configPath,
+              region: ociIpv6Lease.region,
+              ipv6Id: ociIpv6Lease.ipv6Id
+            })
+          } else {
+            await runRemoteOciHelper(
+              session,
+              rootPrefix,
+              paths.ociHelper,
+              ['delete-ipv6', ociIpv6Lease.ipv6Id],
+              'Rollback OCI IPv6 CIDR'
+            )
+          }
         } catch (cleanupError) {
           cleanupWarning = ' Rollback OCI IPv6 CIDR lỗi: ' + errorMessage(cleanupError)
         }
