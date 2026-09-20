@@ -21,6 +21,19 @@ describe('Proxy Builder Batch 3 safety contracts', () => {
     expect(assets).toContain('asyncio.gather(*(server.serve_forever() for server in servers))')
   })
 
+  it('bootstraps OCI /128 into an API-assigned flexible CIDR instead of inventing IPv6 addresses', () => {
+    expect(service).toContain('ensureOciIpv6Cidr')
+    expect(service).toContain('detectRemoteOci(session)')
+    expect(service).toContain("...(ociIpv6Cidr ? { ociIpv6Cidr } : {})")
+    expect(service).toContain('deleteOciIpv6Cidr')
+    expect(assets).toContain("oci_ipv6_cidr = request.get('ociIpv6Cidr')")
+    expect(assets).toContain('managed_network = ipaddress.ip_network(allocated_cidr, strict=False)')
+    expect(assets).toContain('cidr = add_ipv6(address, 128, interface)')
+    expect(assets).toContain("Provider chỉ cấp IPv6 /128; cần một routed IPv6 CIDR/prefix")
+    expect(ociService).toContain("'/20160918/ipv6'")
+    expect(ociService).toContain('cidrPrefixLength: requiredPrefix')
+  })
+
   it('supports IPv4, IPv6 and mixed allocation without inventing public IPv4', () => {
     expect(assets).toContain("if mode == 'ipv4'")
     expect(assets).toContain("if mode == 'ipv6'")

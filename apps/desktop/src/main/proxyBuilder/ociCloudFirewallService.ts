@@ -27,8 +27,37 @@ interface OciIngressRule {
 }
 
 interface OciVnic { subnetId?: string }
-interface OciSubnet { securityListIds?: string[] }
+interface OciSubnet {
+  securityListIds?: string[]
+  ipv6CidrBlock?: string
+  ipv6CidrBlocks?: string[]
+}
 interface OciSecurityList { ingressSecurityRules?: OciIngressRule[] }
+
+interface OciIpv6 {
+  id?: string
+  ipAddress?: string
+  cidrPrefixLength?: number
+  displayName?: string
+  ipv6SubnetCidr?: string
+  lifecycleState?: string
+  vnicId?: string
+}
+
+export interface EnsureOciIpv6CidrInput {
+  configPath: string
+  profile?: string
+  region: string
+  vnicId: string
+  requiredAddressCount: number
+}
+
+export interface EnsureOciIpv6CidrResult {
+  ipv6Id: string
+  cidr: string
+  prefixLength: number
+  created: boolean
+}
 
 export interface EnsureOciIngressInput {
   configPath: string
@@ -46,6 +75,7 @@ export interface EnsureOciIngressResult {
 }
 
 const RULE_MARKER_PREFIX = 'page-auto-proxy:'
+const IPV6_CIDR_DISPLAY_NAME = 'page-auto-proxy-cidr'
 
 function unquote(value: string): string {
   const trimmed = value.trim()
@@ -178,7 +208,7 @@ function buildAuthorization(
 async function sendOciRequest<T>(
   credentials: OciCredentials,
   region: string,
-  method: 'GET' | 'PUT',
+  method: 'GET' | 'PUT' | 'POST' | 'DELETE',
   path: string,
   bodyValue?: unknown
 ): Promise<T> {
@@ -202,7 +232,7 @@ async function sendOciRequest<T>(
 
   if (response.status < 200 || response.status >= 300) {
     if (response.status === 401) throw new Error('OCI credential không hợp lệ hoặc API key chưa được cấp cho user.')
-    if (response.status === 403) throw new Error('OCI user thiếu quyền đọc VNIC/Subnet hoặc manage Security List.')
+    if (response.status === 403) throw new Error('OCI user thiếu quyền manage virtual-network-family (VNIC/Subnet/IPv6/Security List).')
     if (response.status === 404) throw new Error('OCI không tìm thấy VNIC/Subnet/Security List của VPS.')
     throw new Error(`OCI API lỗi HTTP ${response.status}.`)
   }
@@ -213,6 +243,132 @@ async function sendOciRequest<T>(
   } catch {
     throw new Error('OCI API trả dữ liệu không hợp lệ.')
   }
+}
+
+export function selectOciIpv6PrefixLength(requiredAddressCount: number): number {
+  if (!Number.isInteger(requiredAddressCount) || requiredAddressCount < 1 || requiredAddressCount > 10_000) {
+    throw new Error('Số lượng IPv6 OCI phải nằm trong 1-10000.')
+  }
+  // OCI flexible IPv6 masks must be nibble-aligned (divisible by 4).
+  // Keep the network address unused so generated proxy sources start at +1.
+  for (let prefix = 124; prefix >= 80; prefix -= 4) {
+    const usable = (2 ** (128 - prefix)) - 1
+    if (usable >= requiredAddressCount) return prefix
+  }
+  throw new Error('Không tìm được IPv6 CIDR OCI đủ lớn cho số lượng proxy.')
+}
+
+function ociIpv6Capacity(prefixLength: number): number {
+  if (!Number.isInteger(prefixLength) || prefixLength < 80 || prefixLength > 128) return 0
+  return Math.max(0, (2 ** (128 - prefixLength)) - 1)
+}
+
+export async function ensureOciIpv6Cidr(input: EnsureOciIpv6CidrInput): Promise<EnsureOciIpv6CidrResult> {
+  if (!/^ocid1\.vnic\./.test(input.vnicId)) throw new Error('Không xác định được OCI VNIC của VPS.')
+  const profile = input.profile?.trim() || 'DEFAULT'
+  const credentials = loadCredentials(input.configPath, profile)
+  const region = input.region.trim() || credentials.region
+  const requiredPrefix = selectOciIpv6PrefixLength(input.requiredAddressCount)
+
+  const existing = await sendOciRequest<OciIpv6[]>(
+    credentials,
+    region,
+    'GET',
+    `/20160918/ipv6?vnicId=${encodeURIComponent(input.vnicId)}`
+  )
+  const managed = (Array.isArray(existing) ? existing : [])
+    .filter((item) =>
+      item.displayName === IPV6_CIDR_DISPLAY_NAME
+      && item.lifecycleState !== 'TERMINATED'
+      && typeof item.ipAddress === 'string'
+      && typeof item.cidrPrefixLength === 'number'
+      && ociIpv6Capacity(item.cidrPrefixLength) >= input.requiredAddressCount
+    )
+    .sort((a, b) => (b.cidrPrefixLength ?? 0) - (a.cidrPrefixLength ?? 0))
+  const reusable = managed[0]
+  if (reusable?.id && reusable.ipAddress && reusable.cidrPrefixLength) {
+    return {
+      ipv6Id: reusable.id,
+      cidr: `${reusable.ipAddress}/${reusable.cidrPrefixLength}`,
+      prefixLength: reusable.cidrPrefixLength,
+      created: false
+    }
+  }
+
+  const vnic = await sendOciRequest<OciVnic>(
+    credentials,
+    region,
+    'GET',
+    `/20160918/vnics/${encodeURIComponent(input.vnicId)}`
+  )
+  if (!vnic.subnetId) throw new Error('OCI VNIC không trả về subnetId.')
+  const subnet = await sendOciRequest<OciSubnet>(
+    credentials,
+    region,
+    'GET',
+    `/20160918/subnets/${encodeURIComponent(vnic.subnetId)}`
+  )
+  const preferredSubnetCidr =
+    (Array.isArray(existing) ? existing : []).find((item) => item.ipv6SubnetCidr)?.ipv6SubnetCidr
+    ?? subnet.ipv6CidrBlocks?.[0]
+    ?? subnet.ipv6CidrBlock
+
+  const created = await sendOciRequest<OciIpv6>(
+    credentials,
+    region,
+    'POST',
+    '/20160918/ipv6',
+    {
+      vnicId: input.vnicId,
+      displayName: IPV6_CIDR_DISPLAY_NAME,
+      cidrPrefixLength: requiredPrefix,
+      lifetime: 'EPHEMERAL',
+      ...(preferredSubnetCidr ? { ipv6SubnetCidr: preferredSubnetCidr } : {})
+    }
+  )
+  if (!created.id) throw new Error('OCI CreateIpv6 không trả về IPv6 OCID.')
+
+  let confirmed = created
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    confirmed = await sendOciRequest<OciIpv6>(
+      credentials,
+      region,
+      'GET',
+      `/20160918/ipv6/${encodeURIComponent(created.id)}`
+    )
+    if (confirmed.lifecycleState === 'AVAILABLE' && confirmed.ipAddress && confirmed.cidrPrefixLength) break
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 500))
+  }
+  if (confirmed.lifecycleState !== 'AVAILABLE' || !confirmed.ipAddress || !confirmed.cidrPrefixLength) {
+    throw new Error('OCI đã tạo IPv6 CIDR nhưng chưa chuyển sang AVAILABLE.')
+  }
+  if (ociIpv6Capacity(confirmed.cidrPrefixLength) < input.requiredAddressCount) {
+    throw new Error('OCI IPv6 CIDR được cấp không đủ số địa chỉ proxy yêu cầu.')
+  }
+  return {
+    ipv6Id: created.id,
+    cidr: `${confirmed.ipAddress}/${confirmed.cidrPrefixLength}`,
+    prefixLength: confirmed.cidrPrefixLength,
+    created: true
+  }
+}
+
+export async function deleteOciIpv6Cidr(input: {
+  configPath: string
+  profile?: string
+  region: string
+  ipv6Id: string
+}): Promise<void> {
+  if (!/^ocid1\.ipv6\./.test(input.ipv6Id)) return
+  const profile = input.profile?.trim() || 'DEFAULT'
+  const credentials = loadCredentials(input.configPath, profile)
+  const region = input.region.trim() || credentials.region
+  await sendOciRequest(
+    credentials,
+    region,
+    'DELETE',
+    `/20160918/ipv6/${encodeURIComponent(input.ipv6Id)}`
+  )
 }
 
 export function hasOciIngressRule(

@@ -17,7 +17,12 @@ import { PROXY_RUNTIME_PY, PROXY_RESTORE_PY, PROXY_PROVISIONER_PY, PROXY_SYSTEMD
 import { applyProxyBuilderSshAuth } from './sshAuth'
 import { runNativeOpenSsh, shouldUseNativeOpenSsh } from './nativeOpenSsh'
 import { checkProxyLineNow } from './checkerService'
-import { ensureOciSecurityListIngress, resolveOciConfigPath } from './ociCloudFirewallService'
+import {
+  deleteOciIpv6Cidr,
+  ensureOciIpv6Cidr,
+  ensureOciSecurityListIngress,
+  resolveOciConfigPath
+} from './ociCloudFirewallService'
 
 const PROVISION_TIMEOUT_MS = 15 * 60_000
 const COMMAND_TIMEOUT_MS = 60_000
@@ -292,6 +297,26 @@ async function verifyProvisionedProxies(
   return { results, errors: errors.filter(Boolean) }
 }
 
+async function detectRemoteOci(session: SshSessionLike): Promise<{ region: string; vnicId: string } | null> {
+  const command = [
+    "REGION=$(curl -fsS --connect-timeout 2 --max-time 4 -H 'Authorization: Bearer Oracle' http://169.254.169.254/opc/v2/instance/region 2>/dev/null | tr -d '\\r\\n\"')",
+    "VNIC=$(curl -fsS --connect-timeout 2 --max-time 4 -H 'Authorization: Bearer Oracle' http://169.254.169.254/opc/v2/vnics/0/vnicId 2>/dev/null | tr -d '\\r\\n\"')",
+    "printf 'REGION=%s\\nVNIC=%s\\n' \"$REGION\" \"$VNIC\""
+  ].join('; ')
+  const result = await session.exec(command, 15_000)
+  if (result.code !== 0) return null
+  const values = new Map(
+    result.stdout.split(/\r?\n/).flatMap((line) => {
+      const index = line.indexOf('=')
+      return index > 0 ? [[line.slice(0, index), line.slice(index + 1).trim()] as const] : []
+    })
+  )
+  const region = values.get('REGION') ?? ''
+  const vnicId = values.get('VNIC') ?? ''
+  if (!/^[a-z0-9-]+$/i.test(region) || !/^ocid1\.vnic\./.test(vnicId)) return null
+  return { region, vnicId }
+}
+
 function isCloudFirewallTimeout(errors: string[]): boolean {
   return errors.length > 0 && errors.every((message) =>
     /Timeout khi kết nối proxy|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH/i.test(message)
@@ -380,6 +405,14 @@ export class ProxyBuilderProvisionService {
       request: `${tempBase}-request.json`, runtime: `${tempBase}-runtime.py`, restore: `${tempBase}-restore.py`,
       provisioner: `${tempBase}-provision.py`, service: `${tempBase}.service`
     }
+    let ociIpv6Lease: {
+      configPath: string
+      profile?: string
+      region: string
+      ipv6Id: string
+      created: boolean
+    } | null = null
+    let remoteProvisionSucceeded = false
     try {
       await session.connect(connectConfig(input))
       if (this.active?.cancelRequested) throw new Error('Provision cancelled')
@@ -402,9 +435,53 @@ export class ProxyBuilderProvisionService {
       if (!interfaceName) throw new Error('Không xác định được default network interface.')
       const publicResult = await session.exec("curl -4 -fsS --connect-timeout 3 --max-time 7 https://api.ipify.org 2>/dev/null || true")
       const listenHost = publicResult.stdout.trim() || input.host.trim().replace(/^\[|\]$/g, '')
+
+      let ociIpv6Cidr: string | undefined
+      if (input.ipMode !== 'ipv4') {
+        const remoteOci = await detectRemoteOci(session)
+        if (remoteOci) {
+          const ociConfigPath = resolveOciConfigPath(input.cloudFirewall?.configPath)
+          if (!ociConfigPath) {
+            this.update(runId, {
+              status: 'failed',
+              phase: 'preflight',
+              percent: 100,
+              message: 'OCI IPv6 /128 cần cấp Flexible IPv6 CIDR trước khi tạo proxy. Chọn Cấu hình OCI để Page-Auto tự cấp dải.',
+              cloudFirewallAction: {
+                provider: 'oci',
+                status: 'required',
+                message: 'OCI IPv6 /128 cần OCI config để Page-Auto cấp Flexible IPv6 CIDR cho VNIC.'
+              }
+            })
+            return
+          }
+          this.update(runId, {
+            phase: 'provisioning',
+            percent: 25,
+            message: `Đang cấp OCI Flexible IPv6 CIDR cho ${input.count} proxy…`
+          })
+          const lease = await ensureOciIpv6Cidr({
+            configPath: ociConfigPath,
+            ...(input.cloudFirewall?.profile?.trim() ? { profile: input.cloudFirewall.profile.trim() } : {}),
+            region: remoteOci.region,
+            vnicId: remoteOci.vnicId,
+            requiredAddressCount: input.ipMode === 'both' ? Math.max(1, input.count - 1) : input.count
+          })
+          ociIpv6Cidr = lease.cidr
+          ociIpv6Lease = {
+            configPath: ociConfigPath,
+            ...(input.cloudFirewall?.profile?.trim() ? { profile: input.cloudFirewall.profile.trim() } : {}),
+            region: remoteOci.region,
+            ipv6Id: lease.ipv6Id,
+            created: lease.created
+          }
+        }
+      }
+
       const request = JSON.stringify({
         host: input.host.trim(), interface: interfaceName, listenHost, count: input.count, startPort: input.startPort,
-        ipMode: input.ipMode, proxyAuth: input.proxyAuth
+        ipMode: input.ipMode, proxyAuth: input.proxyAuth,
+        ...(ociIpv6Cidr ? { ociIpv6Cidr } : {})
       })
       this.update(runId, { phase: 'provisioning', percent: 28, message: 'Đang staging runtime và manifest…' })
       await session.writeFile(paths.request, request, 0o600)
@@ -420,6 +497,7 @@ export class ProxyBuilderProvisionService {
       })
       if (result.code !== 0) throw new Error((result.stderr || result.stdout || 'Provision command failed.').trim().slice(-2200))
       const remote = parseProvisionResult(result.stdout)
+      remoteProvisionSucceeded = true
       if (this.active?.cancelRequested) throw new Error('Provision cancelled')
       this.update(runId, { phase: 'self_test', percent: 92, message: 'Đang kiểm tra khả năng truy cập proxy từ máy Windows…' })
       let verified = await verifyProvisionedProxies(remote, input.proxyAuth)
@@ -499,9 +577,22 @@ export class ProxyBuilderProvisionService {
       })
     } catch (error) {
       const cancelled = this.active?.runId === runId && this.active.cancelRequested
+      let cleanupWarning = ''
+      if (!remoteProvisionSucceeded && ociIpv6Lease?.created) {
+        try {
+          await deleteOciIpv6Cidr({
+            configPath: ociIpv6Lease.configPath,
+            ...(ociIpv6Lease.profile ? { profile: ociIpv6Lease.profile } : {}),
+            region: ociIpv6Lease.region,
+            ipv6Id: ociIpv6Lease.ipv6Id
+          })
+        } catch (cleanupError) {
+          cleanupWarning = ' Rollback OCI IPv6 CIDR lỗi: ' + errorMessage(cleanupError)
+        }
+      }
       this.update(runId, {
         status: cancelled ? 'cancelled' : 'failed', phase: 'rollback', percent: 100,
-        message: cancelled ? 'Đã dừng phiên tạo proxy; rollback đã được yêu cầu trên VPS.' : errorMessage(error)
+        message: (cancelled ? 'Đã dừng phiên tạo proxy; rollback đã được yêu cầu trên VPS.' : errorMessage(error)) + cleanupWarning
       })
     } finally {
       try { await session.exec(`rm -f ${Object.values(paths).map(shellQuote).join(' ')}`, 10_000) } catch { /* best effort */ }

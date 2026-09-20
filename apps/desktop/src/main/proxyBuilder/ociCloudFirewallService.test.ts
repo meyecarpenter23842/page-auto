@@ -2,7 +2,13 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { hasOciIngressRule, parseOciConfig, reconcileOciIngressRules, resolveOciConfigPath } from './ociCloudFirewallService'
+import {
+  hasOciIngressRule,
+  parseOciConfig,
+  reconcileOciIngressRules,
+  resolveOciConfigPath,
+  selectOciIpv6PrefixLength
+} from './ociCloudFirewallService'
 
 describe('Proxy Builder OCI cloud firewall', () => {
   it('parses a selected OCI config profile without exposing key material', () => {
@@ -55,6 +61,14 @@ describe('Proxy Builder OCI cloud firewall', () => {
     }]
     expect(hasOciIngressRule(rules, marker, 3128, 3227)).toBe(true)
     expect(hasOciIngressRule(rules, marker, 3128, 3128)).toBe(false)
+  })
+
+  it('sizes OCI flexible IPv6 CIDRs on nibble boundaries for the requested proxy pool', () => {
+    expect(selectOciIpv6PrefixLength(1)).toBe(124)
+    expect(selectOciIpv6PrefixLength(15)).toBe(124)
+    expect(selectOciIpv6PrefixLength(16)).toBe(120)
+    expect(selectOciIpv6PrefixLength(1000)).toBe(116)
+    expect(selectOciIpv6PrefixLength(10_000)).toBe(112)
   })
 
   it('uses ~/.oci/config automatically when no file was selected', () => {
