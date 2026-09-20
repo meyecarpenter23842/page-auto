@@ -142,6 +142,12 @@ export interface ProxyBuilderProxyResult {
   username: string | null
 }
 
+export interface ProxyBuilderCloudFirewallAction {
+  provider: 'oci'
+  status: 'required' | 'failed'
+  message: string
+}
+
 export interface ProxyBuilderProvisionSnapshot {
   runId: string
   status: ProxyBuilderProvisionStatus
@@ -151,6 +157,7 @@ export interface ProxyBuilderProvisionSnapshot {
   createdAt: string
   updatedAt: string
   results: ProxyBuilderProxyResult[]
+  cloudFirewallAction?: ProxyBuilderCloudFirewallAction
 }
 
 export interface ProxyBuilderRunIdPayload { runId: string }

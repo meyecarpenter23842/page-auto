@@ -85,11 +85,14 @@ describe('Proxy Center inventory/binding + checker/export', () => {
     expect(bindingPanel).toContain('proxy fields của Account Manager')
   })
 
-  it('keeps OCI API credentials in Main and requires a local config for Oracle VPS', () => {
-    expect(workspace).toContain('Chọn OCI config')
-    expect(workspace).toContain('window.pageAutoProxyBuilder.pickOciConfig')
-    expect(workspace).toContain("cloudFirewall: { provider: 'oci' as const")
-    expect(workspace).toContain('Oracle VPS: chọn OCI config')
+  it('keeps OCI setup out of the primary flow and reveals it only as a cloud-timeout fallback', () => {
+    expect(workspace).not.toContain('OCI Profile')
+    expect(workspace).not.toContain('cloudFirewallReady')
+    expect(workspace).toContain("cloudFirewallAction?.provider === 'oci'")
+    expect(workspace).toContain('Cấu hình OCI')
+    expect(workspace).toContain('pickOciConfigFile(true)')
+    expect(workspace).toContain('disabled={!capability || !selectedModeReady || provisionRunning || sshChecking}')
+    expect(workspace).toContain("startProvisionRequest(ociConfigPath || undefined)")
     expect(preload).toContain('pickOciConfig: () => ipcRenderer.invoke')
     expect(ipc).toContain("title: 'Chọn OCI config'")
   })

@@ -1,5 +1,8 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { parseOciConfig, reconcileOciIngressRules } from './ociCloudFirewallService'
+import { parseOciConfig, reconcileOciIngressRules, resolveOciConfigPath } from './ociCloudFirewallService'
 
 describe('Proxy Builder OCI cloud firewall', () => {
   it('parses a selected OCI config profile without exposing key material', () => {
@@ -39,4 +42,18 @@ describe('Proxy Builder OCI cloud firewall', () => {
       tcpOptions: { destinationPortRange: { min: 6000, max: 6019 } }
     })
   })
+
+  it('uses ~/.oci/config automatically when no file was selected', () => {
+    const home = mkdtempSync(join(tmpdir(), 'page-auto-oci-'))
+    try {
+      const ociDir = join(home, '.oci')
+      mkdirSync(ociDir, { recursive: true })
+      const configPath = join(ociDir, 'config')
+      writeFileSync(configPath, '[DEFAULT]\nregion=ap-singapore-1\n')
+      expect(resolveOciConfigPath(undefined, home)).toBe(configPath)
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
 })

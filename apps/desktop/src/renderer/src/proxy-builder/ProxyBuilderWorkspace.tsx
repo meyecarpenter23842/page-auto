@@ -117,7 +117,6 @@ export function ProxyBuilderWorkspace() {
   const [sshKeyPassphrase, setSshKeyPassphrase] = useState('')
   const [ociConfigPath, setOciConfigPath] = useState('')
   const [ociConfigFileName, setOciConfigFileName] = useState('')
-  const [ociProfile, setOciProfile] = useState('DEFAULT')
   const [proxyIpMode, setProxyIpMode] = useState<ProxyIpMode>('ipv6')
   const [proxyCount, setProxyCount] = useState(300)
   const [startPort, setStartPort] = useState(3128)
@@ -157,8 +156,7 @@ export function ProxyBuilderWorkspace() {
     : proxyIpMode === 'ipv6'
       ? Boolean(capability?.supportsIpv6)
       : Boolean(capability?.supportsIpv4 && capability?.supportsIpv6)
-  const ociDetected = capability?.cloudProvider === 'oci'
-  const cloudFirewallReady = !ociDetected || Boolean(ociConfigPath)
+  const cloudFirewallAction = provision?.cloudFirewallAction ?? null
 
   useEffect(() => {
     if (!provisionRunning || !provision) return
@@ -209,6 +207,34 @@ export function ProxyBuilderWorkspace() {
     setProxyPassword(randomAuthToken(20))
   }
 
+  const startProvisionRequest = async (cloudConfigPath?: string) => {
+    if (!capability || provisionRunning) return
+    setNotice(null)
+    try {
+      const proxyAuth: ProxyBuilderProxyAuth = proxyAuthMode === 'basic'
+        ? { type: 'basic', username: proxyUser, password: proxyPassword }
+        : { type: 'none' }
+      const next = await window.pageAutoProxyBuilder.startProvision({
+        host,
+        username: sshUser,
+        auth: sshAuth(),
+        startPort,
+        ipMode: proxyIpMode,
+        count: proxyCount,
+        proxyAuth,
+        ...(cloudConfigPath
+          ? { cloudFirewall: { provider: 'oci' as const, configPath: cloudConfigPath } }
+          : {})
+      })
+      setProvision(next)
+      setCreatedExportAuth(proxyAuth)
+      setCreatedSelected(new Set())
+      setRuntimeActive(null)
+    } catch (error) {
+      setNotice(errorMessage(error))
+    }
+  }
+
   const pickSshKeyFile = async () => {
     if (sshChecking || provisionRunning) return
     setNotice(null)
@@ -225,7 +251,7 @@ export function ProxyBuilderWorkspace() {
     }
   }
 
-  const pickOciConfigFile = async () => {
+  const pickOciConfigFile = async (retryAfterPick = false) => {
     if (sshChecking || provisionRunning) return
     setNotice(null)
     try {
@@ -233,6 +259,7 @@ export function ProxyBuilderWorkspace() {
       if (result.cancelled || !result.path) return
       setOciConfigPath(result.path)
       setOciConfigFileName(result.fileName ?? 'OCI config')
+      if (retryAfterPick) await startProvisionRequest(result.path)
     } catch (error) {
       setNotice(errorMessage(error))
     }
@@ -258,33 +285,7 @@ export function ProxyBuilderWorkspace() {
     }
   }
 
-  const createProxy = async () => {
-    if (!capability || provisionRunning) return
-    setNotice(null)
-    try {
-      const proxyAuth: ProxyBuilderProxyAuth = proxyAuthMode === 'basic'
-        ? { type: 'basic', username: proxyUser, password: proxyPassword }
-        : { type: 'none' }
-      const next = await window.pageAutoProxyBuilder.startProvision({
-        host,
-        username: sshUser,
-        auth: sshAuth(),
-        startPort,
-        ipMode: proxyIpMode,
-        count: proxyCount,
-        proxyAuth,
-        ...(ociDetected && ociConfigPath
-          ? { cloudFirewall: { provider: 'oci' as const, configPath: ociConfigPath, profile: ociProfile.trim() || 'DEFAULT' } }
-          : {})
-      })
-      setProvision(next)
-      setCreatedExportAuth(proxyAuth)
-      setCreatedSelected(new Set())
-      setRuntimeActive(null)
-    } catch (error) {
-      setNotice(errorMessage(error))
-    }
-  }
+  const createProxy = async () => startProvisionRequest(ociConfigPath || undefined)
 
   const cancelProvision = async () => {
     if (!provisionRunning || !provision) return
@@ -495,21 +496,6 @@ export function ProxyBuilderWorkspace() {
                 ) : null}
               </div>
 
-              {ociDetected ? (
-                <div className="proxy-builder-section">
-                  <div className="proxy-builder-section-heading"><strong>Oracle Cloud</strong><span>Tự mở Security List</span></div>
-                  <div className="proxy-builder-fields proxy-builder-fields-proxy">
-                    <label className="proxy-builder-field-wide">OCI config
-                      <div className="proxy-builder-inline-actions">
-                        <button className="button secondary" type="button" disabled={sshChecking || provisionRunning} onClick={() => void pickOciConfigFile()}>Chọn OCI config</button>
-                        <span className="proxy-builder-muted">{ociConfigFileName ? `Đã chọn: ${ociConfigFileName}` : 'Chọn file ~/.oci/config; API private key chỉ được đọc trong Electron Main.'}</span>
-                      </div>
-                    </label>
-                    <label>OCI Profile<input value={ociProfile} onChange={(event) => setOciProfile(event.currentTarget.value)} placeholder="DEFAULT" autoComplete="off" /></label>
-                  </div>
-                </div>
-              ) : null}
-
               <div className="proxy-builder-section">
                 <div className="proxy-builder-section-heading"><strong>Proxy</strong><span>Chọn loại IP và dải port</span></div>
                 <div className="proxy-builder-fields proxy-builder-fields-proxy">
@@ -528,16 +514,21 @@ export function ProxyBuilderWorkspace() {
               </div>
 
               <div className="proxy-builder-create-actions">
-                <button className="button primary" type="button" disabled={!capability || !selectedModeReady || !cloudFirewallReady || provisionRunning || sshChecking} onClick={() => void createProxy()}>Tạo Proxy</button>
+                <button className="button primary" type="button" disabled={!capability || !selectedModeReady || provisionRunning || sshChecking} onClick={() => void createProxy()}>Tạo Proxy</button>
                 <button className="button secondary" type="button" disabled={!provisionRunning} onClick={() => void cancelProvision()}>Dừng</button>
                 <span>{capability
-                  ? ociDetected && !ociConfigPath
-                    ? 'Oracle VPS: chọn OCI config để Page-Auto tự mở Security List trước khi test.'
-                    : selectedModeReady
-                      ? 'Capability hợp lệ; app tự xử lý host firewall + cloud ingress rồi test từ Windows.'
-                      : 'VPS chưa đạt capability cho loại proxy đang chọn.'
+                  ? selectedModeReady
+                    ? 'Capability hợp lệ; app tự tạo proxy, xử lý host firewall và test từ Windows.'
+                    : 'VPS chưa đạt capability cho loại proxy đang chọn.'
                   : 'Kiểm tra SSH trước khi tạo proxy.'}</span>
               </div>
+              {cloudFirewallAction?.provider === 'oci' ? (
+                <div className="proxy-builder-inline-actions">
+                  <span className="proxy-builder-muted">{cloudFirewallAction.message}</span>
+                  <button className="button secondary" type="button" disabled={sshChecking || provisionRunning} onClick={() => void pickOciConfigFile(true)}>Cấu hình OCI</button>
+                  {ociConfigFileName ? <span className="proxy-builder-muted">Đã chọn: {ociConfigFileName}</span> : null}
+                </div>
+              ) : null}
             </section>
 
             <aside className="proxy-builder-panel proxy-builder-progress-panel" aria-label="Tiến trình tạo proxy">
