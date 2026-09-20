@@ -9,9 +9,11 @@ import type {
   ProxyBuilderRuntimeAction,
   ProxyBuilderSshDiagnostic
 } from '../../../shared/proxyBuilder'
+import { ProxyAccountBindingPanel } from './ProxyAccountBindingPanel'
+import { ProxyInventoryPanel } from './ProxyInventoryPanel'
 import './proxyBuilder.css'
 
-type ProxyBuilderTab = 'create' | 'checker'
+type ProxyBuilderTab = 'create' | 'inventory' | 'accounts' | 'checker'
 type ProxyIpMode = 'ipv4' | 'ipv6' | 'both'
 type SshAuthMode = 'password' | 'key'
 type ProxyAuthMode = 'none' | 'basic'
@@ -349,6 +351,33 @@ export function ProxyBuilderWorkspace() {
       .map(formatCreatedProxy)
       .filter(Boolean)
 
+  const saveCreatedToInventory = async () => {
+    const items = results.flatMap((item) => {
+      const rawProxy = formatCreatedProxy(item)
+      if (!rawProxy) return []
+      return [{
+        rawProxy,
+        ipFamily: item.type,
+        outboundIp: item.outboundIp,
+        status: item.status === 'ready' ? 'live' as const : item.status === 'error' ? 'dead' as const : 'unknown' as const,
+        sourceKind: 'builder' as const,
+        sourceLabel: host.trim() || null,
+        lastCheckedAt: item.status === 'ready' || item.status === 'error' ? Date.now() : null
+      }]
+    })
+    if (!items.length) {
+      setNotice('Không có proxy hợp lệ để lưu vào Kho Proxy.')
+      return
+    }
+    try {
+      const saved = await window.pageAutoProxyBuilder.upsertInventory({ items })
+      setNotice(`Đã lưu ${saved.inserted + saved.updated} proxy vào Kho Proxy.`)
+      setActiveTab('inventory')
+    } catch (error) {
+      setNotice(errorMessage(error))
+    }
+  }
+
   const checkerLines = (onlyLive: boolean, selectedOnly: boolean): string[] =>
     checkerResults
       .filter((item) => (!onlyLive || item.status === 'live') && (!selectedOnly || checkerSelected.has(item.index)))
@@ -414,12 +443,18 @@ export function ProxyBuilderWorkspace() {
 
   return (
     <section className="proxy-builder-shell" data-testid="proxy-builder-workspace">
-      <nav className="proxy-builder-tabs" role="tablist" aria-label="Proxy Builder">
+      <nav className="proxy-builder-tabs" role="tablist" aria-label="Proxy Center">
         <button type="button" role="tab" aria-selected={activeTab === 'create'} className={activeTab === 'create' ? 'active' : ''} onClick={() => setActiveTab('create')}>Tạo Proxy</button>
+        <button type="button" role="tab" aria-selected={activeTab === 'inventory'} className={activeTab === 'inventory' ? 'active' : ''} onClick={() => setActiveTab('inventory')}>Kho Proxy</button>
+        <button type="button" role="tab" aria-selected={activeTab === 'accounts'} className={activeTab === 'accounts' ? 'active' : ''} onClick={() => setActiveTab('accounts')}>Gán Account</button>
         <button type="button" role="tab" aria-selected={activeTab === 'checker'} className={activeTab === 'checker' ? 'active' : ''} onClick={() => setActiveTab('checker')}>Proxy Checker</button>
       </nav>
 
-      {activeTab === 'create' ? (
+      {activeTab === 'inventory' ? (
+        <ProxyInventoryPanel />
+      ) : activeTab === 'accounts' ? (
+        <ProxyAccountBindingPanel />
+      ) : activeTab === 'create' ? (
         <>
           <div className="proxy-builder-config-layout">
             <section className="proxy-builder-panel proxy-builder-config-panel">
@@ -525,6 +560,7 @@ export function ProxyBuilderWorkspace() {
               <div><strong>Danh sách Proxy</strong><span>{results.length} proxy</span></div>
               <div className="proxy-builder-inline-actions">
                 {results.length ? <><button className="button secondary" type="button" disabled={runtimeBusy || provisionRunning} onClick={() => void controlRuntime('start')}>Start service</button><button className="button secondary" type="button" disabled={runtimeBusy || provisionRunning} onClick={() => void controlRuntime('stop')}>Stop service</button><button className="button secondary" type="button" disabled={runtimeBusy || provisionRunning} onClick={() => void controlRuntime('restart')}>Restart</button></> : null}
+                <button className="button secondary" type="button" disabled={!results.length || provisionRunning} onClick={() => void saveCreatedToInventory()}>Lưu vào Kho</button>
                 <button className="button secondary" type="button" disabled={!createdSelected.size || checkerRunning} onClick={() => void startChecker(createdLines(true))}>Test đã chọn</button>
                 <button className="button secondary" type="button" disabled={!results.length || checkerRunning} onClick={() => void startChecker(createdLines(false))}>Test tất cả</button>
                 <button className="button secondary" type="button" disabled={!results.length || textBusy} onClick={() => void copyLines(createdLines(Boolean(createdSelected.size)))}>Copy</button>

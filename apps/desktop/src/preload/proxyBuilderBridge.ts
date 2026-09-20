@@ -10,7 +10,14 @@ import {
   type ProxyBuilderProvisionInput,
   type ProxyBuilderProvisionSnapshot,
   type ProxyBuilderRuntimeControlInput,
-  type ProxyBuilderRuntimeControlResult
+  type ProxyBuilderRuntimeControlResult,
+  type ProxyCenterAccountBinding,
+  type ProxyCenterAccountIdsInput,
+  type ProxyCenterAssignInput,
+  type ProxyCenterInventoryDeleteInput,
+  type ProxyCenterInventoryRecord,
+  type ProxyCenterInventoryUpsertInput,
+  type ProxyCenterInventoryUpsertResult
 } from '../shared/proxyBuilder'
 
 export interface ProxyBuilderPreloadApi {
@@ -24,6 +31,13 @@ export interface ProxyBuilderPreloadApi {
   startChecker: (input: ProxyBuilderCheckerStartInput) => Promise<ProxyBuilderCheckerSnapshot>
   getCheckerStatus: (runId: string) => Promise<ProxyBuilderCheckerSnapshot | null>
   cancelChecker: (runId: string) => Promise<ProxyBuilderCheckerSnapshot | null>
+  listInventory: () => Promise<ProxyCenterInventoryRecord[]>
+  upsertInventory: (input: ProxyCenterInventoryUpsertInput) => Promise<ProxyCenterInventoryUpsertResult>
+  checkInventory: (input: ProxyCenterInventoryDeleteInput) => Promise<ProxyCenterInventoryRecord[]>
+  deleteInventory: (input: ProxyCenterInventoryDeleteInput) => Promise<number>
+  listAccountBindings: () => Promise<ProxyCenterAccountBinding[]>
+  assignInventoryProxy: (input: ProxyCenterAssignInput) => Promise<ProxyCenterAccountBinding[]>
+  clearAccountProxy: (input: ProxyCenterAccountIdsInput) => Promise<ProxyCenterAccountBinding[]>
 }
 
 const api: ProxyBuilderPreloadApi = {
@@ -36,7 +50,14 @@ const api: ProxyBuilderPreloadApi = {
   controlRuntime: (input) => ipcRenderer.invoke(PROXY_BUILDER_IPC.runtimeControl, input),
   startChecker: (input) => ipcRenderer.invoke(PROXY_BUILDER_IPC.checkerStart, input),
   getCheckerStatus: (runId) => ipcRenderer.invoke(PROXY_BUILDER_IPC.checkerStatus, { runId }),
-  cancelChecker: (runId) => ipcRenderer.invoke(PROXY_BUILDER_IPC.checkerCancel, { runId })
+  cancelChecker: (runId) => ipcRenderer.invoke(PROXY_BUILDER_IPC.checkerCancel, { runId }),
+  listInventory: () => ipcRenderer.invoke(PROXY_BUILDER_IPC.inventoryList),
+  upsertInventory: (input) => ipcRenderer.invoke(PROXY_BUILDER_IPC.inventoryUpsert, input),
+  checkInventory: (input) => ipcRenderer.invoke(PROXY_BUILDER_IPC.inventoryCheck, input),
+  deleteInventory: (input) => ipcRenderer.invoke(PROXY_BUILDER_IPC.inventoryDelete, input),
+  listAccountBindings: () => ipcRenderer.invoke(PROXY_BUILDER_IPC.accountBindingsList),
+  assignInventoryProxy: (input) => ipcRenderer.invoke(PROXY_BUILDER_IPC.accountBindingsAssign, input),
+  clearAccountProxy: (input) => ipcRenderer.invoke(PROXY_BUILDER_IPC.accountBindingsClear, input)
 }
 
 contextBridge.exposeInMainWorld('pageAutoProxyBuilder', api)

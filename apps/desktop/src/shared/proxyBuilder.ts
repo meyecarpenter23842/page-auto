@@ -8,7 +8,14 @@ export const PROXY_BUILDER_IPC = {
   runtimeControl: 'proxy-builder:runtime-control',
   checkerStart: 'proxy-builder:checker-start',
   checkerStatus: 'proxy-builder:checker-status',
-  checkerCancel: 'proxy-builder:checker-cancel'
+  checkerCancel: 'proxy-builder:checker-cancel',
+  inventoryList: 'proxy-center:inventory-list',
+  inventoryUpsert: 'proxy-center:inventory-upsert',
+  inventoryCheck: 'proxy-center:inventory-check',
+  inventoryDelete: 'proxy-center:inventory-delete',
+  accountBindingsList: 'proxy-center:account-bindings-list',
+  accountBindingsAssign: 'proxy-center:account-bindings-assign',
+  accountBindingsClear: 'proxy-center:account-bindings-clear'
 } as const
 
 export type ProxyBuilderSshAuth =
@@ -189,4 +196,76 @@ export interface ProxyBuilderCheckerSnapshot {
   createdAt: string
   updatedAt: string
   results: ProxyBuilderCheckerResult[]
+}
+
+
+export type ProxyCenterInventoryStatus = 'unknown' | 'live' | 'dead'
+export type ProxyCenterIpFamily = 'unknown' | 'ipv4' | 'ipv6'
+export type ProxyCenterSourceKind = 'import' | 'builder'
+
+export interface ProxyCenterInventoryRecord {
+  id: number
+  host: string
+  port: number
+  username: string | null
+  maskedProxy: string
+  ipFamily: ProxyCenterIpFamily
+  outboundIp: string | null
+  status: ProxyCenterInventoryStatus
+  latencyMs: number | null
+  lastError: string | null
+  sourceKind: ProxyCenterSourceKind
+  sourceLabel: string | null
+  lastCheckedAt: number | null
+  assignedAccountCount: number
+  createdAt: number
+  updatedAt: number
+}
+
+export interface ProxyCenterInventoryUpsertItem {
+  rawProxy: string
+  ipFamily?: ProxyCenterIpFamily
+  outboundIp?: string | null
+  status?: ProxyCenterInventoryStatus
+  latencyMs?: number | null
+  lastError?: string | null
+  sourceKind?: ProxyCenterSourceKind
+  sourceLabel?: string | null
+  lastCheckedAt?: number | null
+}
+
+export interface ProxyCenterInventoryUpsertInput {
+  items: ProxyCenterInventoryUpsertItem[]
+}
+
+export interface ProxyCenterInventoryUpsertResult {
+  inserted: number
+  updated: number
+  errors: string[]
+  records: ProxyCenterInventoryRecord[]
+}
+
+export interface ProxyCenterInventoryDeleteInput {
+  ids: number[]
+}
+
+export interface ProxyCenterAccountBinding {
+  accountId: number
+  uid: string
+  name: string | null
+  category: string | null
+  accountStatus: string
+  inventoryId: number | null
+  inventoryStatus: ProxyCenterInventoryStatus | null
+  maskedProxy: string | null
+  duplicateBindingCount: number
+}
+
+export interface ProxyCenterAssignInput {
+  proxyId: number
+  accountIds: number[]
+}
+
+export interface ProxyCenterAccountIdsInput {
+  accountIds: number[]
 }

@@ -48,7 +48,7 @@ try {
   const page = await electronApp.firstWindow()
   await page.locator('.app-shell').waitFor({ state: 'visible', timeout: 30_000 })
 
-  const menuButton = page.getByRole('button', { name: 'Proxy Builder', exact: true })
+  const menuButton = page.getByRole('button', { name: 'Proxy Center', exact: true })
   await menuButton.waitFor({ state: 'visible' })
   await menuButton.click()
 
@@ -70,7 +70,7 @@ try {
   invariant(text.includes('0 LIVE') && text.includes('1 DEAD'), 'Packaged checker summary không phản ánh LIVE/DEAD đúng.')
 
   await page.screenshot({ path: screenshotPath, fullPage: true })
-  console.log('Proxy Builder packaged UI smoke passed:', { menuVisible: true, checkerIpcLive: true, deterministicDead: true, screenshotPath })
+  console.log('Proxy Center packaged UI smoke passed:', { menuVisible: true, checkerIpcLive: true, deterministicDead: true, screenshotPath })
 } finally {
   if (electronApp) await electronApp.close().catch(() => undefined)
   if (server) await new Promise((resolve) => server.close(() => resolve())).catch(() => undefined)
