@@ -4,6 +4,7 @@ import { buildProxyBuilderDiscoveryScript, parseProxyBuilderDiscovery } from './
 
 const discoverySource = readFileSync(new URL('./sshDiscoveryService.ts', import.meta.url), 'utf8')
 const sshAuthSource = readFileSync(new URL('./sshAuth.ts', import.meta.url), 'utf8')
+const ociMetadataSource = readFileSync(new URL('./ociMetadata.ts', import.meta.url), 'utf8')
 
 describe('Proxy Builder SSH discovery parser', () => {
   it('parses network capability without inventing addresses', () => {
@@ -95,16 +96,17 @@ describe('Proxy Builder SSH discovery parser', () => {
   })
 
 
-  it('renders OCI metadata discovery as POSIX sh-safe commands', () => {
+  it('uses the shared full-VNIC OCI metadata probe for discovery', () => {
     const script = buildProxyBuilderDiscoveryScript(3128)
-    expect(script).toContain("-H 'Authorization: Bearer Oracle'")
-    expect(script).toContain("tr -d '\\r\\n\"'")
-    expect(script).not.toContain('tr -d "\\r\\n"")')
-    expect(script).toContain('if command -v curl >/dev/null 2>&1; then\n')
-    expect(script).toContain('/opc/v2/vnics/0/ipv6AddressCidrs')
-    expect(script).toContain('/opc/v1/vnics/0/ipv6AddressCidrs')
-    expect(script).toContain('PA_OCI_IPV6_CIDRS=%s')
-    expect(script).toContain('\nfi\ncase "$OCI_VNIC"')
+    expect(discoverySource).toContain("from './ociMetadata'")
+    expect(discoverySource).toContain('buildOciVnicMetadataProbeCommand')
+    expect(script).toContain('OCI_METADATA=')
+    expect(script).toContain('PA_OCI_VNIC=')
+    expect(script).not.toContain('/vnics/0/')
+    expect(ociMetadataSource).toContain('http://169.254.169.254/opc/v2/vnics/')
+    expect(ociMetadataSource).toContain('http://169.254.169.254/opc/v1/vnics/')
+    expect(ociMetadataSource).toContain("collect('ipv6AddressCidrs')")
+    expect(ociMetadataSource).toContain("wanted_mac = open('/sys/class/net/' + iface + '/address'")
   })
 
 })

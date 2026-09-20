@@ -6,6 +6,7 @@ const service = readFileSync(new URL('./provisionService.ts', import.meta.url), 
 const assets = readFileSync(new URL('./remoteAssets.ts', import.meta.url), 'utf8')
 const sshAuth = readFileSync(new URL('./sshAuth.ts', import.meta.url), 'utf8')
 const ociService = readFileSync(new URL('./ociCloudFirewallService.ts', import.meta.url), 'utf8')
+const ociMetadata = readFileSync(new URL('./ociMetadata.ts', import.meta.url), 'utf8')
 
 describe('Proxy Builder Batch 3 safety contracts', () => {
   it('does not expose proxy passwords in result contracts or runtime snapshots', () => {
@@ -22,11 +23,15 @@ describe('Proxy Builder Batch 3 safety contracts', () => {
   })
 
   it('uses route-first OCI IPv6 provisioning before any IAM-dependent API call', () => {
-    expect(service).toContain("uniq('ipv6AddressCidrs')")
-    expect(service).toContain("uniq('ipv6SubnetCidrBlocks', 'ipv6SubnetCidrBlock')")
-    expect(service).toContain("'http://169.254.169.254/opc/v1/'+path")
-    expect(service).toContain("wanted_mac=open('/sys/class/net/'+iface+'/address')")
+    expect(service).toContain("from './ociMetadata'")
+    expect(service).toContain('buildOciVnicMetadataProbeCommand(shellQuote(interfaceName))')
+    expect(service).toContain('parseOciVnicMetadataProbeOutput(result.stdout)')
     expect(service).toContain('detectRemoteOci(session, interfaceName)')
+    expect(service).not.toContain("wanted_mac=open('/sys/class/net/'+iface+'/address')")
+    expect(ociMetadata).toContain("collect('ipv6AddressCidrs')")
+    expect(ociMetadata).toContain("collect('ipv6SubnetCidrBlocks', 'ipv6SubnetCidrBlock')")
+    expect(ociMetadata).toContain('http://169.254.169.254/opc/v2/vnics/')
+    expect(ociMetadata).toContain('http://169.254.169.254/opc/v1/vnics/')
     expect(service).toContain('probeRemoteRoutedIpv6Cidr(')
     expect(service).toContain('selectReusableIpv6Cidr(remoteOci.assignedIpv6Cidrs')
     expect(service).toContain('ensureOciIpv6Automatically(')

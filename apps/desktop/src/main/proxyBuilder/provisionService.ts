@@ -29,6 +29,11 @@ import {
   ensureOciSecurityListIngress,
   resolveOciConfigPath
 } from './ociCloudFirewallService'
+import {
+  buildOciVnicMetadataProbeCommand,
+  parseOciVnicMetadataProbeOutput,
+  type OciVnicMetadata
+} from './ociMetadata'
 
 const PROVISION_TIMEOUT_MS = 15 * 60_000
 const COMMAND_TIMEOUT_MS = 60_000
@@ -303,17 +308,6 @@ async function verifyProvisionedProxies(
   return { results, errors: errors.filter(Boolean) }
 }
 
-interface RemoteOciMetadata {
-  region: string
-  vnicId: string
-  assignedIpv6Cidrs: string[]
-  subnetIpv6Cidrs: string[]
-}
-
-function splitCsv(value: string | undefined): string[] {
-  return (value ?? '').split(',').map((item) => item.trim()).filter(Boolean)
-}
-
 function ipv6CidrCapacity(cidr: string): number {
   const match = cidr.trim().match(/^([^/]+)\/(\d{1,3})$/)
   if (!match || !match[1]?.includes(':')) return 0
@@ -398,68 +392,11 @@ async function probeRemoteRoutedIpv6Cidr(
   return null
 }
 
-async function detectRemoteOci(session: SshSessionLike, interfaceName: string): Promise<RemoteOciMetadata | null> {
-  const script = [
-    'import json, sys, urllib.request',
-    "v2_headers={'Authorization':'Bearer Oracle'}",
-    'def get_v2(path):',
-    "    req=urllib.request.Request('http://169.254.169.254/opc/v2/'+path, headers=v2_headers)",
-    '    with urllib.request.urlopen(req, timeout=4) as response: return json.load(response)',
-    'def get_v1(path):',
-    "    req=urllib.request.Request('http://169.254.169.254/opc/v1/'+path)",
-    '    with urllib.request.urlopen(req, timeout=4) as response: return json.load(response)',
-    'def safe(getter, path):',
-    '    try: return getter(path)',
-    '    except Exception: return None',
-    "instance=safe(get_v2, 'instance/') or {}",
-    "v2=safe(get_v2, 'vnics/') or []",
-    "v1=safe(get_v1, 'vnics/') or []",
-    'iface=sys.argv[1]',
-    'try:',
-    "    wanted_mac=open('/sys/class/net/'+iface+'/address').read().strip().lower()",
-    'except Exception:',
-    "    wanted_mac=''",
-    'records=[x for x in ((v2 if isinstance(v2, list) else []) + (v1 if isinstance(v1, list) else [])) if isinstance(x, dict)]',
-    "matched=[x for x in records if wanted_mac and str(x.get('macAddr') or '').lower() == wanted_mac]",
-    'pool=matched or records',
-    "vnic_id=next((str(x.get('vnicId') or '') for x in pool if str(x.get('vnicId') or '').startswith('ocid1.vnic.')), '')",
-    "same=[x for x in pool if not vnic_id or str(x.get('vnicId') or '') == vnic_id]",
-    'def uniq(key, fallback=None):',
-    '    values=[]',
-    '    for item in same:',
-    '        raw=item.get(key)',
-    '        seq=raw if isinstance(raw, list) else ([raw] if raw else [])',
-    '        if not seq and fallback:',
-    '            raw=item.get(fallback)',
-    '            seq=[raw] if raw else []',
-    '        for value in seq:',
-    '            text=str(value)',
-    '            if text and text not in values: values.append(text)',
-    '    return values',
-    "print('REGION='+str(instance.get('region') or ''))",
-    "print('VNIC='+vnic_id)",
-    "print('IPV6_CIDRS='+','.join(uniq('ipv6AddressCidrs')))",
-    "print('IPV6_SUBNETS='+','.join(uniq('ipv6SubnetCidrBlocks', 'ipv6SubnetCidrBlock')))"
-  ].join('\n')
-  const encoded = Buffer.from(script, 'utf8').toString('base64')
-  const command = `python3 -c ${shellQuote(`import base64;exec(base64.b64decode("${encoded}"))`)} ${shellQuote(interfaceName)}`
+async function detectRemoteOci(session: SshSessionLike, interfaceName: string): Promise<OciVnicMetadata | null> {
+  const command = buildOciVnicMetadataProbeCommand(shellQuote(interfaceName))
   const result = await session.exec(command, 15_000)
   if (result.code !== 0) return null
-  const values = new Map(
-    result.stdout.split(/\r?\n/).flatMap((line) => {
-      const index = line.indexOf('=')
-      return index > 0 ? [[line.slice(0, index), line.slice(index + 1).trim()] as const] : []
-    })
-  )
-  const region = values.get('REGION') ?? ''
-  const vnicId = values.get('VNIC') ?? ''
-  if (!/^[a-z0-9-]+$/i.test(region) || !/^ocid1\.vnic\./.test(vnicId)) return null
-  return {
-    region,
-    vnicId,
-    assignedIpv6Cidrs: splitCsv(values.get('IPV6_CIDRS')),
-    subnetIpv6Cidrs: splitCsv(values.get('IPV6_SUBNETS'))
-  }
+  return parseOciVnicMetadataProbeOutput(result.stdout)
 }
 
 interface RemoteOciIpv6Lease {
@@ -549,7 +486,7 @@ async function ensureOciIpv6Automatically(
   session: SshSessionLike,
   prefix: string,
   helperPath: string,
-  remoteOci: RemoteOciMetadata,
+  remoteOci: OciVnicMetadata,
   requiredAddressCount: number
 ): Promise<RemoteOciIpv6Lease> {
   try {
@@ -583,7 +520,7 @@ async function ensureOciIngressAutomatically(
   session: SshSessionLike,
   prefix: string,
   helperPath: string,
-  remoteOci: RemoteOciMetadata,
+  remoteOci: OciVnicMetadata,
   startPort: number,
   endPort: number
 ): Promise<RemoteOciIngressResult> {
