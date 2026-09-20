@@ -138,6 +138,18 @@ export const PREVIEW_LIMIT = 12
 export const ACCOUNT_RUNTIME_REFRESH_MS = 1_500
 export const UNGROUPED_CATEGORY_FILTER = '__ungrouped__'
 
+export function normalizeBulkUidFilter(value: string): string[] {
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const line of value.split(/\r?\n/)) {
+    const uid = line.trim()
+    if (!uid || seen.has(uid)) continue
+    seen.add(uid)
+    result.push(uid)
+  }
+  return result
+}
+
 export function formatDate(value: unknown): string {
   if (typeof value !== 'number' || !value) return '—'
   return new Intl.DateTimeFormat('vi-VN', { dateStyle: 'short', timeStyle: 'short' }).format(value)

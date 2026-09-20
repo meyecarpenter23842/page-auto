@@ -122,6 +122,19 @@
   padding: 4px 7px;
 }
 
+.bulk-uid-filter-button {
+  flex: 0 0 auto;
+  min-width: 44px;
+  min-height: 24px;
+  padding: 2px 7px;
+}
+
+.bulk-uid-filter-button.active {
+  color: #175cd3;
+  background: #eff6ff;
+  border-color: #8fb4ee;
+}
+
 .filter-row select {
   padding: 4px 24px 4px 7px;
 }
@@ -401,6 +414,69 @@
   border-radius: 5px;
 }
 
+.bulk-uid-filter-modal {
+  width: min(520px, calc(100vw - 28px));
+  padding: 12px;
+}
+
+.bulk-uid-filter-modal .modal-header {
+  margin-bottom: 6px;
+}
+
+.bulk-uid-filter-modal .modal-header > div {
+  min-width: 0;
+}
+
+.bulk-uid-filter-modal .modal-header h2 {
+  font-size: 15px;
+}
+
+.bulk-uid-filter-modal .modal-header p {
+  margin: 2px 0 0;
+  color: #667085;
+  font-size: 10.5px;
+}
+
+.bulk-uid-filter-textarea {
+  width: 100%;
+  min-height: 280px;
+  max-height: 58vh;
+  resize: vertical;
+  padding: 7px 8px;
+  color: #182033;
+  background: #ffffff;
+  border: 1px solid #c7d0db;
+  border-radius: 3px;
+  outline: none;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.bulk-uid-filter-textarea:focus {
+  border-color: #6f9ee8;
+  box-shadow: 0 0 0 1px rgba(23, 92, 211, 0.08);
+}
+
+.bulk-uid-filter-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 24px;
+  color: #344054;
+  font-size: 10.5px;
+}
+
+.bulk-uid-filter-summary small {
+  color: #667085;
+}
+
+.bulk-uid-filter-actions {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+}
+
 .modal-header {
   display: flex;
   align-items: center;
@@ -634,4 +710,26 @@
   .span-2 {
     grid-column: span 1;
   }
+}
+
+
+html[data-theme='dark'] .bulk-uid-filter-button.active {
+  color: var(--pa-dark-text);
+  background: var(--pa-dark-surface-3);
+  border-color: var(--pa-dark-border-strong);
+}
+
+html[data-theme='dark'] .bulk-uid-filter-modal .modal-header p,
+html[data-theme='dark'] .bulk-uid-filter-summary small {
+  color: var(--pa-dark-muted);
+}
+
+html[data-theme='dark'] .bulk-uid-filter-summary {
+  color: var(--pa-dark-text-soft);
+}
+
+html[data-theme='dark'] .bulk-uid-filter-textarea {
+  color: var(--pa-dark-text);
+  background: var(--pa-dark-surface-2);
+  border-color: var(--pa-dark-border-strong);
 }
