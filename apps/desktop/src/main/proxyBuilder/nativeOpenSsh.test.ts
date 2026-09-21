@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { buildNativeOpenSshArgs, resolveWindowsOpenSshExecutable, summarizeNativeOpenSshProbe } from './nativeOpenSsh'
+import {
+  buildNativeOpenSshArgs,
+  resolveWindowsOpenSshExecutable,
+  sanitizeNativeOpenSshStdout,
+  summarizeNativeOpenSshProbe
+} from './nativeOpenSsh'
 
 describe('Proxy Builder Windows OpenSSH transport', () => {
   it('pins the Windows system OpenSSH binary before PATH fallback', () => {
@@ -35,6 +40,29 @@ describe('Proxy Builder Windows OpenSSH transport', () => {
     }
     expect(buildNativeOpenSshArgs(input, 'true')).not.toContain('-vvv')
     expect(buildNativeOpenSshArgs(input, 'true', { verbose: true })[0]).toBe('-vvv')
+  })
+
+  it('preserves large machine-readable stdout instead of clipping provision result JSON', () => {
+    const marker = 'PA_RESULT_JSON=' + 'A'.repeat(150_000)
+    const output = sanitizeNativeOpenSshStdout({
+      host: '140.238.155.28',
+      username: 'ubuntu',
+      auth: { type: 'key', privateKey: '', privateKeyPath: 'F:\\keys\\mcp-vps-ed25519' }
+    }, marker)
+
+    expect(output).toBe(marker)
+    expect(output.length).toBeGreaterThan(120_000)
+    expect(output).not.toContain('[trace truncated]')
+  })
+
+  it('still redacts secrets from untruncated machine-readable stdout', () => {
+    const output = sanitizeNativeOpenSshStdout({
+      host: '140.238.155.28',
+      username: 'ubuntu',
+      auth: { type: 'password', password: 'super-secret' }
+    }, 'prefix super-secret suffix')
+
+    expect(output).toBe('prefix [redacted] suffix')
   })
 
   it('extracts offered/accepted fingerprints and authenticated stage from verbose trace', () => {

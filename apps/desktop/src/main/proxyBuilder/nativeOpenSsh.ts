@@ -71,7 +71,7 @@ function clipTrace(value: string): string {
   return value.slice(0, half) + '\n...[trace truncated]...\n' + value.slice(-half)
 }
 
-function sanitizeSshText(input: SshTargetInput, value: string): string {
+function redactSshSecrets(input: SshTargetInput, value: string): string {
   let sanitized = value
   const secrets: string[] = []
   if (input.auth.type === 'password') {
@@ -84,7 +84,15 @@ function sanitizeSshText(input: SshTargetInput, value: string): string {
     if (!secret) continue
     sanitized = sanitized.split(secret).join('[redacted]')
   }
-  return clipTrace(sanitized)
+  return sanitized
+}
+
+function sanitizeSshText(input: SshTargetInput, value: string): string {
+  return clipTrace(redactSshSecrets(input, value))
+}
+
+export function sanitizeNativeOpenSshStdout(input: SshTargetInput, value: string): string {
+  return redactSshSecrets(input, value)
 }
 
 export function inspectNativeOpenSshKey(keyPath: string): NativeOpenSshKeyInfo {
@@ -195,7 +203,7 @@ export async function runNativeOpenSsh(
       options.onChild?.(null)
       if (error) reject(error)
       else resolve({
-        stdout: sanitizeSshText(input, stdout),
+        stdout: sanitizeNativeOpenSshStdout(input, stdout),
         stderr: sanitizeSshText(input, stderr),
         code: code ?? 255,
         executable,
