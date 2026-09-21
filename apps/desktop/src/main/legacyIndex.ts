@@ -39,6 +39,23 @@ let scannerIpcRuntime: ScannerIpcRuntime | null = null
 let scenarioIpcRuntime: ScenarioIpcRuntime | null = null
 let scenarioRunnerIpcRuntime: ScenarioRunnerIpcRuntime | null = null
 
+const singleInstanceLockAcquired = app.requestSingleInstanceLock()
+
+function focusMainWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  if (!mainWindow.isVisible()) mainWindow.show()
+  mainWindow.focus()
+}
+
+if (!singleInstanceLockAcquired) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    focusMainWindow()
+  })
+}
+
 function resolveWindowIcon(): string {
   return app.isPackaged
     ? join(process.resourcesPath, 'app-icon.png')
@@ -73,6 +90,8 @@ function createMainWindow(): BrowserWindow {
 }
 
 app.whenReady().then(() => {
+  if (!singleInstanceLockAcquired) return
+
   let preparedDataDirectory: PreparedDataDirectory
   try {
     preparedDataDirectory = prepareDataDirectory({
