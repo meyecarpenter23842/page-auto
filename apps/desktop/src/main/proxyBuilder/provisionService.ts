@@ -351,13 +351,12 @@ for attempt in range(2):
     offset = 2 + ((seed + attempt * 0x9E3779B97F4A7C15) % span)
     address = str(ipaddress.ip_address(int(network.network_address) + offset))
     cidr = address + '/128'
-    added = subprocess.run(['ip', '-6', 'addr', 'add', cidr, 'dev', interface], capture_output=True, text=True)
+    added = subprocess.run(['ip', '-6', 'addr', 'add', cidr, 'dev', interface, 'nodad'], capture_output=True, text=True)
     if added.returncode != 0:
         continue
     try:
-        time.sleep(0.8)
         status = subprocess.run(['ip', '-6', 'addr', 'show', 'dev', interface], capture_output=True, text=True)
-        if 'dadfailed' in status.stdout.lower():
+        if 'dadfailed' in status.stdout.lower() or ' tentative ' in (' ' + status.stdout.lower() + ' '):
             continue
         try:
             probe = subprocess.run([

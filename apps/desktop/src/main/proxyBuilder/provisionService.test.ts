@@ -61,6 +61,13 @@ describe('Proxy Builder Batch 3 safety contracts', () => {
     expect(assets).toContain('elif error.status == 404:')
   })
 
+  it('skips IPv6 DAD for Page-Auto-managed aliases so route probes, pool creation and reboot restore do not race tentative addresses', () => {
+    expect(service).toContain("['ip', '-6', 'addr', 'add', cidr, 'dev', interface, 'nodad']")
+    expect(service).not.toContain('time.sleep(0.8)')
+    expect(assets).toContain("run(['ip', '-6', 'addr', 'add', cidr, 'dev', interface, 'nodad'], check=False)")
+    expect(assets).toContain("run('ip', '-6', 'addr', 'add', cidr, 'dev', interface, 'nodad')")
+  })
+
   it('supports IPv4, IPv6 and mixed allocation without inventing public IPv4', () => {
     expect(assets).toContain("if mode == 'ipv4'")
     expect(assets).toContain("if mode == 'ipv6'")
