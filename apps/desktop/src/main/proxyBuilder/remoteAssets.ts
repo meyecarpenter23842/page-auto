@@ -249,7 +249,7 @@ def main():
     if not interface:
         return
     for cidr in manifest.get('managed_ipv6', []):
-        run('ip', '-6', 'addr', 'add', cidr, 'dev', interface)
+        run('ip', '-6', 'addr', 'add', cidr, 'dev', interface, 'nodad')
     restore_firewall(manifest)
 
 
@@ -340,7 +340,7 @@ def port_busy(port):
 
 def add_ipv6(address, prefix, interface):
     cidr = f'{address}/{prefix}'
-    result = run(['ip', '-6', 'addr', 'add', cidr, 'dev', interface], check=False)
+    result = run(['ip', '-6', 'addr', 'add', cidr, 'dev', interface, 'nodad'], check=False)
     if result.returncode != 0 and 'File exists' not in (result.stderr or ''):
         raise RuntimeError((result.stderr or '').strip() or f'cannot add {cidr}')
     return cidr
