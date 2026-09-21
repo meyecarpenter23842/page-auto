@@ -167,14 +167,19 @@ export function ProxyBuilderWorkspace() {
   const assignedOciIpv6Cidr = capability?.cloudProvider === 'oci'
     ? (capability.ociIpv6Cidrs ?? []).find((cidr) => ipv6CidrCapacity(cidr) >= requiredIpv6Count) ?? null
     : null
-  const needsOciIpv6Bootstrap = Boolean(
+  const requiresManualOciIpv6Cidr = Boolean(
     capability?.cloudProvider === 'oci'
     && capability.ipv6Addresses.length > 0
+    && !(capability.ociIpv6Cidrs ?? []).length
     && !assignedOciIpv6Cidr
-    && !manualIpv6Cidr
     && proxyIpMode !== 'ipv4'
   )
-  const ipv6ModeReady = Boolean(capability?.supportsIpv6 || assignedOciIpv6Cidr || manualIpv6Cidr || needsOciIpv6Bootstrap)
+  const ipv6ModeReady = Boolean(
+    capability?.supportsIpv6
+    || assignedOciIpv6Cidr
+    || manualIpv6Cidr
+    || (capability?.cloudProvider === 'oci' && !requiresManualOciIpv6Cidr)
+  )
   const selectedModeReady = proxyIpMode === 'ipv4'
     ? Boolean(capability?.supportsIpv4)
     : proxyIpMode === 'ipv6'
@@ -511,11 +516,11 @@ export function ProxyBuilderWorkspace() {
                   <label>Số lượng<input type="number" min={1} max={10000} value={proxyCount} onChange={(event) => setProxyCount(clampInteger(event.currentTarget.value, 1, 10000, 1))} /></label>
                   <label>Start Port<input type="number" min={1} max={65535} value={startPort} onChange={(event) => setStartPort(clampInteger(event.currentTarget.value, 1, 65535, 3128))} /></label>
                   {proxyIpMode !== 'ipv4' && capability?.cloudProvider === 'oci' && !assignedOciIpv6Cidr ? (
-                    <label className="proxy-builder-field-wide">IPv6 CIDR đã cấp trên cloud (tùy chọn)<input value={ipv6Cidr} onChange={(event) => setIpv6Cidr(event.currentTarget.value)} placeholder="2603:...:0/116" autoComplete="off" spellCheck={false} /></label>
+                    <label className="proxy-builder-field-wide">IPv6 CIDR đã cấp trên Oracle<input value={ipv6Cidr} onChange={(event) => setIpv6Cidr(event.currentTarget.value)} placeholder="2603:...:0/116" autoComplete="off" spellCheck={false} /></label>
                   ) : null}
                 </div>
-                {proxyIpMode !== 'ipv4' && capability?.cloudProvider === 'oci' && !assignedOciIpv6Cidr ? (
-                  <span className="proxy-builder-muted">Nếu Oracle Console đã cấp CIDR nhưng VPS vẫn chỉ báo /128, dán CIDR tại đây. App sẽ test source-bind trước khi dùng và không gọi CreateIpv6.</span>
+                {requiresManualOciIpv6Cidr ? (
+                  <span className="proxy-builder-muted">OCI chỉ báo IPv6 /128 và không trả CIDR đã gán. Dán CIDR từ Oracle Console để tiếp tục; Page-Auto sẽ không gọi CreateIpv6.</span>
                 ) : null}
               </div>
 
@@ -533,18 +538,14 @@ export function ProxyBuilderWorkspace() {
                 <span>{capability
                   ? selectedModeReady
                     ? manualIpv6Cidr
-                      ? 'CIDR IPv6 thủ công sẽ được test source-bind trước khi tạo proxy; không gọi CreateIpv6.'
-                      : needsOciIpv6Bootstrap
-                        ? 'OCI đang có IPv6 /128; Page-Auto sẽ tự kiểm tra route và tự cấp dải khi thật sự cần.'
-                        : 'Capability hợp lệ; app tự tạo proxy, xử lý host firewall và test từ Windows.'
-                    : 'VPS chưa đạt capability cho loại proxy đang chọn.'
+                      ? 'CIDR IPv6 đã nhập sẽ được test source-bind trước khi tạo proxy; không gọi CreateIpv6.'
+                      : 'Capability hợp lệ; app tự tạo proxy, xử lý host firewall và test từ Windows.'
+                    : requiresManualOciIpv6Cidr
+                      ? 'Cần nhập CIDR IPv6 đã cấp trên Oracle trước khi tạo proxy.'
+                      : 'VPS chưa đạt capability cho loại proxy đang chọn.'
                   : 'Kiểm tra SSH trước khi tạo proxy.'}</span>
               </div>
-              {needsOciIpv6Bootstrap ? (
-                <div className="proxy-builder-inline-actions">
-                  <span className="proxy-builder-muted">Không cần chọn file OCI. App ưu tiên dải đã route/gán sẵn, sau đó mới dùng OCI API tự động.</span>
-                </div>
-              ) : cloudFirewallAction?.provider === 'oci' ? (
+              {cloudFirewallAction?.provider === 'oci' ? (
                 <div className="proxy-builder-inline-actions">
                   <span className="proxy-builder-muted">{cloudFirewallAction.message}</span>
                 </div>

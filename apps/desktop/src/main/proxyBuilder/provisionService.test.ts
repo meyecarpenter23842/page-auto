@@ -22,12 +22,17 @@ describe('Proxy Builder Batch 3 safety contracts', () => {
     expect(assets).toContain('asyncio.gather(*(server.serve_forever() for server in servers))')
   })
 
-  it('uses a manually supplied cloud IPv6 CIDR before any OCI API fallback', () => {
+  it('requires a manual OCI CIDR when IMDS exposes no assigned CIDR and never calls CreateIpv6 for that state', () => {
     expect(shared).toContain('ipv6Cidr?: string')
     expect(service).toContain("const manualIpv6Cidr = input.ipMode === 'ipv4' ? '' : input.ipv6Cidr?.trim() ?? ''")
     expect(service).toContain('[manualIpv6Cidr],')
     expect(service).toContain('Page-Auto không gọi OCI API khi đã nhập CIDR thủ công.')
-    expect(service.indexOf('if (manualIpv6Cidr)')).toBeLessThan(service.indexOf("else if (input.ipMode !== 'ipv4' && remoteOci)"))
+    expect(service).toContain("else if (!remoteOci.assignedIpv6Cidrs.length)")
+    expect(service).toContain('Page-Auto sẽ không gọi CreateIpv6 trong trạng thái này.')
+    const guardIndex = service.indexOf("else if (!remoteOci.assignedIpv6Cidrs.length)")
+    const apiIndex = service.indexOf('const lease = await ensureOciIpv6Automatically(', guardIndex)
+    expect(guardIndex).toBeGreaterThan(0)
+    expect(apiIndex).toBeGreaterThan(guardIndex)
   })
 
   it('uses route-first OCI IPv6 provisioning before any IAM-dependent API call', () => {
