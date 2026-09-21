@@ -85,20 +85,20 @@ describe('Proxy Center inventory/binding + checker/export', () => {
     expect(bindingPanel).toContain('proxy fields của Account Manager')
   })
 
-  it('accepts a manually assigned cloud IPv6 CIDR when OCI IMDS omits ipv6AddressCidrs', () => {
-    expect(workspace).toContain('IPv6 CIDR đã cấp trên cloud (tùy chọn)')
+  it('requires the manual Oracle CIDR when OCI IMDS omits ipv6AddressCidrs', () => {
+    expect(workspace).toContain('IPv6 CIDR đã cấp trên Oracle')
+    expect(workspace).toContain('requiresManualOciIpv6Cidr')
     expect(workspace).toContain('...(manualIpv6Cidr ? { ipv6Cidr: manualIpv6Cidr } : {})')
-    expect(workspace).toContain('!manualIpv6Cidr')
-    expect(workspace).toContain('không gọi CreateIpv6')
+    expect(workspace).toContain('Cần nhập CIDR IPv6 đã cấp trên Oracle trước khi tạo proxy.')
+    expect(workspace).toContain('Page-Auto sẽ không gọi CreateIpv6.')
   })
 
-  it('keeps OCI IPv6 provisioning automatic and route-first without asking for a config file', () => {
+  it('keeps OCI ingress support without exposing OCI profile/config UI', () => {
     expect(workspace).not.toContain('OCI Profile')
     expect(workspace).not.toContain('cloudFirewallReady')
     expect(workspace).toContain("cloudFirewallAction?.provider === 'oci'")
     expect(workspace).not.toContain('Cấu hình OCI')
     expect(workspace).not.toContain('pickOciConfigFile')
-    expect(workspace).toContain('Không cần chọn file OCI. App ưu tiên dải đã route/gán sẵn, sau đó mới dùng OCI API tự động.')
     expect(workspace).toContain('capability.ociIpv6Cidrs ?? []')
     expect(workspace).toContain('OCI CIDR sẵn')
     expect(workspace).toContain('disabled={!capability || !selectedModeReady || provisionRunning || sshChecking}')

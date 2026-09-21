@@ -726,6 +726,8 @@ export class ProxyBuilderProvisionService {
               percent: 25,
               message: `Subnet IPv6 được route trực tiếp; đang tạo pool trong ${routedCidr}…`
             })
+          } else if (!remoteOci.assignedIpv6Cidrs.length) {
+            throw new Error('OCI IMDS không trả IPv6 CIDR đã gán cho VNIC. Hãy nhập CIDR đã cấp trên Oracle Console; Page-Auto sẽ không gọi CreateIpv6 trong trạng thái này.')
           } else {
             this.update(runId, {
               phase: 'provisioning',
