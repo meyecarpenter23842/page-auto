@@ -12,7 +12,7 @@ describe('Content Library editor layout', () => {
     expect(styles).toContain('grid-template-columns: 220px minmax(360px, .72fr) minmax(620px, 1.49fr)')
     expect(styles).toContain('.content-library-table th:nth-child(3) { width: auto; }')
     expect(styles).toContain('.content-library-table th:nth-child(4) { width: 68px; }')
-    expect(styles).toContain('min-height: 335px')
+    expect(styles).toContain('min-height: clamp(430px, 54vh, 620px)')
     expect(styles).toContain('min-height: 225px')
   })
 
