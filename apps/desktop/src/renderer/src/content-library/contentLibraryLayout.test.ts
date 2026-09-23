@@ -16,11 +16,13 @@ describe('Content Library editor layout', () => {
     expect(styles).toContain('min-height: 225px')
   })
 
-  it('reclaims the Library route header and places compact media settings below the editor', () => {
+  it('reclaims the Library route header and prioritizes the writing surface over footer controls', () => {
     expect(styles).toContain('.workspace-content-library > .topbar')
     expect(styles).toContain('display: none;')
-    expect(styles).toContain('.content-library-settings-card:first-child')
-    expect(styles).toContain('grid-template-columns: minmax(260px, 2.2fr) minmax(120px, .8fr) 92px minmax(120px, .8fr)')
+    expect(styles).toContain('min-height: clamp(430px, 54vh, 620px)')
+    expect(styles).toContain('grid-template-columns: 52px minmax(260px, 2.4fr) minmax(110px, .7fr) 76px minmax(110px, .7fr)')
+    expect(styles).toContain('.content-library-save-card p')
+    expect(styles).toContain('display: none;')
   })
 
   it('defines a local dark palette instead of leaving light Spin cards in dark mode', () => {
