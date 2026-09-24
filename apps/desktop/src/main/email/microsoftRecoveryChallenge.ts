@@ -76,14 +76,14 @@ function textContainsExactMailbox(text: string, mailbox: string): boolean {
   return matches.some((candidate) => normalizeMailboxAddress(candidate) === mailbox)
 }
 
-function isRecoveryCodeHeading(text: string): boolean {
+export function microsoftRecoveryCodeHeadingMatches(text: string): boolean {
   return /enter\s+(?:your\s+)?(?:security\s+)?code/i.test(text.replace(/\s+/g, ' '))
 }
 
 function isAuditedRecoveryCodeCopy(text: string): boolean {
   const normalized = text.replace(/\s+/g, ' ')
   const emailEvidence = /matches\s+the\s+email\s+address\s+on\s+your\s+account|we(?:'|’)ll\s+send\s+you\s+a\s+code|we\s+will\s+send\s+you\s+a\s+code|we\s+sent[^.]*code[^.]*email|sent[^.]*to\s+your\s+email|email\s+address/i.test(normalized)
-  return isRecoveryCodeHeading(normalized) && emailEvidence
+  return microsoftRecoveryCodeHeadingMatches(normalized) && emailEvidence
 }
 
 export function microsoftRecoveryCodeWasRejected(text: string): boolean {
@@ -448,7 +448,7 @@ async function confirmRecoveryEmailAndSend(
 
 async function fillSecurityCode(page: Page, code: string, allowRoundBoundCodeScreen = false): Promise<boolean> {
   const body = await readBody(page)
-  if (!isAuditedRecoveryCodeCopy(body) && !(allowRoundBoundCodeScreen && isRecoveryCodeHeading(body))) return false
+  if (!isAuditedRecoveryCodeCopy(body) && !(allowRoundBoundCodeScreen && microsoftRecoveryCodeHeadingMatches(body))) return false
 
   let inputs = page.locator(
     'input:visible:not([type="radio"]):not([type="checkbox"]):not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="password"]):not([type="email"]):not([name="loginfmt"]):not([autocomplete="username"])'
@@ -512,7 +512,7 @@ async function readAndSubmitRecoveryCode(
 ): Promise<MicrosoftRecoveryChallengeResult> {
   const initialBody = await readBody(page)
   const resumedWithoutRoundState = state.requestedAt === null && state.round === null
-  const roundBoundCodeScreen = !resumedWithoutRoundState && isRecoveryCodeHeading(initialBody)
+  const roundBoundCodeScreen = !resumedWithoutRoundState && microsoftRecoveryCodeHeadingMatches(initialBody)
   if (!isAuditedRecoveryCodeCopy(initialBody) && !roundBoundCodeScreen) {
     return {
       status: 'needs_attention',
@@ -595,7 +595,7 @@ async function readAndSubmitRecoveryCode(
   // Microsoft can change surface while a provider is polling. Re-read before
   // typing; state-driven detection owns whatever surface is now authoritative.
   const body = await readBody(page)
-  const stillRoundBound = !resumedWithoutRoundState && isRecoveryCodeHeading(body)
+  const stillRoundBound = !resumedWithoutRoundState && microsoftRecoveryCodeHeadingMatches(body)
   if ((!isAuditedRecoveryCodeCopy(body) && !stillRoundBound)
     || (resumedWithoutRoundState && !microsoftRecoveryCodeChallengeMatchesBackupEmail(body, state.mailbox))) {
     return { status: 'handled' }
