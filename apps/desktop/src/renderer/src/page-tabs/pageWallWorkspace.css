@@ -99,6 +99,46 @@ html[data-theme='dark'] .page-wall-workspace {
   grid-row: 2;
 }
 
+/* In schedule mode the existing right-hand column becomes a horizontal
+   post/schedule split. Accounts keep their own column while the schedule
+   gets the full workspace height instead of half-height. */
+.page-wall-three-regions.mode-schedule {
+  grid-template-columns: minmax(260px, .8fr) minmax(220px, .65fr) minmax(360px, 1.25fr);
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.page-wall-three-regions.mode-schedule .page-wall-region.accounts {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.page-wall-three-regions.mode-schedule .page-wall-region.content {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.page-wall-three-regions.mode-schedule .page-wall-region.control {
+  grid-column: 3;
+  grid-row: 1;
+}
+
+.page-wall-three-regions.mode-schedule .page-wall-post-actions {
+  max-width: none;
+}
+
+.page-wall-three-regions.mode-schedule .page-wall-selected-post {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.page-wall-three-regions.mode-schedule .page-wall-post-actions {
+  justify-content: flex-start;
+}
+
+.page-wall-three-regions.mode-schedule .page-wall-post-preview {
+  min-height: 120px;
+}
+
+
 .page-wall-region-head {
   display: flex;
   align-items: center;
@@ -521,6 +561,7 @@ html[data-theme='dark'] .page-wall-mode-tabs button.active {
 
 .page-wall-plan-list {
   min-height: 0;
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   gap: 5px;
@@ -1192,6 +1233,10 @@ html[data-theme='dark'] .page-wall-account-controls input {
     gap: 7px;
   }
 
+  .page-wall-three-regions.mode-schedule {
+    grid-template-columns: minmax(240px, .75fr) minmax(200px, .6fr) minmax(330px, 1.2fr);
+  }
+
   .page-wall-workspace {
     padding: 6px;
   }
@@ -1201,6 +1246,37 @@ html[data-theme='dark'] .page-wall-account-controls input {
   }
 
   .page-wall-post-actions {
+    max-width: 200px;
+  }
+}
+
+@media (max-width: 880px) {
+  .page-wall-three-regions.mode-schedule {
+    grid-template-columns: minmax(300px, .86fr) minmax(390px, 1.14fr);
+    grid-template-rows: minmax(220px, .82fr) minmax(280px, 1.18fr);
+  }
+
+  .page-wall-three-regions.mode-schedule .page-wall-region.accounts {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+  }
+
+  .page-wall-three-regions.mode-schedule .page-wall-region.content {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .page-wall-three-regions.mode-schedule .page-wall-region.control {
+    grid-column: 2;
+    grid-row: 2;
+  }
+
+  .page-wall-three-regions.mode-schedule .page-wall-selected-post {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .page-wall-three-regions.mode-schedule .page-wall-post-actions {
+    justify-content: flex-end;
     max-width: 200px;
   }
 }
