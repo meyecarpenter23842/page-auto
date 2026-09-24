@@ -622,7 +622,7 @@ async function navigateToManageHowISignIn(page: Page): Promise<boolean> {
     await page.goBack({ waitUntil: 'domcontentloaded', timeout: 15_000 }).catch(() => undefined)
     return false
   }
-  return isMicrosoftSignInManagementUrl(page.url())
+  return true
 }
 
 async function navigateToChangePasswordFromSecurity(page: Page): Promise<boolean> {
@@ -643,7 +643,7 @@ async function navigateToChangePasswordFromSecurity(page: Page): Promise<boolean
     await page.goBack({ waitUntil: 'domcontentloaded', timeout: 15_000 }).catch(() => undefined)
     return false
   }
-  return isMicrosoftPasswordChangeUrl(page.url())
+  return true
 }
 
 
