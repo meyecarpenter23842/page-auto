@@ -2,7 +2,8 @@ import type { HotmailActionStatus } from '../../shared/hotmail'
 import type {
   HotmailComboOperation,
   HotmailComboRecoveryOperation,
-  HotmailComboStage
+  HotmailComboStage,
+  HotmailSecurityAction
 } from '../../shared/emailCombo'
 
 export interface EmailComboProgress {
@@ -10,6 +11,15 @@ export interface EmailComboProgress {
   awaitingManual: boolean
   stopped: boolean
   completed: boolean
+}
+
+export function emailSecurityStagePlan(actions: HotmailSecurityAction[]): HotmailComboStage[] {
+  const selected = new Set(actions)
+  const stages: HotmailComboStage[] = []
+  if (selected.has('add_recovery')) stages.push('recovery_write')
+  if (selected.has('remove_recovery')) stages.push('recovery_remove')
+  if (selected.has('password')) stages.push('password')
+  return stages
 }
 
 export function emailComboStagePlan(operation: HotmailComboOperation): HotmailComboStage[] {
