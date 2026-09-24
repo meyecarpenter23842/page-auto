@@ -306,6 +306,7 @@ export class HotmailService {
             null,
             payload.operation,
             account.backupEmail,
+            recoveryEmail,
             Boolean(payload.confirmCompleted)
           )
           this.runtimeStatus.set(accountId, 'error')
@@ -323,6 +324,7 @@ export class HotmailService {
           proxy,
           payload.operation,
           account.backupEmail,
+          recoveryEmail,
           Boolean(payload.confirmCompleted)
         )
 

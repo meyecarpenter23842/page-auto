@@ -131,6 +131,7 @@ export class EmailCommonRuntime {
     proxy: EmailProxyCandidate | null,
     operation: HotmailRecoveryOperation,
     backupEmail: string | null,
+    recoveryEmail: string | null,
     confirmCompleted: boolean
   ): Promise<HotmailRecoveryActionResult & { proxyManagedExternally: boolean }> {
     if (!this.ownership.claim(account.id, 'recovery', confirmCompleted)) {
@@ -152,6 +153,7 @@ export class EmailCommonRuntime {
         proxy,
         operation,
         backupEmail,
+        recoveryEmail,
         confirmCompleted,
         placement
       )
@@ -276,6 +278,7 @@ export class EmailCommonRuntime {
       proxy,
       operation,
       backupEmail,
+      null,
       confirmCompleted,
       this.windowLayout?.placementFor(account.id) ?? null
     )

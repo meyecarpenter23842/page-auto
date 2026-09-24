@@ -18,6 +18,8 @@ import {
   microsoftRouteLogLabel,
   waitForMicrosoftOwnedPage
 } from './emailMicrosoftPageOwnership'
+import { createMailboxProviderRouter } from './mailboxProviderComposition'
+import { normalizeMailboxAddress } from './mailProvider'
 import { isMicrosoftRecoverySurface } from './microsoftRecoveryChallenge'
 import { runMicrosoftAuthV2WorkerController } from './microsoftAuthV2WorkerController'
 
@@ -44,6 +46,7 @@ interface OpenCommand extends BrowserCommandBase {
 interface RecoveryCommand extends BrowserCommandBase {
   type: 'recovery-action'
   operation: HotmailRecoveryOperation
+  recoveryEmail?: string
   confirmCompleted: boolean
 }
 
@@ -116,6 +119,7 @@ function parseCommand(event: unknown): WorkerCommand | null {
   if (candidate.loginEmail !== undefined && typeof candidate.loginEmail !== 'string') return null
   if (candidate.loginPassword !== undefined && typeof candidate.loginPassword !== 'string') return null
   if (candidate.backupEmail !== undefined && typeof candidate.backupEmail !== 'string') return null
+  if ('recoveryEmail' in candidate && candidate.recoveryEmail !== undefined && typeof candidate.recoveryEmail !== 'string') return null
   if (candidate.type === 'open-mail') return candidate as OpenCommand
   if (candidate.type === 'recovery-action' && (candidate.operation === 'add' || candidate.operation === 'remove' || candidate.operation === 'replace')) {
     return candidate as RecoveryCommand
@@ -566,6 +570,257 @@ async function openRecoverySecurityPage(context: BrowserContext): Promise<Page> 
   return page
 }
 
+
+const ADD_RECOVERY_CODE_TIMEOUT_MS = 60_000
+
+function escapeRecoveryPattern(value: string): string {
+  return value.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')
+}
+
+function exactRecoveryMailboxVisible(text: string, mailbox: string): boolean {
+  return text.toLowerCase().includes(mailbox.toLowerCase())
+}
+
+function maskedRecoveryIdentity(mailbox: string): { prefix: string; domain: string } | null {
+  const normalized = normalizeMailboxAddress(mailbox)
+  if (!normalized) return null
+  const separator = normalized.lastIndexOf('@')
+  const local = normalized.slice(0, separator)
+  const domain = normalized.slice(separator + 1)
+  return { prefix: local.slice(0, Math.min(2, local.length)), domain }
+}
+
+function maskedRecoveryMailboxVisible(text: string, mailbox: string): boolean {
+  const identity = maskedRecoveryIdentity(mailbox)
+  if (!identity?.prefix) return false
+  const masked = new RegExp(
+    escapeRecoveryPattern(identity.prefix) + '\\*+@' + escapeRecoveryPattern(identity.domain),
+    'i'
+  )
+  return masked.test(text)
+}
+
+function recoveryMailboxEvidence(
+  text: string,
+  targetMailbox: string,
+  existingMailbox?: string | null
+): boolean {
+  if (exactRecoveryMailboxVisible(text, targetMailbox)) return true
+  if (!maskedRecoveryMailboxVisible(text, targetMailbox)) return false
+
+  const existing = existingMailbox ? normalizeMailboxAddress(existingMailbox) : null
+  if (!existing) return true
+  const targetIdentity = maskedRecoveryIdentity(targetMailbox)
+  const existingIdentity = maskedRecoveryIdentity(existing)
+  return !targetIdentity
+    || !existingIdentity
+    || targetIdentity.prefix !== existingIdentity.prefix
+    || targetIdentity.domain !== existingIdentity.domain
+}
+
+function addRecoveryCodeRejected(text: string): boolean {
+  return /incorrect\s+code|invalid\s+code|code\s+is\s+incorrect|code\s+didn['’]?t\s+work|mã\s+không\s+đúng|mã\s+không\s+hợp\s+lệ/i.test(text)
+}
+
+function addRecoverySuccessCopy(text: string): boolean {
+  return /successfully\s+(?:added|verified)|has\s+been\s+added|you\s+can\s+now\s+use|đã\s+(?:thêm|xác\s+minh)|thêm\s+thành\s+công/i.test(text)
+}
+
+async function readRecoveryBody(page: Page): Promise<string> {
+  return await page.locator('body').innerText({ timeout: 5_000 }).catch(() => '')
+}
+
+async function findAddRecoveryEmailInput(page: Page): Promise<Locator | null> {
+  return await firstVisible([
+    page.getByLabel(/recovery\s+email|alternate\s+email|email\s+address|email\s+khôi\s+phục|địa\s+chỉ\s+email/i).first(),
+    page.locator('input[type="email"]:visible:not([name="loginfmt"]):not([autocomplete="username"])').first(),
+    page.locator('input[autocomplete="email"]:visible:not([name="loginfmt"]):not([autocomplete="username"])').first()
+  ])
+}
+
+async function chooseRecoveryEmailMethod(page: Page): Promise<boolean> {
+  const method = await firstVisible([
+    page.getByRole('radio', { name: /^(email|recovery email|email address|email a code|email khôi phục|địa chỉ email)$/i }).first(),
+    page.getByRole('button', { name: /^(email|recovery email|email address|email a code|email khôi phục|địa chỉ email)$/i }).first(),
+    page.getByRole('link', { name: /^(email|recovery email|email address|email a code|email khôi phục|địa chỉ email)$/i }).first(),
+    page.locator('[role="option"]:visible').filter({ hasText: /^(email|recovery email|email address|email a code|email khôi phục|địa chỉ email)$/i }).first(),
+    page.getByText(/^(email|recovery email|email address|email a code|email khôi phục|địa chỉ email)$/i).first()
+  ])
+  if (!method) return false
+  await method.click({ timeout: 8_000 })
+  await page.waitForTimeout(350)
+  return true
+}
+
+async function openAddRecoveryForm(page: Page): Promise<Locator | null> {
+  let input = await findAddRecoveryEmailInput(page)
+  if (input) return input
+
+  const add = await firstVisible([
+    page.getByRole('button', { name: /add a new way to sign in or verify|add a new way to verify|add method|thêm (?:một )?cách mới để đăng nhập hoặc xác minh|thêm phương thức/i }).first(),
+    page.getByRole('link', { name: /add a new way to sign in or verify|add a new way to verify|add method|thêm (?:một )?cách mới để đăng nhập hoặc xác minh|thêm phương thức/i }).first(),
+    page.getByText(/add a new way to sign in or verify|add a new way to verify|add method|thêm (?:một )?cách mới để đăng nhập hoặc xác minh|thêm phương thức/i).first()
+  ])
+  if (!add) return null
+
+  await add.click({ timeout: 8_000 })
+  await page.waitForTimeout(350)
+  input = await findAddRecoveryEmailInput(page)
+  if (input) return input
+
+  if (!await chooseRecoveryEmailMethod(page)) return null
+  return await findAddRecoveryEmailInput(page)
+}
+
+async function fillRecoveryVerificationCode(page: Page, codeInput: string): Promise<boolean> {
+  const code = codeInput.trim()
+  if (!/^[a-z0-9]{4,8}$/i.test(code)) return false
+
+  let inputs = page.locator(
+    'input[autocomplete="one-time-code"]:visible, input[name*="otc" i]:visible, input[name*="code" i]:visible, input[id*="code" i]:visible'
+  )
+  let count = await inputs.count()
+
+  if (count === 0) {
+    inputs = page.locator(
+      'input:visible:not([type="email"]):not([type="password"]):not([type="radio"]):not([type="checkbox"]):not([type="hidden"]):not([type="submit"]):not([type="button"]):not([name="loginfmt"]):not([autocomplete="username"])'
+    )
+    count = await inputs.count()
+  }
+
+  if (count === 1) {
+    await inputs.first().fill(code)
+    return (await inputs.first().inputValue().catch(() => '')).trim() === code
+  }
+
+  if (count !== code.length) return false
+  for (let index = 0; index < code.length; index += 1) {
+    await inputs.nth(index).fill(code[index] ?? '')
+  }
+
+  const values: string[] = []
+  for (let index = 0; index < code.length; index += 1) {
+    values.push((await inputs.nth(index).inputValue().catch(() => '')).trim())
+  }
+  return values.join('') === code
+}
+
+async function runAddRecoveryMail(
+  page: Page,
+  command: RecoveryCommand
+): Promise<{ status: 'success' | 'needs_attention'; message: string }> {
+  const targetMailbox = normalizeMailboxAddress(command.recoveryEmail ?? '')
+  if (!targetMailbox) {
+    return { status: 'needs_attention', message: 'Thiếu Mail KP mới hợp lệ cho thao tác Thêm.' }
+  }
+
+  let body = await readRecoveryBody(page)
+  if (recoveryMailboxEvidence(body, targetMailbox, command.backupEmail)) {
+    return { status: 'success', message: 'Mail KP mới đã có trong Microsoft Security.' }
+  }
+
+  const emailInput = await openAddRecoveryForm(page)
+  if (!emailInput) {
+    return {
+      status: 'needs_attention',
+      message: 'Không tìm thấy flow Add a new way to sign in or verify / Email trên Microsoft Security hiện tại.'
+    }
+  }
+
+  await emailInput.fill(targetMailbox)
+  const filled = normalizeMailboxAddress(await emailInput.inputValue().catch(() => ''))
+  if (filled !== targetMailbox) {
+    return { status: 'needs_attention', message: 'Không xác nhận được Microsoft đã nhận đúng Mail KP mới nên chưa gửi code.' }
+  }
+
+  const send = await firstVisible([
+    page.getByRole('button', { name: /^(next|send code|continue|tiếp theo|gửi mã|tiếp tục)$/i }).last(),
+    page.locator('input[type="submit"]:visible').last(),
+    page.locator('button[type="submit"]:visible').last()
+  ])
+  if (!send || !await send.isEnabled().catch(() => true)) {
+    return { status: 'needs_attention', message: 'Không tìm thấy nút Next/Send code cho Mail KP mới.' }
+  }
+
+  const challengeId = 'hotmail-add-recovery-' + command.accountId + '-' + Date.now()
+  const router = createMailboxProviderRouter(page.context())
+  const baseline = await router.prepareChallenge({
+    accountId: command.accountId,
+    mailbox: targetMailbox,
+    role: 'recovery',
+    purpose: 'microsoft_security',
+    challengeId
+  })
+  if (baseline.status !== 'success' || baseline.providerId === null) {
+    return { status: 'needs_attention', message: baseline.message }
+  }
+
+  const requestedAt = Date.now()
+  try {
+    await send.click({ timeout: 8_000 })
+  } catch {
+    return { status: 'needs_attention', message: 'Không click được nút gửi code xác minh Mail KP mới.' }
+  }
+  await page.waitForTimeout(350)
+
+  const codeResult = await router.getFreshCode({
+    accountId: command.accountId,
+    mailbox: targetMailbox,
+    role: 'recovery',
+    purpose: 'microsoft_security',
+    challengeId,
+    notBefore: Math.max(1, requestedAt - 5_000),
+    baselineMessageKeys: baseline.messageKeys,
+    timeoutMs: ADD_RECOVERY_CODE_TIMEOUT_MS
+  })
+  if (codeResult.providerId !== null && codeResult.providerId !== baseline.providerId) {
+    return { status: 'needs_attention', message: 'Mailbox Router đổi provider giữa cùng challenge thêm Mail KP.' }
+  }
+  if (codeResult.status !== 'success' || !codeResult.code || !codeResult.messageKey) {
+    return { status: 'needs_attention', message: codeResult.message }
+  }
+
+  body = await readRecoveryBody(page)
+  if (addRecoveryCodeRejected(body)) {
+    return { status: 'needs_attention', message: 'Microsoft đang báo code Mail KP không hợp lệ; chưa cập nhật BackupEmail.' }
+  }
+
+  if (!await fillRecoveryVerificationCode(page, codeResult.code)) {
+    return { status: 'needs_attention', message: 'Không xác nhận được code Mail KP mới đã được nhập đúng vào Microsoft.' }
+  }
+
+  const verify = await firstVisible([
+    page.getByRole('button', { name: /^(next|verify|continue|tiếp theo|xác minh|tiếp tục)$/i }).last(),
+    page.locator('input[type="submit"]:visible').last(),
+    page.locator('button[type="submit"]:visible').last()
+  ])
+  if (!verify) {
+    return { status: 'needs_attention', message: 'Không tìm thấy nút Next/Verify sau khi nhập code Mail KP mới.' }
+  }
+
+  try {
+    await verify.click({ timeout: 8_000 })
+  } catch {
+    return { status: 'needs_attention', message: 'Không click được nút xác minh Mail KP mới.' }
+  }
+
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    await page.waitForTimeout(350)
+    body = await readRecoveryBody(page)
+    if (addRecoveryCodeRejected(body)) {
+      return { status: 'needs_attention', message: 'Microsoft từ chối code Mail KP mới; BackupEmail chưa được cập nhật.' }
+    }
+    if (recoveryMailboxEvidence(body, targetMailbox, command.backupEmail) || addRecoverySuccessCopy(body)) {
+      return { status: 'success', message: 'Đã thêm và xác minh Mail KP mới trên Microsoft.' }
+    }
+  }
+
+  return {
+    status: 'needs_attention',
+    message: 'Đã submit code Mail KP mới nhưng chưa có bằng chứng Microsoft xác nhận thêm thành công; PAGE-AUTO chưa cập nhật BackupEmail.'
+  }
+}
+
 async function runRecoveryAction(context: BrowserContext, command: RecoveryCommand, proxyManagedExternally: boolean): Promise<RecoveryResult> {
   let page: Page
   if (command.confirmCompleted) {
@@ -600,6 +855,28 @@ async function runRecoveryAction(context: BrowserContext, command: RecoveryComma
     }
   }
 
+  if (!command.confirmCompleted && command.operation === 'add' && command.recoveryEmail) {
+    const result = await runAddRecoveryMail(page, command)
+    return result.status === 'success'
+      ? {
+          type: 'recovery-result',
+          accountId: command.accountId,
+          operation: command.operation,
+          status: 'success',
+          proxyManagedExternally,
+          message: result.message
+        }
+      : {
+          type: 'recovery-result',
+          accountId: command.accountId,
+          operation: command.operation,
+          status: 'needs_attention',
+          needsAttentionReason: 'manual_completion_required',
+          proxyManagedExternally,
+          message: result.message
+        }
+  }
+
   if (!command.confirmCompleted) {
     return {
       type: 'recovery-result',
@@ -609,6 +886,31 @@ async function runRecoveryAction(context: BrowserContext, command: RecoveryComma
       needsAttentionReason: 'manual_completion_required',
       proxyManagedExternally,
       message: `${manualReasonMessage('manual_completion_required')} Nghiệp vụ: ${recoveryInstruction(command.operation)}.`
+    }
+  }
+
+  if (command.operation === 'add' && command.recoveryEmail) {
+    const targetMailbox = normalizeMailboxAddress(command.recoveryEmail)
+    const body = await readRecoveryBody(page)
+    if (!targetMailbox || !recoveryMailboxEvidence(body, targetMailbox, command.backupEmail)) {
+      return {
+        type: 'recovery-result',
+        accountId: command.accountId,
+        operation: command.operation,
+        status: 'needs_attention',
+        needsAttentionReason: 'manual_completion_required',
+        proxyManagedExternally,
+        message: 'Chưa xác minh được Mail KP mới xuất hiện trong Microsoft Security; BackupEmail chưa được cập nhật.'
+      }
+    }
+
+    return {
+      type: 'recovery-result',
+      accountId: command.accountId,
+      operation: command.operation,
+      status: 'success',
+      proxyManagedExternally,
+      message: 'Đã xác minh Mail KP mới tồn tại trong Microsoft Security.'
     }
   }
 

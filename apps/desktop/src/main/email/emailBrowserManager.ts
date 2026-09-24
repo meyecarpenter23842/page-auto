@@ -206,6 +206,7 @@ export class EmailBrowserManager {
     proxy: EmailProxyCandidate | null,
     operation: HotmailRecoveryOperation,
     backupEmail: string | null,
+    recoveryEmail: string | null,
     confirmCompleted: boolean,
     placement: BrowserWindowPlacement | null = null
   ): Promise<HotmailRecoveryActionResult & { proxyManagedExternally: boolean }> {
@@ -249,6 +250,10 @@ export class EmailBrowserManager {
       operation,
       confirmCompleted: resumeAfterAuth ? false : confirmCompleted,
       ...buildEmailLoginPayload(account),
+      ...(operation === 'add' && !account.backupEmail?.trim() && recoveryEmail
+        ? { backupEmail: recoveryEmail }
+        : {}),
+      ...(recoveryEmail ? { recoveryEmail } : {}),
       ...(browserExecutable.trim() ? { executablePath: browserExecutable.trim() } : {}),
       ...proxyPayload(effectiveProxy)
     }) as WorkerRecoveryResult
