@@ -12,7 +12,9 @@ import type {
   HotmailComboOperation,
   HotmailComboRecoveryOperation,
   HotmailComboStage,
-  HotmailComboStageResult
+  HotmailComboStageResult,
+  HotmailSecurityAction,
+  HotmailSecurityTarget
 } from '../../shared/emailCombo'
 import { EmailCommonRuntime } from './emailCommonRuntime'
 import { inspectEmailProfile } from './emailProfileResolver'
@@ -22,6 +24,7 @@ import { validateEmailPassword } from './emailPasswordActionPolicy'
 import {
   advanceEmailComboStage,
   emailComboStagePlan,
+  emailSecurityStagePlan,
   recoveryOperationForCombo,
   redactEmailComboSecrets
 } from './emailComboActionPolicy'
@@ -30,10 +33,12 @@ type ResolveEmailBrowserExecutable = (requestedExecutable: string, profileRoot: 
 
 interface ActiveComboAccount {
   accountId: number
-  operation: HotmailComboOperation
+  operation: HotmailComboOperation | null
   recoveryOperation: HotmailComboRecoveryOperation
   recoveryEmail: string
   newPassword: string
+  oldBackupEmail: string | null
+  allowManualContinuation: boolean
   stages: HotmailComboStage[]
   stageIndex: number
   history: HotmailComboStageResult[]
