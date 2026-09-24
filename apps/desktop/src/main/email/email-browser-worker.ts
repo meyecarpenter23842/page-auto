@@ -27,6 +27,8 @@ import {
 } from './microsoftAccountSecurityNavigation'
 import {
   findExistingMicrosoftSecurityAuthPage,
+  isMicrosoftAccountHubUrl,
+  isMicrosoftSecurityAuthResumeUrl,
   openMicrosoftAccountHome
 } from './microsoftSecurityActionEntry'
 import {
@@ -533,14 +535,42 @@ async function prepareAuthenticatedPage(
   }
 
   let page = await openTarget(context)
+
+  // Security actions use account.microsoft.com itself as the session gate.
+  // If the profile can remain on the account hub, the Microsoft session is alive;
+  // do not launch a second Outlook/OAuth login flow.
+  if (resumeMode === 'security_action' && isMicrosoftAccountHubUrl(page.url())) {
+    return { status: 'ready', page, autoLoginAttempted }
+  }
+
+  if (resumeMode === 'security_action' && !isMicrosoftSecurityAuthResumeUrl(page.url())) {
+    return {
+      status: 'needs_attention',
+      reason: 'needs_login',
+      message: 'Microsoft Account không giữ được session hub và cũng không chuyển sang flow login đã hỗ trợ.'
+    }
+  }
+
   let login = await autoLoginMicrosoft(page, command, allowPasswordChangeSurface)
   autoLoginAttempted = autoLoginAttempted || login.attempted
   if (login.status === 'needs_attention') {
     return { status: 'needs_attention', reason: login.reason!, message: login.message! }
   }
 
-  if (login.attempted && reopenTargetAfterLogin) {
+  if (reopenTargetAfterLogin) {
     page = await openTarget(context)
+    if (resumeMode === 'security_action' && isMicrosoftAccountHubUrl(page.url())) {
+      return { status: 'ready', page, autoLoginAttempted }
+    }
+
+    if (resumeMode === 'security_action' && !isMicrosoftSecurityAuthResumeUrl(page.url())) {
+      return {
+        status: 'needs_attention',
+        reason: 'needs_login',
+        message: 'Đã login Microsoft nhưng không quay lại được account.microsoft.com.'
+      }
+    }
+
     login = await autoLoginMicrosoft(page, command, allowPasswordChangeSurface)
     autoLoginAttempted = autoLoginAttempted || login.attempted
     if (login.status === 'needs_attention') {
