@@ -20,6 +20,7 @@ export function isMicrosoftSecurityAuthResumeUrl(value: string): boolean {
     const host = url.hostname.toLowerCase()
     if (host === 'outlook.live.com') return false
     if (host === 'account.microsoft.com') return false
+    if (host === 'login.microsoft.com' && url.pathname.toLowerCase().includes('/consumers/fido/create')) return false
     return host === 'login.live.com'
       || host === 'login.microsoftonline.com'
       || host === 'login.microsoft.com'
