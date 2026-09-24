@@ -24,6 +24,7 @@ import {
 } from '../content-library/CanonicalPostPicker'
 import { AccountSelectionMenu } from '../accounts/AccountSelectionMenu'
 import { useExcelRowRange } from '../accounts/accountTableSelection'
+import { comparePageWallScheduleGroups } from './pageWallScheduleOrder'
 import './pageWallWorkspace.css'
 import './pageWallRuntimeControls.css'
 
@@ -146,11 +147,7 @@ function groupSchedulePlans(plans: PageWallFinitePlanView[]): ScheduleGroup[] {
       status: groupStatus(sorted),
       editable: first.scheduleKind === 'daily' && canEditPageWallFiniteSchedule(sorted)
     }
-  }).sort((left, right) => {
-    const leftDate = left.scheduleKind === 'daily' ? '9999-12-31' : left.localDate ?? ''
-    const rightDate = right.scheduleKind === 'daily' ? '9999-12-31' : right.localDate ?? ''
-    return leftDate.localeCompare(rightDate) || (left.minutes[0] ?? 0) - (right.minutes[0] ?? 0)
-  })
+  }).sort(comparePageWallScheduleGroups)
 }
 
 function PostEditorModal({ item, variantIndex, onClose, onSaved }: { item: ContentLibraryItem | null; variantIndex: number; onClose: () => void; onSaved: (item: ContentLibraryItem, variantIndex: number) => void }) {
