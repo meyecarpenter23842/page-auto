@@ -220,7 +220,10 @@ export class HotmailComboService {
       const executable = await this.resolveBrowserExecutable(settings.browserExecutable, settings.profileRoot)
       const attachedExternally = inspection.status === 'running' && !manager.isOpen(accountId)
       proxy = attachedExternally ? null : (this.proxyPool.assignment(accountId) ?? this.proxyPool.acquire(accountId))
-      const opened = await manager.openWorkflow('combo', account, settings.profileRoot, executable, proxy)
+      const loginAccount = !account.backupEmail && stages.includes('recovery_write') && recoveryEmail
+        ? { ...account, backupEmail: recoveryEmail }
+        : account
+      const opened = await manager.openWorkflow('combo', loginAccount, settings.profileRoot, executable, proxy)
       if (opened.proxyManagedExternally) this.proxyPool.release(accountId)
       if (proxy && !opened.proxyManagedExternally) {
         if (opened.status === 'started' || opened.status === 'already_open') this.proxyPool.recordSuccess(proxy)
