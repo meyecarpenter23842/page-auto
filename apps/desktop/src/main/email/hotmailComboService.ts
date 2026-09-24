@@ -220,15 +220,7 @@ export class HotmailComboService {
       const executable = await this.resolveBrowserExecutable(settings.browserExecutable, settings.profileRoot)
       const attachedExternally = inspection.status === 'running' && !manager.isOpen(accountId)
       proxy = attachedExternally ? null : (this.proxyPool.assignment(accountId) ?? this.proxyPool.acquire(accountId))
-      const loginAccount = !account.backupEmail && stages.includes('recovery_write') && recoveryEmail
-        ? { ...account, backupEmail: recoveryEmail }
-        : account
-      const opened = await manager.openWorkflow('combo', loginAccount, settings.profileRoot, executable, proxy)
-      if (opened.proxyManagedExternally) this.proxyPool.release(accountId)
-      if (proxy && !opened.proxyManagedExternally) {
-        if (opened.status === 'started' || opened.status === 'already_open') this.proxyPool.recordSuccess(proxy)
-        else if (/proxy/i.test(opened.message)) this.proxyPool.recordFailure(proxy)
-      }
+      const opened = manager.beginWorkflow('combo', accountId)
       if (opened.status !== 'started' && opened.status !== 'already_open') {
         const safeMessage = redactEmailComboSecrets(opened.message, [newPassword, account.emailPassword, proxy?.password, proxy?.username])
         return this.simpleError(accountId, safeMessage, account.backupEmail, opened.status)
@@ -249,8 +241,8 @@ export class HotmailComboService {
         manager,
         executable,
         profileRoot: settings.profileRoot,
-        proxy: opened.proxyManagedExternally ? null : proxy,
-        proxyManagedExternally: opened.proxyManagedExternally,
+        proxy,
+        proxyManagedExternally: false,
         passwordUpdated: false,
         backupEmail: account.backupEmail
       }
@@ -322,6 +314,13 @@ export class HotmailComboService {
         state.newPassword,
         confirmCompleted
       )
+      if (result.proxyManagedExternally) {
+        state.proxyManagedExternally = true
+        if (state.proxy) this.proxyPool.release(state.accountId)
+        state.proxy = null
+      } else if (state.proxy) {
+        this.proxyPool.recordSuccess(state.proxy)
+      }
       if (result.status === 'success') {
         this.accounts.update(state.accountId, { emailPassword: state.newPassword })
         state.passwordUpdated = true
@@ -350,6 +349,13 @@ export class HotmailComboService {
       recoveryTarget,
       confirmCompleted
     )
+    if (result.proxyManagedExternally) {
+      state.proxyManagedExternally = true
+      if (state.proxy) this.proxyPool.release(state.accountId)
+      state.proxy = null
+    } else if (state.proxy) {
+      this.proxyPool.recordSuccess(state.proxy)
+    }
     if (result.status === 'success') {
       if (recoveryOperation === 'remove') {
         const keepNewRecovery = state.completedStages.includes('recovery_write') && Boolean(state.recoveryEmail)
