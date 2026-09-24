@@ -208,6 +208,26 @@ export class EmailCommonRuntime {
     }
   }
 
+  beginWorkflow(
+    owner: EmailRuntimeWorkflowOwner,
+    accountId: number
+  ): HotmailBrowserOpenResult {
+    if (!this.ownership.claim(accountId, owner)) {
+      const current = this.ownership.current(accountId)
+      return openError(accountId, current ? runtimeBusyMessage(current) : 'Không thể giữ ownership Email runtime cho workflow.')
+    }
+
+    this.windowLayout?.claim(accountId)
+    return {
+      accountId,
+      status: 'started',
+      message: 'Đã giữ Email profile cho Security workflow.',
+      profileDirectory: null,
+      attached: false,
+      proxyManagedExternally: false
+    }
+  }
+
   async openWorkflow(
     owner: EmailRuntimeWorkflowOwner,
     account: AccountRecord,
