@@ -6,6 +6,14 @@ export const MICROSOFT_ACCOUNT_HOME_URL =
 
 export const MICROSOFT_SECURITY_URL = 'https://account.microsoft.com/security'
 
+export function isMicrosoftAccountHubUrl(value: string): boolean {
+  try {
+    return new URL(value).hostname.toLowerCase() === 'account.microsoft.com'
+  } catch {
+    return false
+  }
+}
+
 export function isMicrosoftSecurityAuthResumeUrl(value: string): boolean {
   try {
     const url = new URL(value)
@@ -31,7 +39,7 @@ export async function openMicrosoftAccountHome(context: BrowserContext): Promise
     'microsoft_auth',
     (candidate) => {
       try {
-        return new URL(candidate.url()).hostname.toLowerCase() === 'account.microsoft.com'
+        return isMicrosoftAccountHubUrl(candidate.url())
       } catch {
         return false
       }
