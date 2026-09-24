@@ -986,7 +986,7 @@ async function runRecoveryAction(context: BrowserContext, command: RecoveryComma
   if (command.confirmCompleted) {
     page = await new EmailPageRegistry(context).resolveMicrosoftActionPage(isRecoverySecurityTarget)
   } else {
-    const prepared = await prepareAuthenticatedPage(context, command, openRecoverySecurityPage)
+    const prepared = await prepareAuthenticatedPage(context, command, openMicrosoftAccountHome)
     if (prepared.status === 'needs_attention') {
       return {
         type: 'recovery-result',
@@ -999,6 +999,49 @@ async function runRecoveryAction(context: BrowserContext, command: RecoveryComma
       }
     }
     page = prepared.page
+
+    for (let attempt = 0; attempt < 2 && !isRecoverySecurityTarget(page); attempt += 1) {
+      if (!await navigateToManageHowISignIn(page)) {
+        return {
+          type: 'recovery-result',
+          accountId: command.accountId,
+          operation: command.operation,
+          status: 'needs_attention',
+          needsAttentionReason: 'manual_completion_required',
+          proxyManagedExternally,
+          message: isMicrosoftFidoCreateUrl(page.url())
+            ? 'Microsoft mở nhầm flow Passkey/FIDO; PAGE-AUTO đã dừng thay vì tiếp tục sai action.'
+            : 'Không tìm thấy đường Account → Security → Manage how I sign in trên Microsoft Account.'
+        }
+      }
+
+      if (isRecoverySecurityTarget(page)) break
+
+      const login = await autoLoginMicrosoft(page, command)
+      if (login.status === 'needs_attention') {
+        return {
+          type: 'recovery-result',
+          accountId: command.accountId,
+          operation: command.operation,
+          status: 'needs_attention',
+          needsAttentionReason: login.reason!,
+          proxyManagedExternally,
+          message: login.message!
+        }
+      }
+    }
+
+    if (!isRecoverySecurityTarget(page)) {
+      return {
+        type: 'recovery-result',
+        accountId: command.accountId,
+        operation: command.operation,
+        status: 'needs_attention',
+        needsAttentionReason: 'manual_completion_required',
+        proxyManagedExternally,
+        message: 'Đã xác thực Microsoft nhưng chưa vào được Manage how I sign in; PAGE-AUTO không mở route action sâu để đoán.'
+      }
+    }
   }
   await page.bringToFront().catch(() => undefined)
 
