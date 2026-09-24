@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   advanceEmailComboStage,
   emailComboStagePlan,
+  emailSecurityStagePlan,
   recoveryOperationForCombo,
   redactEmailComboSecrets
 } from './emailComboActionPolicy'
@@ -13,6 +14,13 @@ describe('emailComboActionPolicy', () => {
     expect(recoveryOperationForCombo('password_then_recovery', 'add')).toBe('add')
     expect(recoveryOperationForCombo('password_then_recovery', 'replace')).toBe('replace')
     expect(recoveryOperationForCombo('reset_recovery_then_password', 'replace')).toBe('add')
+  })
+
+  it('plans selected Hotmail Security actions in fixed safe order', () => {
+    expect(emailSecurityStagePlan(['password', 'add_recovery', 'remove_recovery']))
+      .toEqual(['recovery_write', 'recovery_remove', 'password'])
+    expect(emailSecurityStagePlan(['remove_recovery'])).toEqual(['recovery_remove'])
+    expect(emailSecurityStagePlan(['password'])).toEqual(['password'])
   })
 
   it('preserves partial success instead of rolling a completed stage back', () => {
