@@ -55,7 +55,7 @@ export function HotmailComboPanel({
 
   const provider = HOTMAIL_SECURITY_RECOVERY_PROVIDERS.find((item) => item.id === providerId)
     ?? HOTMAIL_SECURITY_RECOVERY_PROVIDERS[0]
-  const domains = provider.domains
+  const domains: readonly string[] = provider.domains
 
   useEffect(() => {
     if (!domains.includes(domain)) setDomain(domains[0] ?? '')
