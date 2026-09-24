@@ -4,6 +4,7 @@ import { classifyMicrosoftLoginSurface } from './emailLoginPolicy'
 import {
   createMicrosoftRecoveryRound,
   microsoftRecoveryCodeChallengeMatchesBackupEmail,
+  microsoftRecoveryCodeHeadingMatches,
   microsoftRecoveryCodeInputParts,
   microsoftRecoveryCodeWasRejected,
   microsoftRecoveryConfirmationValue,
@@ -68,6 +69,32 @@ describe('Microsoft recovery email challenge policy', () => {
       sendCodeControlCount: 1,
       usePasswordControlCount: 0
     })).toBe('recovery_method_choice')
+  })
+
+  it('routes Verify your identity method lists into the recovery resolver only when a masked email proof is present', () => {
+    expect(classifyMicrosoftLoginSurface({
+      url: accountLiveUrl,
+      text: 'Verify your identity Choose a way to verify Email al*****@fivermail.com Send a code to al*****@fivermail.com Use an app Use a phone',
+      emailInputCount: 0,
+      usernameInputCount: 0,
+      proofEmailInputCount: 0,
+      verificationCodeInputCount: 0,
+      passwordInputCount: 0,
+      sendCodeControlCount: 1,
+      usePasswordControlCount: 0
+    })).toBe('recovery_method_choice')
+
+    expect(classifyMicrosoftLoginSurface({
+      url: accountLiveUrl,
+      text: 'Verify your identity Use an authenticator app Send a text message to phone',
+      emailInputCount: 0,
+      usernameInputCount: 0,
+      proofEmailInputCount: 0,
+      verificationCodeInputCount: 0,
+      passwordInputCount: 0,
+      sendCodeControlCount: 0,
+      usePasswordControlCount: 0
+    })).toBe('identity_review')
   })
 
   it('classifies the audited complete-hidden-part surface as recovery email confirmation', () => {
@@ -152,6 +179,13 @@ describe('Microsoft recovery email challenge policy', () => {
     const suffixCollision = "Enter your code If otherowner@example.com matches the email address on your account, we'll send you a code."
     expect(microsoftRecoveryCodeChallengeMatchesBackupEmail(suffixCollision, 'owner@example.com')).toBe(false)
     expect(microsoftRecoveryCodeChallengeMatchesBackupEmail(suffixCollision, 'otherowner@example.com')).toBe(true)
+  })
+
+  it('recognizes both Enter your security code and compact Enter the code headings', () => {
+    expect(microsoftRecoveryCodeHeadingMatches('Enter your security code')).toBe(true)
+    expect(microsoftRecoveryCodeHeadingMatches('Enter the code')).toBe(true)
+    expect(microsoftRecoveryCodeHeadingMatches('Enter the security code')).toBe(true)
+    expect(microsoftRecoveryCodeHeadingMatches('Enter the code from your authenticator app')).toBe(true)
   })
 
   it('supports both a single OTP field and the six-box code UI from the live flow', () => {
