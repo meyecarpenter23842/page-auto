@@ -855,7 +855,7 @@ async function runRecoveryAction(context: BrowserContext, command: RecoveryComma
     }
   }
 
-  if (!command.confirmCompleted && command.operation === 'add') {
+  if (!command.confirmCompleted && command.operation === 'add' && command.recoveryEmail) {
     const result = await runAddRecoveryMail(page, command)
     return result.status === 'success'
       ? {
@@ -889,8 +889,8 @@ async function runRecoveryAction(context: BrowserContext, command: RecoveryComma
     }
   }
 
-  if (command.operation === 'add') {
-    const targetMailbox = normalizeMailboxAddress(command.recoveryEmail ?? '')
+  if (command.operation === 'add' && command.recoveryEmail) {
+    const targetMailbox = normalizeMailboxAddress(command.recoveryEmail)
     const body = await readRecoveryBody(page)
     if (!targetMailbox || !recoveryMailboxEvidence(body, targetMailbox, command.backupEmail)) {
       return {
