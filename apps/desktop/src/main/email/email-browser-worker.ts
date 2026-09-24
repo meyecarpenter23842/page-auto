@@ -1257,23 +1257,7 @@ async function fillPasswordForm(page: Page, command: PasswordCommand): Promise<'
 }
 
 function isPasswordActionTarget(page: Page): boolean {
-  try {
-    const url = new URL(page.url())
-    return url.hostname.toLowerCase() === 'account.live.com'
-      && /\/(client\/)?password\/change/i.test(url.pathname)
-  } catch {
-    return false
-  }
-}
-
-async function openPasswordPage(context: BrowserContext): Promise<Page> {
-  const page = await new EmailPageRegistry(context).resolveOrCreate('microsoft_auth', isPasswordActionTarget)
-  await page.goto('https://account.live.com/password/Change', {
-    waitUntil: 'domcontentloaded',
-    timeout: 30_000
-  })
-  await page.bringToFront().catch(() => undefined)
-  return page
+  return isMicrosoftPasswordChangeUrl(page.url())
 }
 
 function passwordNeedsAttention(command: PasswordCommand, reason: HotmailNeedsAttentionReason, proxyManagedExternally: boolean, message?: string): PasswordResult {
@@ -1292,11 +1276,40 @@ async function runPasswordAction(context: BrowserContext, command: PasswordComma
   if (command.confirmCompleted) {
     page = await new EmailPageRegistry(context).resolveMicrosoftActionPage(isPasswordActionTarget)
   } else {
-    const prepared = await prepareAuthenticatedPage(context, command, openPasswordPage, true)
+    const prepared = await prepareAuthenticatedPage(context, command, openMicrosoftAccountHome, true)
     if (prepared.status === 'needs_attention') {
       return passwordNeedsAttention(command, prepared.reason, proxyManagedExternally, prepared.message)
     }
     page = prepared.page
+
+    for (let attempt = 0; attempt < 2 && !isPasswordActionTarget(page); attempt += 1) {
+      if (!await navigateToChangePasswordFromSecurity(page)) {
+        return passwordNeedsAttention(
+          command,
+          'manual_completion_required',
+          proxyManagedExternally,
+          isMicrosoftFidoCreateUrl(page.url())
+            ? 'Microsoft mở nhầm flow Passkey/FIDO; PAGE-AUTO đã dừng thay vì tiếp tục sai action.'
+            : 'Không tìm thấy đường Account → Security → Change password trên Microsoft Account.'
+        )
+      }
+
+      if (isPasswordActionTarget(page)) break
+
+      const login = await autoLoginMicrosoft(page, command, true)
+      if (login.status === 'needs_attention') {
+        return passwordNeedsAttention(command, login.reason!, proxyManagedExternally, login.message!)
+      }
+    }
+
+    if (!isPasswordActionTarget(page)) {
+      return passwordNeedsAttention(
+        command,
+        'manual_completion_required',
+        proxyManagedExternally,
+        'Đã xác thực Microsoft nhưng chưa vào được Change password; PAGE-AUTO không mở route action sâu để đoán.'
+      )
+    }
   }
   await page.bringToFront().catch(() => undefined)
 
