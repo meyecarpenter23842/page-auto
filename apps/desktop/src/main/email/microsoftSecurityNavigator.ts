@@ -5,7 +5,7 @@ import {
   isMicrosoftSecurityHubUrl,
   isMicrosoftSignInManagementUrl
 } from './microsoftAccountSecurityNavigation'
-import { MICROSOFT_ACCOUNT_HOME_URL, MICROSOFT_SECURITY_URL } from './microsoftSecurityActionEntry'
+import { MICROSOFT_SECURITY_URL } from './microsoftSecurityActionEntry'
 
 async function firstVisible(locators: Locator[]): Promise<Locator | null> {
   for (const locator of locators) {
@@ -19,18 +19,8 @@ async function settle(page: Page): Promise<void> {
   await page.waitForTimeout(250)
 }
 
-async function recoverFromFido(page: Page): Promise<boolean> {
-  if (!isMicrosoftFidoCreateUrl(page.url())) return false
-  await page.goto(MICROSOFT_ACCOUNT_HOME_URL, {
-    waitUntil: 'domcontentloaded',
-    timeout: 30_000
-  }).catch(() => undefined)
-  await settle(page)
-  return true
-}
-
 export async function navigateToMicrosoftSecurityHub(page: Page): Promise<boolean> {
-  await recoverFromFido(page)
+  if (isMicrosoftFidoCreateUrl(page.url())) return false
   if (isMicrosoftSecurityHubUrl(page.url())) return true
 
   // Direct stable hub URL first. Microsoft can redirect into auth/recovery when needed.
@@ -67,7 +57,7 @@ export async function navigateToManageHowISignIn(page: Page): Promise<boolean> {
 
   await manage.click({ timeout: 8_000 }).catch(() => undefined)
   await settle(page)
-  if (await recoverFromFido(page)) return false
+  if (isMicrosoftFidoCreateUrl(page.url())) return false
   return isMicrosoftSignInManagementUrl(page.url())
 }
 
@@ -84,6 +74,6 @@ export async function navigateToChangePasswordFromSecurity(page: Page): Promise<
 
   await changePassword.click({ timeout: 8_000 }).catch(() => undefined)
   await settle(page)
-  if (await recoverFromFido(page)) return false
+  if (isMicrosoftFidoCreateUrl(page.url())) return false
   return isMicrosoftPasswordChangeUrl(page.url())
 }
