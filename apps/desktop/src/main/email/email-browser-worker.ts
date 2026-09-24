@@ -22,6 +22,13 @@ import { createMailboxProviderRouter } from './mailboxProviderComposition'
 import { normalizeMailboxAddress } from './mailProvider'
 import { isMicrosoftRecoverySurface } from './microsoftRecoveryChallenge'
 import { runMicrosoftAuthV2WorkerController } from './microsoftAuthV2WorkerController'
+import {
+  isMicrosoftAccountHostUrl,
+  isMicrosoftFidoCreateUrl,
+  isMicrosoftPasswordChangeUrl,
+  isMicrosoftSecurityHubUrl,
+  isMicrosoftSignInManagementUrl
+} from './microsoftAccountSecurityNavigation'
 
 interface ProxyConfig {
   server: string
@@ -550,24 +557,93 @@ function recoveryInstruction(operation: HotmailRecoveryOperation): string {
   return 'thay Email khôi phục'
 }
 
-function isRecoverySecurityTarget(page: Page): boolean {
-  try {
-    const url = new URL(page.url())
-    return url.hostname.toLowerCase() === 'account.live.com'
-      && url.pathname.toLowerCase().includes('/proofs/manage')
-  } catch {
-    return false
-  }
+function isMicrosoftAccountHomeTarget(page: Page): boolean {
+  return isMicrosoftAccountHostUrl(page.url())
 }
 
-async function openRecoverySecurityPage(context: BrowserContext): Promise<Page> {
-  const page = await new EmailPageRegistry(context).resolveOrCreate('microsoft_auth', isRecoverySecurityTarget)
-  await page.goto('https://account.live.com/proofs/manage/additional', {
+function isRecoverySecurityTarget(page: Page): boolean {
+  return isMicrosoftSignInManagementUrl(page.url())
+}
+
+async function openMicrosoftAccountHome(context: BrowserContext): Promise<Page> {
+  const page = await new EmailPageRegistry(context).resolveOrCreate('microsoft_auth', isMicrosoftAccountHomeTarget)
+  await page.goto('https://account.microsoft.com/?ref=MeControl&refd=account.microsoft.com', {
     waitUntil: 'domcontentloaded',
     timeout: 30_000
   })
   await page.bringToFront().catch(() => undefined)
   return page
+}
+
+async function navigateToSecurityHub(page: Page): Promise<boolean> {
+  if (isMicrosoftFidoCreateUrl(page.url())) {
+    await page.goto('https://account.microsoft.com/?ref=MeControl&refd=account.microsoft.com', {
+      waitUntil: 'domcontentloaded',
+      timeout: 30_000
+    })
+  }
+
+  if (isMicrosoftSecurityHubUrl(page.url())) return true
+
+  const security = await firstVisible([
+    page.getByRole('link', { name: /^security$/i }).first(),
+    page.getByRole('button', { name: /^security$/i }).first(),
+    page.getByText(/^security$/i).first()
+  ])
+  if (security) {
+    await security.click({ timeout: 8_000 }).catch(() => undefined)
+    await page.waitForLoadState('domcontentloaded', { timeout: 15_000 }).catch(() => undefined)
+    await page.waitForTimeout(350)
+    if (isMicrosoftSecurityHubUrl(page.url())) return true
+  }
+
+  await page.goto('https://account.microsoft.com/security', {
+    waitUntil: 'domcontentloaded',
+    timeout: 30_000
+  })
+  return isMicrosoftSecurityHubUrl(page.url())
+}
+
+async function navigateToManageHowISignIn(page: Page): Promise<boolean> {
+  if (!await navigateToSecurityHub(page)) return false
+
+  const manage = await firstVisible([
+    page.getByRole('link', { name: /manage how i sign in/i }).first(),
+    page.getByRole('button', { name: /manage how i sign in/i }).first(),
+    page.getByText(/manage how i sign in/i).first()
+  ])
+  if (!manage) return false
+
+  await manage.click({ timeout: 8_000 }).catch(() => undefined)
+  await page.waitForLoadState('domcontentloaded', { timeout: 15_000 }).catch(() => undefined)
+  await page.waitForTimeout(350)
+
+  if (isMicrosoftFidoCreateUrl(page.url())) {
+    await page.goBack({ waitUntil: 'domcontentloaded', timeout: 15_000 }).catch(() => undefined)
+    return false
+  }
+  return true
+}
+
+async function navigateToChangePasswordFromSecurity(page: Page): Promise<boolean> {
+  if (!await navigateToSecurityHub(page)) return false
+
+  const changePassword = await firstVisible([
+    page.getByRole('link', { name: /change password/i }).first(),
+    page.getByRole('button', { name: /change password/i }).first(),
+    page.getByText(/change password/i).first()
+  ])
+  if (!changePassword) return false
+
+  await changePassword.click({ timeout: 8_000 }).catch(() => undefined)
+  await page.waitForLoadState('domcontentloaded', { timeout: 15_000 }).catch(() => undefined)
+  await page.waitForTimeout(350)
+
+  if (isMicrosoftFidoCreateUrl(page.url())) {
+    await page.goBack({ waitUntil: 'domcontentloaded', timeout: 15_000 }).catch(() => undefined)
+    return false
+  }
+  return true
 }
 
 
@@ -648,7 +724,12 @@ async function chooseRecoveryEmailMethod(page: Page): Promise<boolean> {
   ])
   if (!method) return false
   await method.click({ timeout: 8_000 })
+  await page.waitForLoadState('domcontentloaded', { timeout: 10_000 }).catch(() => undefined)
   await page.waitForTimeout(350)
+  if (isMicrosoftFidoCreateUrl(page.url())) {
+    await page.goBack({ waitUntil: 'domcontentloaded', timeout: 15_000 }).catch(() => undefined)
+    return false
+  }
   return true
 }
 
@@ -664,7 +745,12 @@ async function openAddRecoveryForm(page: Page): Promise<Locator | null> {
   if (!add) return null
 
   await add.click({ timeout: 8_000 })
+  await page.waitForLoadState('domcontentloaded', { timeout: 10_000 }).catch(() => undefined)
   await page.waitForTimeout(350)
+  if (isMicrosoftFidoCreateUrl(page.url())) {
+    await page.goBack({ waitUntil: 'domcontentloaded', timeout: 15_000 }).catch(() => undefined)
+    return null
+  }
   input = await findAddRecoveryEmailInput(page)
   if (input) return input
 
@@ -910,7 +996,7 @@ async function runRecoveryAction(context: BrowserContext, command: RecoveryComma
   if (command.confirmCompleted) {
     page = await new EmailPageRegistry(context).resolveMicrosoftActionPage(isRecoverySecurityTarget)
   } else {
-    const prepared = await prepareAuthenticatedPage(context, command, openRecoverySecurityPage)
+    const prepared = await prepareAuthenticatedPage(context, command, openMicrosoftAccountHome)
     if (prepared.status === 'needs_attention') {
       return {
         type: 'recovery-result',
@@ -923,6 +1009,49 @@ async function runRecoveryAction(context: BrowserContext, command: RecoveryComma
       }
     }
     page = prepared.page
+
+    for (let attempt = 0; attempt < 2 && !isRecoverySecurityTarget(page); attempt += 1) {
+      if (!await navigateToManageHowISignIn(page)) {
+        return {
+          type: 'recovery-result',
+          accountId: command.accountId,
+          operation: command.operation,
+          status: 'needs_attention',
+          needsAttentionReason: 'manual_completion_required',
+          proxyManagedExternally,
+          message: isMicrosoftFidoCreateUrl(page.url())
+            ? 'Microsoft mở nhầm flow Passkey/FIDO; PAGE-AUTO đã dừng thay vì tiếp tục sai action.'
+            : 'Không tìm thấy đường Account → Security → Manage how I sign in trên Microsoft Account.'
+        }
+      }
+
+      if (isRecoverySecurityTarget(page)) break
+
+      const login = await autoLoginMicrosoft(page, command)
+      if (login.status === 'needs_attention') {
+        return {
+          type: 'recovery-result',
+          accountId: command.accountId,
+          operation: command.operation,
+          status: 'needs_attention',
+          needsAttentionReason: login.reason!,
+          proxyManagedExternally,
+          message: login.message!
+        }
+      }
+    }
+
+    if (!isRecoverySecurityTarget(page)) {
+      return {
+        type: 'recovery-result',
+        accountId: command.accountId,
+        operation: command.operation,
+        status: 'needs_attention',
+        needsAttentionReason: 'manual_completion_required',
+        proxyManagedExternally,
+        message: 'Đã xác thực Microsoft nhưng chưa vào được Manage how I sign in; PAGE-AUTO không mở route action sâu để đoán.'
+      }
+    }
   }
   await page.bringToFront().catch(() => undefined)
 
@@ -1138,23 +1267,7 @@ async function fillPasswordForm(page: Page, command: PasswordCommand): Promise<'
 }
 
 function isPasswordActionTarget(page: Page): boolean {
-  try {
-    const url = new URL(page.url())
-    return url.hostname.toLowerCase() === 'account.live.com'
-      && /\/(client\/)?password\/change/i.test(url.pathname)
-  } catch {
-    return false
-  }
-}
-
-async function openPasswordPage(context: BrowserContext): Promise<Page> {
-  const page = await new EmailPageRegistry(context).resolveOrCreate('microsoft_auth', isPasswordActionTarget)
-  await page.goto('https://account.live.com/password/Change', {
-    waitUntil: 'domcontentloaded',
-    timeout: 30_000
-  })
-  await page.bringToFront().catch(() => undefined)
-  return page
+  return isMicrosoftPasswordChangeUrl(page.url())
 }
 
 function passwordNeedsAttention(command: PasswordCommand, reason: HotmailNeedsAttentionReason, proxyManagedExternally: boolean, message?: string): PasswordResult {
@@ -1173,11 +1286,40 @@ async function runPasswordAction(context: BrowserContext, command: PasswordComma
   if (command.confirmCompleted) {
     page = await new EmailPageRegistry(context).resolveMicrosoftActionPage(isPasswordActionTarget)
   } else {
-    const prepared = await prepareAuthenticatedPage(context, command, openPasswordPage, true)
+    const prepared = await prepareAuthenticatedPage(context, command, openMicrosoftAccountHome, true)
     if (prepared.status === 'needs_attention') {
       return passwordNeedsAttention(command, prepared.reason, proxyManagedExternally, prepared.message)
     }
     page = prepared.page
+
+    for (let attempt = 0; attempt < 2 && !isPasswordActionTarget(page); attempt += 1) {
+      if (!await navigateToChangePasswordFromSecurity(page)) {
+        return passwordNeedsAttention(
+          command,
+          'manual_completion_required',
+          proxyManagedExternally,
+          isMicrosoftFidoCreateUrl(page.url())
+            ? 'Microsoft mở nhầm flow Passkey/FIDO; PAGE-AUTO đã dừng thay vì tiếp tục sai action.'
+            : 'Không tìm thấy đường Account → Security → Change password trên Microsoft Account.'
+        )
+      }
+
+      if (isPasswordActionTarget(page)) break
+
+      const login = await autoLoginMicrosoft(page, command, true)
+      if (login.status === 'needs_attention') {
+        return passwordNeedsAttention(command, login.reason!, proxyManagedExternally, login.message!)
+      }
+    }
+
+    if (!isPasswordActionTarget(page)) {
+      return passwordNeedsAttention(
+        command,
+        'manual_completion_required',
+        proxyManagedExternally,
+        'Đã xác thực Microsoft nhưng chưa vào được Change password; PAGE-AUTO không mở route action sâu để đoán.'
+      )
+    }
   }
   await page.bringToFront().catch(() => undefined)
 
