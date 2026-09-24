@@ -187,3 +187,4 @@ export function HotmailComboPanel({
       <button className="email-button primary" disabled={busy || selectedIds.length === 0 || actions.length === 0} onClick={() => void run()}>{busy ? 'Đang chạy…' : 'OK, chạy luôn'}</button>
     </div>
   </div>
+}
