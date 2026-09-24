@@ -136,6 +136,28 @@ try {
   invariant((await wallRoot.locator('.page-wall-now-summary').innerText()).includes('delay 7s'), 'Summary Đăng ngay không phản ánh delay đã chọn.')
 
   await wallRoot.locator('.page-wall-mode-tabs button').filter({ hasText: 'Lịch chạy' }).click()
+  const scheduleLayout = await windowPage.evaluate(() => {
+    const rect = (selector) => {
+      const node = document.querySelector(selector)
+      if (!node) return null
+      const box = node.getBoundingClientRect()
+      return { left: box.left, top: box.top, bottom: box.bottom, width: box.width, height: box.height }
+    }
+    const grid = document.querySelector('.business-page_wall_post [data-testid="page-wall-three-regions"]')
+    return {
+      viewportWidth: innerWidth,
+      className: grid?.className ?? '',
+      accounts: rect('.business-page_wall_post [data-testid="page-wall-region-accounts"]'),
+      content: rect('.business-page_wall_post [data-testid="page-wall-region-content"]'),
+      control: rect('.business-page_wall_post [data-testid="page-wall-region-control"]')
+    }
+  })
+  invariant(scheduleLayout.className.includes('mode-schedule'), `Lịch chạy chưa chuyển layout mode-schedule: ${JSON.stringify(scheduleLayout)}`)
+  if (scheduleLayout.viewportWidth > 880) {
+    invariant(scheduleLayout.accounts && scheduleLayout.content && scheduleLayout.control, `Không đọc được layout Lịch chạy: ${JSON.stringify(scheduleLayout)}`)
+    invariant(scheduleLayout.accounts.left < scheduleLayout.content.left - 10 && scheduleLayout.content.left < scheduleLayout.control.left - 10, `Lịch chạy chưa tận dụng chiều ngang thành 3 cột: ${JSON.stringify(scheduleLayout)}`)
+    invariant(Math.abs(scheduleLayout.accounts.top - scheduleLayout.control.top) < 4 && Math.abs(scheduleLayout.accounts.bottom - scheduleLayout.control.bottom) < 4, `Khung lịch chưa full-height cùng workspace: ${JSON.stringify(scheduleLayout)}`)
+  }
   await wallRoot.locator('.page-wall-schedule-toolbar button').filter({ hasText: '+ Thêm lịch' }).click()
   let scheduleDialog = windowPage.getByRole('dialog', { name: 'Thiết lập lịch đăng' })
   await scheduleDialog.waitFor({ state: 'visible' })
