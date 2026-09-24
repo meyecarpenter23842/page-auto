@@ -77,7 +77,7 @@ function textContainsExactMailbox(text: string, mailbox: string): boolean {
 }
 
 export function microsoftRecoveryCodeHeadingMatches(text: string): boolean {
-  return /enter\s+(?:your\s+)?(?:security\s+)?code/i.test(text.replace(/\s+/g, ' '))
+  return /enter\s+(?:(?:your|the)\s+)?(?:security\s+)?code/i.test(text.replace(/\s+/g, ' '))
 }
 
 function isAuditedRecoveryCodeCopy(text: string): boolean {
