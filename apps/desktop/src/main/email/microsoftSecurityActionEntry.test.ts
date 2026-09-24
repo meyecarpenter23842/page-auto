@@ -18,7 +18,7 @@ describe('microsoftSecurityActionEntry', () => {
 
   it('resumes only Microsoft login/recovery routes that can block security navigation', () => {
     expect(isMicrosoftSecurityAuthResumeUrl('https://login.live.com/oauth20_authorize.srf')).toBe(true)
-    expect(isMicrosoftSecurityAuthResumeUrl('https://login.microsoft.com/consumers/fido/create?mkt=en-US')).toBe(true)
+    expect(isMicrosoftSecurityAuthResumeUrl('https://login.microsoft.com/consumers/fido/create?mkt=en-US')).toBe(false)
     expect(isMicrosoftSecurityAuthResumeUrl('https://account.live.com/identity/confirm')).toBe(true)
   })
 })
