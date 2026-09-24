@@ -490,7 +490,7 @@ export function HotmailAuto() {
 
     <footer className="email-selection-footer"><div><strong>{visibleSelected}</strong> dòng đang hiện được tích · <strong>{excelRange.rangeIds.size}</strong> dòng đang phủ khối</div><span>Click/Ctrl/Shift/kéo: phủ khối · Checkbox hoặc Chuột phải › Chọn: tích · Double-click: mở mail</span></footer>
 
-    {panel ? <div className="email-panel-backdrop" onMouseDown={() => setPanel(null)}><aside className="email-side-panel" onMouseDown={(event) => event.stopPropagation()}>
+    {panel ? <div className={`email-panel-backdrop${panel === 'combo' ? ' security-modal-backdrop' : ''}`} onMouseDown={() => setPanel(null)}><aside className={`email-side-panel${panel === 'combo' ? ' security-modal' : ''}`} onMouseDown={(event) => event.stopPropagation()}>
       <div className="email-panel-header"><div><span>EMAIL</span><h2>{panel === 'network' ? 'Proxy / IP' : panel === 'logs' ? 'Nhật ký gần nhất' : panel === 'recovery' ? 'Mail khôi phục' : panel === 'password' ? 'Đổi Password Email' : panel === 'combo' ? 'Hotmail Security' : 'Cài đặt'}</h2></div><button className="email-panel-close" onClick={() => setPanel(null)}>×</button></div>
 
       {panel === 'combo' ? <HotmailComboPanel selectedIds={selectedIds} rows={panelRows} preset={securityPreset} onMessage={setMessage} onRefresh={refreshRows} /> : null}
