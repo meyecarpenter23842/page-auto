@@ -622,8 +622,11 @@ async function runRecoveryAction(context: BrowserContext, command: RecoveryComma
     }
     page = prepared.page
 
-    for (let attempt = 0; attempt < 2 && !isRecoverySecurityTarget(page); attempt += 1) {
-      if (!await navigateToManageHowISignIn(page)) {
+    for (let attempt = 0; attempt < 3 && !isRecoverySecurityTarget(page); attempt += 1) {
+      const navigated = await navigateToManageHowISignIn(page)
+      if (isRecoverySecurityTarget(page)) break
+
+      if (isMicrosoftFidoCreateUrl(page.url())) {
         return {
           type: 'recovery-result',
           accountId: command.accountId,
@@ -631,24 +634,36 @@ async function runRecoveryAction(context: BrowserContext, command: RecoveryComma
           status: 'needs_attention',
           needsAttentionReason: 'manual_completion_required',
           proxyManagedExternally,
-          message: isMicrosoftFidoCreateUrl(page.url())
-            ? 'Microsoft mở nhầm flow Passkey/FIDO; PAGE-AUTO đã dừng thay vì tiếp tục sai action.'
-            : 'Không tìm thấy đường Account → Security → Manage how I sign in trên Microsoft Account.'
+          message: 'Microsoft mở flow Passkey/FIDO thay vì Email Security; PAGE-AUTO dừng action.'
         }
       }
 
-      if (isRecoverySecurityTarget(page)) break
+      if (isMicrosoftSecurityAuthResumeUrl(page.url())) {
+        const login = await autoLoginMicrosoft(page, command)
+        if (login.status === 'needs_attention') {
+          return {
+            type: 'recovery-result',
+            accountId: command.accountId,
+            operation: command.operation,
+            status: 'needs_attention',
+            needsAttentionReason: login.reason!,
+            proxyManagedExternally,
+            message: login.message!
+          }
+        }
+        page = await openMicrosoftAccountHome(context)
+        continue
+      }
 
-      const login = await autoLoginMicrosoft(page, command)
-      if (login.status === 'needs_attention') {
+      if (!navigated) {
         return {
           type: 'recovery-result',
           accountId: command.accountId,
           operation: command.operation,
           status: 'needs_attention',
-          needsAttentionReason: login.reason!,
+          needsAttentionReason: 'manual_completion_required',
           proxyManagedExternally,
-          message: login.message!
+          message: 'Không tìm thấy đường Account → Security → Manage how I sign in trên Microsoft Account.'
         }
       }
     }
@@ -904,23 +919,35 @@ async function runPasswordAction(context: BrowserContext, command: PasswordComma
     }
     page = prepared.page
 
-    for (let attempt = 0; attempt < 2 && !isPasswordActionTarget(page); attempt += 1) {
-      if (!await navigateToChangePasswordFromSecurity(page)) {
+    for (let attempt = 0; attempt < 3 && !isPasswordActionTarget(page); attempt += 1) {
+      const navigated = await navigateToChangePasswordFromSecurity(page)
+      if (isPasswordActionTarget(page)) break
+
+      if (isMicrosoftFidoCreateUrl(page.url())) {
         return passwordNeedsAttention(
           command,
           'manual_completion_required',
           proxyManagedExternally,
-          isMicrosoftFidoCreateUrl(page.url())
-            ? 'Microsoft mở nhầm flow Passkey/FIDO; PAGE-AUTO đã dừng thay vì tiếp tục sai action.'
-            : 'Không tìm thấy đường Account → Security → Change password trên Microsoft Account.'
+          'Microsoft mở flow Passkey/FIDO thay vì Password; PAGE-AUTO dừng action.'
         )
       }
 
-      if (isPasswordActionTarget(page)) break
+      if (isMicrosoftSecurityAuthResumeUrl(page.url())) {
+        const login = await autoLoginMicrosoft(page, command, true)
+        if (login.status === 'needs_attention') {
+          return passwordNeedsAttention(command, login.reason!, proxyManagedExternally, login.message!)
+        }
+        page = await openMicrosoftAccountHome(context)
+        continue
+      }
 
-      const login = await autoLoginMicrosoft(page, command, true)
-      if (login.status === 'needs_attention') {
-        return passwordNeedsAttention(command, login.reason!, proxyManagedExternally, login.message!)
+      if (!navigated) {
+        return passwordNeedsAttention(
+          command,
+          'manual_completion_required',
+          proxyManagedExternally,
+          'Không tìm thấy đường Account → Security → Change password trên Microsoft Account.'
+        )
       }
     }
 
