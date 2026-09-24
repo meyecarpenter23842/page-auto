@@ -191,17 +191,22 @@ export class HotmailComboService {
     return { results }
   }
 
-  private async startAccount(
-    accountId: number,
-    operation: HotmailComboOperation,
-    recoveryOperation: HotmailComboRecoveryOperation,
-    recoveryEmail: string,
+  private async startAccount(input: {
+    accountId: number
+    operation: HotmailComboOperation | null
+    recoveryOperation: HotmailComboRecoveryOperation
+    recoveryEmail: string
     newPassword: string
-  ): Promise<HotmailComboActionResult> {
+    stages: HotmailComboStage[]
+    allowManualContinuation: boolean
+  }): Promise<HotmailComboActionResult> {
+    const { accountId, operation, recoveryOperation, recoveryEmail, newPassword, stages, allowManualContinuation } = input
     const account = this.accounts.getById(accountId)
     if (!account) return this.simpleError(accountId, 'Account không tồn tại.')
     if (!account.email) return this.simpleError(accountId, 'Account chưa có Email Microsoft.', account.backupEmail)
-    if (account.emailPassword === newPassword) return this.simpleError(accountId, 'Password Email mới trùng Password canonical hiện tại.', account.backupEmail)
+    if (stages.includes('password') && account.emailPassword === newPassword) {
+      return this.simpleError(accountId, 'Password Email mới trùng Password canonical hiện tại.', account.backupEmail)
+    }
 
     const settings = this.repository.getProfileSettings()
     const inspection = await inspectEmailProfile(settings.profileRoot, account.uid)
@@ -232,7 +237,9 @@ export class HotmailComboService {
         recoveryOperation,
         recoveryEmail,
         newPassword,
-        stages: emailComboStagePlan(operation),
+        oldBackupEmail: account.backupEmail,
+        allowManualContinuation,
+        stages: [...stages],
         stageIndex: 0,
         history: [],
         completedStages: [],
