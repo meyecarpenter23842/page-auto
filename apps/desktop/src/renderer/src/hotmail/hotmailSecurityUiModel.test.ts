@@ -11,9 +11,9 @@ describe('hotmailSecurityUiModel', () => {
     const fvia = HOTMAIL_SECURITY_RECOVERY_PROVIDERS.find((item) => item.id === 'fviainboxes')
 
     expect(inboxes?.domains).toEqual([
-      'getnada.com', 'getmule.com', 'tupmail.com', 'blondmail.com', 'spicysoda.com', 'replyloop.com',
-      'chapsmail.com', 'guysmail.com', 'fivermail.com', 'clowmail.com', 'gimpmail.com', 'dropjar.com',
-      'getairmail.com', 'givmail.com', 'inboxbear.com', 'robot-mail.com', 'tafmail.com', 'temptami.com', 'vomoto.com'
+      'blondmail.com', 'chapsmail.com', 'clowmail.com', 'dropjar.com', 'fivermail.com', 'getairmail.com',
+      'getmule.com', 'getnada.com', 'gimpmail.com', 'givmail.com', 'guysmail.com', 'inboxbear.com',
+      'replyloop.com', 'robot-mail.com', 'tafmail.com', 'temptami.com', 'tupmail.com', 'vomoto.com'
     ])
     expect(fvia?.domains).toEqual([
       'fviainboxes.com', 'fviadropinbox.com', 'fviamail.work', 'dropinboxes.com', 'titanads.email'
