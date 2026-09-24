@@ -289,7 +289,9 @@ export class HotmailComboService {
 
       this.repository.updateEmailState(state.accountId, { lastError: safeMessage })
       if (outcome.status === 'needs_attention') {
-        return this.finishResult(state, 'needs_attention', safeMessage, stage)
+        const result = this.finishResult(state, 'needs_attention', safeMessage, stage)
+        if (!state.allowManualContinuation) this.finishAccount(state)
+        return result
       }
 
       const result = this.finishResult(state, outcome.status, safeMessage)
@@ -307,6 +309,7 @@ export class HotmailComboService {
     if (!account) return { status: 'error', message: 'Account không còn tồn tại.' }
 
     if (stage === 'password') {
+      if (!state.newPassword) return { status: 'error', message: 'Thiếu Password mới cho stage đổi Password.' }
       const result = await state.manager.runWorkflowPasswordAction(
         'combo',
         account,
@@ -328,6 +331,11 @@ export class HotmailComboService {
     }
 
     const recoveryOperation: HotmailRecoveryOperation = stage === 'recovery_remove' ? 'remove' : state.recoveryOperation
+    if (recoveryOperation === 'remove' && !state.oldBackupEmail) {
+      return { status: 'success', message: 'Account không có Mail KP cũ; bỏ qua stage xóa.' }
+    }
+
+    const recoveryTarget = recoveryOperation === 'remove' ? state.oldBackupEmail : state.recoveryEmail
     const result = await state.manager.runWorkflowRecoveryAction(
       'combo',
       account,
@@ -335,16 +343,20 @@ export class HotmailComboService {
       state.executable,
       state.proxyManagedExternally ? null : state.proxy,
       recoveryOperation,
-      account.backupEmail,
+      recoveryOperation === 'remove' ? state.oldBackupEmail : account.backupEmail,
+      recoveryTarget,
       confirmCompleted
     )
     if (result.status === 'success') {
-      const nextBackupEmail = canonicalBackupEmailAfterRecoverySuccess(
-        recoveryOperation,
-        recoveryOperation === 'remove' ? null : state.recoveryEmail
-      )
-      const updated = this.accounts.update(state.accountId, { backupEmail: nextBackupEmail })
-      state.backupEmail = updated.backupEmail
+      if (recoveryOperation === 'remove') {
+        const keepNewRecovery = state.completedStages.includes('recovery_write') && Boolean(state.recoveryEmail)
+        const updated = this.accounts.update(state.accountId, { backupEmail: keepNewRecovery ? state.recoveryEmail : null })
+        state.backupEmail = updated.backupEmail
+      } else {
+        const nextBackupEmail = canonicalBackupEmailAfterRecoverySuccess(recoveryOperation, state.recoveryEmail)
+        const updated = this.accounts.update(state.accountId, { backupEmail: nextBackupEmail })
+        state.backupEmail = updated.backupEmail
+      }
     }
     return {
       status: result.status,
