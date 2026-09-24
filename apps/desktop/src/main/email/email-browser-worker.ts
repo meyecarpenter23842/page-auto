@@ -821,6 +821,90 @@ async function runAddRecoveryMail(
   }
 }
 
+
+async function runRemoveRecoveryMail(
+  page: Page,
+  command: RecoveryCommand
+): Promise<{ status: 'success' | 'needs_attention'; message: string }> {
+  const targetMailbox = normalizeMailboxAddress(command.recoveryEmail ?? command.backupEmail ?? '')
+  if (!targetMailbox) {
+    return { status: 'success', message: 'Account không có Mail KP cũ; bỏ qua thao tác xóa.' }
+  }
+
+  const body = await readRecoveryBody(page)
+  if (!recoveryMailboxEvidence(body, targetMailbox)) {
+    return { status: 'success', message: 'Mail KP cũ không còn xuất hiện trong Microsoft Security.' }
+  }
+
+  const identity = maskedRecoveryIdentity(targetMailbox)
+  const maskedPattern = identity?.prefix
+    ? new RegExp(escapeRecoveryPattern(identity.prefix) + '\\*+@' + escapeRecoveryPattern(identity.domain), 'i')
+    : null
+
+  const targetNode = exactRecoveryMailboxVisible(body, targetMailbox)
+    ? page.getByText(targetMailbox, { exact: false }).first()
+    : maskedPattern
+      ? page.getByText(maskedPattern).first()
+      : null
+
+  if (!targetNode || !await targetNode.isVisible().catch(() => false)) {
+    return {
+      status: 'needs_attention',
+      message: 'Đã nhận diện Mail KP cũ trong Microsoft Security nhưng không khóa được đúng dòng để xóa.'
+    }
+  }
+
+  let container = targetNode.locator(
+    'xpath=ancestor::*[self::li or self::tr or @role="row" or contains(translate(@class,"ABCDEFGHIJKLMNOPQRSTUVWXYZ","abcdefghijklmnopqrstuvwxyz"),"proof") or contains(translate(@class,"ABCDEFGHIJKLMNOPQRSTUVWXYZ","abcdefghijklmnopqrstuvwxyz"),"method")][1]'
+  )
+  if (await container.count() === 0) container = targetNode.locator('xpath=..')
+
+  const remove = await firstVisible([
+    container.getByRole('button', { name: /remove|delete|xóa|xoá/i }).first(),
+    container.getByRole('link', { name: /remove|delete|xóa|xoá/i }).first(),
+    container.getByText(/^(remove|delete|xóa|xoá)$/i).first()
+  ])
+  if (!remove) {
+    return {
+      status: 'needs_attention',
+      message: 'Không tìm thấy nút Remove/Delete trong đúng dòng Mail KP cũ; PAGE-AUTO không xóa mù.'
+    }
+  }
+
+  try {
+    await remove.click({ timeout: 8_000 })
+  } catch {
+    return { status: 'needs_attention', message: 'Không click được nút xóa Mail KP cũ.' }
+  }
+  await page.waitForTimeout(350)
+
+  const confirm = await firstVisible([
+    page.getByRole('button', { name: /^(remove|delete|yes|confirm|xóa|xoá|đồng ý|xác nhận)$/i }).last(),
+    page.locator('button[type="submit"]:visible').last(),
+    page.locator('input[type="submit"]:visible').last()
+  ])
+  if (confirm && await confirm.isVisible().catch(() => false)) {
+    try {
+      await confirm.click({ timeout: 8_000 })
+    } catch {
+      return { status: 'needs_attention', message: 'Không xác nhận được thao tác xóa Mail KP cũ.' }
+    }
+  }
+
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    await page.waitForTimeout(350)
+    const nextBody = await readRecoveryBody(page)
+    if (!recoveryMailboxEvidence(nextBody, targetMailbox)) {
+      return { status: 'success', message: 'Đã xóa đúng Mail KP cũ khỏi Microsoft Security.' }
+    }
+  }
+
+  return {
+    status: 'needs_attention',
+    message: 'Đã gửi lệnh xóa nhưng Mail KP cũ vẫn còn trong Microsoft Security; chưa cập nhật dữ liệu.'
+  }
+}
+
 async function runRecoveryAction(context: BrowserContext, command: RecoveryCommand, proxyManagedExternally: boolean): Promise<RecoveryResult> {
   let page: Page
   if (command.confirmCompleted) {
@@ -853,6 +937,28 @@ async function runRecoveryAction(context: BrowserContext, command: RecoveryComma
       proxyManagedExternally,
       message: manualReasonMessage(attention)
     }
+  }
+
+  if (!command.confirmCompleted && command.operation === 'remove') {
+    const result = await runRemoveRecoveryMail(page, command)
+    return result.status === 'success'
+      ? {
+          type: 'recovery-result',
+          accountId: command.accountId,
+          operation: command.operation,
+          status: 'success',
+          proxyManagedExternally,
+          message: result.message
+        }
+      : {
+          type: 'recovery-result',
+          accountId: command.accountId,
+          operation: command.operation,
+          status: 'needs_attention',
+          needsAttentionReason: 'manual_completion_required',
+          proxyManagedExternally,
+          message: result.message
+        }
   }
 
   if (!command.confirmCompleted && command.operation === 'add' && command.recoveryEmail) {
