@@ -140,10 +140,6 @@ export function classifyMicrosoftLoginSurface(snapshot: MicrosoftLoginSnapshot):
     return 'login_transition'
   }
 
-  if (/verify your identity|confirm your identity|identity verification|xác minh danh tính/.test(text)) {
-    return 'identity_review'
-  }
-
   if (/enter a valid email address|enter a valid email|valid email address, phone number, or skype/i.test(text)) {
     return usernameInputCount > 0 ? 'username' : 'credential_error'
   }
@@ -161,10 +157,10 @@ export function classifyMicrosoftLoginSurface(snapshot: MicrosoftLoginSnapshot):
   const hasMaskedRecoveryEmail = /[a-z0-9.!#$%&'*+/=?^_`{|}~-]{2,}\*+@[a-z0-9.-]+\.[a-z]{2,}/i.test(text)
   const helpProtectRecovery = /help us protect your account/.test(text)
   const completeHiddenPart = /complete\s+the\s+hidden\s+part/.test(text)
-  const recoveryEmailProofCopy = /verify your email|we(?:'|’)ll send a code|we will send a code|send code|already received a code|xác minh email|gửi mã/.test(text)
+  const recoveryEmailProofCopy = /verify your email|we(?:'|’)ll send a code|we will send a code|send(?:\s+a)?\s+code(?:\s+to)?|already received a code|email\s+[a-z0-9.!#$%&'*+/=?^_`{|}~-]{2,}\*+@|xác minh email|gửi mã/.test(text)
   const fullEmailConfirmationCopy = /verify\s+your\s+email/.test(text)
     && /to\s+verify\s+(?:that\s+)?this\s+is\s+your\s+email(?:\s+address)?\s*[,.:;-]?\s*enter\s+it\s+here/.test(text)
-  const recoveryCodeHeading = /enter\s+your\s+(?:security\s+)?code/.test(text)
+  const recoveryCodeHeading = /enter\s+(?:your\s+)?(?:security\s+)?code/.test(text)
   const recoveryCodeEmailEvidence = /matches\s+the\s+email\s+address\s+on\s+your\s+account|we(?:'|’)ll\s+send\s+you\s+a\s+code|we\s+will\s+send\s+you\s+a\s+code|we\s+sent[^.\n]*code[^.\n]*email|sent[^.\n]*to\s+your\s+email|email\s+address/.test(text)
   const auditedRecoveryCode = recoveryCodeHeading && recoveryCodeEmailEvidence
   const hasRecoveryProofEvidence = proofEmailInputCount > 0 || sendCodeControlCount > 0 || recoveryEmailProofCopy
@@ -196,6 +192,17 @@ export function classifyMicrosoftLoginSurface(snapshot: MicrosoftLoginSnapshot):
       return 'recovery_email_confirmation'
     }
     return 'recovery_method_choice'
+  }
+
+  // Live identity-verification variants can present several methods on one page.
+  // Promote only a masked Email proof into the recovery resolver; the resolver
+  // still has to match that mask against canonical BackupEmail before clicking.
+  if (hasMaskedRecoveryEmail && recoveryEmailProofCopy) {
+    return 'recovery_method_choice'
+  }
+
+  if (/verify your identity|confirm your identity|identity verification|xác minh danh tính/.test(text)) {
+    return 'identity_review'
   }
 
   // Any other actual code/OTP input remains a security challenge. Authenticator,
