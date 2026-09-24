@@ -76,11 +76,14 @@ function textContainsExactMailbox(text: string, mailbox: string): boolean {
   return matches.some((candidate) => normalizeMailboxAddress(candidate) === mailbox)
 }
 
+function isRecoveryCodeHeading(text: string): boolean {
+  return /enter\s+(?:your\s+)?(?:security\s+)?code/i.test(text.replace(/\s+/g, ' '))
+}
+
 function isAuditedRecoveryCodeCopy(text: string): boolean {
   const normalized = text.replace(/\s+/g, ' ')
-  const heading = /enter\s+your\s+(?:security\s+)?code/i.test(normalized)
   const emailEvidence = /matches\s+the\s+email\s+address\s+on\s+your\s+account|we(?:'|’)ll\s+send\s+you\s+a\s+code|we\s+will\s+send\s+you\s+a\s+code|we\s+sent[^.]*code[^.]*email|sent[^.]*to\s+your\s+email|email\s+address/i.test(normalized)
-  return heading && emailEvidence
+  return isRecoveryCodeHeading(normalized) && emailEvidence
 }
 
 export function microsoftRecoveryCodeWasRejected(text: string): boolean {
@@ -321,11 +324,13 @@ async function chooseRecoveryMethod(
   state: MicrosoftRecoverySession
 ): Promise<MicrosoftRecoveryChallengeResult> {
   const body = await readBody(page)
+  const mailbox = normalizeMailboxAddress(backupEmail)
   const hint = firstMatchingHint(body, backupEmail)
-  if (!hint) {
+  const exactMailboxVisible = mailbox ? textContainsExactMailbox(body, mailbox) : false
+  if (!hint && !exactMailboxVisible) {
     return {
       status: 'needs_attention',
-      message: 'Mail KP Microsoft đang hiển thị không khớp ít nhất 2 ký tự đầu + domain của BackupEmail canonical.'
+      message: 'Microsoft không hiển thị phương thức Email khớp BackupEmail canonical; PAGE-AUTO không chọn Phone/Auth/Passkey thay thế.'
     }
   }
 
@@ -337,12 +342,16 @@ async function chooseRecoveryMethod(
     }
   }
 
-  const masked = new RegExp(`(?:email\\s+)?${escapeRegExp(hint.prefix)}\\*+@${escapeRegExp(hint.domain)}`, 'i')
+  const mailboxPattern = hint
+    ? new RegExp(`(?:email\\s+|send\\s+(?:a\\s+)?code\\s+to\\s+)?${escapeRegExp(hint.prefix)}\\*+@${escapeRegExp(hint.domain)}`, 'i')
+    : new RegExp(escapeRegExp(mailbox!), 'i')
   const control = await firstVisible([
-    page.getByRole('radio', { name: masked }).first(),
-    page.locator('label:visible').filter({ hasText: masked }).first(),
-    page.locator('[role="button"]:visible').filter({ hasText: masked }).first(),
-    page.getByText(masked).first()
+    page.getByRole('radio', { name: mailboxPattern }).first(),
+    page.getByRole('button', { name: mailboxPattern }).first(),
+    page.getByRole('link', { name: mailboxPattern }).first(),
+    page.locator('label:visible').filter({ hasText: mailboxPattern }).first(),
+    page.locator('[role="button"]:visible').filter({ hasText: mailboxPattern }).first(),
+    page.getByText(mailboxPattern).first()
   ])
   if (!control) {
     return {
@@ -437,9 +446,9 @@ async function confirmRecoveryEmailAndSend(
   return { status: 'handled' }
 }
 
-async function fillSecurityCode(page: Page, code: string): Promise<boolean> {
+async function fillSecurityCode(page: Page, code: string, allowRoundBoundCodeScreen = false): Promise<boolean> {
   const body = await readBody(page)
-  if (!isAuditedRecoveryCodeCopy(body)) return false
+  if (!isAuditedRecoveryCodeCopy(body) && !(allowRoundBoundCodeScreen && isRecoveryCodeHeading(body))) return false
 
   let inputs = page.locator(
     'input:visible:not([type="radio"]):not([type="checkbox"]):not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="password"]):not([type="email"]):not([name="loginfmt"]):not([autocomplete="username"])'
@@ -466,8 +475,8 @@ async function fillSecurityCode(page: Page, code: string): Promise<boolean> {
   return values.join('') === code
 }
 
-async function submitSecurityCode(page: Page, code: string): Promise<MicrosoftRecoveryChallengeResult> {
-  if (!await fillSecurityCode(page, code)) {
+async function submitSecurityCode(page: Page, code: string, allowRoundBoundCodeScreen = false): Promise<MicrosoftRecoveryChallengeResult> {
+  if (!await fillSecurityCode(page, code, allowRoundBoundCodeScreen)) {
     return { status: 'needs_attention', message: 'Không xác nhận được security code đã được nhập đúng vào các ô Microsoft hiện tại.' }
   }
 
@@ -502,14 +511,15 @@ async function readAndSubmitRecoveryCode(
   state: MicrosoftRecoverySession
 ): Promise<MicrosoftRecoveryChallengeResult> {
   const initialBody = await readBody(page)
-  if (!isAuditedRecoveryCodeCopy(initialBody)) {
+  const resumedWithoutRoundState = state.requestedAt === null && state.round === null
+  const roundBoundCodeScreen = !resumedWithoutRoundState && isRecoveryCodeHeading(initialBody)
+  if (!isAuditedRecoveryCodeCopy(initialBody) && !roundBoundCodeScreen) {
     return {
       status: 'needs_attention',
-      message: 'Microsoft không còn ở màn code Email đã audit; PAGE-AUTO không đọc hoặc submit mã vào challenge khác.'
+      message: 'Microsoft không còn ở màn code Email đã xác minh; PAGE-AUTO không đọc hoặc submit mã vào challenge khác.'
     }
   }
 
-  const resumedWithoutRoundState = state.requestedAt === null && state.round === null
   if (resumedWithoutRoundState && !microsoftRecoveryCodeChallengeMatchesBackupEmail(initialBody, state.mailbox)) {
     return {
       status: 'needs_attention',
@@ -585,7 +595,8 @@ async function readAndSubmitRecoveryCode(
   // Microsoft can change surface while a provider is polling. Re-read before
   // typing; state-driven detection owns whatever surface is now authoritative.
   const body = await readBody(page)
-  if (!isAuditedRecoveryCodeCopy(body)
+  const stillRoundBound = !resumedWithoutRoundState && isRecoveryCodeHeading(body)
+  if ((!isAuditedRecoveryCodeCopy(body) && !stillRoundBound)
     || (resumedWithoutRoundState && !microsoftRecoveryCodeChallengeMatchesBackupEmail(body, state.mailbox))) {
     return { status: 'handled' }
   }
@@ -595,7 +606,7 @@ async function readAndSubmitRecoveryCode(
     state.sessionConsumedMessageKeys,
     state.round.consumedMessageKeys
   )
-  return await submitSecurityCode(page, codeResult.code)
+  return await submitSecurityCode(page, codeResult.code, !resumedWithoutRoundState)
 }
 
 /** Handle only the audited Microsoft recovery-email challenge. Unknown security surfaces remain manual. */
