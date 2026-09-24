@@ -100,6 +100,8 @@ export class HotmailComboService {
     if (this.active.size > 0) {
       throw new Error('Đang có Combo Email chờ xử lý thủ công. Hoàn tất flow đó trước khi mở combo mới.')
     }
+
+    if (payload.actions?.length) return await this.startSecurityWorkflow(payload)
     if (!payload.operation) throw new Error('Chưa chọn loại Combo Email.')
 
     const newPassword = validateEmailPassword(payload.newPassword)
@@ -109,7 +111,62 @@ export class HotmailComboService {
 
     const results: HotmailComboActionResult[] = []
     for (const accountId of uniqueAccountIds(payload.accountIds)) {
-      results.push(await this.startAccount(accountId, payload.operation, recoveryOperation, recoveryEmail, newPassword))
+      results.push(await this.startAccount({
+        accountId,
+        operation: payload.operation,
+        recoveryOperation,
+        recoveryEmail,
+        newPassword,
+        stages: emailComboStagePlan(payload.operation),
+        allowManualContinuation: true
+      }))
+    }
+    return { results }
+  }
+
+  private async startSecurityWorkflow(payload: HotmailComboActionPayload): Promise<HotmailComboBatchResult> {
+    const actions = [...new Set(payload.actions ?? [])] as HotmailSecurityAction[]
+    const stages = emailSecurityStagePlan(actions)
+    if (stages.length === 0) throw new Error('Chưa chọn hành động Hotmail Security.')
+
+    const targets = new Map<number, HotmailSecurityTarget>()
+    for (const item of payload.targets ?? []) {
+      if (!Number.isInteger(item.accountId) || item.accountId <= 0) continue
+      targets.set(item.accountId, item)
+    }
+    const accountIds = uniqueAccountIds(payload.accountIds.length ? payload.accountIds : [...targets.keys()])
+    const results: HotmailComboActionResult[] = []
+
+    for (const accountId of accountIds) {
+      const target = targets.get(accountId)
+      let recoveryEmail = ''
+      let newPassword = ''
+
+      if (actions.includes('add_recovery')) {
+        recoveryEmail = validateRecoveryAction('add', target?.recoveryEmail ?? null) ?? ''
+        if (!recoveryEmail) {
+          results.push(this.simpleError(accountId, 'Thiếu Mail KP mới hợp lệ cho account này.'))
+          continue
+        }
+      }
+      if (actions.includes('password')) {
+        try {
+          newPassword = validateEmailPassword(target?.newPassword)
+        } catch (error) {
+          results.push(this.simpleError(accountId, error instanceof Error ? error.message : 'Password mới không hợp lệ.'))
+          continue
+        }
+      }
+
+      results.push(await this.startAccount({
+        accountId,
+        operation: null,
+        recoveryOperation: 'add',
+        recoveryEmail,
+        newPassword,
+        stages,
+        allowManualContinuation: false
+      }))
     }
     return { results }
   }
