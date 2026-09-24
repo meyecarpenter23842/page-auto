@@ -724,7 +724,12 @@ async function chooseRecoveryEmailMethod(page: Page): Promise<boolean> {
   ])
   if (!method) return false
   await method.click({ timeout: 8_000 })
+  await page.waitForLoadState('domcontentloaded', { timeout: 10_000 }).catch(() => undefined)
   await page.waitForTimeout(350)
+  if (isMicrosoftFidoCreateUrl(page.url())) {
+    await page.goBack({ waitUntil: 'domcontentloaded', timeout: 15_000 }).catch(() => undefined)
+    return false
+  }
   return true
 }
 
@@ -740,7 +745,12 @@ async function openAddRecoveryForm(page: Page): Promise<Locator | null> {
   if (!add) return null
 
   await add.click({ timeout: 8_000 })
+  await page.waitForLoadState('domcontentloaded', { timeout: 10_000 }).catch(() => undefined)
   await page.waitForTimeout(350)
+  if (isMicrosoftFidoCreateUrl(page.url())) {
+    await page.goBack({ waitUntil: 'domcontentloaded', timeout: 15_000 }).catch(() => undefined)
+    return null
+  }
   input = await findAddRecoveryEmailInput(page)
   if (input) return input
 
