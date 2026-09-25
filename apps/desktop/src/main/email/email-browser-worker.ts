@@ -1050,7 +1050,7 @@ async function run(): Promise<void> {
   let attachedExternally = false
   let closing = false
 
-  const resolveContext = async (command: BrowserCommandBase): Promise<{ context: BrowserContext; proxyManagedExternally: boolean } | OpenResult> => {
+  const resolveContext = async (command: WorkerCommand): Promise<{ context: BrowserContext; proxyManagedExternally: boolean } | OpenResult> => {
     if (launchedContext) return { context: launchedContext, proxyManagedExternally: false }
     if (attachedBrowser) {
       const context = attachedBrowser.contexts()[0]
