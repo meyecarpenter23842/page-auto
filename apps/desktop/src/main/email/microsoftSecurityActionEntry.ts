@@ -1,5 +1,4 @@
 import type { BrowserContext, Page } from 'playwright-core'
-import { EmailPageRegistry } from './emailPageRegistry'
 
 export const MICROSOFT_ACCOUNT_HOME_URL =
   'https://account.microsoft.com/?ref=MeControl&refd=account.microsoft.com'
@@ -12,6 +11,30 @@ export function isMicrosoftAccountHubUrl(value: string): boolean {
   } catch {
     return false
   }
+}
+
+export interface MicrosoftAccountPageCandidate {
+  url: string
+  closed: boolean
+}
+
+export function selectMicrosoftAccountHomePageIndex(
+  pages: readonly MicrosoftAccountPageCandidate[]
+): number | null {
+  for (let index = pages.length - 1; index >= 0; index -= 1) {
+    const page = pages[index]
+    if (page && !page.closed && isMicrosoftAccountHubUrl(page.url)) return index
+  }
+
+  const openPages = pages
+    .map((page, index) => ({ page, index }))
+    .filter(({ page }) => !page.closed)
+
+  if (openPages.length === 1 && openPages[0]?.page.url === 'about:blank') {
+    return openPages[0].index
+  }
+
+  return null
 }
 
 export function isMicrosoftSecurityAuthResumeUrl(value: string): boolean {
@@ -36,16 +59,14 @@ export function findExistingMicrosoftSecurityAuthPage(context: BrowserContext): 
 }
 
 export async function openMicrosoftAccountHome(context: BrowserContext): Promise<Page> {
-  const page = await new EmailPageRegistry(context).resolveOrCreate(
-    'microsoft_auth',
-    (candidate) => {
-      try {
-        return isMicrosoftAccountHubUrl(candidate.url())
-      } catch {
-        return false
-      }
-    }
+  const pages = context.pages()
+  const selectedIndex = selectMicrosoftAccountHomePageIndex(
+    pages.map((page) => ({ url: page.url(), closed: page.isClosed() }))
   )
+  const page = selectedIndex === null
+    ? await context.newPage()
+    : pages[selectedIndex]!
+
   await page.goto(MICROSOFT_ACCOUNT_HOME_URL, {
     waitUntil: 'domcontentloaded',
     timeout: 30_000
