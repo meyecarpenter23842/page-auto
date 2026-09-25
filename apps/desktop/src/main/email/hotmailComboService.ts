@@ -165,7 +165,10 @@ export class HotmailComboService {
         recoveryEmail,
         newPassword,
         stages,
-        allowManualContinuation: false
+        // Security challenges (password reauth, recovery verification, CAPTCHA/manual review)
+        // must keep the same Chrome/profile/worker alive. Closing here destroys the
+        // Microsoft session immediately after the user completes the challenge.
+        allowManualContinuation: true
       }))
     }
     return { results }
