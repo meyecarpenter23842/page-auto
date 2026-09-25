@@ -3,6 +3,7 @@ import type { BrowserContext, Page } from 'playwright-core'
 import {
   keepMicrosoftForegroundDuring,
   microsoftSameTabNavigationTarget,
+  shouldCloseMicrosoftOwnedPagesAfterAuthResult,
   shouldContinueRecoveryPostCodeSettle,
   shouldYieldRecoveryNeedsAttentionToFreshSurface
 } from './microsoftAuthV2WorkerController'
@@ -92,5 +93,15 @@ describe('Microsoft Auth V2 recovery continuation', () => {
     expect(shouldContinueRecoveryPostCodeSettle('recovery_code')).toBe(true)
     expect(shouldContinueRecoveryPostCodeSettle('stay_signed_in')).toBe(false)
     expect(shouldContinueRecoveryPostCodeSettle('authenticated')).toBe(false)
+  })
+
+  it('preserves Microsoft auth pages for needs-attention/manual continuation', () => {
+    expect(shouldCloseMicrosoftOwnedPagesAfterAuthResult('needs_attention')).toBe(false)
+    expect(shouldCloseMicrosoftOwnedPagesAfterAuthResult('handled')).toBe(false)
+    expect(shouldCloseMicrosoftOwnedPagesAfterAuthResult('retryable')).toBe(false)
+  })
+
+  it('cleans Microsoft auth pages only after detector-proven authentication', () => {
+    expect(shouldCloseMicrosoftOwnedPagesAfterAuthResult('authenticated')).toBe(true)
   })
 })

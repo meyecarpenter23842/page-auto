@@ -134,6 +134,17 @@ export function shouldContinueRecoveryPostCodeSettle(
 }
 
 /**
+ * Only a proven authenticated terminal result may retire Microsoft-owned auth pages.
+ * needs_attention/manual states must preserve the exact operator page/context so the
+ * action-only worker stays alive for manual continuation in the same Email profile.
+ */
+export function shouldCloseMicrosoftOwnedPagesAfterAuthResult(
+  kind: EmailAuthV2HandlerResult['kind']
+): boolean {
+  return kind === 'authenticated'
+}
+
+/**
  * Outlook's audited CTA frequently has a real Microsoft href but target=_blank.
  * Navigating that href directly keeps the flow in the existing operator tab.
  */
@@ -437,12 +448,14 @@ export async function runMicrosoftAuthV2WorkerController(
   })
 
   if (targetReady) return { status: 'target_ready', attempted }
-  if (result.kind === 'authenticated') {
+
+  if (shouldCloseMicrosoftOwnedPagesAfterAuthResult(result.kind)) {
     await closeMicrosoftOwnedOpenerChain(page)
+  }
+  if (result.kind === 'authenticated') {
     return { status: 'authenticated', attempted }
   }
 
-  await closeMicrosoftOwnedOpenerChain(page)
   if (result.kind === 'needs_attention') {
     if (!attentionReason) attentionReason = result.reason === 'microsoft_surface_unreadable' ? 'security_review' : 'needs_login'
     if (!attentionMessage) {
