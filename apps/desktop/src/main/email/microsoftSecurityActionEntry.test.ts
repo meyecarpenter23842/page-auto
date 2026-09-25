@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   isMicrosoftAccountHubUrl,
-  isMicrosoftSecurityAuthResumeUrl
+  isMicrosoftSecurityAuthResumeUrl,
+  selectMicrosoftAccountHomePageIndex
 } from './microsoftSecurityActionEntry'
 
 describe('microsoftSecurityActionEntry', () => {
@@ -9,6 +10,25 @@ describe('microsoftSecurityActionEntry', () => {
     expect(isMicrosoftAccountHubUrl('https://account.microsoft.com/?ref=MeControl')).toBe(true)
     expect(isMicrosoftAccountHubUrl('https://account.microsoft.com/security')).toBe(true)
     expect(isMicrosoftAccountHubUrl('https://outlook.live.com/mail/0/')).toBe(false)
+  })
+
+  it('preserves a logged-in Outlook tab and opens Security in a separate page', () => {
+    expect(selectMicrosoftAccountHomePageIndex([
+      { url: 'https://outlook.live.com/mail/0/', closed: false }
+    ])).toBeNull()
+  })
+
+  it('reuses the sole initial blank page instead of creating an unnecessary tab', () => {
+    expect(selectMicrosoftAccountHomePageIndex([
+      { url: 'about:blank', closed: false }
+    ])).toBe(0)
+  })
+
+  it('reuses an existing Microsoft account hub page without touching Outlook', () => {
+    expect(selectMicrosoftAccountHomePageIndex([
+      { url: 'https://outlook.live.com/mail/0/', closed: false },
+      { url: 'https://account.microsoft.com/security', closed: false }
+    ])).toBe(1)
   })
 
   it('does not resume Outlook as a security-action auth flow', () => {
