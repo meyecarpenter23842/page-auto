@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { chromium, type Browser, type BrowserContext, type Locator, type Page } from 'playwright-core'
 import type { HotmailNeedsAttentionReason, HotmailRecoveryOperation } from '../../shared/hotmail'
 import { friendlyEmailBrowserError, isEmailProfileInUseError } from './emailBrowserLifecycle'
+import { emailBrowserLaunchPolicy } from './emailSecurityBrowserLaunchPolicy'
 import { emailCredentialValueMatches, traceEmailCredential } from './emailCredentialBinding'
 import {
   classifyMicrosoftLoginSurface,
@@ -225,12 +226,19 @@ async function openOutlook(context: BrowserContext): Promise<Page> {
   return page
 }
 
-async function launchProfile(command: BrowserCommandBase): Promise<BrowserContext> {
+async function launchProfile(command: WorkerCommand): Promise<BrowserContext> {
   if (!command.executablePath?.trim()) throw new Error('Browser executable not found')
+  const launchPolicy = emailBrowserLaunchPolicy(command.type)
+  if (command.type !== 'open-mail') {
+    console.info(
+      `[PAGE-AUTO email security] launch-contract=${launchPolicy.ignoreDefaultArgs.join(',') || 'default'} action=${command.type}`
+    )
+  }
   return await chromium.launchPersistentContext(command.profileDirectory, {
     headless: false,
     viewport: null,
     executablePath: command.executablePath,
+    ...(launchPolicy.ignoreDefaultArgs.length > 0 ? { ignoreDefaultArgs: launchPolicy.ignoreDefaultArgs } : {}),
     ...(command.proxy ? { proxy: command.proxy } : {})
   })
 }
