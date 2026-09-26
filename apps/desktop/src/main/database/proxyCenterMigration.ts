@@ -1,7 +1,29 @@
 import type Database from 'better-sqlite3'
 
-export const PROXY_CENTER_SCHEMA_VERSION = 33
-export const PROXY_CENTER_MIGRATION_NAME = 'proxy_center_inventory'
+export const PROXY_CENTER_INVENTORY_SCHEMA_VERSION = 33
+export const PROXY_CENTER_INVENTORY_MIGRATION_NAME = 'proxy_center_inventory'
+export const PROXY_CENTER_SCHEMA_VERSION = 34
+export const PROXY_CENTER_MIGRATION_NAME = 'proxy_center_folders'
+
+function hasColumn(client: Database.Database, table: string, column: string): boolean {
+  const rows = client.prepare('PRAGMA table_info(' + table + ')').all() as Array<{ name: string }>
+  return rows.some((row) => row.name === column)
+}
+
+function recordMigration(
+  client: Database.Database,
+  version: number,
+  name: string
+): void {
+  const applied = client
+    .prepare('SELECT 1 FROM __page_auto_migrations WHERE version = ?')
+    .get(version)
+  if (applied) return
+
+  client.prepare(
+    'INSERT INTO __page_auto_migrations (version, name, applied_at) VALUES (?, ?, ?)'
+  ).run(version, name, Date.now())
+}
 
 export function applyProxyCenterMigration(client: Database.Database): void {
   const migrate = client.transaction(() => {
@@ -31,14 +53,31 @@ export function applyProxyCenterMigration(client: Database.Database): void {
         ON proxy_inventory(host, port, username);
     `)
 
-    const applied = client
-      .prepare('SELECT 1 FROM __page_auto_migrations WHERE version = ?')
-      .get(PROXY_CENTER_SCHEMA_VERSION)
-    if (applied) return
+    recordMigration(
+      client,
+      PROXY_CENTER_INVENTORY_SCHEMA_VERSION,
+      PROXY_CENTER_INVENTORY_MIGRATION_NAME
+    )
 
-    client.prepare(
-      'INSERT INTO __page_auto_migrations (version, name, applied_at) VALUES (?, ?, ?)'
-    ).run(PROXY_CENTER_SCHEMA_VERSION, PROXY_CENTER_MIGRATION_NAME, Date.now())
+    client.exec(`
+      CREATE TABLE IF NOT EXISTS proxy_folders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+        name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+    `)
+
+    if (!hasColumn(client, 'proxy_inventory', 'folder_id')) {
+      client.exec('ALTER TABLE proxy_inventory ADD COLUMN folder_id INTEGER')
+    }
+
+    client.exec(`
+      CREATE INDEX IF NOT EXISTS idx_proxy_inventory_folder
+        ON proxy_inventory(folder_id, updated_at DESC, id DESC);
+    `)
+
+    recordMigration(client, PROXY_CENTER_SCHEMA_VERSION, PROXY_CENTER_MIGRATION_NAME)
   })
 
   migrate()

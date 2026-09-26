@@ -13,6 +13,11 @@ export const PROXY_BUILDER_IPC = {
   inventoryUpsert: 'proxy-center:inventory-upsert',
   inventoryCheck: 'proxy-center:inventory-check',
   inventoryDelete: 'proxy-center:inventory-delete',
+  folderList: 'proxy-center:folder-list',
+  folderCreate: 'proxy-center:folder-create',
+  folderRename: 'proxy-center:folder-rename',
+  folderDelete: 'proxy-center:folder-delete',
+  folderAssign: 'proxy-center:folder-assign',
   accountBindingsList: 'proxy-center:account-bindings-list',
   accountBindingsAssign: 'proxy-center:account-bindings-assign',
   accountBindingsClear: 'proxy-center:account-bindings-clear'
@@ -227,6 +232,7 @@ export interface ProxyCenterInventoryRecord {
   sourceLabel: string | null
   lastCheckedAt: number | null
   assignedAccountCount: number
+  folderId: number | null
   createdAt: number
   updatedAt: number
 }
@@ -256,6 +262,32 @@ export interface ProxyCenterInventoryUpsertResult {
 
 export interface ProxyCenterInventoryDeleteInput {
   ids: number[]
+}
+
+export interface ProxyCenterFolder {
+  id: number
+  name: string
+  proxyCount: number
+  createdAt: number
+  updatedAt: number
+}
+
+export interface ProxyCenterFolderCreateInput {
+  name: string
+}
+
+export interface ProxyCenterFolderRenameInput {
+  id: number
+  name: string
+}
+
+export interface ProxyCenterFolderDeleteInput {
+  id: number
+}
+
+export interface ProxyCenterFolderAssignInput {
+  ids: number[]
+  folderId: number | null
 }
 
 export interface ProxyCenterAccountBinding {

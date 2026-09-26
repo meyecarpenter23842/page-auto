@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3'
 import type {
+  ProxyCenterFolder,
   ProxyCenterInventoryRecord,
   ProxyCenterInventoryStatus,
   ProxyCenterInventoryUpsertInput,
@@ -23,6 +24,7 @@ interface StoredProxyRow {
   sourceKind: ProxyCenterSourceKind
   sourceLabel: string | null
   lastCheckedAt: number | null
+  folderId: number | null
   createdAt: number
   updatedAt: number
 }
@@ -51,6 +53,7 @@ const SELECT_PROXY = `
     source_kind AS sourceKind,
     source_label AS sourceLabel,
     last_checked_at AS lastCheckedAt,
+    folder_id AS folderId,
     created_at AS createdAt,
     updated_at AS updatedAt
   FROM proxy_inventory
@@ -69,6 +72,10 @@ function endpointKey(host: string, port: number, username: string | null | undef
   return host.trim().toLowerCase() + ':' + port + ':' + (username?.trim() ?? '')
 }
 
+function uniqueIds(ids: number[]): number[] {
+  return [...new Set(ids.filter((id) => Number.isInteger(id) && id > 0))]
+}
+
 function rowFromDatabase(row: Record<string, unknown>): StoredProxyRow {
   return {
     id: Number(row.id),
@@ -84,6 +91,7 @@ function rowFromDatabase(row: Record<string, unknown>): StoredProxyRow {
     sourceKind: String(row.sourceKind ?? 'import') as ProxyCenterSourceKind,
     sourceLabel: row.sourceLabel === null ? null : String(row.sourceLabel),
     lastCheckedAt: row.lastCheckedAt === null ? null : Number(row.lastCheckedAt),
+    folderId: row.folderId === null ? null : Number(row.folderId),
     createdAt: Number(row.createdAt),
     updatedAt: Number(row.updatedAt)
   }
@@ -106,6 +114,7 @@ function publicRecord(row: StoredProxyRow): ProxyCenterInventoryRecord {
     sourceLabel: row.sourceLabel,
     lastCheckedAt: row.lastCheckedAt,
     assignedAccountCount: 0,
+    folderId: row.folderId,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt
   }
@@ -124,6 +133,78 @@ export class ProxyCenterInventoryRepository {
       .prepare(SELECT_PROXY + ' ORDER BY updated_at DESC, id DESC')
       .all() as Record<string, unknown>[]
     return rows.map(rowFromDatabase).map(publicRecord)
+  }
+
+  listFolders(): ProxyCenterFolder[] {
+    return (this.client.prepare(`
+      SELECT f.id, f.name, f.created_at AS createdAt, f.updated_at AS updatedAt,
+             COUNT(p.id) AS proxyCount
+      FROM proxy_folders f
+      LEFT JOIN proxy_inventory p ON p.folder_id = f.id
+      GROUP BY f.id
+      ORDER BY f.name COLLATE NOCASE, f.id
+    `).all() as Array<Record<string, unknown>>).map((row) => ({
+      id: Number(row.id),
+      name: String(row.name),
+      proxyCount: Number(row.proxyCount ?? 0),
+      createdAt: Number(row.createdAt),
+      updatedAt: Number(row.updatedAt)
+    }))
+  }
+
+  createFolder(name: string): ProxyCenterFolder[] {
+    const normalized = normalizeText(name)
+    if (!normalized) throw new Error('Tên thư mục không được để trống.')
+    if (normalized.length > 80) throw new Error('Tên thư mục tối đa 80 ký tự.')
+    const now = Date.now()
+    try {
+      this.client.prepare('INSERT INTO proxy_folders (name, created_at, updated_at) VALUES (?, ?, ?)')
+        .run(normalized, now, now)
+    } catch {
+      throw new Error('Tên thư mục đã tồn tại.')
+    }
+    return this.listFolders()
+  }
+
+  renameFolder(id: number, name: string): ProxyCenterFolder[] {
+    if (!Number.isInteger(id) || id <= 0) throw new Error('Thư mục không hợp lệ.')
+    const normalized = normalizeText(name)
+    if (!normalized) throw new Error('Tên thư mục không được để trống.')
+    if (normalized.length > 80) throw new Error('Tên thư mục tối đa 80 ký tự.')
+    try {
+      const changed = this.client.prepare('UPDATE proxy_folders SET name = ?, updated_at = ? WHERE id = ?')
+        .run(normalized, Date.now(), id).changes
+      if (!changed) throw new Error('Thư mục không còn tồn tại.')
+    } catch (error) {
+      if (error instanceof Error && error.message === 'Thư mục không còn tồn tại.') throw error
+      throw new Error('Tên thư mục đã tồn tại.')
+    }
+    return this.listFolders()
+  }
+
+  deleteFolder(id: number): ProxyCenterFolder[] {
+    if (!Number.isInteger(id) || id <= 0) throw new Error('Thư mục không hợp lệ.')
+    const run = this.client.transaction(() => {
+      this.client.prepare('UPDATE proxy_inventory SET folder_id = NULL, updated_at = ? WHERE folder_id = ?')
+        .run(Date.now(), id)
+      this.client.prepare('DELETE FROM proxy_folders WHERE id = ?').run(id)
+    })
+    run()
+    return this.listFolders()
+  }
+
+  assignFolder(ids: number[], folderId: number | null): ProxyCenterInventoryRecord[] {
+    const normalizedIds = uniqueIds(ids)
+    if (!normalizedIds.length) return this.list()
+    if (folderId !== null) {
+      if (!Number.isInteger(folderId) || folderId <= 0) throw new Error('Thư mục không hợp lệ.')
+      const exists = this.client.prepare('SELECT 1 FROM proxy_folders WHERE id = ?').get(folderId)
+      if (!exists) throw new Error('Thư mục không còn tồn tại.')
+    }
+    const placeholders = normalizedIds.map(() => '?').join(', ')
+    this.client.prepare('UPDATE proxy_inventory SET folder_id = ?, updated_at = ? WHERE id IN (' + placeholders + ')')
+      .run(folderId, Date.now(), ...normalizedIds)
+    return this.list()
   }
 
   getSecret(id: number): ProxyCenterSecretRecord | null {
@@ -173,11 +254,11 @@ export class ProxyCenterInventoryRepository {
             INSERT INTO proxy_inventory (
               host, port, username, password, ip_family, outbound_ip, status,
               latency_ms, last_error, source_kind, source_label, last_checked_at,
-              created_at, updated_at
+              folder_id, created_at, updated_at
             ) VALUES (
               @host, @port, @username, @password, @ipFamily, @outboundIp, @status,
               @latencyMs, @lastError, @sourceKind, @sourceLabel, @lastCheckedAt,
-              @createdAt, @updatedAt
+              NULL, @createdAt, @updatedAt
             )
           `).run({
             host,
@@ -262,7 +343,7 @@ export class ProxyCenterInventoryRepository {
   }
 
   delete(ids: number[]): number {
-    const unique = [...new Set(ids.filter((id) => Number.isInteger(id) && id > 0))]
+    const unique = uniqueIds(ids)
     if (!unique.length) return 0
     const placeholders = unique.map(() => '?').join(', ')
     return this.client.prepare('DELETE FROM proxy_inventory WHERE id IN (' + placeholders + ')').run(...unique).changes

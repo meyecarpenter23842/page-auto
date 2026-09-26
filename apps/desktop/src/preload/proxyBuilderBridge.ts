@@ -12,6 +12,11 @@ import {
   type ProxyBuilderRuntimeControlInput,
   type ProxyBuilderRuntimeControlResult,
   type ProxyCenterAccountBinding,
+  type ProxyCenterFolder,
+  type ProxyCenterFolderAssignInput,
+  type ProxyCenterFolderCreateInput,
+  type ProxyCenterFolderDeleteInput,
+  type ProxyCenterFolderRenameInput,
   type ProxyCenterAccountIdsInput,
   type ProxyCenterAssignInput,
   type ProxyCenterInventoryDeleteInput,
@@ -35,6 +40,11 @@ export interface ProxyBuilderPreloadApi {
   upsertInventory: (input: ProxyCenterInventoryUpsertInput) => Promise<ProxyCenterInventoryUpsertResult>
   checkInventory: (input: ProxyCenterInventoryDeleteInput) => Promise<ProxyCenterInventoryRecord[]>
   deleteInventory: (input: ProxyCenterInventoryDeleteInput) => Promise<number>
+  listProxyFolders: () => Promise<ProxyCenterFolder[]>
+  createProxyFolder: (input: ProxyCenterFolderCreateInput) => Promise<ProxyCenterFolder[]>
+  renameProxyFolder: (input: ProxyCenterFolderRenameInput) => Promise<ProxyCenterFolder[]>
+  deleteProxyFolder: (input: ProxyCenterFolderDeleteInput) => Promise<ProxyCenterFolder[]>
+  assignProxyFolder: (input: ProxyCenterFolderAssignInput) => Promise<ProxyCenterInventoryRecord[]>
   listAccountBindings: () => Promise<ProxyCenterAccountBinding[]>
   assignInventoryProxy: (input: ProxyCenterAssignInput) => Promise<ProxyCenterAccountBinding[]>
   clearAccountProxy: (input: ProxyCenterAccountIdsInput) => Promise<ProxyCenterAccountBinding[]>
@@ -55,6 +65,11 @@ const api: ProxyBuilderPreloadApi = {
   upsertInventory: (input) => ipcRenderer.invoke(PROXY_BUILDER_IPC.inventoryUpsert, input),
   checkInventory: (input) => ipcRenderer.invoke(PROXY_BUILDER_IPC.inventoryCheck, input),
   deleteInventory: (input) => ipcRenderer.invoke(PROXY_BUILDER_IPC.inventoryDelete, input),
+  listProxyFolders: () => ipcRenderer.invoke(PROXY_BUILDER_IPC.folderList),
+  createProxyFolder: (input) => ipcRenderer.invoke(PROXY_BUILDER_IPC.folderCreate, input),
+  renameProxyFolder: (input) => ipcRenderer.invoke(PROXY_BUILDER_IPC.folderRename, input),
+  deleteProxyFolder: (input) => ipcRenderer.invoke(PROXY_BUILDER_IPC.folderDelete, input),
+  assignProxyFolder: (input) => ipcRenderer.invoke(PROXY_BUILDER_IPC.folderAssign, input),
   listAccountBindings: () => ipcRenderer.invoke(PROXY_BUILDER_IPC.accountBindingsList),
   assignInventoryProxy: (input) => ipcRenderer.invoke(PROXY_BUILDER_IPC.accountBindingsAssign, input),
   clearAccountProxy: (input) => ipcRenderer.invoke(PROXY_BUILDER_IPC.accountBindingsClear, input)

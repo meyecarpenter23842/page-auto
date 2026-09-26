@@ -13,6 +13,10 @@ import {
   type ProxyBuilderRunIdPayload,
   type ProxyBuilderRuntimeControlInput,
   type ProxyCenterAccountBinding,
+  type ProxyCenterFolderAssignInput,
+  type ProxyCenterFolderCreateInput,
+  type ProxyCenterFolderDeleteInput,
+  type ProxyCenterFolderRenameInput,
   type ProxyCenterAccountIdsInput,
   type ProxyCenterAssignInput,
   type ProxyCenterInventoryDeleteInput,
@@ -153,6 +157,13 @@ export function registerProxyBuilderIpc(database: Database.Database): ProxyBuild
   ipcMain.handle(PROXY_BUILDER_IPC.checkerCancel, (_event, payload: ProxyBuilderRunIdPayload) => checker.cancel(payload))
 
   ipcMain.handle(PROXY_BUILDER_IPC.inventoryList, () => listInventory())
+  ipcMain.handle(PROXY_BUILDER_IPC.folderList, () => inventory.listFolders())
+  ipcMain.handle(PROXY_BUILDER_IPC.folderCreate, (_event, input: ProxyCenterFolderCreateInput) => inventory.createFolder(input.name))
+  ipcMain.handle(PROXY_BUILDER_IPC.folderRename, (_event, input: ProxyCenterFolderRenameInput) => inventory.renameFolder(input.id, input.name))
+  ipcMain.handle(PROXY_BUILDER_IPC.folderDelete, (_event, input: ProxyCenterFolderDeleteInput) => inventory.deleteFolder(input.id))
+  ipcMain.handle(PROXY_BUILDER_IPC.folderAssign, (_event, input: ProxyCenterFolderAssignInput) =>
+    decorateInventory(inventory.assignFolder(input.ids, input.folderId), accounts.list())
+  )
   ipcMain.handle(PROXY_BUILDER_IPC.inventoryUpsert, (_event, input: ProxyCenterInventoryUpsertInput) => {
     const result = inventory.upsert(input)
     return { ...result, records: listInventory() }

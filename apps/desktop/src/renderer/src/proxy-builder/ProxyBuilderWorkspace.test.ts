@@ -107,4 +107,16 @@ describe('Proxy Center inventory/binding + checker/export', () => {
     expect(ipc).toContain("title: 'Chọn OCI config'")
   })
 
+  it('adds proxy folders, usage badges and quick selection without changing proxy runtime', () => {
+    for (const label of ['Thư mục Proxy', 'Chọn chưa dùng', 'Chọn đã dùng', 'Chuyển thư mục', 'ĐÃ DÙNG', 'CHƯA DÙNG']) {
+      expect(inventoryPanel).toContain(label)
+    }
+    expect(inventoryPanel).toContain('listProxyFolders')
+    expect(inventoryPanel).toContain('assignProxyFolder')
+    expect(preload).toContain('createProxyFolder')
+    expect(preload).toContain('renameProxyFolder')
+    expect(preload).toContain('deleteProxyFolder')
+    expect(ipc).toContain('inventory.assignFolder')
+  })
+
 })
