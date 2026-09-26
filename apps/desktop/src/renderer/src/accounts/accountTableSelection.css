@@ -225,3 +225,33 @@ html[data-theme='dark'] .account-selection-menu .email-context-separator {
 html[data-theme='dark'] .account-selection-menu .context-danger {
   color: #fca5a5;
 }
+
+
+/* Proxy inventory reuses the same Excel-style row range semantics as Account Manager. */
+.proxy-center-table tbody tr {
+  user-select: none;
+}
+
+.proxy-center-table tbody tr.range-row > td {
+  background: #e7f0fb !important;
+}
+
+.proxy-center-table tbody tr.range-row:hover > td {
+  background: #dce9f7 !important;
+}
+
+.proxy-center-table tbody tr.checked-row > td:first-child {
+  box-shadow: inset 3px 0 #175cd3 !important;
+}
+
+html[data-theme='dark'] .proxy-center-table tbody tr.range-row > td {
+  background: #1b2938 !important;
+}
+
+html[data-theme='dark'] .proxy-center-table tbody tr.range-row:hover > td {
+  background: #203449 !important;
+}
+
+html[data-theme='dark'] .proxy-center-table tbody tr.checked-row > td:first-child {
+  box-shadow: inset 3px 0 var(--pa-dark-green) !important;
+}

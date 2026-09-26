@@ -1,5 +1,12 @@
-import { useEffect, useMemo, useState } from 'react'
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type MouseEvent as ReactMouseEvent
+} from 'react'
 import type { ProxyCenterFolder, ProxyCenterInventoryRecord, ProxyCenterInventoryStatus } from '../../../shared/proxyBuilder'
+import { AccountSelectionMenu } from '../accounts/AccountSelectionMenu'
+import { useExcelRowRange } from '../accounts/accountTableSelection'
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -17,6 +24,15 @@ function formatCheckedAt(value: number | null): string {
 
 type UsageFilter = 'all' | 'used' | 'unused'
 
+type FolderEditorState =
+  | { mode: 'create'; value: string }
+  | { mode: 'rename'; id: number; value: string }
+
+interface ContextMenuState {
+  x: number
+  y: number
+}
+
 export function ProxyInventoryPanel() {
   const [rows, setRows] = useState<ProxyCenterInventoryRecord[]>([])
   const [folders, setFolders] = useState<ProxyCenterFolder[]>([])
@@ -26,6 +42,8 @@ export function ProxyInventoryPanel() {
   const [usage, setUsage] = useState<UsageFilter>('all')
   const [folderFilter, setFolderFilter] = useState('all')
   const [moveFolder, setMoveFolder] = useState('none')
+  const [folderEditor, setFolderEditor] = useState<FolderEditorState | null>(null)
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [importText, setImportText] = useState('')
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
@@ -65,6 +83,7 @@ export function ProxyInventoryPanel() {
     })
   }, [rows, folders, search, status, usage, folderFilter])
 
+  const excelRange = useExcelRowRange(filtered.map((item) => item.id))
   const importLines = importText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
   const liveCount = rows.filter((item) => item.status === 'live').length
   const deadCount = rows.filter((item) => item.status === 'dead').length
@@ -75,6 +94,28 @@ export function ProxyInventoryPanel() {
 
   const selectRows = (predicate: (item: ProxyCenterInventoryRecord) => boolean) => {
     setSelected(new Set(filtered.filter(predicate).map((item) => item.id)))
+  }
+
+  const selectRange = () => {
+    setSelected((current) => new Set([...current, ...excelRange.rangeIds]))
+    setContextMenu(null)
+  }
+
+  const selectAllFiltered = () => {
+    setSelected(new Set(filtered.map((item) => item.id)))
+    setContextMenu(null)
+  }
+
+  const clearSelection = () => {
+    setSelected(new Set())
+    setContextMenu(null)
+  }
+
+  const openContextMenu = (item: ProxyCenterInventoryRecord, event: ReactMouseEvent<HTMLTableRowElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+    excelRange.ensureContextRow(item.id)
+    setContextMenu({ x: event.clientX, y: event.clientY })
   }
 
   const importInventory = async () => {
@@ -115,27 +156,21 @@ export function ProxyInventoryPanel() {
     }
   }
 
-  const createFolder = async () => {
-    const name = window.prompt('Tên thư mục proxy mới:')
-    if (!name?.trim() || busy) return
+  const saveFolderEditor = async () => {
+    if (!folderEditor || busy) return
+    const name = folderEditor.value.trim()
+    if (!name) return
     setBusy(true)
+    setNotice(null)
     try {
-      setFolders(await window.pageAutoProxyBuilder.createProxyFolder({ name }))
-      setNotice('Đã tạo thư mục "' + name.trim() + '".')
-    } catch (error) {
-      setNotice(message(error))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const renameFolder = async (folder: ProxyCenterFolder) => {
-    const name = window.prompt('Đổi tên thư mục:', folder.name)
-    if (!name?.trim() || name.trim() === folder.name || busy) return
-    setBusy(true)
-    try {
-      setFolders(await window.pageAutoProxyBuilder.renameProxyFolder({ id: folder.id, name }))
-      setNotice('Đã đổi tên thư mục.')
+      if (folderEditor.mode === 'create') {
+        setFolders(await window.pageAutoProxyBuilder.createProxyFolder({ name }))
+        setNotice('Đã tạo thư mục "' + name + '".')
+      } else {
+        setFolders(await window.pageAutoProxyBuilder.renameProxyFolder({ id: folderEditor.id, name }))
+        setNotice('Đã đổi tên thư mục thành "' + name + '".')
+      }
+      setFolderEditor(null)
     } catch (error) {
       setNotice(message(error))
     } finally {
@@ -147,8 +182,9 @@ export function ProxyInventoryPanel() {
     if (busy || !window.confirm('Xóa thư mục "' + folder.name + '"? Proxy bên trong sẽ chuyển về Chưa phân loại.')) return
     setBusy(true)
     try {
-      setFolders(await window.pageAutoProxyBuilder.deleteProxyFolder({ id: folder.id }))
+      await window.pageAutoProxyBuilder.deleteProxyFolder({ id: folder.id })
       if (folderFilter === 'folder:' + folder.id) setFolderFilter('all')
+      if (folderEditor?.mode === 'rename' && folderEditor.id === folder.id) setFolderEditor(null)
       await load()
       setNotice('Đã xóa thư mục; proxy được giữ lại trong Chưa phân loại.')
     } catch (error) {
@@ -181,6 +217,7 @@ export function ProxyInventoryPanel() {
     try {
       const count = await window.pageAutoProxyBuilder.deleteInventory({ ids: [...selected] })
       setSelected(new Set())
+      excelRange.clearRange()
       await load()
       setNotice('Đã xóa ' + count + ' proxy khỏi kho.')
     } catch (error) {
@@ -236,8 +273,40 @@ export function ProxyInventoryPanel() {
         <aside className="proxy-builder-panel proxy-center-folders">
           <div className="proxy-center-folder-heading">
             <strong>Thư mục Proxy</strong>
-            <button className="button secondary" type="button" disabled={busy} onClick={() => void createFolder()}>+ Tạo</button>
+            <button
+              className="button secondary"
+              type="button"
+              disabled={busy}
+              onClick={() => setFolderEditor({ mode: 'create', value: '' })}
+            >
+              + Tạo
+            </button>
           </div>
+
+          {folderEditor ? (
+            <div className="proxy-center-folder-editor">
+              <label>{folderEditor.mode === 'create' ? 'Tạo thư mục mới' : 'Đổi tên thư mục'}</label>
+              <input
+                aria-label="Tên thư mục proxy"
+                autoFocus
+                value={folderEditor.value}
+                disabled={busy}
+                onChange={(event) => {
+                  const value = event.target.value
+                  setFolderEditor((current) => current ? { ...current, value } : current)
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') void saveFolderEditor()
+                  if (event.key === 'Escape') setFolderEditor(null)
+                }}
+              />
+              <div className="proxy-builder-inline-actions">
+                <button className="button primary" type="button" disabled={busy || !folderEditor.value.trim()} onClick={() => void saveFolderEditor()}>Lưu</button>
+                <button className="button secondary" type="button" disabled={busy} onClick={() => setFolderEditor(null)}>Hủy</button>
+              </div>
+            </div>
+          ) : null}
+
           <button type="button" className={folderFilter === 'all' ? 'active' : ''} onClick={() => setFolderFilter('all')}>
             <span>Tất cả proxy</span><b>{rows.length}</b>
           </button>
@@ -249,7 +318,14 @@ export function ProxyInventoryPanel() {
               <button type="button" className={folderFilter === 'folder:' + folder.id ? 'active' : ''} onClick={() => setFolderFilter('folder:' + folder.id)}>
                 <span>{folder.name}</span><b>{folder.proxyCount}</b>
               </button>
-              <button className="proxy-center-folder-icon" type="button" title="Đổi tên" onClick={() => void renameFolder(folder)}>✎</button>
+              <button
+                className="proxy-center-folder-icon"
+                type="button"
+                title="Đổi tên"
+                onClick={() => setFolderEditor({ mode: 'rename', id: folder.id, value: folder.name })}
+              >
+                ✎
+              </button>
               <button className="proxy-center-folder-icon danger" type="button" title="Xóa thư mục" onClick={() => void deleteFolder(folder)}>×</button>
             </div>
           ))}
@@ -257,7 +333,10 @@ export function ProxyInventoryPanel() {
 
         <section className="proxy-builder-panel proxy-builder-results-panel">
           <div className="proxy-center-selection-bar">
-            <div><strong>Danh sách quản lý</strong><span>Đang chọn {selected.size} · hiển thị {filtered.length}/{rows.length}</span></div>
+            <div>
+              <strong>Danh sách quản lý</strong>
+              <span>Đang tích {selected.size} · phủ {excelRange.rangeIds.size} · hiển thị {filtered.length}/{rows.length}</span>
+            </div>
             <div className="proxy-builder-inline-actions">
               <button className="button secondary" type="button" disabled={!filtered.length || busy} onClick={() => selectRows(() => true)}>Chọn tất cả lọc</button>
               <button className="button secondary" type="button" disabled={!filtered.some((item) => item.assignedAccountCount === 0) || busy} onClick={() => selectRows((item) => item.assignedAccountCount === 0)}>Chọn chưa dùng</button>
@@ -289,46 +368,76 @@ export function ProxyInventoryPanel() {
                     disabled={!filtered.length}
                     checked={Boolean(filtered.length) && filtered.every((item) => selected.has(item.id))}
                     onChange={(event) => {
-                      setSelected((current) => {
-                        const next = new Set(current)
-                        for (const item of filtered) {
-                          if (event.currentTarget.checked) next.add(item.id)
-                          else next.delete(item.id)
-                        }
-                        return next
-                      })
+                      const checked = event.target.checked
+                      setSelected(checked ? new Set(filtered.map((item) => item.id)) : new Set())
                     }}
                   />
                 </th>
                 <th>Proxy</th><th>Type</th><th>Outbound IP</th><th>Status</th><th>Sử dụng</th><th>Latency / lỗi</th><th>Account</th><th>Thư mục</th><th>Nguồn</th><th>Lần test</th>
               </tr></thead>
               <tbody>
-                {filtered.map((item) => (
-                  <tr key={item.id}>
-                    <td className="proxy-builder-check-column"><input type="checkbox" checked={selected.has(item.id)} onChange={() => setSelected((current) => {
-                      const next = new Set(current)
-                      if (next.has(item.id)) next.delete(item.id)
-                      else next.add(item.id)
-                      return next
-                    })} aria-label={'Chọn proxy kho ' + item.id} /></td>
-                    <td>{item.maskedProxy}</td>
-                    <td>{item.ipFamily === 'unknown' ? '-' : item.ipFamily.toUpperCase()}</td>
-                    <td>{item.outboundIp ?? '-'}</td>
-                    <td><span className={'proxy-builder-live-badge ' + (item.status === 'unknown' ? 'pending' : item.status)}>{statusLabel(item.status)}</span></td>
-                    <td><span className={'proxy-center-usage-badge ' + (item.assignedAccountCount > 0 ? 'used' : 'unused')}>{item.assignedAccountCount > 0 ? 'ĐÃ DÙNG' : 'CHƯA DÙNG'}</span></td>
-                    <td>{item.latencyMs !== null ? item.latencyMs + ' ms' : item.lastError ?? '-'}</td>
-                    <td>{item.assignedAccountCount || '-'}</td>
-                    <td>{folderName(item.folderId)}</td>
-                    <td>{item.sourceKind === 'builder' ? 'Tạo Proxy' : 'Import'}{item.sourceLabel ? ' · ' + item.sourceLabel : ''}</td>
-                    <td>{formatCheckedAt(item.lastCheckedAt)}</td>
-                  </tr>
-                ))}
+                {filtered.map((item) => {
+                  const checked = selected.has(item.id)
+                  const ranged = excelRange.rangeIds.has(item.id)
+                  return (
+                    <tr
+                      key={item.id}
+                      className={`${checked ? 'checked-row ' : ''}${ranged ? 'range-row' : ''}`.trim()}
+                      onPointerDown={(event) => excelRange.onRowPointerDown(event, item.id)}
+                      onPointerEnter={() => excelRange.onRowPointerEnter(item.id)}
+                      onContextMenu={(event) => openContextMenu(item, event)}
+                    >
+                      <td className="proxy-builder-check-column">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(event) => {
+                            const nextChecked = event.target.checked
+                            setSelected((current) => {
+                              const next = new Set(current)
+                              if (nextChecked) next.add(item.id)
+                              else next.delete(item.id)
+                              return next
+                            })
+                          }}
+                          onPointerDown={(event) => event.stopPropagation()}
+                          aria-label={'Chọn proxy kho ' + item.id}
+                        />
+                      </td>
+                      <td>{item.maskedProxy}</td>
+                      <td>{item.ipFamily === 'unknown' ? '-' : item.ipFamily.toUpperCase()}</td>
+                      <td>{item.outboundIp ?? '-'}</td>
+                      <td><span className={'proxy-builder-live-badge ' + (item.status === 'unknown' ? 'pending' : item.status)}>{statusLabel(item.status)}</span></td>
+                      <td><span className={'proxy-center-usage-badge ' + (item.assignedAccountCount > 0 ? 'used' : 'unused')}>{item.assignedAccountCount > 0 ? 'ĐÃ DÙNG' : 'CHƯA DÙNG'}</span></td>
+                      <td>{item.latencyMs !== null ? item.latencyMs + ' ms' : item.lastError ?? '-'}</td>
+                      <td>{item.assignedAccountCount || '-'}</td>
+                      <td>{folderName(item.folderId)}</td>
+                      <td>{item.sourceKind === 'builder' ? 'Tạo Proxy' : 'Import'}{item.sourceLabel ? ' · ' + item.sourceLabel : ''}</td>
+                      <td>{formatCheckedAt(item.lastCheckedAt)}</td>
+                    </tr>
+                  )
+                })}
                 {!filtered.length ? <tr><td colSpan={11} className="proxy-builder-empty">Kho Proxy chưa có dữ liệu phù hợp.</td></tr> : null}
               </tbody>
             </table>
           </div>
         </section>
       </div>
+
+      {contextMenu ? (
+        <AccountSelectionMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          checkedCount={selected.size}
+          rangeCount={excelRange.rangeIds.size}
+          totalCount={filtered.length}
+          onCheckRange={selectRange}
+          onCheckAll={selectAllFiltered}
+          onClearChecked={clearSelection}
+          onDismiss={() => setContextMenu(null)}
+        />
+      ) : null}
+
       {notice ? <div className="proxy-builder-notice">{notice}</div> : null}
     </section>
   )

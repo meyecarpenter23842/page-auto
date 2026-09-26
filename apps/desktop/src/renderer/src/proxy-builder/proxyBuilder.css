@@ -699,3 +699,46 @@ html[data-theme='dark'] .proxy-center-usage-badge.unused {
 @media (max-width: 1100px) {
   .proxy-center-management { grid-template-columns: 165px minmax(760px, 1fr); }
 }
+
+
+.proxy-center-folder-editor {
+  display: grid;
+  gap: 6px;
+  margin: 0 0 7px;
+  padding: 7px;
+  border: 1px solid #dbe2ea;
+  border-radius: 7px;
+  background: #f8fafc;
+}
+
+.proxy-center-folder-editor label {
+  color: #475569;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.proxy-center-folder-editor input {
+  width: 100%;
+  min-width: 0;
+  min-height: 29px;
+  border: 1px solid #d7dee8;
+  border-radius: 6px;
+  padding: 4px 7px;
+  color: #111827;
+  background: #fff;
+}
+
+html[data-theme='dark'] .proxy-center-folder-editor {
+  border-color: var(--pa-dark-border);
+  background: var(--pa-dark-surface-2);
+}
+
+html[data-theme='dark'] .proxy-center-folder-editor label {
+  color: var(--pa-dark-muted);
+}
+
+html[data-theme='dark'] .proxy-center-folder-editor input {
+  border-color: var(--pa-dark-border);
+  color: var(--pa-dark-text);
+  background: var(--pa-dark-surface);
+}
