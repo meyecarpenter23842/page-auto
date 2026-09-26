@@ -13,6 +13,7 @@ export const PROXY_BUILDER_IPC = {
   inventoryUpsert: 'proxy-center:inventory-upsert',
   inventoryCheck: 'proxy-center:inventory-check',
   inventoryDelete: 'proxy-center:inventory-delete',
+  inventoryCopy: 'proxy-center:inventory-copy',
   folderList: 'proxy-center:folder-list',
   folderCreate: 'proxy-center:folder-create',
   folderRename: 'proxy-center:folder-rename',
@@ -262,6 +263,14 @@ export interface ProxyCenterInventoryUpsertResult {
 
 export interface ProxyCenterInventoryDeleteInput {
   ids: number[]
+}
+
+export interface ProxyCenterInventoryCopyInput {
+  ids: number[]
+}
+
+export interface ProxyCenterInventoryCopyResult {
+  count: number
 }
 
 export interface ProxyCenterFolder {

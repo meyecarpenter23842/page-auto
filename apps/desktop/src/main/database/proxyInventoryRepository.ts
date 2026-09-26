@@ -125,6 +125,17 @@ function rawProxy(row: StoredProxyRow): string {
   return row.username ? base + ':' + row.username + ':' + row.password : base
 }
 
+function secretRecord(row: StoredProxyRow): ProxyCenterSecretRecord {
+  return {
+    id: row.id,
+    host: row.host,
+    port: row.port,
+    username: row.username || null,
+    password: row.password || null,
+    rawProxy: rawProxy(row)
+  }
+}
+
 export class ProxyCenterInventoryRepository {
   constructor(private readonly client: Database.Database) {}
 
@@ -209,16 +220,26 @@ export class ProxyCenterInventoryRepository {
 
   getSecret(id: number): ProxyCenterSecretRecord | null {
     const row = this.client.prepare(SELECT_PROXY + ' WHERE id = ?').get(id) as Record<string, unknown> | undefined
-    if (!row) return null
-    const stored = rowFromDatabase(row)
-    return {
-      id: stored.id,
-      host: stored.host,
-      port: stored.port,
-      username: stored.username || null,
-      password: stored.password || null,
-      rawProxy: rawProxy(stored)
+    return row ? secretRecord(rowFromDatabase(row)) : null
+  }
+
+  getSecrets(ids: number[]): ProxyCenterSecretRecord[] {
+    const normalizedIds = uniqueIds(ids)
+    if (!normalizedIds.length) return []
+    const placeholders = normalizedIds.map(() => '?').join(', ')
+    const rows = this.client
+      .prepare(SELECT_PROXY + ' WHERE id IN (' + placeholders + ')')
+      .all(...normalizedIds) as Record<string, unknown>[]
+    const byId = new Map(rows.map((row) => {
+      const stored = rowFromDatabase(row)
+      return [stored.id, stored] as const
+    }))
+    const result: ProxyCenterSecretRecord[] = []
+    for (const id of normalizedIds) {
+      const stored = byId.get(id)
+      if (stored) result.push(secretRecord(stored))
     }
+    return result
   }
 
   upsert(input: ProxyCenterInventoryUpsertInput): ProxyCenterInventoryUpsertResult {

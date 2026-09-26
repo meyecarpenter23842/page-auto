@@ -111,6 +111,21 @@ export function ProxyInventoryPanel() {
     setContextMenu(null)
   }
 
+  const copyInventory = async (ids: number[], label: string) => {
+    if (!ids.length || busy) return
+    setBusy(true)
+    setNotice(null)
+    try {
+      const result = await window.pageAutoProxyBuilder.copyInventoryProxies({ ids })
+      setNotice('Đã copy ' + result.count + ' proxy ' + label + '.')
+      setContextMenu(null)
+    } catch (error) {
+      setNotice(message(error))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const openContextMenu = (item: ProxyCenterInventoryRecord, event: ReactMouseEvent<HTMLTableRowElement>) => {
     event.preventDefault()
     event.stopPropagation()
@@ -435,7 +450,28 @@ export function ProxyInventoryPanel() {
           onCheckAll={selectAllFiltered}
           onClearChecked={clearSelection}
           onDismiss={() => setContextMenu(null)}
-        />
+        >
+          <button
+            type="button"
+            disabled={!excelRange.rangeIds.size || busy}
+            onClick={() => void copyInventory(
+              filtered.filter((item) => excelRange.rangeIds.has(item.id)).map((item) => item.id),
+              'phần phủ khối'
+            )}
+          >
+            Copy Proxy phần phủ khối ({excelRange.rangeIds.size})
+          </button>
+          <button
+            type="button"
+            disabled={!selected.size || busy}
+            onClick={() => void copyInventory(
+              rows.filter((item) => selected.has(item.id)).map((item) => item.id),
+              'đã tích'
+            )}
+          >
+            Copy Proxy đã tích ({selected.size})
+          </button>
+        </AccountSelectionMenu>
       ) : null}
 
       {notice ? <div className="proxy-builder-notice">{notice}</div> : null}

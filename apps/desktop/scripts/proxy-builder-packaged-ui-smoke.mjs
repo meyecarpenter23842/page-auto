@@ -90,6 +90,25 @@ try {
     'Kho Proxy không phủ khối được bằng kéo chuột như Account Manager.'
   )
 
+  await firstCell.click({ button: 'right' })
+  await page.getByRole('button', { name: 'Copy Proxy phần phủ khối (2)', exact: true }).click()
+  const copiedRange = await electronApp.evaluate(({ clipboard }) => clipboard.readText())
+  invariant(
+    copiedRange.split(/\r?\n/).sort().join('\n') === [
+      `127.0.0.1:${proxyPort}:smoke1:secret1`,
+      `127.0.0.1:${proxyPort}:smoke2:secret2`
+    ].sort().join('\n'),
+    'Copy Proxy phần phủ khối không đưa đầy đủ proxy credentials vào clipboard.'
+  )
+
+  await firstCell.click({ button: 'right' })
+  await page.getByRole('button', { name: 'Copy Proxy đã tích (2)', exact: true }).click()
+  const copiedChecked = await electronApp.evaluate(({ clipboard }) => clipboard.readText())
+  invariant(
+    copiedChecked.split(/\r?\n/).sort().join('\n') === copiedRange.split(/\r?\n/).sort().join('\n'),
+    'Copy Proxy đã tích không khớp tập proxy đã chọn.'
+  )
+
   await root.getByRole('tab', { name: 'Proxy Checker', exact: true }).click()
 
   const textarea = root.getByLabel('Danh sách proxy')
