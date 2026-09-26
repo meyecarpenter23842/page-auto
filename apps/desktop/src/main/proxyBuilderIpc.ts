@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3'
-import { dialog, ipcMain } from 'electron'
+import { clipboard, dialog, ipcMain } from 'electron'
 import { existsSync } from 'node:fs'
 import { isIP } from 'node:net'
 import { homedir } from 'node:os'
@@ -19,6 +19,7 @@ import {
   type ProxyCenterFolderRenameInput,
   type ProxyCenterAccountIdsInput,
   type ProxyCenterAssignInput,
+  type ProxyCenterInventoryCopyInput,
   type ProxyCenterInventoryDeleteInput,
   type ProxyCenterInventoryRecord,
   type ProxyCenterInventoryUpsertInput
@@ -169,6 +170,12 @@ export function registerProxyBuilderIpc(database: Database.Database): ProxyBuild
     return { ...result, records: listInventory() }
   })
   ipcMain.handle(PROXY_BUILDER_IPC.inventoryDelete, (_event, input: ProxyCenterInventoryDeleteInput) => inventory.delete(input.ids))
+  ipcMain.handle(PROXY_BUILDER_IPC.inventoryCopy, (_event, input: ProxyCenterInventoryCopyInput) => {
+    const secrets = inventory.getSecrets(input.ids)
+    if (!secrets.length) return { count: 0 }
+    clipboard.writeText(secrets.map((item) => item.rawProxy).join('\n'))
+    return { count: secrets.length }
+  })
   ipcMain.handle(PROXY_BUILDER_IPC.inventoryCheck, async (_event, input: ProxyCenterInventoryDeleteInput) => {
     const ids = [...new Set(input.ids.filter((id) => Number.isInteger(id) && id > 0))]
     let cursor = 0
