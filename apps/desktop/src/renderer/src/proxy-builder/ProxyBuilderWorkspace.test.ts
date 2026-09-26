@@ -119,4 +119,18 @@ describe('Proxy Center inventory/binding + checker/export', () => {
     expect(ipc).toContain('inventory.assignFolder')
   })
 
+  it('keeps folder editing Electron-safe and mirrors Account Manager range selection', () => {
+    expect(inventoryPanel).not.toContain('window.prompt(')
+    expect(inventoryPanel).toContain('Tên thư mục proxy')
+    expect(inventoryPanel).toContain('useExcelRowRange(filtered.map')
+    expect(inventoryPanel).toContain('AccountSelectionMenu')
+    expect(inventoryPanel).toContain("ranged ? 'range-row' : ''")
+    expect(inventoryPanel).toContain('const checked = event.target.checked')
+    expect(inventoryPanel).not.toContain('event.currentTarget.checked')
+    expect(packagedSmoke).toContain("name: 'Kho Proxy'")
+    expect(packagedSmoke).toContain("getByLabel('Tên thư mục proxy')")
+    expect(packagedSmoke).toContain("getByLabel('Chọn tất cả proxy đang lọc')")
+    expect(packagedSmoke).toContain("tbody tr.range-row")
+  })
+
 })
