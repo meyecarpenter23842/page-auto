@@ -321,7 +321,6 @@ export class HotmailRepository {
       .map(parseEmailProxyLine)
       .filter((candidate): candidate is NonNullable<typeof candidate> => candidate !== null)
       .map((candidate) => candidate.display)
-      .slice(0, 5)
     return {
       ...profile,
       proxyMode: proxy.mode,
@@ -329,6 +328,22 @@ export class HotmailRepository {
       proxyPreview: previews,
       currentProxy
     }
+  }
+
+  saveProxyEntries(entries: string[]): void {
+    const current = this.getProxySettings()
+    this.client.prepare(`
+      INSERT INTO email_proxy_settings (id, mode, proxy_list_json, updated_at)
+      VALUES (1, @mode, @proxyListJson, @updatedAt)
+      ON CONFLICT(id) DO UPDATE SET
+        mode=excluded.mode,
+        proxy_list_json=excluded.proxy_list_json,
+        updated_at=excluded.updated_at
+    `).run({
+      mode: current.mode,
+      proxyListJson: JSON.stringify(entries),
+      updatedAt: Date.now()
+    })
   }
 
   saveSettings(input: SaveHotmailSettingsInput, normalizedProxyEntries?: string[]): void {
