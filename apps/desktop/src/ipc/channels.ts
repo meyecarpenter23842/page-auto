@@ -42,6 +42,8 @@ import type {
   HotmailPasswordBatchResult,
   HotmailProxyStatus,
   HotmailProxyTestResult,
+  HotmailProxyEntryPayload,
+  HotmailProxyReplacePayload,
   HotmailRecoveryActionPayload,
   HotmailRecoveryBatchResult,
   HotmailSettingsView,
@@ -102,6 +104,9 @@ export const IPC_CHANNELS = {
   hotmailProxyStatus: 'hotmail:proxy:status',
   hotmailProxyRotate: 'hotmail:proxy:rotate',
   hotmailProxyTest: 'hotmail:proxy:test',
+  hotmailProxyTestEntry: 'hotmail:proxy:test-entry',
+  hotmailProxyRemoveEntry: 'hotmail:proxy:remove-entry',
+  hotmailProxyReplaceEntry: 'hotmail:proxy:replace-entry',
   pageTabsList: 'page-tabs:list',
   pageTabsGet: 'page-tabs:get',
   pageTabsCreate: 'page-tabs:create',
@@ -197,6 +202,9 @@ export interface PageAutoIpcContract {
   getHotmailProxyStatus: () => Promise<HotmailProxyStatus>
   rotateHotmailProxy: () => Promise<HotmailProxyStatus>
   testHotmailProxy: () => Promise<HotmailProxyTestResult>
+  testHotmailProxyEntry: (payload: HotmailProxyEntryPayload) => Promise<HotmailProxyTestResult>
+  removeHotmailProxyEntry: (payload: HotmailProxyEntryPayload) => Promise<HotmailProxyStatus>
+  replaceHotmailProxyEntry: (payload: HotmailProxyReplacePayload) => Promise<HotmailProxyStatus>
   listPageTabs: () => Promise<PageTabSummary[]>
   getPageTab: (payload: PageTabIdPayload) => Promise<PageTabConfig | null>
   createPageTab: (input: CreatePageTabInput) => Promise<PageTabConfig>
