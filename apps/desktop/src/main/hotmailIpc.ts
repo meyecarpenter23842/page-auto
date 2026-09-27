@@ -11,6 +11,8 @@ import type {
   HotmailBatchResult,
   HotmailOpenBatchPayload,
   HotmailPasswordActionPayload,
+  HotmailProxyEntryPayload,
+  HotmailProxyReplacePayload,
   HotmailRecoveryActionPayload
 } from '../shared/hotmail'
 import { BrowserEngineService } from './browser/browserEngineService'
@@ -317,6 +319,9 @@ export function registerHotmailIpcHandlers(database: Database.Database): Hotmail
   ipcMain.handle(IPC_CHANNELS.hotmailProxyStatus, () => service.getProxyStatus())
   ipcMain.handle(IPC_CHANNELS.hotmailProxyRotate, () => service.rotateProxy())
   ipcMain.handle(IPC_CHANNELS.hotmailProxyTest, () => service.testProxy())
+  ipcMain.handle(IPC_CHANNELS.hotmailProxyTestEntry, (_event, payload: HotmailProxyEntryPayload) => service.testProxyAt(payload.index))
+  ipcMain.handle(IPC_CHANNELS.hotmailProxyRemoveEntry, (_event, payload: HotmailProxyEntryPayload) => service.removeProxyAt(payload.index))
+  ipcMain.handle(IPC_CHANNELS.hotmailProxyReplaceEntry, (_event, payload: HotmailProxyReplacePayload) => service.replaceProxyAt(payload.index, payload.proxy))
 
   return {
     dispose: () => {
