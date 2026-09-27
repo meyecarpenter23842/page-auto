@@ -164,6 +164,8 @@ export function HotmailAuto() {
   const [message, setMessage] = useState('Email dùng chung accountId, Tên TK và Nhóm TK với Account Manager; trạng thái Email tách riêng Facebook.')
   const [oauthPrompt, setOauthPrompt] = useState<HotmailOAuthStartResult | null>(null)
   const [proxyStatus, setProxyStatus] = useState<HotmailProxyStatus | null>(null)
+  const [proxyTestIndex, setProxyTestIndex] = useState<number | null>(null)
+  const [testingProxyPool, setTestingProxyPool] = useState(false)
   const [contextMenu, setContextMenu] = useState<ContextMenuState>(null)
   const [panel, setPanel] = useState<EmailPanel>(null)
   const [query, setQuery] = useState('')
@@ -360,7 +362,79 @@ export function HotmailAuto() {
   const testProxy = () => runAction('test', async () => {
     const result = await window.pageAuto.testHotmailProxy()
     return result.publicIp ? `${result.message} · IP hiện tại: ${result.publicIp}` : result.message
-  }, 'none')
+  }, 'settings')
+
+  const testProxyEntry = async (index: number) => {
+    if (proxyDirty) {
+      setMessage('Hãy lưu danh sách proxy đang sửa trước khi test từng proxy.')
+      return
+    }
+    setProxyTestIndex(index)
+    try {
+      const result = await window.pageAuto.testHotmailProxyEntry({ index })
+      setMessage(result.publicIp ? `${result.message} · IP: ${result.publicIp}` : result.message)
+      await refreshSettings()
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error))
+    } finally {
+      setProxyTestIndex(null)
+    }
+  }
+
+  const testAllProxyEntries = async () => {
+    if (!proxyStatus || proxyDirty || proxyStatus.entries.length === 0) return
+    setTestingProxyPool(true)
+    try {
+      let live = 0
+      let die = 0
+      for (const entry of proxyStatus.entries) {
+        setProxyTestIndex(entry.index)
+        const result = await window.pageAuto.testHotmailProxyEntry({ index: entry.index })
+        if (result.ok) live += 1
+        else die += 1
+        await refreshSettings()
+      }
+      setMessage(`Đã test ${live + die} proxy · LIVE ${live} · DIE ${die}.`)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error))
+    } finally {
+      setProxyTestIndex(null)
+      setTestingProxyPool(false)
+    }
+  }
+
+  const removeProxyEntry = async (index: number, proxy: string) => {
+    if (proxyDirty) {
+      setMessage('Hãy lưu danh sách proxy đang sửa trước khi xóa proxy.')
+      return
+    }
+    if (!window.confirm(`Xóa proxy ${proxy} khỏi pool Email?`)) return
+    try {
+      const status = await window.pageAuto.removeHotmailProxyEntry({ index })
+      setProxyStatus(status)
+      setMessage(status.message)
+      await refreshSettings()
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const replaceProxyEntry = async (index: number, proxy: string) => {
+    if (proxyDirty) {
+      setMessage('Hãy lưu danh sách proxy đang sửa trước khi thay proxy.')
+      return
+    }
+    const replacement = window.prompt(`Thay proxy ${proxy} bằng proxy IPv4 mới:`, '')
+    if (replacement === null || !replacement.trim()) return
+    try {
+      const status = await window.pageAuto.replaceHotmailProxyEntry({ index, proxy: replacement })
+      setProxyStatus(status)
+      setMessage(status.message)
+      await refreshSettings()
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error))
+    }
+  }
 
   const refreshEverything = () => runAction('refresh', async () => 'Đã làm mới dữ liệu Email.', 'all')
   const pickProfileRoot = () => runAction('pick-root', async () => {
@@ -547,7 +621,16 @@ export function HotmailAuto() {
         />
         <section className="email-settings-card"><div className="email-settings-heading"><div><span>MẠNG EMAIL</span><h3>IPv4 / Proxy riêng</h3></div><span className="email-settings-badge">Không dùng proxy Facebook</span></div><div className="email-settings-grid">
           <label><span>Chế độ</span><select value={draft.proxyMode} onChange={(event: ChangeEvent<HTMLSelectElement>) => setDraft({ ...draft, proxyMode: event.target.value as EmailProxyMode })}><option value="direct">Trực tiếp</option><option value="random_ipv4">IPv4 ngẫu nhiên</option></select></label><label><span>Pool hiện tại</span><input value={`${settings?.proxyCount ?? 0} proxy`} readOnly /></label>
-          <label className="wide"><span>Danh sách proxy IPv4</span><textarea value={draft.proxyListText} onChange={(event: ChangeEvent<HTMLTextAreaElement>) => { setDraft({ ...draft, proxyListText: event.target.value }); setProxyDirty(true) }} placeholder={'Mỗi dòng một proxy\nKhông sửa = giữ pool hiện tại'} /></label>
+          <label className="wide"><span>Thêm / thay toàn bộ pool</span><textarea value={draft.proxyListText} onChange={(event: ChangeEvent<HTMLTextAreaElement>) => { setDraft({ ...draft, proxyListText: event.target.value }); setProxyDirty(true) }} placeholder={'Mỗi dòng một proxy\nKhông sửa = giữ pool hiện tại'} /><small>{proxyDirty ? 'Có thay đổi chưa lưu. Lưu trước khi test/xóa/thay từng proxy.' : 'Pool hiện tại hiển thị bên dưới; proxy có user/pass vẫn được ẩn credential.'}</small></label>
+        </div>
+        <div className="email-proxy-pool-toolbar"><div><strong>Proxy trong pool</strong><span>{proxyStatus?.entries.length ?? 0} proxy · LIVE {proxyStatus?.entries.filter((entry) => entry.status === 'live').length ?? 0} · DIE {proxyStatus?.entries.filter((entry) => entry.status === 'die').length ?? 0}</span></div><button className="email-button secondary" disabled={proxyDirty || testingProxyPool || (proxyStatus?.entries.length ?? 0) === 0} onClick={() => void testAllProxyEntries()}>{testingProxyPool && <Spinner />}Test toàn bộ</button></div>
+        <div className="email-proxy-pool-list">
+          {proxyStatus?.entries.length ? proxyStatus.entries.map((entry) => <div className="email-proxy-pool-row" key={`${entry.index}-${entry.proxy}`}>
+            <span className="email-proxy-index">{entry.index + 1}</span>
+            <span className="mono email-proxy-address" title={entry.proxy}>{entry.proxy}</span>
+            <span className={`email-proxy-health ${entry.status}`}>{entry.status === 'live' ? 'LIVE' : entry.status === 'die' ? 'DIE' : 'Chưa test'}</span>
+            <div className="email-proxy-row-actions"><button className="email-button secondary" disabled={proxyDirty || testingProxyPool || proxyTestIndex !== null} onClick={() => void testProxyEntry(entry.index)}>{proxyTestIndex === entry.index ? <Spinner /> : null}Test</button><button className="email-button secondary" disabled={proxyDirty || testingProxyPool} onClick={() => void replaceProxyEntry(entry.index, entry.proxy)}>Thay</button><button className="email-button ghost" disabled={proxyDirty || testingProxyPool} onClick={() => void removeProxyEntry(entry.index, entry.proxy)}>Xóa</button></div>
+          </div>) : <div className="email-panel-empty">Pool chưa có proxy.</div>}
         </div></section>
         <details className="email-advanced-card"><summary>Cài đặt nâng cao — OAuth mặc định</summary><div className="email-settings-grid advanced-body"><label><span>Client ID mặc định</span><input value={draft.oauthClientId} onChange={(event: ChangeEvent<HTMLInputElement>) => setDraft({ ...draft, oauthClientId: event.target.value })} /></label><label><span>Tenant</span><input value={draft.oauthTenant} onChange={(event: ChangeEvent<HTMLInputElement>) => setDraft({ ...draft, oauthTenant: event.target.value })} placeholder="consumers" /></label></div></details>
         <div className="email-settings-footer"><span>{message}</span><button className="email-button primary" disabled={isBusy('save')} onClick={() => void saveSettings()}>{isBusy('save') && <Spinner />}Lưu cài đặt</button></div>
