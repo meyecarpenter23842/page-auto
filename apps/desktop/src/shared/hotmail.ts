@@ -180,11 +180,29 @@ export interface HotmailPasswordBatchResult {
   results: HotmailPasswordActionResult[]
 }
 
+export type HotmailProxyHealthStatus = 'untested' | 'live' | 'die'
+
+export interface HotmailProxyPoolEntry {
+  index: number
+  proxy: string
+  status: HotmailProxyHealthStatus
+  cooldownUntil: number | null
+}
+
+export interface HotmailProxyEntryPayload {
+  index: number
+}
+
+export interface HotmailProxyReplacePayload extends HotmailProxyEntryPayload {
+  proxy: string
+}
+
 export interface HotmailProxyStatus {
   mode: EmailProxyMode
   poolSize: number
   currentProxy: string | null
   activeSessions: number
+  entries: HotmailProxyPoolEntry[]
   message: string
 }
 
