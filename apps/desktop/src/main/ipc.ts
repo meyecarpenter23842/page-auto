@@ -16,7 +16,7 @@ import type {
   AccountListFilters,
   SaveImportPresetInput
 } from '../shared/accounts'
-import { assertValidAppSettings, type AppSettingsPatch } from '../shared/appSettings'
+import { assertValidAppSettings, mergeAppSettings, type AppSettingsPatch } from '../shared/appSettings'
 import type { BrowserTestRequest } from '../shared/browserSettings'
 import type { BrowserRetileResult, BrowserWindowLayoutSettings } from '../shared/browserWindowLayout'
 import type { BrowserDisplaySlotRuntimeExtension } from '../shared/browserSlotDiagnostics'
@@ -63,6 +63,7 @@ import { PwaRemoteControlService } from './services/pwaRemoteControlService'
 import { ResilientPostingService } from './services/resilientPostingService'
 import { RotationService, type RotationPostingExecutor } from './services/rotationService'
 import { RuntimeRecoveryService } from './services/runtimeRecovery'
+import { applyWindowsStartupSetting } from './services/windowsStartupSetting'
 
 interface RegisterIpcOptions {
   database: Database.Database
@@ -80,6 +81,17 @@ const MAX_BACKUP_FILE_BYTES = 20 * 1024 * 1024
 export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
   const accounts = new AccountRepository(options.database)
   const appSettings = new AppSettingsRepository(options.database)
+  const syncWindowsStartup = (enabled: boolean) => applyWindowsStartupSetting(enabled, {
+    platform: process.platform,
+    isPackaged: app.isPackaged,
+    executablePath: process.execPath,
+    setLoginItemSettings: (settings) => app.setLoginItemSettings(settings)
+  })
+  try {
+    syncWindowsStartup(appSettings.get().advanced.startWithWindows ?? false)
+  } catch (error) {
+    console.warn('Windows startup sync failed', error instanceof Error ? error.message : String(error))
+  }
   const browserWindowLayoutSettings = new BrowserWindowLayoutRepository(options.database)
   const captchaSettings = new CaptchaSettingsRepository(options.database)
   const pageTabs = new PageTabRepository(options.database)
@@ -299,14 +311,36 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
 
   ipcMain.handle(IPC_CHANNELS.appSettingsGet, () => appSettings.get())
   ipcMain.handle(IPC_CHANNELS.appSettingsUpdate, async (_event, input: AppSettingsPatch) => {
-    const next = appSettings.update(input)
-    if (input.logging) await logMaintenance.cleanup(next.logging).catch(() => undefined)
-    return next
+    const current = appSettings.get()
+    const startupChanged = input.advanced?.startWithWindows !== undefined
+    const nextStartup = startupChanged ? Boolean(input.advanced?.startWithWindows) : (current.advanced.startWithWindows ?? false)
+    if (startupChanged) {
+      const candidate = mergeAppSettings(current, input)
+      assertValidAppSettings(candidate)
+      syncWindowsStartup(nextStartup)
+    }
+    try {
+      const next = appSettings.update(input)
+      if (input.logging) await logMaintenance.cleanup(next.logging).catch(() => undefined)
+      return next
+    } catch (error) {
+      if (startupChanged) {
+        try { syncWindowsStartup(current.advanced.startWithWindows ?? false) } catch { /* keep original persistence error */ }
+      }
+      throw error
+    }
   })
   ipcMain.handle(IPC_CHANNELS.appSettingsReset, async () => {
-    const next = appSettings.reset()
-    await logMaintenance.cleanup(next.logging).catch(() => undefined)
-    return next
+    const currentStartup = appSettings.get().advanced.startWithWindows ?? false
+    syncWindowsStartup(false)
+    try {
+      const next = appSettings.reset()
+      await logMaintenance.cleanup(next.logging).catch(() => undefined)
+      return next
+    } catch (error) {
+      try { syncWindowsStartup(currentStartup) } catch { /* keep original persistence error */ }
+      throw error
+    }
   })
 
   ipcMain.handle(IPC_CHANNELS.browserDetect, () => browserEngine.detectChrome())

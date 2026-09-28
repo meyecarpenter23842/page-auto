@@ -92,6 +92,8 @@ export interface AdvancedSettings {
   userAgentPolicy: UserAgentPolicy
   timezonePolicy: TimezonePolicy
   customTimezone: string | null
+  /** Windows-only. Optional for legacy fixtures/stored settings; defaults to false. */
+  startWithWindows?: boolean
 }
 
 export interface AppSettings {
@@ -171,7 +173,8 @@ export const DEFAULT_APP_SETTINGS: Readonly<AppSettings> = {
     cleanupTemporaryProfileAfterFailure: false,
     userAgentPolicy: 'account',
     timezonePolicy: 'automatic',
-    customTimezone: null
+    customTimezone: null,
+    startWithWindows: false
   }
 }
 
@@ -188,7 +191,7 @@ const RUNTIME_KEYS = [
   'navigationRetryCount', 'safeActionRetryCount', 'retryDelayMs', 'consecutiveFailureLimit'
 ] as const
 const LOGGING_KEYS = ['level', 'retentionDays', 'autoCleanup', 'screenshotOnFailure', 'saveCurrentUrlOnFailure', 'playwrightTrace'] as const
-const ADVANCED_KEYS = ['clearBrowserCacheAfterRun', 'cleanupTemporaryProfileAfterFailure', 'userAgentPolicy', 'timezonePolicy', 'customTimezone'] as const
+const ADVANCED_KEYS = ['clearBrowserCacheAfterRun', 'cleanupTemporaryProfileAfterFailure', 'userAgentPolicy', 'timezonePolicy', 'customTimezone', 'startWithWindows'] as const
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -345,6 +348,7 @@ export function assertValidAppSettings(settings: AppSettings): void {
   assertEnum('advanced.userAgentPolicy', settings.advanced.userAgentPolicy, USER_AGENT_POLICIES)
   assertEnum('advanced.timezonePolicy', settings.advanced.timezonePolicy, TIMEZONE_POLICIES)
   assertNullableString('advanced.customTimezone', settings.advanced.customTimezone, 128)
+  assertBoolean('advanced.startWithWindows', settings.advanced.startWithWindows ?? false)
   if (settings.advanced.timezonePolicy === 'custom' && !settings.advanced.customTimezone?.trim()) {
     throw new Error('advanced.customTimezone is required when timezonePolicy is custom.')
   }

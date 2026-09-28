@@ -40,6 +40,7 @@ describe('AppSettingsRepository', () => {
     expect(saved.browser.navigationTimeoutMs).toBe(45000)
     expect(saved.runtime.maxActivePageTabs).toBe(4)
     expect(saved.session.validateBeforeRun).toBe(true)
+    expect(saved.advanced.startWithWindows).toBe(false)
     expect(repository.get()).toEqual(saved)
 
     const row = runtime.client
@@ -47,6 +48,19 @@ describe('AppSettingsRepository', () => {
       .get(APP_SETTINGS_STORAGE_KEY) as { value: string } | undefined
     expect(row).toBeDefined()
     expect(JSON.parse(row!.value)).toEqual(saved)
+
+    runtime.close()
+  })
+
+  it('persists the Windows startup preference inside app settings', () => {
+    const { runtime, repository } = createRepository()
+
+    const enabled = repository.update({ advanced: { startWithWindows: true } })
+    expect(enabled.advanced.startWithWindows).toBe(true)
+    expect(repository.get().advanced.startWithWindows).toBe(true)
+
+    const disabled = repository.update({ advanced: { startWithWindows: false } })
+    expect(disabled.advanced.startWithWindows).toBe(false)
 
     runtime.close()
   })
