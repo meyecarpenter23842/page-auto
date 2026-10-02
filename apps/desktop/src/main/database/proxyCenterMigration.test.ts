@@ -5,7 +5,9 @@ import {
   PROXY_CENTER_INVENTORY_MIGRATION_NAME,
   PROXY_CENTER_INVENTORY_SCHEMA_VERSION,
   PROXY_CENTER_MIGRATION_NAME,
-  PROXY_CENTER_SCHEMA_VERSION
+  PROXY_CENTER_SCHEMA_VERSION,
+  PROXY_CENTER_USAGE_MIGRATION_NAME,
+  PROXY_CENTER_USAGE_SCHEMA_VERSION
 } from './proxyCenterMigration'
 import { ProxyCenterInventoryRepository } from './proxyInventoryRepository'
 
@@ -30,8 +32,8 @@ describe('Proxy Center inventory persistence', () => {
     applyProxyCenterMigration(db)
 
     const migrations = db.prepare(
-      'SELECT version, name FROM __page_auto_migrations WHERE version IN (?, ?) ORDER BY version'
-    ).all(PROXY_CENTER_INVENTORY_SCHEMA_VERSION, PROXY_CENTER_SCHEMA_VERSION)
+      'SELECT version, name FROM __page_auto_migrations WHERE version IN (?, ?, ?) ORDER BY version'
+    ).all(PROXY_CENTER_INVENTORY_SCHEMA_VERSION, PROXY_CENTER_SCHEMA_VERSION, PROXY_CENTER_USAGE_SCHEMA_VERSION)
     const table = db.prepare(
       "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'proxy_inventory'"
     ).get()
@@ -47,6 +49,10 @@ describe('Proxy Center inventory persistence', () => {
       {
         version: PROXY_CENTER_SCHEMA_VERSION,
         name: PROXY_CENTER_MIGRATION_NAME
+      },
+      {
+        version: PROXY_CENTER_USAGE_SCHEMA_VERSION,
+        name: PROXY_CENTER_USAGE_MIGRATION_NAME
       }
     ])
     expect(table).toBeTruthy()
@@ -84,6 +90,7 @@ describe('Proxy Center inventory persistence', () => {
 
     const columns = db.prepare('PRAGMA table_info(proxy_inventory)').all() as Array<{ name: string }>
     expect(columns.some((column) => column.name === 'folder_id')).toBe(true)
+    expect(columns.some((column) => column.name === 'manual_used')).toBe(true)
     expect(new ProxyCenterInventoryRepository(db).list()).toHaveLength(1)
   })
 
@@ -124,6 +131,25 @@ describe('Proxy Center inventory persistence', () => {
     expect(second.records[0]?.status).toBe('live')
     expect(second.records[0]?.sourceKind).toBe('builder')
     expect(repository.getSecret(id)?.password).toBe('second-secret')
+  })
+
+  it('persists manual used/unused marks independently from Account binding', () => {
+    applyProxyCenterMigration(db)
+    const repository = new ProxyCenterInventoryRepository(db)
+    const inserted = repository.upsert({
+      items: [
+        { rawProxy: '127.0.0.1:3128:user-a:secret-a' },
+        { rawProxy: '127.0.0.1:3129:user-b:secret-b' }
+      ]
+    })
+    const ids = inserted.records.map((item) => item.id)
+
+    const used = repository.setManualUsage(ids, true)
+    expect(used.every((item) => item.manuallyUsed)).toBe(true)
+
+    const unused = repository.setManualUsage([ids[0] ?? 0], false)
+    expect(unused.find((item) => item.id === ids[0])?.manuallyUsed).toBe(false)
+    expect(unused.find((item) => item.id === ids[1])?.manuallyUsed).toBe(true)
   })
 
   it('keeps proxy folders persistent and returns deleted-folder proxies to unfiled', () => {

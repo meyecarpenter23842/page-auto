@@ -24,6 +24,10 @@ function formatCheckedAt(value: number | null): string {
 
 type UsageFilter = 'all' | 'used' | 'unused'
 
+function isUsed(item: ProxyCenterInventoryRecord): boolean {
+  return item.assignedAccountCount > 0 || item.manuallyUsed
+}
+
 type FolderEditorState =
   | { mode: 'create'; value: string }
   | { mode: 'rename'; id: number; value: string }
@@ -66,8 +70,8 @@ export function ProxyInventoryPanel() {
     const needle = search.trim().toLowerCase()
     return rows.filter((item) => {
       if (status !== 'all' && item.status !== status) return false
-      if (usage === 'used' && item.assignedAccountCount <= 0) return false
-      if (usage === 'unused' && item.assignedAccountCount > 0) return false
+      if (usage === 'used' && !isUsed(item)) return false
+      if (usage === 'unused' && isUsed(item)) return false
       if (folderFilter === 'unfiled' && item.folderId !== null) return false
       if (folderFilter.startsWith('folder:') && item.folderId !== Number(folderFilter.slice(7))) return false
       if (!needle) return true
@@ -88,7 +92,7 @@ export function ProxyInventoryPanel() {
   const liveCount = rows.filter((item) => item.status === 'live').length
   const deadCount = rows.filter((item) => item.status === 'dead').length
   const unknownCount = rows.length - liveCount - deadCount
-  const usedCount = rows.filter((item) => item.assignedAccountCount > 0).length
+  const usedCount = rows.filter(isUsed).length
   const unfiledCount = rows.filter((item) => item.folderId === null).length
   const folderName = (id: number | null) => id === null ? 'Chưa phân loại' : folders.find((folder) => folder.id === id)?.name ?? 'Thư mục đã xóa'
 
@@ -109,6 +113,21 @@ export function ProxyInventoryPanel() {
   const clearSelection = () => {
     setSelected(new Set())
     setContextMenu(null)
+  }
+
+  const markUsage = async (ids: number[], used: boolean, label: string) => {
+    if (!ids.length || busy) return
+    setBusy(true)
+    setNotice(null)
+    try {
+      setRows(await window.pageAutoProxyBuilder.setInventoryUsage({ ids, used }))
+      setNotice('Đã đánh dấu ' + ids.length + ' proxy ' + (used ? 'ĐÃ DÙNG' : 'CHƯA DÙNG') + ' (' + label + ').')
+      setContextMenu(null)
+    } catch (error) {
+      setNotice(message(error))
+    } finally {
+      setBusy(false)
+    }
   }
 
   const copyInventory = async (ids: number[], label: string) => {
@@ -354,8 +373,8 @@ export function ProxyInventoryPanel() {
             </div>
             <div className="proxy-builder-inline-actions">
               <button className="button secondary" type="button" disabled={!filtered.length || busy} onClick={() => selectRows(() => true)}>Chọn tất cả lọc</button>
-              <button className="button secondary" type="button" disabled={!filtered.some((item) => item.assignedAccountCount === 0) || busy} onClick={() => selectRows((item) => item.assignedAccountCount === 0)}>Chọn chưa dùng</button>
-              <button className="button secondary" type="button" disabled={!filtered.some((item) => item.assignedAccountCount > 0) || busy} onClick={() => selectRows((item) => item.assignedAccountCount > 0)}>Chọn đã dùng</button>
+              <button className="button secondary" type="button" disabled={!filtered.some((item) => !isUsed(item)) || busy} onClick={() => selectRows((item) => !isUsed(item))}>Chọn chưa dùng</button>
+              <button className="button secondary" type="button" disabled={!filtered.some(isUsed) || busy} onClick={() => selectRows(isUsed)}>Chọn đã dùng</button>
               <button className="button secondary" type="button" disabled={!selected.size || busy} onClick={() => setSelected(new Set())}>Bỏ chọn</button>
             </div>
           </div>
@@ -423,7 +442,7 @@ export function ProxyInventoryPanel() {
                       <td>{item.ipFamily === 'unknown' ? '-' : item.ipFamily.toUpperCase()}</td>
                       <td>{item.outboundIp ?? '-'}</td>
                       <td><span className={'proxy-builder-live-badge ' + (item.status === 'unknown' ? 'pending' : item.status)}>{statusLabel(item.status)}</span></td>
-                      <td><span className={'proxy-center-usage-badge ' + (item.assignedAccountCount > 0 ? 'used' : 'unused')}>{item.assignedAccountCount > 0 ? 'ĐÃ DÙNG' : 'CHƯA DÙNG'}</span></td>
+                      <td><span className={'proxy-center-usage-badge ' + (isUsed(item) ? 'used' : 'unused')}>{isUsed(item) ? 'ĐÃ DÙNG' : 'CHƯA DÙNG'}</span></td>
                       <td>{item.latencyMs !== null ? item.latencyMs + ' ms' : item.lastError ?? '-'}</td>
                       <td>{item.assignedAccountCount || '-'}</td>
                       <td>{folderName(item.folderId)}</td>
@@ -451,6 +470,50 @@ export function ProxyInventoryPanel() {
           onClearChecked={clearSelection}
           onDismiss={() => setContextMenu(null)}
         >
+          <button
+            type="button"
+            disabled={!excelRange.rangeIds.size || busy}
+            onClick={() => void markUsage(
+              filtered.filter((item) => excelRange.rangeIds.has(item.id)).map((item) => item.id),
+              true,
+              'phần phủ khối'
+            )}
+          >
+            Đánh dấu đã dùng · phần phủ ({excelRange.rangeIds.size})
+          </button>
+          <button
+            type="button"
+            disabled={!excelRange.rangeIds.size || busy}
+            onClick={() => void markUsage(
+              filtered.filter((item) => excelRange.rangeIds.has(item.id)).map((item) => item.id),
+              false,
+              'phần phủ khối'
+            )}
+          >
+            Đánh dấu chưa dùng · phần phủ ({excelRange.rangeIds.size})
+          </button>
+          <button
+            type="button"
+            disabled={!selected.size || busy}
+            onClick={() => void markUsage(
+              rows.filter((item) => selected.has(item.id)).map((item) => item.id),
+              true,
+              'đã tích'
+            )}
+          >
+            Đánh dấu đã dùng · đã tích ({selected.size})
+          </button>
+          <button
+            type="button"
+            disabled={!selected.size || busy}
+            onClick={() => void markUsage(
+              rows.filter((item) => selected.has(item.id)).map((item) => item.id),
+              false,
+              'đã tích'
+            )}
+          >
+            Đánh dấu chưa dùng · đã tích ({selected.size})
+          </button>
           <button
             type="button"
             disabled={!excelRange.rangeIds.size || busy}

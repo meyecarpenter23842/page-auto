@@ -133,6 +133,21 @@ describe('Proxy Center inventory/binding + checker/export', () => {
     expect(packagedSmoke).toContain("tbody tr.range-row")
   })
 
+  it('marks painted or checked proxies used/unused through typed IPC', () => {
+    for (const label of [
+      'Đánh dấu đã dùng · phần phủ',
+      'Đánh dấu chưa dùng · phần phủ',
+      'Đánh dấu đã dùng · đã tích',
+      'Đánh dấu chưa dùng · đã tích'
+    ]) expect(inventoryPanel).toContain(label)
+    expect(inventoryPanel).toContain('window.pageAutoProxyBuilder.setInventoryUsage')
+    expect(inventoryPanel).toContain('item.assignedAccountCount > 0 || item.manuallyUsed')
+    expect(preload).toContain('setInventoryUsage: (input) => ipcRenderer.invoke')
+    expect(ipc).toContain('inventory.setManualUsage')
+    expect(packagedSmoke).toContain('Đánh dấu đã dùng · phần phủ (2)')
+    expect(packagedSmoke).toContain('Đánh dấu chưa dùng · đã tích (2)')
+  })
+
   it('copies full proxy credentials from either the paint range or checked rows without exposing secrets to React', () => {
     expect(inventoryPanel).toContain('Copy Proxy phần phủ khối')
     expect(inventoryPanel).toContain('Copy Proxy đã tích')

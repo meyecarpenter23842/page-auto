@@ -116,9 +116,10 @@ describe('initializeDatabase', () => {
       { version: 30, name: 'page_wall_schedule_post_pool' },
       { version: 32, name: 'canonical_post_hashtags' },
       { version: 33, name: 'proxy_center_inventory' },
-      { version: 34, name: 'proxy_center_folders' }
+      { version: 34, name: 'proxy_center_folders' },
+      { version: 35, name: 'proxy_center_manual_usage' }
     ])
-    expect(schemaVersion?.value).toBe('34')
+    expect(schemaVersion?.value).toBe('35')
     expect(executionLogsTable?.name).toBe('execution_logs')
     expect(postLibraryTable?.name).toBe('page_tab_posts')
     expect(pageTabColumns.some((column) => column.name === 'account_order_mode')).toBe(true)
@@ -149,7 +150,7 @@ describe('initializeDatabase', () => {
       .prepare('SELECT COUNT(*) AS count FROM __page_auto_migrations')
       .get() as { count: number }
 
-    expect(count.count).toBe(33)
+    expect(count.count).toBe(34)
     reopened.close()
   })
 

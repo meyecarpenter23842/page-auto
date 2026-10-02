@@ -22,6 +22,7 @@ import {
   type ProxyCenterInventoryCopyInput,
   type ProxyCenterInventoryDeleteInput,
   type ProxyCenterInventoryRecord,
+  type ProxyCenterInventoryUsageInput,
   type ProxyCenterInventoryUpsertInput
 } from '../shared/proxyBuilder'
 import { AccountRepository } from './database/accountRepository'
@@ -170,6 +171,9 @@ export function registerProxyBuilderIpc(database: Database.Database): ProxyBuild
     return { ...result, records: listInventory() }
   })
   ipcMain.handle(PROXY_BUILDER_IPC.inventoryDelete, (_event, input: ProxyCenterInventoryDeleteInput) => inventory.delete(input.ids))
+  ipcMain.handle(PROXY_BUILDER_IPC.inventoryUsage, (_event, input: ProxyCenterInventoryUsageInput) =>
+    decorateInventory(inventory.setManualUsage(input.ids, input.used), accounts.list())
+  )
   ipcMain.handle(PROXY_BUILDER_IPC.inventoryCopy, (_event, input: ProxyCenterInventoryCopyInput) => {
     const secrets = inventory.getSecrets(input.ids)
     if (!secrets.length) return { count: 0 }
