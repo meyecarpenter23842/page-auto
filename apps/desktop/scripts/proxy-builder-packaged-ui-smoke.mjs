@@ -91,6 +91,20 @@ try {
   )
 
   await firstCell.click({ button: 'right' })
+  await page.getByRole('button', { name: 'Đánh dấu đã dùng · phần phủ (2)', exact: true }).click()
+  invariant(
+    await root.locator('.proxy-center-usage-badge.used').filter({ hasText: 'ĐÃ DÙNG' }).count() === 2,
+    'Đánh dấu ĐÃ DÙNG cho vùng phủ khối không cập nhật đủ proxy.'
+  )
+
+  await firstCell.click({ button: 'right' })
+  await page.getByRole('button', { name: 'Đánh dấu chưa dùng · đã tích (2)', exact: true }).click()
+  invariant(
+    await root.locator('.proxy-center-usage-badge.unused').filter({ hasText: 'CHƯA DÙNG' }).count() === 2,
+    'Đánh dấu CHƯA DÙNG cho tập đã tích không cập nhật đủ proxy.'
+  )
+
+  await firstCell.click({ button: 'right' })
   await page.getByRole('button', { name: 'Copy Proxy phần phủ khối (2)', exact: true }).click()
   const copiedRange = await electronApp.evaluate(({ clipboard }) => clipboard.readText())
   invariant(
