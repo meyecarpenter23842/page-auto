@@ -22,7 +22,7 @@ import { CANONICAL_POST_HASHTAG_SCHEMA_VERSION, applyCanonicalPostHashtagMigrati
 import { PAGE_WALL_SCHEMA_VERSION, applyPageWallMigration } from './pageWallMigration'
 import { PAGE_WALL_RECURRING_SCHEMA_VERSION, applyPageWallRecurringMigration } from './pageWallRecurringMigration'
 import { PAGE_WALL_WEEKLY_SCHEDULE_SCHEMA_VERSION, applyPageWallWeeklyScheduleMigration } from './pageWallWeeklyScheduleMigration'
-import { PROXY_CENTER_SCHEMA_VERSION, applyProxyCenterMigration } from './proxyCenterMigration'
+import { PROXY_CENTER_SCHEMA_VERSION, PROXY_CENTER_USAGE_SCHEMA_VERSION, applyProxyCenterMigration } from './proxyCenterMigration'
 import { SCENARIO_SCHEMA_VERSION, applyScenarioMigration } from './scenarioMigration'
 import { SCANNER_SCHEMA_VERSION, applyScannerMigration } from './scannerMigration'
 import { STORY_SCHEMA_VERSION, applyStoryMigration } from './storyMigration'
@@ -119,6 +119,7 @@ export function initializeDatabase(databaseFile: string): DatabaseRuntime {
     PAGE_WALL_POST_POOL_SCHEMA_VERSION,
     CANONICAL_POST_HASHTAG_SCHEMA_VERSION,
     PROXY_CENTER_SCHEMA_VERSION,
+    PROXY_CENTER_USAGE_SCHEMA_VERSION,
     ZALO_SCHEMA_VERSION,
     ZALO_POST_BINDING_SCHEMA_VERSION
   )
