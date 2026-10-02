@@ -23,6 +23,7 @@ import {
   type ProxyCenterInventoryCopyResult,
   type ProxyCenterInventoryDeleteInput,
   type ProxyCenterInventoryRecord,
+  type ProxyCenterInventoryUsageInput,
   type ProxyCenterInventoryUpsertInput,
   type ProxyCenterInventoryUpsertResult
 } from '../shared/proxyBuilder'
@@ -43,6 +44,7 @@ export interface ProxyBuilderPreloadApi {
   checkInventory: (input: ProxyCenterInventoryDeleteInput) => Promise<ProxyCenterInventoryRecord[]>
   deleteInventory: (input: ProxyCenterInventoryDeleteInput) => Promise<number>
   copyInventoryProxies: (input: ProxyCenterInventoryCopyInput) => Promise<ProxyCenterInventoryCopyResult>
+  setInventoryUsage: (input: ProxyCenterInventoryUsageInput) => Promise<ProxyCenterInventoryRecord[]>
   listProxyFolders: () => Promise<ProxyCenterFolder[]>
   createProxyFolder: (input: ProxyCenterFolderCreateInput) => Promise<ProxyCenterFolder[]>
   renameProxyFolder: (input: ProxyCenterFolderRenameInput) => Promise<ProxyCenterFolder[]>
@@ -69,6 +71,7 @@ const api: ProxyBuilderPreloadApi = {
   checkInventory: (input) => ipcRenderer.invoke(PROXY_BUILDER_IPC.inventoryCheck, input),
   deleteInventory: (input) => ipcRenderer.invoke(PROXY_BUILDER_IPC.inventoryDelete, input),
   copyInventoryProxies: (input) => ipcRenderer.invoke(PROXY_BUILDER_IPC.inventoryCopy, input),
+  setInventoryUsage: (input) => ipcRenderer.invoke(PROXY_BUILDER_IPC.inventoryUsage, input),
   listProxyFolders: () => ipcRenderer.invoke(PROXY_BUILDER_IPC.folderList),
   createProxyFolder: (input) => ipcRenderer.invoke(PROXY_BUILDER_IPC.folderCreate, input),
   renameProxyFolder: (input) => ipcRenderer.invoke(PROXY_BUILDER_IPC.folderRename, input),
