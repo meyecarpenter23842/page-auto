@@ -25,6 +25,7 @@ interface StoredProxyRow {
   sourceLabel: string | null
   lastCheckedAt: number | null
   folderId: number | null
+  manuallyUsed: boolean
   createdAt: number
   updatedAt: number
 }
@@ -54,6 +55,7 @@ const SELECT_PROXY = `
     source_label AS sourceLabel,
     last_checked_at AS lastCheckedAt,
     folder_id AS folderId,
+    manual_used AS manualUsed,
     created_at AS createdAt,
     updated_at AS updatedAt
   FROM proxy_inventory
@@ -92,6 +94,7 @@ function rowFromDatabase(row: Record<string, unknown>): StoredProxyRow {
     sourceLabel: row.sourceLabel === null ? null : String(row.sourceLabel),
     lastCheckedAt: row.lastCheckedAt === null ? null : Number(row.lastCheckedAt),
     folderId: row.folderId === null ? null : Number(row.folderId),
+    manuallyUsed: Number(row.manualUsed ?? 0) === 1,
     createdAt: Number(row.createdAt),
     updatedAt: Number(row.updatedAt)
   }
@@ -114,6 +117,7 @@ function publicRecord(row: StoredProxyRow): ProxyCenterInventoryRecord {
     sourceLabel: row.sourceLabel,
     lastCheckedAt: row.lastCheckedAt,
     assignedAccountCount: 0,
+    manuallyUsed: row.manuallyUsed,
     folderId: row.folderId,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt
@@ -215,6 +219,15 @@ export class ProxyCenterInventoryRepository {
     const placeholders = normalizedIds.map(() => '?').join(', ')
     this.client.prepare('UPDATE proxy_inventory SET folder_id = ?, updated_at = ? WHERE id IN (' + placeholders + ')')
       .run(folderId, Date.now(), ...normalizedIds)
+    return this.list()
+  }
+
+  setManualUsage(ids: number[], used: boolean): ProxyCenterInventoryRecord[] {
+    const normalizedIds = uniqueIds(ids)
+    if (!normalizedIds.length) return this.list()
+    const placeholders = normalizedIds.map(() => '?').join(', ')
+    this.client.prepare('UPDATE proxy_inventory SET manual_used = ?, updated_at = ? WHERE id IN (' + placeholders + ')')
+      .run(used ? 1 : 0, Date.now(), ...normalizedIds)
     return this.list()
   }
 
