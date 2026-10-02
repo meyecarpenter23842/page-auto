@@ -4,6 +4,8 @@ export const PROXY_CENTER_INVENTORY_SCHEMA_VERSION = 33
 export const PROXY_CENTER_INVENTORY_MIGRATION_NAME = 'proxy_center_inventory'
 export const PROXY_CENTER_SCHEMA_VERSION = 34
 export const PROXY_CENTER_MIGRATION_NAME = 'proxy_center_folders'
+export const PROXY_CENTER_USAGE_SCHEMA_VERSION = 35
+export const PROXY_CENTER_USAGE_MIGRATION_NAME = 'proxy_center_manual_usage'
 
 function hasColumn(client: Database.Database, table: string, column: string): boolean {
   const rows = client.prepare('PRAGMA table_info(' + table + ')').all() as Array<{ name: string }>
@@ -78,6 +80,12 @@ export function applyProxyCenterMigration(client: Database.Database): void {
     `)
 
     recordMigration(client, PROXY_CENTER_SCHEMA_VERSION, PROXY_CENTER_MIGRATION_NAME)
+
+    if (!hasColumn(client, 'proxy_inventory', 'manual_used')) {
+      client.exec("ALTER TABLE proxy_inventory ADD COLUMN manual_used INTEGER NOT NULL DEFAULT 0")
+    }
+
+    recordMigration(client, PROXY_CENTER_USAGE_SCHEMA_VERSION, PROXY_CENTER_USAGE_MIGRATION_NAME)
   })
 
   migrate()
