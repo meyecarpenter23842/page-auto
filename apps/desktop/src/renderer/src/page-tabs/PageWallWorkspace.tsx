@@ -25,6 +25,10 @@ import {
 import { AccountSelectionMenu } from '../accounts/AccountSelectionMenu'
 import { useExcelRowRange } from '../accounts/accountTableSelection'
 import { comparePageWallScheduleGroups } from './pageWallScheduleOrder'
+import {
+  loadPageWallLastUsedState,
+  savePageWallLastUsedState
+} from './pageWallLastUsedState'
 import './pageWallWorkspace.css'
 import './pageWallRuntimeControls.css'
 
@@ -248,6 +252,7 @@ export function PageWallWorkspace({ activePageId: controlledPageId, scoped = fal
   const [pageTabId, setPageTabId] = useState<number | null>(controlledPageId ?? null)
   const [config, setConfig] = useState<PageTabConfig | null>(null)
   const [selectedIds, setSelectedIds] = useState<number[]>([])
+  const [restoredPageId, setRestoredPageId] = useState<number | null>(null)
   const [accountMenu, setAccountMenu] = useState<{ x: number; y: number } | null>(null)
   const [accountConcurrency, setAccountConcurrency] = useState(1)
   const [runDelaySeconds, setRunDelaySeconds] = useState(0)
@@ -286,13 +291,27 @@ export function PageWallWorkspace({ activePageId: controlledPageId, scoped = fal
   }, [])
 
   useEffect(() => {
-    if (!pageTabId) { setConfig(null); setDashboard({ plans: [], jobs: [] }); return }
+    if (!pageTabId) {
+      setConfig(null)
+      setRestoredPageId(null)
+      setDashboard({ plans: [], jobs: [] })
+      return
+    }
+    setRestoredPageId(null)
     let cancelled = false
     void window.pageAuto.getPageTab({ id: pageTabId }).then((next) => {
       if (cancelled) return
       setConfig(next)
       const runnable = (next?.accounts ?? []).filter(isWallAccountSelectable).sort((a, b) => a.sortOrder - b.sortOrder)
-      setSelectedIds(runnable.map((account) => account.accountId))
+      const runnableIdsForPage = runnable.map((account) => account.accountId)
+      const runnableSet = new Set(runnableIdsForPage)
+      const lastUsed = loadPageWallLastUsedState(pageTabId)
+      setSelectedIds(lastUsed
+        ? lastUsed.selectedAccountIds.filter((accountId) => runnableSet.has(accountId))
+        : runnableIdsForPage)
+      setAccountConcurrency(lastUsed?.accountConcurrency ?? 1)
+      setRunDelaySeconds(lastUsed?.runDelaySeconds ?? 0)
+      setRestoredPageId(pageTabId)
       setLastResults([])
     }).catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)))
     void refreshLibrary().catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)))
@@ -303,6 +322,17 @@ export function PageWallWorkspace({ activePageId: controlledPageId, scoped = fal
 
   const accounts = useMemo(() => [...(config?.accounts ?? [])].sort((a, b) => a.sortOrder - b.sortOrder), [config])
   const runnableIds = useMemo(() => accounts.filter(isWallAccountSelectable).map((account) => account.accountId), [accounts])
+
+  useEffect(() => {
+    if (!pageTabId || restoredPageId !== pageTabId || config?.id !== pageTabId) return
+    const runnableSet = new Set(runnableIds)
+    savePageWallLastUsedState(pageTabId, {
+      selectedAccountIds: selectedIds.filter((accountId) => runnableSet.has(accountId)),
+      accountConcurrency,
+      runDelaySeconds
+    })
+  }, [pageTabId, restoredPageId, config?.id, runnableIds, selectedIds, accountConcurrency, runDelaySeconds])
+
   const accountRange = useExcelRowRange(runnableIds)
   const selectedRunnable = selectedIds.filter((id) => runnableIds.includes(id))
   const scheduleGroups = useMemo(() => groupSchedulePlans(dashboard.plans), [dashboard.plans])
