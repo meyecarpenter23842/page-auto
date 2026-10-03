@@ -12,7 +12,6 @@ const execFileAsync = promisify(execFile)
 const DOCK_GAP_PX = 4
 const POWERSHELL_TIMEOUT_MS = 12_000
 const SCROLL_POLL_MS = 80
-const DISCOVER_POLL_MS = 700
 
 export interface AccountBrowserDockTarget {
   accountId: number
@@ -268,7 +267,6 @@ export class AccountBrowserDockManager {
   private readonly layoutCells = new Map<number, AccountBrowserDockCell>()
   private operation = Promise.resolve()
   private layoutTimer: NodeJS.Timeout | null = null
-  private discoverTimer: NodeJS.Timeout | null = null
   private scrollTimer: NodeJS.Timeout | null = null
   private moveHost: ChildProcessWithoutNullStreams | null = null
   private closing = false
@@ -281,18 +279,17 @@ export class AccountBrowserDockManager {
   }
 
   /**
-   * Account-open hook from ipc.ts. A normal profile should join the shared Chrome
-   * workspace regardless of whether the profile or the workspace was opened first.
+   * Compatibility entry point for callers that explicitly request the Chrome workspace.
+   * Opening an account profile by itself must never invoke this method.
    */
   async open(owner: BrowserWindow | null): Promise<AccountBrowserDockOpenResult> {
     return this.openExplicit(owner)
   }
 
-  /** Re-scan active slot owners after a profile finishes opening. */
+  /** Explicit re-scan only; callers decide when newly opened Chrome windows should join. */
   async sync(): Promise<void> {
     if (!this.window || this.window.isDestroyed() || this.closing) return
     await this.enqueueSync()
-    this.scheduleDiscover()
   }
 
   accountClosed(accountId: number): void {
@@ -304,10 +301,8 @@ export class AccountBrowserDockManager {
   dispose(): void {
     ipcMain.removeHandler(ACCOUNT_BROWSER_DOCK_IPC.open)
     if (this.layoutTimer) clearTimeout(this.layoutTimer)
-    if (this.discoverTimer) clearTimeout(this.discoverTimer)
     if (this.scrollTimer) clearInterval(this.scrollTimer)
     this.layoutTimer = null
-    this.discoverTimer = null
     this.scrollTimer = null
     this.stopMoveHost()
     this.layoutCells.clear()
@@ -326,7 +321,6 @@ export class AccountBrowserDockManager {
       this.window.show()
       this.window.focus()
       await this.enqueueSync()
-      this.scheduleDiscover()
       return {
         status: 'focused',
         embeddedCount: this.embedded.size,
@@ -368,16 +362,13 @@ export class AccountBrowserDockManager {
       if (this.closing || this.embedded.size === 0) return
       event.preventDefault()
       this.closing = true
-      if (this.discoverTimer) clearTimeout(this.discoverTimer)
       if (this.scrollTimer) clearInterval(this.scrollTimer)
-      this.discoverTimer = null
       this.scrollTimer = null
       void this.restoreAll().then(() => {
         if (!manager.isDestroyed()) manager.destroy()
       }).catch((error) => {
         this.closing = false
         this.startScrollWatcher()
-        this.scheduleDiscover()
         if (!manager.isDestroyed()) {
           manager.setTitle('Quản lý cửa sổ Chrome - lỗi tách cửa sổ')
           manager.show()
@@ -388,10 +379,8 @@ export class AccountBrowserDockManager {
     })
     manager.on('closed', () => {
       if (this.layoutTimer) clearTimeout(this.layoutTimer)
-      if (this.discoverTimer) clearTimeout(this.discoverTimer)
       if (this.scrollTimer) clearInterval(this.scrollTimer)
       this.layoutTimer = null
-      this.discoverTimer = null
       this.scrollTimer = null
       this.stopMoveHost()
       this.window = null
@@ -405,13 +394,12 @@ export class AccountBrowserDockManager {
     manager.show()
     this.startScrollWatcher()
     await this.enqueueSync()
-    this.scheduleDiscover()
     return {
       status: 'opened',
       embeddedCount: this.embedded.size,
       message: this.embedded.size > 0
         ? `Đã gom ${this.embedded.size} cửa sổ Chrome vào trình quản lý.`
-        : 'Đã mở trình quản lý. Đang chờ Chrome profile/tác vụ xuất hiện để tự gom.'
+        : 'Đã mở trình quản lý. Chưa có Chrome profile nào đang mở; bấm Cửa sổ Chrome lần nữa để gom Chrome mới.'
     }
   }
 
@@ -449,16 +437,6 @@ export class AccountBrowserDockManager {
     }
 
     if (changed) await this.layoutNow()
-  }
-
-  private scheduleDiscover(): void {
-    if (this.discoverTimer || this.closing) return
-    const manager = this.window
-    if (!manager || manager.isDestroyed()) return
-    this.discoverTimer = setTimeout(() => {
-      this.discoverTimer = null
-      void this.enqueueSync().finally(() => this.scheduleDiscover())
-    }, DISCOVER_POLL_MS)
   }
 
   private scheduleLayout(): void {

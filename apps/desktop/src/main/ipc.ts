@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain } from 'electron'
+import { app, dialog, ipcMain } from 'electron'
 import type Database from 'better-sqlite3'
 import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { dirname, extname, join } from 'node:path'
@@ -224,18 +224,14 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
   ipcMain.handle(IPC_CHANNELS.accountPresetsDelete, (_event, id: number) => accounts.deleteImportPreset(id))
   ipcMain.handle(IPC_CHANNELS.accountColumnLayoutGet, () => accounts.getColumnLayout('accounts'))
   ipcMain.handle(IPC_CHANNELS.accountColumnLayoutSave, (_event, payload: AccountColumnLayoutPayload) => { accounts.saveColumnLayout('accounts', payload.layout) })
-  ipcMain.handle(IPC_CHANNELS.accountOpenProfile, async (event, payload: AccountOpenProfilePayload) => {
+  ipcMain.handle(IPC_CHANNELS.accountOpenProfile, async (_event, payload: AccountOpenProfilePayload) => {
     const account = accounts.getById(payload.accountId)
     if (!account) return { status: 'error', message: 'Account không tồn tại.' }
     const checkLive = payload.checkLive === true
     if (checkLive) profileNameRefreshRequests.set(account.id, (profileNameRefreshRequests.get(account.id) ?? 0) + 1)
     try {
-      const opening = browserProfiles.open(account)
-      if (!checkLive) void browserDock.open(BrowserWindow.fromWebContents(event.sender))
-      const result = await opening
-      if (checkLive) {
-        if (result.status === 'started') await browserProfiles.closeAccount(account.id)
-      } else if (result.status !== 'error') await browserDock.sync()
+      const result = await browserProfiles.open(account)
+      if (checkLive && result.status === 'started') await browserProfiles.closeAccount(account.id)
       return result
     } finally {
       if (checkLive) {

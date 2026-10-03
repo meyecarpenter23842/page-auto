@@ -27,13 +27,26 @@ describe('global Chrome workspace entry point', () => {
     expect(ipcSource).not.toContain(".filter((assignment) => assignment.owners.includes('profile'))")
   })
 
-  it('auto-syncs profiles into an independent top-level workspace regardless of open order', () => {
+  it('keeps a normal account open independent until the user explicitly opens the Chrome workspace', () => {
+    const start = ipcSource.indexOf('ipcMain.handle(IPC_CHANNELS.accountOpenProfile')
+    const end = ipcSource.indexOf('ipcMain.handle(IPC_CHANNELS.facebookCheckpoint282Run', start)
+    const profileOpenSource = ipcSource.slice(start, end)
+
+    expect(profileOpenSource).toContain('await browserProfiles.open(account)')
+    expect(profileOpenSource).not.toContain('browserDock.open')
+    expect(profileOpenSource).not.toContain('browserDock.sync')
+    expect(profileOpenSource).not.toContain('BrowserWindow.fromWebContents')
+  })
+
+  it('syncs dock contents only from an explicit workspace action and never polls for new profiles', () => {
+    expect(dockManagerSource).toContain('ipcMain.handle(ACCOUNT_BROWSER_DOCK_IPC.open, (event) => this.openExplicit')
     expect(dockManagerSource).toContain('async open(owner: BrowserWindow | null): Promise<AccountBrowserDockOpenResult>')
     expect(dockManagerSource).toContain('return this.openExplicit(owner)')
     expect(dockManagerSource).toContain('async sync(): Promise<void>')
     expect(dockManagerSource).toContain('await this.enqueueSync()')
-    expect(dockManagerSource).toContain('const DISCOVER_POLL_MS = 700')
-    expect(dockManagerSource).toContain('void this.enqueueSync().finally(() => this.scheduleDiscover())')
+    expect(dockManagerSource).not.toContain('DISCOVER_POLL_MS')
+    expect(dockManagerSource).not.toContain('scheduleDiscover')
+    expect(dockManagerSource).not.toContain('discoverTimer')
     expect(dockManagerSource).not.toContain("{ parent: owner }")
     expect(dockManagerSource).toContain("owner.once('closed'")
   })
