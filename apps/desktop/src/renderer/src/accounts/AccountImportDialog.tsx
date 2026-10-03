@@ -10,13 +10,16 @@ import {
 } from '../../../shared/accounts'
 import type { AccountGroupRecord } from '../../../shared/accountGroups'
 import {
-  DEFAULT_CUSTOM_MAPPING,
   MIN_CUSTOM_MAPPING_COLUMNS,
   PREVIEW_LIMIT,
   importFieldLabels,
   normalizeCustomMapping,
   type PreviewRow
 } from './accountManagerModel'
+import {
+  loadAccountImportLastUsedState,
+  saveAccountImportLastUsedState
+} from './accountImportLastUsedState'
 
 export interface ImportDialogProps {
   operation: AccountImportOperation
@@ -29,8 +32,8 @@ export interface ImportDialogProps {
 
 export function ImportDialog({ operation, presets, initialGroupName, onClose, onImported, onPresetSaved }: ImportDialogProps) {
   const [rawText, setRawText] = useState('')
-  const [delimiter, setDelimiter] = useState('|')
-  const [mapping, setMapping] = useState<AccountImportMapping>(() => [...DEFAULT_CUSTOM_MAPPING])
+  const [delimiter, setDelimiter] = useState(() => loadAccountImportLastUsedState(operation).delimiter)
+  const [mapping, setMapping] = useState<AccountImportMapping>(() => loadAccountImportLastUsedState(operation).mapping)
   const [groups, setGroups] = useState<AccountGroupRecord[]>([])
   const [selectedGroupId, setSelectedGroupId] = useState('')
   const [presetName, setPresetName] = useState('')
@@ -48,6 +51,10 @@ export function ImportDialog({ operation, presets, initialGroupName, onClose, on
   useEffect(() => {
     setMapping((current) => normalizeCustomMapping(current, Math.max(maxDataColumns, MIN_CUSTOM_MAPPING_COLUMNS)))
   }, [maxDataColumns])
+
+  useEffect(() => {
+    saveAccountImportLastUsedState(operation, { delimiter, mapping })
+  }, [operation, delimiter, mapping])
 
   useEffect(() => {
     if (operation !== 'insert') return
