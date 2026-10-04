@@ -25,6 +25,7 @@ import { EmailCommonRuntime } from './email/emailCommonRuntime'
 import { EmailBrowserWindowLayoutRuntime } from './email/emailBrowserWindowLayout'
 import { runHotmailOpenBatch } from './email/emailOpenBatch'
 import { HotmailComboService } from './email/hotmailComboService'
+import { testEmailBrowserExecutable } from './email/emailProxyTester'
 import { ElectronEmailSecretCipher } from './email/emailSecretStore'
 import { HotmailService } from './email/hotmailService'
 import { createMicrosoftMailboxRuntime } from './email/microsoftMailboxRuntime'
@@ -69,6 +70,7 @@ export function registerHotmailIpcHandlers(database: Database.Database): Hotmail
     height: initialBrowserSettings.browserWindowHeight
   })
   const browserEngine = new BrowserEngineService()
+  const validatedExecutables = new Set<string>()
   let pendingRecoveryPayload: HotmailRecoveryActionPayload | null = null
   let pendingPasswordPayload: HotmailPasswordActionPayload | null = null
 
@@ -78,13 +80,29 @@ export function registerHotmailIpcHandlers(database: Database.Database): Hotmail
       throw new Error('Không tìm thấy Browser Email. Anh chọn Chrome/Edge/Chromium chạy được trong Cài đặt Email.')
     }
 
+    let foundExecutable = false
     for (const candidate of candidates) {
       const probe = await browserEngine.probeExecutable(candidate)
-      if (probe.status === 'found') return candidate
+      if (probe.status !== 'found') continue
+      foundExecutable = true
+      if (validatedExecutables.has(candidate)) return candidate
+
+      const result = await testEmailBrowserExecutable(candidate)
+      if (result.ok) {
+        validatedExecutables.add(candidate)
+        return candidate
+      }
+
+      if (requestedExecutable.trim()) {
+        throw new Error('Browser Email đã chọn không mở persistent profile được. Anh chọn Chrome/Edge/Chromium khác rồi thử lại.')
+      }
     }
 
-    if (requestedExecutable.trim()) {
+    if (requestedExecutable.trim() && !foundExecutable) {
       throw new Error('Không tìm thấy file Browser Email đã chọn.')
+    }
+    if (foundExecutable) {
+      throw new Error('Các Browser Email tự tìm thấy đều không mở persistent profile được. Anh chọn file browser thủ công trong Cài đặt Email.')
     }
     throw new Error('Không tìm thấy Browser Email chạy được. Anh chọn file browser thủ công trong Cài đặt Email.')
   }

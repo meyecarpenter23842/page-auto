@@ -19,8 +19,6 @@ asarUnpack:
 extraResources:
   - from: resources/app-icon.png
     to: app-icon.png
-  - from: resources/captcha-extensions
-    to: captcha-extensions
 
 win:
   executableName: PageAuto
