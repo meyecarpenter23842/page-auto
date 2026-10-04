@@ -17,6 +17,7 @@ import type {
   FacebookCheckpoint282Result,
   FacebookCheckpointSurface
 } from '../../shared/facebookCheckpoint'
+import type { CaptchaBrowserRuntimeState } from '../captcha/captchaRuntime'
 import { getEmailCodeProvider } from '../services/emailCodeProviderRegistry'
 import { setBrowserLaunchAwareTimeout } from './browserLaunchBroker'
 import {
@@ -186,7 +187,8 @@ export class BrowserProfileManager {
     private readonly getBrowserSettings: () => BrowserSettings = () => ({ ...DEFAULT_APP_SETTINGS.browser }),
     private readonly getSessionSettings: () => SessionSettings = () => ({ ...DEFAULT_APP_SETTINGS.session }),
     private readonly windowLayout?: BrowserWindowLayoutManager,
-    private readonly getWindowLayoutSettings: () => BrowserWindowLayoutSettings = () => cloneDefaultBrowserWindowLayout()
+    private readonly getWindowLayoutSettings: () => BrowserWindowLayoutSettings = () => cloneDefaultBrowserWindowLayout(),
+    private readonly getCaptchaRuntimeState: () => CaptchaBrowserRuntimeState | null = () => null
   ) {}
 
   onAccountClosed(listener: AccountClosedListener): () => void {
@@ -673,6 +675,7 @@ export class BrowserProfileManager {
     const layoutSettings = { ...this.getWindowLayoutSettings() }
     const placement = this.windowLayout?.placementFor(account.id, layoutSettings, browserSettings) ?? null
     const sessionSettings = { ...this.getSessionSettings() }
+    const captcha = this.getCaptchaRuntimeState()
     return new Promise<BrowserProfileResult>((resolve) => {
       const responseTimeout = browserSettings.startupDelayMs
         + browserSettings.startupTimeoutMs
@@ -699,7 +702,8 @@ export class BrowserProfileManager {
           placement,
           launch: {
             ...(proxy ? { proxy } : {}),
-            ...(account.userAgent ? { userAgent: account.userAgent } : {})
+            ...(account.userAgent ? { userAgent: account.userAgent } : {}),
+            ...(captcha ? { captcha } : {})
           }
         })
       } catch (error) {

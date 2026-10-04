@@ -42,6 +42,7 @@ import { AccountRepository } from './database/accountRepository'
 import { AppSettingsRepository } from './database/appSettingsRepository'
 import { BrowserWindowLayoutRepository } from './database/browserWindowLayoutRepository'
 import { CaptchaSettingsRepository } from './database/captchaSettingsRepository'
+import { buildCaptchaBrowserRuntimeState } from './captcha/captchaRuntime'
 import { ExecutionLogRepository } from './database/executionLogRepository'
 import { PageTabRepository } from './database/pageTabRepository'
 import { PageWallJobRepository } from './database/pageWallJobRepository'
@@ -94,6 +95,13 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
   }
   const browserWindowLayoutSettings = new BrowserWindowLayoutRepository(options.database)
   const captchaSettings = new CaptchaSettingsRepository(options.database)
+  const captchaExtensionRoot = app.isPackaged
+    ? join(process.resourcesPath, 'captcha-extensions')
+    : join(app.getAppPath(), 'resources', 'captcha-extensions')
+  const captchaRuntimeState = () => buildCaptchaBrowserRuntimeState(
+    captchaSettings.getRuntimeSnapshot(),
+    captchaExtensionRoot
+  )
   const pageTabs = new PageTabRepository(options.database)
   const pageWallJobs = new PageWallJobRepository(options.database)
   const pageWallRecurringPlans = new PageWallRecurringRepository(options.database, pageWallJobs)
@@ -124,7 +132,7 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
       lastCookieCheck: session.lastCookieCheck,
       lastUsedAt: session.status === 'valid' ? Date.now() : current.lastUsedAt
     })
-  }, () => appSettings.get().browser, () => appSettings.get().session, browserWindowLayout, () => browserWindowLayoutSettings.get())
+  }, () => appSettings.get().browser, () => appSettings.get().session, browserWindowLayout, () => browserWindowLayoutSettings.get(), captchaRuntimeState)
 
   const browserDock = new AccountBrowserDockManager(() => {
     const display = browserWindowLayout.listDisplays()[0] as (ReturnType<BrowserWindowLayoutManager['listDisplays']>[number] & BrowserDisplaySlotRuntimeExtension) | undefined

@@ -11,6 +11,8 @@ import type {
   FacebookCheckpointSurface
 } from '../../shared/facebookCheckpoint'
 import type { PostingProxyConfig } from '../../shared/posting'
+import { configureManagedCaptchaExtension } from '../captcha/captchaExtensionController'
+import type { CaptchaBrowserRuntimeState } from '../captcha/captchaRuntime'
 import { createEmailCodeWorkerRpc } from '../email/emailCodeWorkerRpc'
 import { runFacebookCommonChallengeRuntime } from '../facebook/facebookCommonChallengeRuntime'
 import { resolveCheckLiveAccountStatus } from './checkLiveAccountStatus'
@@ -41,6 +43,7 @@ import { runWithResizeWatcherPaused } from './resizeWatchGuard'
 interface BrowserLaunchConfig {
   proxy?: PostingProxyConfig
   userAgent?: string
+  captcha?: CaptchaBrowserRuntimeState
 }
 
 interface ContextCommand {
@@ -290,6 +293,7 @@ async function run(): Promise<void> {
 
   let context: BrowserContext | null = null
   let cdpEndpoint: string | null = null
+  let captchaRevisionApplied: string | null = null
   let activePlacement: BrowserWindowPlacement | null = null
   let launchedWholeChromeScale: number | null = null
   let manualResizeDetached = false
@@ -327,6 +331,18 @@ async function run(): Promise<void> {
     return sameWholeChromeScale(launchedWholeChromeScale, wholeChromeScaleForLaunch(placement))
   }
 
+  const applyCaptchaRuntime = async (
+    activeContext: BrowserContext,
+    captcha: CaptchaBrowserRuntimeState | undefined
+  ): Promise<void> => {
+    if (!captcha || captchaRevisionApplied === captcha.revision) return
+    const configured = await configureManagedCaptchaExtension(activeContext, captcha)
+    captchaRevisionApplied = captcha.revision
+    console.info(
+      `[PAGE-AUTO captcha-extension] provider=${configured.provider ?? 'disabled'} status=${configured.extensionId ? 'ready' : 'off'}`
+    )
+  }
+
   const logReopenRequired = (placement: BrowserWindowPlacement | null): void => {
     console.info(
       `[PAGE-AUTO compact-scale] reopen-required running=${launchedWholeChromeScale ?? 1} requested=${wholeChromeScaleForLaunch(placement) ?? 1}`
@@ -343,6 +359,7 @@ async function run(): Promise<void> {
     const activeContext = context
     context = null
     cdpEndpoint = null
+    captchaRevisionApplied = null
     activePlacement = null
     launchedWholeChromeScale = null
     manualResizeDetached = false
@@ -366,6 +383,7 @@ async function run(): Promise<void> {
         }
       }
       if (!cdpEndpoint) cdpEndpoint = await resolveCdpEndpoint(profileDirectory)
+      await applyCaptchaRuntime(activeContext, command.launch?.captcha)
       return activeContext
     }
 
@@ -383,7 +401,8 @@ async function run(): Promise<void> {
           ? [`--force-device-scale-factor=${launchedWholeChromeScale}`]
           : []),
         '--remote-debugging-address=127.0.0.1',
-        '--remote-debugging-port=0'
+        '--remote-debugging-port=0',
+        ...(command.launch?.captcha ? ['--enable-unsafe-extension-debugging'] : [])
       ],
       viewport: null,
       ...(command.launch?.userAgent ? { userAgent: command.launch.userAgent } : {})
@@ -404,6 +423,7 @@ async function run(): Promise<void> {
     const opened = await chromium.launchPersistentContext(profileDirectory, launchOptions)
     await applyBrowserContextSettings(opened, command.browser)
     context = opened
+    await applyCaptchaRuntime(opened, command.launch?.captcha)
     await runWithResizeWatcherPaused(
       stopWatchingResize,
       () => applyBrowserPlacementToContext(opened, activePlacement),
@@ -429,6 +449,7 @@ async function run(): Promise<void> {
       stopWatchingResize()
       context = null
       cdpEndpoint = null
+      captchaRevisionApplied = null
       activePlacement = null
       launchedWholeChromeScale = null
       manualResizeDetached = false
@@ -667,7 +688,19 @@ async function run(): Promise<void> {
         if (!manualResizeDetached) {
           await applyBrowserWindowPlacement(activeContext, page, activePlacement).catch(() => undefined)
         }
-        const session = await bootstrapFacebookSession(activeContext, page, command.account, command.session.facebookLocale)
+        const session = await bootstrapFacebookSession(
+          activeContext,
+          page,
+          command.account,
+          command.session.facebookLocale,
+          command.launch?.captcha?.active
+            ? {
+                networkTimeoutMs: Math.max(60_000, command.browser.navigationTimeoutMs),
+                navigationTimeoutMs: command.browser.navigationTimeoutMs,
+                pageSettleDelayMs: command.browser.pageSettleDelayMs
+              }
+            : undefined
+        )
         session.status = await resolveCheckLiveAccountStatus(page, session)
         if (session.status === 'valid') {
           const identity = await inspectFacebookAccountIdentity(activeContext, command.account.uid)
