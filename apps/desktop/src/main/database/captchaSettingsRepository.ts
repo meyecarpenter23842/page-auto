@@ -7,7 +7,6 @@ import {
   type CaptchaSettingsView,
   type SaveCaptchaSettingsInput
 } from '../../shared/captchaSettings'
-import { resolveCaptchaRuntimeSnapshot, type CaptchaRuntimeSnapshot } from '../captcha/captchaRuntime'
 
 const CAPTCHA_SETTINGS_KEY = 'captcha.providers.v1'
 
@@ -90,10 +89,6 @@ export class CaptchaSettingsRepository {
 
   get(): CaptchaSettingsView {
     return toView(this.readStored())
-  }
-
-  getRuntimeSnapshot(): CaptchaRuntimeSnapshot {
-    return resolveCaptchaRuntimeSnapshot(this.readStored())
   }
 
   save(input: SaveCaptchaSettingsInput): CaptchaSettingsView {
