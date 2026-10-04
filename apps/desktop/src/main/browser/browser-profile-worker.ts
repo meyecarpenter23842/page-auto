@@ -294,6 +294,7 @@ async function run(): Promise<void> {
   let context: BrowserContext | null = null
   let cdpEndpoint: string | null = null
   let captchaRevisionApplied: string | null = null
+  let captchaRuntimeReady = false
   let activePlacement: BrowserWindowPlacement | null = null
   let launchedWholeChromeScale: number | null = null
   let manualResizeDetached = false
@@ -335,12 +336,27 @@ async function run(): Promise<void> {
     activeContext: BrowserContext,
     captcha: CaptchaBrowserRuntimeState | undefined
   ): Promise<void> => {
-    if (!captcha || captchaRevisionApplied === captcha.revision) return
-    const configured = await configureManagedCaptchaExtension(activeContext, captcha)
-    captchaRevisionApplied = captcha.revision
-    console.info(
-      `[PAGE-AUTO captcha-extension] provider=${configured.provider ?? 'disabled'} status=${configured.extensionId ? 'ready' : 'off'}`
-    )
+    if (!captcha) {
+      captchaRuntimeReady = false
+      return
+    }
+    if (captchaRevisionApplied === captcha.revision) return
+
+    try {
+      const configured = await configureManagedCaptchaExtension(activeContext, captcha)
+      captchaRuntimeReady = Boolean(configured.extensionId)
+      console.info(
+        `[PAGE-AUTO captcha-extension] provider=${configured.provider ?? 'disabled'} status=${configured.extensionId ? 'ready' : 'off'}`
+      )
+    } catch (error) {
+      captchaRuntimeReady = false
+      console.warn(
+        '[PAGE-AUTO captcha-extension] setup failed; continue Facebook login without CAPTCHA extension:',
+        error instanceof Error ? error.message : String(error)
+      )
+    } finally {
+      captchaRevisionApplied = captcha.revision
+    }
   }
 
   const logReopenRequired = (placement: BrowserWindowPlacement | null): void => {
@@ -360,6 +376,7 @@ async function run(): Promise<void> {
     context = null
     cdpEndpoint = null
     captchaRevisionApplied = null
+    captchaRuntimeReady = false
     activePlacement = null
     launchedWholeChromeScale = null
     manualResizeDetached = false
@@ -450,6 +467,7 @@ async function run(): Promise<void> {
       context = null
       cdpEndpoint = null
       captchaRevisionApplied = null
+      captchaRuntimeReady = false
       activePlacement = null
       launchedWholeChromeScale = null
       manualResizeDetached = false
@@ -693,7 +711,7 @@ async function run(): Promise<void> {
           page,
           command.account,
           command.session.facebookLocale,
-          command.launch?.captcha?.active
+          captchaRuntimeReady
             ? {
                 networkTimeoutMs: Math.max(60_000, command.browser.navigationTimeoutMs),
                 navigationTimeoutMs: command.browser.navigationTimeoutMs,
