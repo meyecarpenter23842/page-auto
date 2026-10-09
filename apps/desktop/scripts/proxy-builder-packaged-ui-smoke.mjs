@@ -135,6 +135,28 @@ try {
     'Copy Proxy sau khi tích checkbox không khớp tập proxy đã chọn.'
   )
 
+  // A real pointer drag must scroll the *inventory viewport* and select new rows.
+  await root.getByRole('button', { name: '+ Nhập Proxy vào kho', exact: true }).click()
+  const manyProxies = Array.from({ length: 90 }, (_, index) => '127.0.0.1:' + (41000 + index) + ':drag' + index + ':secret' + index)
+  await root.getByLabel('Nhập proxy vào kho').fill(manyProxies.join('\n'))
+  await root.getByRole('button', { name: 'Nhập vào kho (90)', exact: true }).click()
+  await inventoryRows.nth(89).waitFor({ state: 'attached' })
+  await root.getByRole('button', { name: 'Bỏ chọn', exact: true }).click()
+  const scrollHost = root.locator('.proxy-center-table').locator('..')
+  await scrollHost.evaluate((node) => { node.scrollTop = 0 })
+  const viewport = await scrollHost.boundingBox()
+  const sourceBox = await inventoryRows.first().locator('td').nth(1).boundingBox()
+  invariant(viewport && sourceBox, 'Không đo được vùng cuộn để test kéo phủ.')
+  const initialScroll = await scrollHost.evaluate((node) => node.scrollTop)
+  await page.mouse.move(sourceBox.x + 10, sourceBox.y + sourceBox.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(viewport.x + 65, viewport.y + viewport.height - 8, { steps: 8 })
+  await page.waitForTimeout(1050)
+  await page.mouse.up()
+  const scrolled = await scrollHost.evaluate((node) => node.scrollTop)
+  const selectedByDrag = await root.locator('.proxy-center-table tbody input[type="checkbox"]:checked').count()
+  invariant(scrolled > initialScroll + 70 && selectedByDrag > 10, 'Kéo phủ không tự cuộn/chọn thêm dòng: scroll=' + scrolled + ', selected=' + selectedByDrag)
+
   await root.getByRole('tab', { name: 'Proxy Checker', exact: true }).click()
 
   const textarea = root.getByLabel('Danh sách proxy')

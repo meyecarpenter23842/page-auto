@@ -119,6 +119,7 @@ export function AccountBindingPickerModal({ accounts, selectedIds, onApply, onCl
               const ranged = excelRange.rangeIds.has(account.id)
               return <tr
                 key={account.id}
+                data-excel-row-id={account.id}
                 className={`${checked ? 'checked-row ' : ''}${ranged ? 'range-row' : ''}`.trim()}
                 onPointerDown={(event) => excelRange.onRowPointerDown(event, account.id)}
                 onPointerEnter={() => excelRange.onRowPointerEnter(account.id)}

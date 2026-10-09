@@ -21,6 +21,32 @@ export type ExcelDragMode = 'add' | 'remove'
 
 const INTERACTIVE_SELECTOR = 'input,button,select,a,textarea,[contenteditable="true"]'
 
+/** Vertical pixels/frame, constrained to the scrollable viewport under the mouse. */
+export function edgeAutoScrollDelta(
+  pointerY: number, top: number, bottom: number,
+  scrollTop: number, scrollHeight: number, clientHeight: number, edgeSize = 44
+): number {
+  if (bottom <= top || scrollHeight <= clientHeight + 1) return 0
+  const band = Math.min(edgeSize, Math.max(12, (bottom - top) / 3))
+  if (pointerY < top + band && scrollTop > 0) {
+    return -Math.min(24, Math.max(4, Math.round((top + band - pointerY) / band * 18)))
+  }
+  if (pointerY > bottom - band && scrollTop < scrollHeight - clientHeight) {
+    return Math.min(24, Math.max(4, Math.round((pointerY - bottom + band) / band * 18)))
+  }
+  return 0
+}
+
+/** Avoid scrolling the app shell when only a grid's own viewport should move. */
+function findVerticalScrollHost(start: HTMLElement): HTMLElement | null {
+  for (let node: HTMLElement | null = start.parentElement; node; node = node.parentElement) {
+    if (node.scrollHeight <= node.clientHeight + 1) continue
+    if (/auto|scroll|overlay/.test(window.getComputedStyle(node).overflowY)) return node
+  }
+  const root = document.scrollingElement
+  return root instanceof HTMLElement && root.scrollHeight > root.clientHeight + 1 ? root : null
+}
+
 export function rowIdsBetween(orderedIds: readonly number[], startId: number, endId: number): number[] {
   const start = orderedIds.indexOf(startId)
   const end = orderedIds.indexOf(endId)
@@ -101,7 +127,19 @@ export function useExcelRowRange(
     baseIds: Set<number>
     mode: ExcelDragMode
     anchorId: number
+    pointerId: number
+    pointerX: number
+    pointerY: number
+    lastTargetId: number
+    rowsRoot: HTMLTableSectionElement | null
+    scrollHost: HTMLElement | null
   } | null>(null)
+  const orderedIdsRef = useRef(orderedIds)
+  const checkedChangeRef = useRef(onCheckedChange)
+  const processPointerRef = useRef<(autoScroll: boolean) => void>(() => {})
+  const startFrameRef = useRef<() => void>(() => {})
+  orderedIdsRef.current = orderedIds
+  checkedChangeRef.current = onCheckedChange
   const orderedKey = useMemo(() => orderedIds.join('|'), [orderedIds])
 
   const applyRange = (next: ExcelRowRangeState, syncChecked = false) => {
@@ -109,7 +147,7 @@ export function useExcelRowRange(
     anchorIdRef.current = next.anchorId
     setRangeIds(next.ids)
     setAnchorId(next.anchorId)
-    if (syncChecked) onCheckedChange?.(new Set(next.ids))
+    if (syncChecked) checkedChangeRef.current?.(new Set(next.ids))
   }
 
   useEffect(() => {
@@ -123,12 +161,65 @@ export function useExcelRowRange(
     setAnchorId(nextAnchor)
   }, [orderedKey])
 
+  // Row pointer-enter events stop outside the viewport; drive both hit tests and
+  // edge scrolling from the same mouse drag across all grids using this hook.
+  const processPointer = (autoScroll: boolean) => {
+    const drag = dragRef.current
+    if (!drag || !drag.rowsRoot || !drag.scrollHost) return
+    const host = drag.scrollHost
+    const rect = host.getBoundingClientRect()
+    if (autoScroll) {
+      const dy = edgeAutoScrollDelta(drag.pointerY, rect.top, rect.bottom, host.scrollTop, host.scrollHeight, host.clientHeight)
+      if (dy) host.scrollTop += dy
+    }
+    const headerBottom = drag.rowsRoot.closest('table')?.tHead?.getBoundingClientRect().bottom ?? rect.top
+    const minY = Math.min(rect.bottom - 3, Math.max(rect.top + 3, headerBottom + 3))
+    const x = Math.max(rect.left + 3, Math.min(drag.pointerX, rect.right - 3))
+    const y = Math.max(minY, Math.min(drag.pointerY, rect.bottom - 3))
+    const element = document.elementFromPoint(
+      Math.max(1, Math.min(x, window.innerWidth - 2)),
+      Math.max(1, Math.min(y, window.innerHeight - 2))
+    )
+    const row = element?.closest<HTMLElement>('[data-excel-row-id]')
+    if (!row || !drag.rowsRoot.contains(row)) return
+    const id = Number(row.dataset.excelRowId)
+    if (!Number.isFinite(id) || !orderedIdsRef.current.includes(id) || drag.lastTargetId === id) return
+    drag.lastTargetId = id
+    applyRange({
+      ids: nextExcelDragRange(orderedIdsRef.current, drag.baseIds, drag.startId, id, drag.mode),
+      anchorId: drag.anchorId
+    }, true)
+  }
+  processPointerRef.current = processPointer
+
   useEffect(() => {
+    let frameId: number | null = null
+    const frame = () => {
+      if (!dragRef.current) { frameId = null; return }
+      processPointerRef.current(true)
+      frameId = window.requestAnimationFrame(frame)
+    }
+    startFrameRef.current = () => {
+      if (frameId === null) frameId = window.requestAnimationFrame(frame)
+    }
+    const onPointerMove = (event: PointerEvent) => {
+      const drag = dragRef.current
+      if (!drag || event.pointerId !== drag.pointerId) return
+      if (event.pointerType === 'mouse' && !(event.buttons & 1)) { dragRef.current = null; return }
+      drag.pointerX = event.clientX
+      drag.pointerY = event.clientY
+      processPointerRef.current(false)
+    }
     const endDrag = () => { dragRef.current = null }
+    window.addEventListener('pointermove', onPointerMove)
     window.addEventListener('pointerup', endDrag)
     window.addEventListener('pointercancel', endDrag)
     window.addEventListener('blur', endDrag)
     return () => {
+      dragRef.current = null
+      if (frameId !== null) window.cancelAnimationFrame(frameId)
+      startFrameRef.current = () => {}
+      window.removeEventListener('pointermove', onPointerMove)
       window.removeEventListener('pointerup', endDrag)
       window.removeEventListener('pointercancel', endDrag)
       window.removeEventListener('blur', endDrag)
@@ -136,7 +227,7 @@ export function useExcelRowRange(
   }, [])
 
   const onRowPointerDown = (event: ReactPointerEvent<HTMLElement>, accountId: number) => {
-    if (event.button !== 0 || event.detail > 1) return
+    if (event.button !== 0 || event.detail > 1 || event.pointerType === 'touch') return
     const target = event.target as HTMLElement
     if (target.closest(INTERACTIVE_SELECTOR)) return
     event.preventDefault()
@@ -149,13 +240,21 @@ export function useExcelRowRange(
       : accountId
     const mode: ExcelDragMode = additive && !event.shiftKey && currentIds.has(accountId) ? 'remove' : 'add'
     const baseIds = additive ? new Set(currentIds) : new Set<number>()
-    dragRef.current = { startId: shiftAnchor, baseIds, mode, anchorId: shiftAnchor }
+    dragRef.current = {
+      startId: shiftAnchor, baseIds, mode, anchorId: shiftAnchor,
+      pointerId: event.pointerId, pointerX: event.clientX, pointerY: event.clientY,
+      lastTargetId: accountId,
+      rowsRoot: event.currentTarget.closest('tbody'),
+      scrollHost: findVerticalScrollHost(event.currentTarget)
+    }
     applyRange(nextExcelRowRange(orderedIds, currentIds, currentAnchor, accountId, event), true)
+    startFrameRef.current()
   }
 
   const onRowPointerEnter = (accountId: number) => {
     const drag = dragRef.current
-    if (!drag) return
+    if (!drag || drag.lastTargetId === accountId) return
+    drag.lastTargetId = accountId
     applyRange({
       ids: nextExcelDragRange(orderedIds, drag.baseIds, drag.startId, accountId, drag.mode),
       anchorId: drag.anchorId
