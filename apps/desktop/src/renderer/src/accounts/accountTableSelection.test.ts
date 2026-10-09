@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
   clampContextMenuPoint,
+  edgeAutoScrollDelta,
   nextExcelDragRange,
   nextExcelRowRange,
   rowIdsBetween
@@ -53,9 +54,24 @@ describe('Excel-style account table selection', () => {
     expect(sorted(ctrlRemoved)).toEqual([10, 40])
   })
 
-  it('tracks pointer drag locally and always releases it', () => {
+  it('auto-scrolls near the viewport edge but not beyond either end', () => {
+    expect(edgeAutoScrollDelta(197, 0, 200, 0, 1000, 200)).toBeGreaterThan(0)
+    expect(edgeAutoScrollDelta(1, 0, 200, 500, 1000, 200)).toBeLessThan(0)
+    expect(edgeAutoScrollDelta(100, 0, 200, 300, 1000, 200)).toBe(0)
+    expect(edgeAutoScrollDelta(199, 0, 200, 800, 1000, 200)).toBe(0)
+    expect(edgeAutoScrollDelta(1, 0, 200, 0, 1000, 200)).toBe(0)
+    expect(edgeAutoScrollDelta(199, 0, 200, 0, 100, 200)).toBe(0)
+  })
+
+  it('tracks pointer drag across table edges and always releases it', () => {
     expect(selectionHelper).toContain('const onRowPointerEnter = (accountId: number) => {')
     expect(selectionHelper).toContain('nextExcelDragRange')
+    expect(selectionHelper).toContain("window.addEventListener('pointermove', onPointerMove)")
+    expect(selectionHelper).toContain('window.requestAnimationFrame(frame)')
+    expect(selectionHelper).toContain('host.scrollTop += dy')
+    expect(selectionHelper).toContain('host.clientHeight - 5')
+    expect(selectionHelper).toContain('host.clientWidth - 5')
+    expect(selectionHelper).toContain("element?.closest<HTMLElement>('[data-excel-row-id]')")
     expect(selectionHelper).toContain("window.addEventListener('pointerup', endDrag)")
     expect(selectionHelper).toContain("window.addEventListener('pointercancel', endDrag)")
   })
@@ -77,11 +93,12 @@ describe('Excel-style account table selection', () => {
       expect(source).toContain('range-row')
       expect(source).toContain('checked-row')
       expect(source).toContain('useExcelRowRange')
+      expect(source).toContain('data-excel-row-id=')
       expect(source).toMatch(/useExcelRowRange\([^\n]*, (?:selectedIds|selection|selected), set(?:SelectedIds|Selection|Selected)\)/)
       expect(source).not.toContain('paintValue')
     }
     expect(emailGrid).not.toContain('lastSelectedId')
-    expect(selectionHelper).toContain('onCheckedChange?.(new Set(next.ids))')
+    expect(selectionHelper).toContain('checkedChangeRef.current?.(new Set(next.ids))')
     expect(selectionHelper).toContain('if (checkedIds?.has(accountId)) return')
   })
 

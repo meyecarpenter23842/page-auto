@@ -554,6 +554,7 @@ export function HotmailAuto() {
         const ranged = excelRange.rangeIds.has(row.accountId)
         return <tr
           key={row.accountId}
+          data-excel-row-id={row.accountId}
           className={`${checked ? 'checked-row ' : ''}${ranged ? 'range-row ' : ''}`.trim()}
           onPointerDown={(event) => excelRange.onRowPointerDown(event, row.accountId)}
           onPointerEnter={() => excelRange.onRowPointerEnter(row.accountId)}

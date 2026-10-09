@@ -758,3 +758,15 @@ html[data-theme='dark'] .proxy-center-import-toggle,html[data-theme='dark'] .pro
 html[data-theme='dark'] .proxy-center-import-toggle > span,html[data-theme='dark'] .proxy-center-filter-label,html[data-theme='dark'] .proxy-center-busy { color:var(--pa-dark-muted); }
 html[data-theme='dark'] .proxy-center-table tbody tr.checked-row td { background:rgba(83,177,253,.12); }
 @media (max-width:1180px) { .proxy-center-selection-bar.secondary > .proxy-builder-inline-actions { flex-wrap:wrap; } }
+
+/* Dense Proxy inventory: smaller rows and clear, sticky headings when scrolling. */
+.proxy-center-table { font-size:11.5px; line-height:1.3; font-variant-numeric:tabular-nums; }
+.proxy-center-table th,.proxy-center-table td { padding:4px 6px; white-space:nowrap; }
+.proxy-center-table td { font-size:11.5px; }
+.proxy-center-table th { position:sticky; top:0; z-index:2; font-size:10px; background:#f7f9fc; }
+.proxy-center-table td:nth-child(2) { font-family:Consolas,'Courier New',monospace; font-size:11.5px; }
+.proxy-center-table .proxy-builder-check-column { width:27px; min-width:27px; padding-left:5px; padding-right:5px; }
+.proxy-center-table .proxy-center-usage-badge,.proxy-center-table .proxy-builder-live-badge { font-size:9px; line-height:1.2; }
+.proxy-center-table tbody tr { height:25px; }
+.proxy-center-management .proxy-builder-table-wrap { scrollbar-gutter:stable; }
+html[data-theme='dark'] .proxy-center-table th { background:var(--pa-dark-surface-2); color:var(--pa-dark-text-soft); }

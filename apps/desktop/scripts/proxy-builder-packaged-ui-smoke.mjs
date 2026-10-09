@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, resolve } from 'node:path'
@@ -12,6 +13,58 @@ mkdirSync(dirname(screenshotPath), { recursive: true })
 
 let electronApp
 let server
+const proxySockets = new Set()
+let smokeEvidence = null
+
+// Teardown must not hold a Windows runner forever after UI assertions pass.
+async function withinDeadline(promise, label, milliseconds) {
+  let timer
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(label + ' exceeded ' + milliseconds + 'ms')), milliseconds)
+      })
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+async function closeSmokeElectron() {
+  if (!electronApp) return
+  const child = electronApp.process()
+  console.log('[Proxy smoke cleanup] Closing dedicated test Electron')
+  try {
+    await withinDeadline(electronApp.close(), 'Playwright Electron close', 12_000)
+    console.log('[Proxy smoke cleanup] Electron closed')
+  } catch (error) {
+    console.warn('[Proxy smoke cleanup] Graceful close stalled; terminating test-only process:', error)
+    if (child?.pid && process.platform === 'win32') {
+      try {
+        execFileSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { timeout: 8_000, stdio: 'ignore' })
+        return
+      } catch (killError) {
+        console.warn('[Proxy smoke cleanup] taskkill fallback:', killError)
+      }
+    }
+    if (child && child.exitCode === null && !child.kill('SIGKILL')) {
+      throw new Error('Could not terminate test-only Electron process')
+    }
+  }
+}
+
+async function closeSmokeProxy() {
+  if (!server) return
+  console.log('[Proxy smoke cleanup] Closing mock proxy and', proxySockets.size, 'tracked TCP sockets')
+  await withinDeadline(new Promise((resolve, reject) => {
+    // Stop accepting first, then terminate idle client connections. A bare
+    // net.Server.close() will wait until every remaining connection ends.
+    server.close((error) => error ? reject(error) : resolve())
+    for (const socket of proxySockets) socket.destroy()
+  }), 'Mock proxy server close', 5_000)
+  console.log('[Proxy smoke cleanup] Mock proxy closed')
+}
 
 function invariant(condition, message) {
   if (!condition) throw new Error(message)
@@ -19,6 +72,8 @@ function invariant(condition, message) {
 
 async function listenAuthRejectProxy() {
   server = createServer((socket) => {
+    proxySockets.add(socket)
+    socket.once('close', () => proxySockets.delete(socket))
     socket.once('data', () => {
       socket.end('HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="smoke"\r\nConnection: close\r\n\r\n')
     })
@@ -135,6 +190,29 @@ try {
     'Copy Proxy sau khi tích checkbox không khớp tập proxy đã chọn.'
   )
 
+  // A real pointer drag must scroll the *inventory viewport* and select new rows.
+  await root.getByRole('button', { name: '+ Nhập Proxy vào kho', exact: true }).click()
+  const manyProxies = Array.from({ length: 90 }, (_, index) => '127.0.0.1:' + (41000 + index) + ':drag' + index + ':secret' + index)
+  await root.getByLabel('Nhập proxy vào kho').fill(manyProxies.join('\n'))
+  await root.getByRole('button', { name: 'Nhập vào kho (90)', exact: true }).click()
+  await inventoryRows.nth(89).waitFor({ state: 'attached' })
+  await root.getByRole('button', { name: 'Bỏ chọn', exact: true }).click()
+  const scrollHost = root.locator('.proxy-center-table').locator('..')
+  await scrollHost.evaluate((node) => { node.scrollTop = 0 })
+  const viewport = await scrollHost.boundingBox()
+  const sourceBox = await inventoryRows.first().locator('td').nth(1).boundingBox()
+  invariant(viewport && sourceBox, 'Không đo được vùng cuộn để test kéo phủ.')
+  const initialScroll = await scrollHost.evaluate((node) => node.scrollTop)
+  await page.mouse.move(sourceBox.x + 10, sourceBox.y + sourceBox.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(viewport.x + 65, viewport.y + viewport.height - 8, { steps: 8 })
+  await page.waitForTimeout(1050)
+  await page.mouse.up()
+  const scrolled = await scrollHost.evaluate((node) => node.scrollTop)
+  const selectedByDrag = await root.locator('.proxy-center-table tbody input[type="checkbox"]:checked').count()
+  const scrollGeometry = await scrollHost.evaluate((node) => ({ clientWidth: node.clientWidth, clientHeight: node.clientHeight, offsetWidth: node.offsetWidth, offsetHeight: node.offsetHeight }))
+  invariant(scrolled > initialScroll + 70 && selectedByDrag > 10, 'Kéo phủ không tự cuộn/chọn thêm dòng: scroll=' + scrolled + ', selected=' + selectedByDrag + ', viewport=' + JSON.stringify(scrollGeometry))
+
   await root.getByRole('tab', { name: 'Proxy Checker', exact: true }).click()
 
   const textarea = root.getByLabel('Danh sách proxy')
@@ -150,9 +228,17 @@ try {
   invariant(text.includes('0 LIVE') && text.includes('1 DEAD'), 'Packaged checker summary không phản ánh LIVE/DEAD đúng.')
 
   await page.screenshot({ path: screenshotPath, fullPage: true })
-  console.log('Proxy Center packaged UI smoke passed:', { menuVisible: true, checkerIpcLive: true, deterministicDead: true, screenshotPath })
+  smokeEvidence = { menuVisible: true, checkerIpcLive: true, deterministicDead: true, screenshotPath }
 } finally {
-  if (electronApp) await electronApp.close().catch(() => undefined)
-  if (server) await new Promise((resolve) => server.close(() => resolve())).catch(() => undefined)
-  rmSync(dataDirectory, { recursive: true, force: true })
+  try {
+    await closeSmokeElectron()
+  } finally {
+    try {
+      await closeSmokeProxy()
+    } finally {
+      rmSync(dataDirectory, { recursive: true, force: true })
+    }
+  }
 }
+// Report PASS only after teardown has settled.
+console.log('Proxy Center packaged UI smoke passed:', smokeEvidence)

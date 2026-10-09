@@ -509,6 +509,7 @@ export function AccountManager({ onOpenChangeInfoWorkspace }: AccountManagerProp
                 return (
                   <tr
                     key={account.id}
+                    data-excel-row-id={account.id}
                     className={`${checked ? 'checked-row ' : ''}${ranged ? 'range-row' : ''}`.trim()}
                     onPointerDown={(event) => excelRange.onRowPointerDown(event, account.id)}
                     onPointerEnter={() => excelRange.onRowPointerEnter(account.id)}

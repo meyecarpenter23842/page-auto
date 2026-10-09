@@ -445,6 +445,7 @@ export function ProxyInventoryPanel() {
                   return (
                     <tr
                       key={item.id}
+                      data-excel-row-id={item.id}
                       className={`${checked ? 'checked-row ' : ''}${ranged ? 'range-row' : ''}`.trim()}
                       onPointerDown={(event) => excelRange.onRowPointerDown(event, item.id)}
                       onPointerEnter={() => excelRange.onRowPointerEnter(item.id)}
