@@ -96,7 +96,7 @@ describe('Excel-style account table selection', () => {
       expect(source).not.toContain('paintValue')
     }
     expect(emailGrid).not.toContain('lastSelectedId')
-    expect(selectionHelper).toContain('onCheckedChange?.(new Set(next.ids))')
+    expect(selectionHelper).toContain('checkedChangeRef.current?.(new Set(next.ids))')
     expect(selectionHelper).toContain('if (checkedIds?.has(accountId)) return')
   })
 
