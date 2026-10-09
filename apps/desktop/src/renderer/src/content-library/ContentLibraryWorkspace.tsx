@@ -16,6 +16,7 @@ import {
   insertTextAtSelection,
   replaceEditorVariant
 } from './contentLibraryEditor'
+import { confirmWorkspaceNavigation, useUnsavedWorkspaceChanges } from '../workspaceNavigation'
 import './contentLibrary.css'
 import './contentLibraryCategories.css'
 
@@ -184,6 +185,12 @@ export function ContentLibraryWorkspace() {
   }, [details, itemSearch])
 
   const categorySets = useMemo(() => sets.filter((item) => item.id !== CANONICAL_CONTENT_LIBRARY_SET_ID), [sets])
+  const originalEditorItem = editor?.id == null ? null : details?.items.find((item) => item.id === editor.id)
+  const editorDirty = Boolean(editor && (
+    editor.id === null
+    || (originalEditorItem && JSON.stringify(editor) !== JSON.stringify(editorFromItem(originalEditorItem)))
+  ))
+  useUnsavedWorkspaceChanges(editorDirty, 'Thư viện / Bài viết')
   const activeVariant = editor?.variants[activeVariantIndex] ?? ''
   const previewMode = preview?.mode ?? 'source'
   const isAllPosts = details?.id === CANONICAL_CONTENT_LIBRARY_SET_ID
@@ -194,6 +201,7 @@ export function ContentLibraryWorkspace() {
       : [selectedItemId]
 
   const chooseSet = async (id: number) => {
+    if (id !== selectedSetId && editorDirty && !confirmWorkspaceNavigation()) return
     const requestId = ++sourceLoadSequence.current
     setBusy(true)
     setSelectedSetId(id)
@@ -218,6 +226,8 @@ export function ContentLibraryWorkspace() {
   }
 
   const chooseItem = (item: ContentLibraryItem) => {
+    if (item.id === selectedItemId) return
+    if (editorDirty && !confirmWorkspaceNavigation()) return
     setSelectedItemId(item.id)
     setEditor(editorFromItem(item))
     setActiveVariantIndex(0)
@@ -302,7 +312,7 @@ export function ContentLibraryWorkspace() {
   }
 
   const startNewItem = () => {
-    if (!details) return
+    if (!details || (editorDirty && !confirmWorkspaceNavigation())) return
     setSelectedItemId(null)
     setEditor(blankEditor(details.items.length))
     setActiveVariantIndex(0)

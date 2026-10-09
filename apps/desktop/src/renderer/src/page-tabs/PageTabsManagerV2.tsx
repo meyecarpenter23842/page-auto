@@ -31,6 +31,7 @@ import {
   runtimeProgressLabel
 } from './pageRuntimePresentation'
 import { collapseEveryDaySchedules, EVERY_DAY_SCHEDULE, expandEveryDaySchedules } from './scheduleEditor'
+import { useUnsavedWorkspaceChanges } from '../workspaceNavigation'
 import './pageTabs.css'
 import './pageTabsWorkspace.css'
 import './postLibrary.css'
@@ -278,6 +279,7 @@ export function PageTabsManager({ activePageId: controlledActiveId, scoped = fal
   const [loading, setLoading] = useState(true)
   const [savingSection, setSavingSection] = useState<ConfigSection | 'all' | null>(null)
   const [dirtySections, setDirtySections] = useState<Set<ConfigSection>>(() => new Set())
+  useUnsavedWorkspaceChanges(dirtySections.size > 0, 'Page Tabs / Đăng Nhóm')
   const [createOpen, setCreateOpen] = useState(false)
   const [accountPickerOpen, setAccountPickerOpen] = useState(false)
   const [editorModal, setEditorModal] = useState<EditorModal>(null)

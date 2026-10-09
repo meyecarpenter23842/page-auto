@@ -10,6 +10,7 @@ import {
 } from './PageBusinessBindingScope'
 import { PageJoinGroupWorkspace } from './PageJoinGroupWorkspace'
 import { PageScenarioWorkspace } from './PageScenarioWorkspace'
+import { confirmWorkspaceNavigation } from '../workspaceNavigation'
 import './pageBusinessWorkspace.css'
 import './pageTabs3c.css'
 import './pageTabs3d.css'
@@ -356,7 +357,7 @@ export function PageBusinessWorkspace() {
           role="tab"
           aria-selected={activeBusiness === business.id}
           className={activeBusiness === business.id ? 'page-business-tab active' : 'page-business-tab'}
-          onClick={() => setActiveBusiness(business.id)}
+          onClick={() => { if (business.id === activeBusiness || confirmWorkspaceNavigation()) setActiveBusiness(business.id) }}
         ><strong>{business.label}</strong><span>{business.status}</span></button>)}
       </div>
       <button className="page-runtime-quick-trigger" type="button" onClick={() => setRuntimeControlsOpen(true)}>Điều khiển Page<small>Start · Pause · Stop</small></button>

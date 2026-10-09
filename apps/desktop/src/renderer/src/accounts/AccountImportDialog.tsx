@@ -21,6 +21,8 @@ import {
   saveAccountImportLastUsedState
 } from './accountImportLastUsedState'
 
+import { confirmWorkspaceNavigation, useUnsavedWorkspaceChanges } from '../workspaceNavigation'
+
 export interface ImportDialogProps {
   operation: AccountImportOperation
   presets: ImportPreset[]
@@ -32,6 +34,8 @@ export interface ImportDialogProps {
 
 export function ImportDialog({ operation, presets, initialGroupName, onClose, onImported, onPresetSaved }: ImportDialogProps) {
   const [rawText, setRawText] = useState('')
+  useUnsavedWorkspaceChanges(rawText.trim().length > 0, 'Nhập tài khoản')
+  const closeImport = () => { if (!rawText.trim() || confirmWorkspaceNavigation()) onClose() }
   const [delimiter, setDelimiter] = useState(() => loadAccountImportLastUsedState(operation).delimiter)
   const [mapping, setMapping] = useState<AccountImportMapping>(() => loadAccountImportLastUsedState(operation).mapping)
   const [groups, setGroups] = useState<AccountGroupRecord[]>([])
@@ -137,14 +141,14 @@ export function ImportDialog({ operation, presets, initialGroupName, onClose, on
   }
 
   return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+    <div className="modal-backdrop" role="presentation" onMouseDown={closeImport}>
       <div className="modal import-modal account-import-v2" onMouseDown={(event) => event.stopPropagation()}>
         <div className="modal-header">
           <div>
             <p className="eyebrow">Quản lý tài khoản</p>
             <h2>{operation === 'insert' ? 'Nhập tài khoản' : 'Cập nhật tài khoản theo UID'}</h2>
           </div>
-          <button className="icon-button" type="button" onClick={onClose}>×</button>
+          <button className="icon-button" type="button" onClick={closeImport}>×</button>
         </div>
 
         <div className="import-operation-note">
@@ -239,7 +243,7 @@ export function ImportDialog({ operation, presets, initialGroupName, onClose, on
 
         {error ? <div className="inline-error">{error}</div> : null}
         <div className="modal-actions">
-          <button className="button secondary" type="button" onClick={onClose}>Hủy</button>
+          <button className="button secondary" type="button" onClick={closeImport}>Hủy</button>
           <button className="button primary" type="button" disabled={saving || !rawText.trim()} onClick={() => void importNow()}>
             {saving ? 'Đang xử lý…' : operation === 'insert' ? 'Nhập tài khoản' : 'Cập nhật tài khoản'}
           </button>

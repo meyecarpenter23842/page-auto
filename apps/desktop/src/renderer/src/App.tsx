@@ -11,6 +11,7 @@ import { RotationWindowStatusPanel } from './page-tabs/RotationWindowStatusPanel
 import { ScannerWorkspace } from './scanner/ScannerWorkspace'
 import { SettingsPanel } from './settings/SettingsPanel'
 import { ZaloWorkspace } from './zalo/ZaloWorkspace'
+import { confirmWorkspaceNavigation, readLastWorkspaceRoute, saveLastWorkspaceRoute } from './workspaceNavigation'
 import './globalBrowserDock.css'
 
 type RouteId = 'accounts' | 'hotmail' | 'content-library' | 'page-tabs' | 'actions' | 'scanner' | 'proxy-builder' | 'zalo' | 'logs' | 'settings'
@@ -57,12 +58,20 @@ function RouteIcon({ id }: { id: RouteId }) {
 }
 
 export function App() {
-  const [activeRoute, setActiveRoute] = useState<RouteId>('page-tabs')
+  const [activeRoute, setActiveRoute] = useState<RouteId>(() => readLastWorkspaceRoute(routes.map((route) => route.id), 'page-tabs'))
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null)
   const [browserDockOpening, setBrowserDockOpening] = useState(false)
   const active = useMemo(() => routeDescriptions[activeRoute], [activeRoute])
 
   useEffect(() => { void window.pageAuto.getAppInfo().then(setAppInfo) }, [])
+
+  const navigateTo = (route: RouteId): boolean => {
+    if (route === activeRoute) return true
+    if (!confirmWorkspaceNavigation()) return false
+    saveLastWorkspaceRoute(route)
+    setActiveRoute(route)
+    return true
+  }
 
   const openBrowserDock = async () => {
     if (browserDockOpening) return
@@ -73,9 +82,9 @@ export function App() {
   }
 
   const openChangeInfoWorkspace = (workspaceId: number) => {
+    if (!navigateTo('actions')) return
     try { window.sessionStorage.setItem(ACTION_WORKSPACE_OPEN_REQUEST_KEY, String(workspaceId)) }
     catch { /* workspace remains in SQLite */ }
-    setActiveRoute('actions')
   }
 
   const workspaceClass = activeRoute === 'page-tabs'
@@ -95,7 +104,7 @@ export function App() {
         <span className="sidebar-orbit sidebar-orbit-two" aria-hidden="true" />
         <div className="brand sidebar-card"><div className="brand-mark">PA</div><div><strong>PAGE-AUTO</strong><span>Desktop Control</span></div></div>
         <div className="sidebar-menu-card sidebar-card"><p className="sidebar-kicker">MENU CHÍNH</p><nav className="sidebar-nav" aria-label="Điều hướng chính">
-          {routes.map((route) => <button aria-current={route.id === activeRoute ? 'page' : undefined} className={route.id === activeRoute ? 'nav-item active' : 'nav-item'} key={route.id} type="button" onClick={() => setActiveRoute(route.id)}><span className="nav-icon"><RouteIcon id={route.id} /></span><span className="nav-label">{route.label}</span></button>)}
+          {routes.map((route) => <button aria-current={route.id === activeRoute ? 'page' : undefined} className={route.id === activeRoute ? 'nav-item active' : 'nav-item'} key={route.id} type="button" onClick={() => navigateTo(route.id)}><span className="nav-icon"><RouteIcon id={route.id} /></span><span className="nav-label">{route.label}</span></button>)}
         </nav></div>
         <div className="sidebar-footer sidebar-card"><div className="sidebar-status-line"><span className="status-dot" /><strong>Local portable mode</strong></div><span className="sidebar-version">{appInfo ? `v${appInfo.version}` : 'Đang tải phiên bản...'}</span></div>
       </aside>
