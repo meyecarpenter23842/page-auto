@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, resolve } from 'node:path'
@@ -12,6 +13,58 @@ mkdirSync(dirname(screenshotPath), { recursive: true })
 
 let electronApp
 let server
+const proxySockets = new Set()
+let smokeEvidence = null
+
+// Teardown must not hold a Windows runner forever after UI assertions pass.
+async function withinDeadline(promise, label, milliseconds) {
+  let timer
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(label + ' exceeded ' + milliseconds + 'ms')), milliseconds)
+      })
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+async function closeSmokeElectron() {
+  if (!electronApp) return
+  const child = electronApp.process()
+  console.log('[Proxy smoke cleanup] Closing dedicated test Electron')
+  try {
+    await withinDeadline(electronApp.close(), 'Playwright Electron close', 12_000)
+    console.log('[Proxy smoke cleanup] Electron closed')
+  } catch (error) {
+    console.warn('[Proxy smoke cleanup] Graceful close stalled; terminating test-only process:', error)
+    if (child?.pid && process.platform === 'win32') {
+      try {
+        execFileSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { timeout: 8_000, stdio: 'ignore' })
+        return
+      } catch (killError) {
+        console.warn('[Proxy smoke cleanup] taskkill fallback:', killError)
+      }
+    }
+    if (child && child.exitCode === null && !child.kill('SIGKILL')) {
+      throw new Error('Could not terminate test-only Electron process')
+    }
+  }
+}
+
+async function closeSmokeProxy() {
+  if (!server) return
+  console.log('[Proxy smoke cleanup] Closing mock proxy and', proxySockets.size, 'tracked TCP sockets')
+  await withinDeadline(new Promise((resolve, reject) => {
+    // Stop accepting first, then terminate idle client connections. A bare
+    // net.Server.close() will wait until every remaining connection ends.
+    server.close((error) => error ? reject(error) : resolve())
+    for (const socket of proxySockets) socket.destroy()
+  }), 'Mock proxy server close', 5_000)
+  console.log('[Proxy smoke cleanup] Mock proxy closed')
+}
 
 function invariant(condition, message) {
   if (!condition) throw new Error(message)
@@ -19,6 +72,8 @@ function invariant(condition, message) {
 
 async function listenAuthRejectProxy() {
   server = createServer((socket) => {
+    proxySockets.add(socket)
+    socket.once('close', () => proxySockets.delete(socket))
     socket.once('data', () => {
       socket.end('HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="smoke"\r\nConnection: close\r\n\r\n')
     })
@@ -173,9 +228,17 @@ try {
   invariant(text.includes('0 LIVE') && text.includes('1 DEAD'), 'Packaged checker summary không phản ánh LIVE/DEAD đúng.')
 
   await page.screenshot({ path: screenshotPath, fullPage: true })
-  console.log('Proxy Center packaged UI smoke passed:', { menuVisible: true, checkerIpcLive: true, deterministicDead: true, screenshotPath })
+  smokeEvidence = { menuVisible: true, checkerIpcLive: true, deterministicDead: true, screenshotPath }
 } finally {
-  if (electronApp) await electronApp.close().catch(() => undefined)
-  if (server) await new Promise((resolve) => server.close(() => resolve())).catch(() => undefined)
-  rmSync(dataDirectory, { recursive: true, force: true })
+  try {
+    await closeSmokeElectron()
+  } finally {
+    try {
+      await closeSmokeProxy()
+    } finally {
+      rmSync(dataDirectory, { recursive: true, force: true })
+    }
+  }
 }
+// Report PASS only after teardown has settled.
+console.log('Proxy Center packaged UI smoke passed:', smokeEvidence)

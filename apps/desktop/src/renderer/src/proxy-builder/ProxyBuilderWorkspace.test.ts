@@ -145,6 +145,15 @@ describe('Proxy Center inventory/binding + checker/export', () => {
     expect(packagedSmoke).toContain('Đánh dấu chưa dùng (2)')
   })
 
+  it('bounds packaged smoke resource cleanup after UI assertions pass', () => {
+    expect(packagedSmoke).toContain('proxySockets.add(socket)')
+    expect(packagedSmoke).toContain('for (const socket of proxySockets) socket.destroy()')
+    expect(packagedSmoke).toContain("await withinDeadline(electronApp.close(), 'Playwright Electron close', 12_000)")
+    expect(packagedSmoke).toContain("await closeSmokeProxy()")
+    expect(packagedSmoke).toContain("console.log('Proxy Center packaged UI smoke passed:', smokeEvidence)")
+    expect(packagedSmoke).not.toContain("server.close(() => resolve())).catch(() => undefined)")
+  })
+
   it('copies full proxy credentials from the unified selection without exposing secrets to React', () => {
     expect(inventoryPanel).toContain("copyInventory([...selected], 'đang chọn')")
     expect(inventoryPanel).not.toContain('Copy Proxy phần phủ khối')
