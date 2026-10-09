@@ -162,6 +162,24 @@ export function CanonicalPostPicker({
     ))
   }, [details, query])
 
+  const selectVisiblePosts = () => {
+    if (mode !== 'multiple') return
+    setSelected((current) => {
+      const next = new Map(current)
+      for (const item of visibleItems) {
+        const postId = canonicalPostId(item)
+        if (!postId || disabled.has(postId) || getDisabledReason?.(item)) continue
+        next.set(postId, {
+          postId,
+          sourceSetId: details?.id ?? CANONICAL_CONTENT_LIBRARY_SET_ID,
+          sourceSetName: details?.name ?? activeSummary?.name ?? 'Thư viện Bài viết',
+          item: cloneItem(item)
+        })
+      }
+      return next
+    })
+  }
+
   const toggleItem = (item: ContentLibraryItem) => {
     const postId = canonicalPostId(item)
     if (!postId || disabled.has(postId)) return
@@ -258,6 +276,11 @@ export function CanonicalPostPicker({
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Tìm tên hoặc nội dung trong thư mục…"
               />
+              {mode === 'multiple' ? (
+                <button type="button" disabled={detailLoading || !visibleItems.length} onClick={selectVisiblePosts}>
+                  Chọn kết quả ({visibleItems.length})
+                </button>
+              ) : null}
             </div>
 
             <div className="canonical-post-picker-list">

@@ -10,6 +10,7 @@ import {
 const mainEntry = readFileSync(new URL('../main.tsx', import.meta.url), 'utf8')
 const accountManager = readFileSync(new URL('./AccountManager.tsx', import.meta.url), 'utf8')
 const emailGrid = readFileSync(new URL('../hotmail/HotmailAuto.tsx', import.meta.url), 'utf8')
+const proxyGrid = readFileSync(new URL('../proxy-builder/ProxyInventoryPanel.tsx', import.meta.url), 'utf8')
 const sharedPicker = readFileSync(new URL('../actions/AccountBindingPickerModal.tsx', import.meta.url), 'utf8')
 const selectionHelper = readFileSync(new URL('./accountTableSelection.ts', import.meta.url), 'utf8')
 const menu = readFileSync(new URL('./AccountSelectionMenu.tsx', import.meta.url), 'utf8')
@@ -71,14 +72,23 @@ describe('Excel-style account table selection', () => {
     expect(mainEntry).toContain("import './accounts/accountTableSelection.css'")
   })
 
-  it('keeps highlight range separate from real checked selection in primary account tables', () => {
-    for (const source of [accountManager, emailGrid, sharedPicker]) {
+  it('synchronizes pointer range and checked targets for all batch grids', () => {
+    for (const source of [accountManager, emailGrid, proxyGrid, sharedPicker]) {
       expect(source).toContain('range-row')
       expect(source).toContain('checked-row')
       expect(source).toContain('useExcelRowRange')
+      expect(source).toMatch(/useExcelRowRange\([^\n]*, (?:selectedIds|selection|selected), set(?:SelectedIds|Selection|Selected)\)/)
       expect(source).not.toContain('paintValue')
     }
     expect(emailGrid).not.toContain('lastSelectedId')
+    expect(selectionHelper).toContain('onCheckedChange?.(new Set(next.ids))')
+    expect(selectionHelper).toContain('if (checkedIds?.has(accountId)) return')
+  })
+
+  it('uses the canonical checked list for proxy context actions', () => {
+    expect(proxyGrid).toContain("markUsage([...selected], true, 'đang chọn')")
+    expect(proxyGrid).toContain("copyInventory([...selected], 'đang chọn')")
+    expect(proxyGrid).not.toContain("'phần phủ khối'")
   })
 
   it('exposes right-click check commands for range, all rows, and clear-all', () => {

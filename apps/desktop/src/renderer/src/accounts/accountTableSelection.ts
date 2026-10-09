@@ -86,7 +86,12 @@ export function clampContextMenuPoint(
   }
 }
 
-export function useExcelRowRange(orderedIds: readonly number[]) {
+// checkedIds is the canonical target list for bulk actions. The highlight is only visual.
+export function useExcelRowRange(
+  orderedIds: readonly number[],
+  checkedIds?: ReadonlySet<number>,
+  onCheckedChange?: (ids: Set<number>) => void
+) {
   const [rangeIds, setRangeIds] = useState<Set<number>>(() => new Set())
   const [anchorId, setAnchorId] = useState<number | null>(null)
   const rangeIdsRef = useRef(rangeIds)
@@ -99,11 +104,12 @@ export function useExcelRowRange(orderedIds: readonly number[]) {
   } | null>(null)
   const orderedKey = useMemo(() => orderedIds.join('|'), [orderedIds])
 
-  const applyRange = (next: ExcelRowRangeState) => {
+  const applyRange = (next: ExcelRowRangeState, syncChecked = false) => {
     rangeIdsRef.current = next.ids
     anchorIdRef.current = next.anchorId
     setRangeIds(next.ids)
     setAnchorId(next.anchorId)
+    if (syncChecked) onCheckedChange?.(new Set(next.ids))
   }
 
   useEffect(() => {
@@ -135,7 +141,7 @@ export function useExcelRowRange(orderedIds: readonly number[]) {
     if (target.closest(INTERACTIVE_SELECTOR)) return
     event.preventDefault()
 
-    const currentIds = rangeIdsRef.current
+    const currentIds = checkedIds ?? rangeIdsRef.current
     const currentAnchor = anchorIdRef.current
     const additive = event.ctrlKey || event.metaKey
     const shiftAnchor = event.shiftKey && currentAnchor !== null && orderedIds.includes(currentAnchor)
@@ -144,7 +150,7 @@ export function useExcelRowRange(orderedIds: readonly number[]) {
     const mode: ExcelDragMode = additive && !event.shiftKey && currentIds.has(accountId) ? 'remove' : 'add'
     const baseIds = additive ? new Set(currentIds) : new Set<number>()
     dragRef.current = { startId: shiftAnchor, baseIds, mode, anchorId: shiftAnchor }
-    applyRange(nextExcelRowRange(orderedIds, currentIds, currentAnchor, accountId, event))
+    applyRange(nextExcelRowRange(orderedIds, currentIds, currentAnchor, accountId, event), true)
   }
 
   const onRowPointerEnter = (accountId: number) => {
@@ -153,12 +159,14 @@ export function useExcelRowRange(orderedIds: readonly number[]) {
     applyRange({
       ids: nextExcelDragRange(orderedIds, drag.baseIds, drag.startId, accountId, drag.mode),
       anchorId: drag.anchorId
-    })
+    }, true)
   }
 
   const ensureContextRow = (accountId: number) => {
-    if (rangeIdsRef.current.has(accountId)) return
-    applyRange({ ids: new Set([accountId]), anchorId: accountId })
+    // Right-click inside an existing checked selection must preserve the whole batch.
+    if (checkedIds?.has(accountId)) return
+    if (rangeIdsRef.current.has(accountId) && !onCheckedChange) return
+    applyRange({ ids: new Set([accountId]), anchorId: accountId }, true)
   }
 
   const clearRange = () => {

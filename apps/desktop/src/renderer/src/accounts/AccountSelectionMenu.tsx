@@ -79,7 +79,7 @@ export function AccountSelectionMenu({
       onMouseDown={(event) => event.stopPropagation()}
     >
       <div className="account-selection-menu-meta">
-        <span>Đã tích <strong>{checkedCount}</strong></span>
+        <span>Đang chọn <strong>{checkedCount}</strong></span>
         <span>Phủ khối <strong>{rangeCount}</strong></span>
       </div>
       {children ? <><div className="account-selection-menu-actions">{children}</div><div className="account-selection-menu-separator" /></> : null}

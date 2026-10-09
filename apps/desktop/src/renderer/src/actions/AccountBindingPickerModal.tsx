@@ -40,7 +40,7 @@ export function AccountBindingPickerModal({ accounts, selectedIds, onApply, onCl
         .some((value) => value?.toLowerCase().includes(query))
     })
   }, [accounts, category, search, status])
-  const excelRange = useExcelRowRange(filtered.map((account) => account.id))
+  const excelRange = useExcelRowRange(filtered.map((account) => account.id), selected, setSelected)
 
   useEffect(() => {
     if (!contextMenu) return
@@ -62,12 +62,12 @@ export function AccountBindingPickerModal({ accounts, selectedIds, onApply, onCl
     }
   }, [contextMenu])
 
-  const toggle = (id: number, checked: boolean) => setSelected((current) => {
+  const toggle = (id: number, checked: boolean) => { excelRange.clearRange(); setSelected((current) => {
     const next = new Set(current)
     if (checked) next.add(id)
     else next.delete(id)
     return next
-  })
+  }) }
 
   const selectRange = () => {
     setSelected((current) => new Set([...current, ...excelRange.rangeIds]))
@@ -75,11 +75,13 @@ export function AccountBindingPickerModal({ accounts, selectedIds, onApply, onCl
   }
 
   const selectAllFiltered = () => {
+    excelRange.clearRange()
     setSelected((current) => new Set([...current, ...filtered.map((account) => account.id)]))
     setContextMenu(null)
   }
 
   const clearSelection = () => {
+    excelRange.clearRange()
     setSelected(new Set())
     setContextMenu(null)
   }
@@ -104,14 +106,14 @@ export function AccountBindingPickerModal({ accounts, selectedIds, onApply, onCl
           <button className="pt-button secondary" type="button" onClick={selectAllFiltered}>Chọn đang lọc</button>
         </div>
         <div className="pt-account-picker-grid-wrap">
-          <table className="pt-account-picker-grid"><thead><tr><th className="picker-check"><input type="checkbox" aria-label="Chọn tất cả tài khoản đang lọc" checked={allFilteredSelected} onChange={(event) => setSelected((current) => {
+          <table className="pt-account-picker-grid"><thead><tr><th className="picker-check"><input type="checkbox" aria-label="Chọn tất cả tài khoản đang lọc" checked={allFilteredSelected} onChange={(event) => { excelRange.clearRange(); setSelected((current) => {
             const next = new Set(current)
             for (const account of filtered) {
               if (event.target.checked) next.add(account.id)
               else next.delete(account.id)
             }
             return next
-          })} /></th><th>UID / UserName</th><th>Tên</th><th>Trạng thái</th><th>Category</th><th>Note</th></tr></thead><tbody>
+          }) }} /></th><th>UID / UserName</th><th>Tên</th><th>Trạng thái</th><th>Category</th><th>Note</th></tr></thead><tbody>
             {filtered.map((account) => {
               const checked = selected.has(account.id)
               const ranged = excelRange.rangeIds.has(account.id)
@@ -126,7 +128,7 @@ export function AccountBindingPickerModal({ accounts, selectedIds, onApply, onCl
             {filtered.length === 0 ? <tr><td colSpan={6} className="pt-account-empty">Không có tài khoản phù hợp.</td></tr> : null}
           </tbody></table>
         </div>
-        <div className="page-tab-modal-actions"><span className="pt-modal-save-note">Đã tích {selected.size}/{accounts.length} · phủ {excelRange.rangeIds.size}</span><button className="pt-button secondary" type="button" onClick={onClose}>Hủy</button><button className="pt-button primary" type="button" onClick={() => onApply(accounts.filter((account) => selected.has(account.id)).map((account) => account.id))}>Áp dụng</button></div>
+        <div className="page-tab-modal-actions"><span className="pt-modal-save-note">Đang chọn {selected.size}/{accounts.length} · phủ {excelRange.rangeIds.size}</span><button className="pt-button secondary" type="button" onClick={onClose}>Hủy</button><button className="pt-button primary" type="button" onClick={() => onApply(accounts.filter((account) => selected.has(account.id)).map((account) => account.id))}>Áp dụng</button></div>
       </section>
       {contextMenu ? <AccountSelectionMenu
         x={contextMenu.x}

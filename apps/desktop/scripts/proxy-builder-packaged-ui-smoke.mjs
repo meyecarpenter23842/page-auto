@@ -73,7 +73,7 @@ try {
 
   const selectAllInventory = root.getByLabel('Chọn tất cả proxy đang lọc')
   await selectAllInventory.click()
-  await root.getByText(/Đang tích 2 · phủ 0 · hiển thị 2\/2/).waitFor({ state: 'visible' })
+  await root.getByText(/Đang chọn 2 · phủ 0 · hiển thị 2\/2/).waitFor({ state: 'visible' })
   invariant(await root.isVisible(), 'Kho Proxy bị crash sau khi tích chọn tất cả.')
 
   const firstCell = inventoryRows.nth(0).locator('td').nth(1)
@@ -90,41 +90,47 @@ try {
     'Kho Proxy không phủ khối được bằng kéo chuột như Account Manager.'
   )
 
+  invariant(await root.locator('.proxy-center-table tbody input[type="checkbox"]:checked').count() === 2, 'Kéo phủ chưa đồng bộ 2 checkbox nhận lệnh.')
   await firstCell.click({ button: 'right' })
-  await page.getByRole('button', { name: 'Đánh dấu đã dùng · phần phủ (2)', exact: true }).click()
+  await page.getByRole('button', { name: 'Đánh dấu đã dùng (2)', exact: true }).click()
   const usedBadges = root.locator('.proxy-center-usage-badge.used').filter({ hasText: 'ĐÃ DÙNG' })
   await usedBadges.nth(1).waitFor({ state: 'visible', timeout: 10_000 })
   invariant(
     await usedBadges.count() === 2,
-    'Đánh dấu ĐÃ DÙNG cho vùng phủ khối không cập nhật đủ proxy.'
+    'Đánh dấu ĐÃ DÙNG cho các dòng đã chọn không cập nhật đủ proxy.'
   )
 
   await firstCell.click({ button: 'right' })
-  await page.getByRole('button', { name: 'Đánh dấu chưa dùng · đã tích (2)', exact: true }).click()
+  await page.getByRole('button', { name: 'Đánh dấu chưa dùng (2)', exact: true }).click()
   const unusedBadges = root.locator('.proxy-center-usage-badge.unused').filter({ hasText: 'CHƯA DÙNG' })
   await unusedBadges.nth(1).waitFor({ state: 'visible', timeout: 10_000 })
   invariant(
     await unusedBadges.count() === 2,
-    'Đánh dấu CHƯA DÙNG cho tập đã tích không cập nhật đủ proxy.'
+    'Đánh dấu CHƯA DÙNG cho các dòng đã chọn không cập nhật đủ proxy.'
   )
 
   await firstCell.click({ button: 'right' })
-  await page.getByRole('button', { name: 'Copy Proxy phần phủ khối (2)', exact: true }).click()
+  await page.getByRole('button', { name: 'Copy Proxy (2)', exact: true }).click()
   const copiedRange = await electronApp.evaluate(({ clipboard }) => clipboard.readText())
   invariant(
     copiedRange.split(/\r?\n/).sort().join('\n') === [
       `127.0.0.1:${proxyPort}:smoke1:secret1`,
       `127.0.0.1:${proxyPort}:smoke2:secret2`
     ].sort().join('\n'),
-    'Copy Proxy phần phủ khối không đưa đầy đủ proxy credentials vào clipboard.'
+    'Copy Proxy sau khi kéo phủ không đưa đầy đủ proxy credentials vào clipboard.'
   )
 
+  // Re-select via checkboxes; the same bulk action must receive the same targets.
+  await selectAllInventory.click()
+  await inventoryRows.nth(0).locator('td').first().locator('input[type="checkbox"]').check()
+  await inventoryRows.nth(1).locator('td').first().locator('input[type="checkbox"]').check()
+  await root.getByText(/Đang chọn 2 · phủ 0 · hiển thị 2\/2/).waitFor({ state: 'visible' })
   await firstCell.click({ button: 'right' })
-  await page.getByRole('button', { name: 'Copy Proxy đã tích (2)', exact: true }).click()
+  await page.getByRole('button', { name: 'Copy Proxy (2)', exact: true }).click()
   const copiedChecked = await electronApp.evaluate(({ clipboard }) => clipboard.readText())
   invariant(
     copiedChecked.split(/\r?\n/).sort().join('\n') === copiedRange.split(/\r?\n/).sort().join('\n'),
-    'Copy Proxy đã tích không khớp tập proxy đã chọn.'
+    'Copy Proxy sau khi tích checkbox không khớp tập proxy đã chọn.'
   )
 
   await root.getByRole('tab', { name: 'Proxy Checker', exact: true }).click()

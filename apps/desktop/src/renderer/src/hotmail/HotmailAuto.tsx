@@ -15,6 +15,7 @@ import {
 } from '../../../shared/hotmail'
 import { AccountSelectionMenu } from '../accounts/AccountSelectionMenu'
 import { useExcelRowRange } from '../accounts/accountTableSelection'
+import { useGridPreference, isGridString } from '../accounts/gridViewPreferences'
 import { EmailBrowserCompactControls } from './EmailBrowserCompactControls'
 import {
   EMAIL_CATEGORY_ALL,
@@ -171,8 +172,11 @@ export function HotmailAuto() {
   const [testingProxyPool, setTestingProxyPool] = useState(false)
   const [contextMenu, setContextMenu] = useState<ContextMenuState>(null)
   const [panel, setPanel] = useState<EmailPanel>(null)
-  const [query, setQuery] = useState('')
-  const [quickFilter, setQuickFilter] = useState<EmailQuickFilter>('all')
+  const [query, setQuery] = useGridPreference('page-auto:grid:email:search', '', isGridString)
+  const [quickFilter, setQuickFilter] = useGridPreference<EmailQuickFilter>(
+    'page-auto:grid:email:quick-filter', 'all',
+    (value): value is EmailQuickFilter => QUICK_FILTERS.some((filter) => filter.id === value)
+  )
   const [categoryFilter, setCategoryFilter] = useState<EmailCategoryFilter>(EMAIL_CATEGORY_ALL)
   const [openConcurrency, setOpenConcurrency] = useState(1)
   const [recoveryEmail, setRecoveryEmail] = useState('')
@@ -188,7 +192,7 @@ export function HotmailAuto() {
     () => filterHotmailRows(rows, query, quickFilter, categoryFilter),
     [rows, query, quickFilter, categoryFilter]
   )
-  const excelRange = useExcelRowRange(visibleRows.map((row) => row.accountId))
+  const excelRange = useExcelRowRange(visibleRows.map((row) => row.accountId), selection, setSelection)
   const selectedIds = useMemo(() => [...selection], [selection])
   const selectedRows = useMemo(() => rows.filter((row) => selection.has(row.accountId)), [rows, selection])
   const rowsWithErrors = useMemo(() => rows.filter((row) => row.lastError), [rows])
@@ -254,14 +258,15 @@ export function HotmailAuto() {
     }
   }
 
-  const toggleVisible = () => setSelection((current) => {
+  const toggleVisible = () => { excelRange.clearRange(); setSelection((current) => {
     const next = new Set(current)
     const allVisibleSelected = visibleRows.length > 0 && visibleRows.every((row) => next.has(row.accountId))
     visibleRows.forEach((row) => allVisibleSelected ? next.delete(row.accountId) : next.add(row.accountId))
     return next
-  })
+  }) }
 
   const selectAllVisible = () => {
+    excelRange.clearRange()
     setSelection(new Set(visibleRows.map((row) => row.accountId)))
     setContextMenu(null)
   }
@@ -272,11 +277,13 @@ export function HotmailAuto() {
   }
 
   const clearSelection = () => {
+    excelRange.clearRange()
     setSelection(new Set())
     setContextMenu(null)
   }
 
   const toggleOne = (accountId: number) => {
+    excelRange.clearRange()
     setSelection((current) => {
       const next = new Set(current)
       if (next.has(accountId)) next.delete(accountId)
@@ -485,7 +492,6 @@ export function HotmailAuto() {
     event.preventDefault()
     event.stopPropagation()
     excelRange.ensureContextRow(accountId)
-    if (!selection.has(accountId)) setSelection(new Set([accountId]))
     setContextMenu({ x: event.clientX, y: event.clientY, accountId })
   }
 
@@ -521,7 +527,7 @@ export function HotmailAuto() {
         {categoryOptions.map((option) => <option key={option.value} value={option.value}>{option.label} ({option.count})</option>)}
       </select>
       <div className="email-filter-pills">{QUICK_FILTERS.map((filter) => <button key={filter.id} className={quickFilter === filter.id ? 'active' : ''} onClick={() => setQuickFilter(filter.id)}>{filter.label}</button>)}</div>
-      <div className="email-grid-meta"><strong>{selectedRows.length}</strong> đã tích<span>phủ {excelRange.rangeIds.size} · {visibleRows.length}/{rows.length} đang hiện</span>{selectedRows.length ? <button onClick={clearSelection}>Bỏ chọn</button> : null}</div>
+      <div className="email-grid-meta"><strong>{selectedRows.length}</strong> đã chọn<span>phủ {excelRange.rangeIds.size} · {visibleRows.length}/{rows.length} đang hiện</span>{selectedRows.length ? <button onClick={clearSelection}>Bỏ chọn</button> : null}</div>
     </div>
 
     <div className="email-health-strip">
@@ -565,7 +571,7 @@ export function HotmailAuto() {
       {visibleRows.length === 0 ? <tr><td className="empty" colSpan={21}>{rows.length === 0 ? 'Chưa có tài khoản. Thêm tài khoản ở mục Tài khoản trước.' : 'Không có tài khoản phù hợp bộ lọc hiện tại.'}</td></tr> : null}
     </tbody></table></div>
 
-    <footer className="email-selection-footer"><div><strong>{visibleSelected}</strong> dòng đang hiện được tích · <strong>{excelRange.rangeIds.size}</strong> dòng đang phủ khối</div><span>Click/Ctrl/Shift/kéo: phủ khối · Checkbox hoặc Chuột phải › Chọn: tích · Double-click: mở mail</span></footer>
+    <footer className="email-selection-footer"><div><strong>{visibleSelected}</strong> dòng đang hiện được chọn · <strong>{excelRange.rangeIds.size}</strong> dòng phủ gần nhất</div><span>Click/Ctrl/Shift/kéo hoặc checkbox: chọn đúng dòng nhận lệnh · Double-click: mở mail</span></footer>
 
     {panel ? <div className={`email-panel-backdrop${panel === 'combo' ? ' security-modal-backdrop' : ''}`} onMouseDown={() => setPanel(null)}><aside className={`email-side-panel${panel === 'combo' ? ' security-modal' : ''}`} onMouseDown={(event) => event.stopPropagation()}>
       <div className="email-panel-header"><div><span>EMAIL</span><h2>{panel === 'network' ? 'Proxy / IP' : panel === 'logs' ? 'Nhật ký gần nhất' : panel === 'recovery' ? 'Mail khôi phục' : panel === 'password' ? 'Đổi Password Email' : panel === 'combo' ? 'Hotmail Security' : 'Cài đặt'}</h2></div><button className="email-panel-close" onClick={() => setPanel(null)}>×</button></div>

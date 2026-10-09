@@ -22,6 +22,7 @@ import { AccountGroupManagerDialog, AccountGroupPicker } from './AccountGroupDia
 import { AccountImportDialog as ImportDialog } from './AccountImportDialog'
 import { AccountSelectionMenu } from './AccountSelectionMenu'
 import { useExcelRowRange } from './accountTableSelection'
+import { useGridPreference, isGridString } from './gridViewPreferences'
 import {
   ACCOUNT_RUNTIME_REFRESH_MS,
   EMPTY_GROUP_OVERVIEW,
@@ -96,10 +97,13 @@ function BulkUidFilterDialog({
 export function AccountManager({ onOpenChangeInfoWorkspace }: AccountManagerProps = {}) {
   const [accounts, setAccounts] = useState<AccountRecord[]>([])
   const [loading, setLoading] = useState(true)
-  const [search, setSearch] = useState('')
+  const [search, setSearch] = useGridPreference('page-auto:grid:accounts:search', '', isGridString)
   const [bulkUidFilter, setBulkUidFilter] = useState<string[]>([])
   const [bulkUidFilterOpen, setBulkUidFilterOpen] = useState(false)
-  const [statusFilter, setStatusFilter] = useState<'all' | AccountRecord['status']>('all')
+  const [statusFilter, setStatusFilter] = useGridPreference<'all' | AccountRecord['status']>(
+    'page-auto:grid:accounts:status', 'all',
+    (value): value is 'all' | AccountRecord['status'] => value === 'all' || ACCOUNT_STATUSES.includes(value as AccountRecord['status'])
+  )
   const [categoryFilter, setCategoryFilter] = useState('')
   const [groupOverview, setGroupOverview] = useState<AccountGroupOverview>(EMPTY_GROUP_OVERVIEW)
   const [groupManagerOpen, setGroupManagerOpen] = useState(false)
@@ -110,7 +114,13 @@ export function AccountManager({ onOpenChangeInfoWorkspace }: AccountManagerProp
   const [editorAccount, setEditorAccount] = useState<AccountRecord | null | undefined>(undefined)
   const [importOperation, setImportOperation] = useState<AccountImportOperation | null>(null)
   const [presets, setPresets] = useState<ImportPreset[]>([])
-  const [sort, setSort] = useState<{ id: ColumnId; direction: 'asc' | 'desc' }>({ id: 'id', direction: 'desc' })
+  const [sort, setSort] = useGridPreference<{ id: ColumnId; direction: 'asc' | 'desc' }>(
+    'page-auto:grid:accounts:sort', { id: 'id', direction: 'desc' },
+    (value): value is { id: ColumnId; direction: 'asc' | 'desc' } => Boolean(
+      value && typeof value === 'object' && 'id' in value && 'direction' in value
+      && columnById.has(value.id as ColumnId) && (value.direction === 'asc' || value.direction === 'desc')
+    )
+  )
   const [revealedSecrets, setRevealedSecrets] = useState<Set<string>>(new Set())
   const [notice, setNotice] = useState<string | null>(null)
   const [openingProfiles, setOpeningProfiles] = useState(false)
@@ -220,7 +230,7 @@ export function AccountManager({ onOpenChangeInfoWorkspace }: AccountManagerProp
       : String(a).localeCompare(String(b), 'vi', { numeric: true, sensitivity: 'base' })
     return sort.direction === 'asc' ? result : -result
   }), [accounts, sort])
-  const excelRange = useExcelRowRange(sortedAccounts.map((account) => account.id))
+  const excelRange = useExcelRowRange(sortedAccounts.map((account) => account.id), selectedIds, setSelectedIds)
 
   const selected = accounts.filter((account) => selectedIds.has(account.id))
   const selectedGroupName = useMemo(() => {
@@ -234,6 +244,7 @@ export function AccountManager({ onOpenChangeInfoWorkspace }: AccountManagerProp
     : { id, direction: 'asc' })
 
   const setAccountSelected = (accountId: number, value: boolean) => {
+    excelRange.clearRange()
     setSelectedIds((current) => {
       const next = new Set(current)
       if (value) next.add(accountId)
@@ -243,6 +254,7 @@ export function AccountManager({ onOpenChangeInfoWorkspace }: AccountManagerProp
   }
 
   const selectAllFiltered = () => {
+    excelRange.clearRange()
     setSelectedIds(new Set(sortedAccounts.map((account) => account.id)))
     setContextMenu(null)
   }
@@ -253,6 +265,7 @@ export function AccountManager({ onOpenChangeInfoWorkspace }: AccountManagerProp
   }
 
   const clearSelection = () => {
+    excelRange.clearRange()
     setSelectedIds(new Set())
     setContextMenu(null)
   }
@@ -466,7 +479,7 @@ export function AccountManager({ onOpenChangeInfoWorkspace }: AccountManagerProp
             <option value={UNGROUPED_CATEGORY_FILTER}>Chưa gán nhóm ({groupOverview.ungroupedCount})</option>
             {groupOverview.groups.map((group) => <option key={group.id} value={group.name}>{group.name} ({group.accountCount})</option>)}
           </select>
-          <span className="grid-state">{loading ? 'Đang tải…' : `${sortedAccounts.length}/${groupOverview.totalAccounts} tài khoản${bulkUidFilter.length ? ` · lọc UID ${bulkUidFilter.length}` : ''} · tích ${selectedIds.size} · phủ ${excelRange.rangeIds.size}`}</span>
+          <span className="grid-state">{loading ? 'Đang tải…' : `${sortedAccounts.length}/${groupOverview.totalAccounts} tài khoản${bulkUidFilter.length ? ` · lọc UID ${bulkUidFilter.length}` : ''} · chọn ${selectedIds.size} · phủ ${excelRange.rangeIds.size}`}</span>
         </div>
 
         {notice ? <div className="notice-bar"><span>{notice}</span><button type="button" onClick={() => setNotice(null)}>×</button></div> : null}
@@ -474,7 +487,7 @@ export function AccountManager({ onOpenChangeInfoWorkspace }: AccountManagerProp
         <div className="data-grid-wrap">
           <table className="account-grid">
             <thead><tr>
-              <th className="select-column"><input type="checkbox" aria-label="Chọn tất cả" checked={sortedAccounts.length > 0 && sortedAccounts.every((account) => selectedIds.has(account.id))} onChange={(e) => setSelectedIds(e.target.checked ? new Set(sortedAccounts.map((account) => account.id)) : new Set())} /></th>
+              <th className="select-column"><input type="checkbox" aria-label="Chọn tất cả" checked={sortedAccounts.length > 0 && sortedAccounts.every((account) => selectedIds.has(account.id))} onChange={(e) => { excelRange.clearRange(); setSelectedIds(e.target.checked ? new Set(sortedAccounts.map((account) => account.id)) : new Set()) }} /></th>
               {visibleColumns.map((column) => <th key={column.id} style={{ width: layout.widths[column.id], minWidth: layout.widths[column.id] }}><button type="button" onClick={() => toggleSort(column.id)}>{column.label}<span>{sort.id === column.id ? (sort.direction === 'asc' ? ' ↑' : ' ↓') : ''}</span></button></th>)}
             </tr></thead>
             <tbody>
