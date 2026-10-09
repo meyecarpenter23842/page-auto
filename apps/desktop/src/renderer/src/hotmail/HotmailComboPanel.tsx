@@ -48,6 +48,7 @@ export function HotmailComboPanel({
   const [passwordLength, setPasswordLength] = useState(12)
   const [fixedPassword, setFixedPassword] = useState('')
   const [busy, setBusy] = useState(false)
+  const [lastResults, setLastResults] = useState<HotmailComboBatchResult['results']>([])
 
   useEffect(() => {
     setActions(hotmailSecurityPresetActions(preset))
@@ -85,6 +86,7 @@ export function HotmailComboPanel({
   }
 
   const run = async () => {
+    setLastResults([])
     setBusy(true)
     try {
       if (selectedIds.length === 0) throw new Error('Chọn ít nhất một tài khoản trước.')
@@ -116,6 +118,7 @@ export function HotmailComboPanel({
         targets,
         confirmCompleted: false
       })
+      setLastResults(result.results)
       onMessage(comboSummary(result))
       await onRefresh()
     } catch (error) {
@@ -170,6 +173,7 @@ export function HotmailComboPanel({
     <section className="email-settings-card">
       <div className="email-settings-heading"><div><span>PREVIEW</span><h3>Target theo từng account</h3></div></div>
       <div className="email-security-preview-list">
+        {!previews.length ? <p>Chọn tài khoản trong bảng Email để xem mục tiêu.</p> : null}
         {previews.map((item) => <div key={item.accountId}>
           <strong>{item.primary ?? `#${item.accountId}`}</strong>
           {wantsAdd ? <span>→ {item.nextRecovery ?? 'Chưa hợp lệ'}</span> : null}
@@ -178,13 +182,22 @@ export function HotmailComboPanel({
       </div>
     </section>
 
+    {lastResults.length ? <section className="email-settings-card" aria-label="Kết quả theo tài khoản">
+      <div className="email-settings-heading"><div><span>KẾT QUẢ</span><h3>{lastResults.length} tài khoản đã xử lý</h3></div></div>
+      <div className="email-security-result-list" role="status" aria-live="polite">
+        {lastResults.map((item) => <div key={item.accountId}>
+          <strong>#{item.accountId}</strong>
+          <span>{item.status === 'success' ? 'Hoàn tất' : item.status === 'needs_attention' ? 'Cần xử lý' : 'Lỗi'} · {item.completedStages.length} bước hoàn thành</span>
+        </div>)}
+      </div>
+    </section> : null}
     <div className="email-info-card">
       <strong>Thứ tự cố định</strong>
       <p>Login/session → Thêm KP mới → Xóa KP cũ → Đổi Password. Action nào không chọn thì bỏ qua. Mỗi canonical field chỉ cập nhật sau khi Microsoft xác nhận stage tương ứng thành công.</p>
     </div>
 
     <div className="email-panel-actions">
-      <button className="email-button primary" disabled={busy || selectedIds.length === 0 || actions.length === 0} onClick={() => void run()}>{busy ? 'Đang chạy…' : 'OK, chạy luôn'}</button>
+      <button className="email-button primary" disabled={busy || selectedIds.length === 0 || actions.length === 0} onClick={() => void run()}>{busy ? 'Đang chạy…' : `Chạy ${selectedIds.length} tài khoản`}</button>
     </div>
   </div>
 }

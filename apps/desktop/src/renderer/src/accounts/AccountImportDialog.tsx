@@ -9,6 +9,7 @@ import {
   type ImportPreset
 } from '../../../shared/accounts'
 import type { AccountGroupRecord } from '../../../shared/accountGroups'
+import { formatImportPreviewCell } from './accountImportPreview'
 import {
   MIN_CUSTOM_MAPPING_COLUMNS,
   PREVIEW_LIMIT,
@@ -154,7 +155,8 @@ export function ImportDialog({ operation, presets, initialGroupName, onClose, on
         <div className="import-operation-note">
           {operation === 'insert'
             ? 'UID đã tồn tại sẽ không tạo trùng. Nếu chọn Nhóm, tài khoản mới và UID đã có đều được gán/chuyển vào Nhóm đó.'
-            : 'UID là khóa tìm tài khoản. Bỏ qua = giữ dữ liệu cũ; ô có cột nhưng để trống = xóa dữ liệu cũ; cột không tồn tại trong dòng = giữ nguyên.'}
+            : 'Cập nhật theo UID: Bỏ qua = giữ nguyên; trường đã chọn có ô trống = xóa giá trị; trường không có cột trong dòng = giữ nguyên.'}
+          <span className="import-privacy-note"> Mật khẩu, Cookie, 2FA và proxy chứa mật khẩu được che trong bảng xem trước; dữ liệu dán vẫn được gửi nguyên văn khi xác nhận.</span>
         </div>
 
         <div className="import-toolbar-row">
@@ -221,8 +223,8 @@ export function ImportDialog({ operation, presets, initialGroupName, onClose, on
                         const exists = index < row.values.length
                         const value = exists ? (row.values[index] ?? '').trim() : ''
                         return (
-                          <td key={index} className={!exists ? 'preview-cell-missing' : value === '' ? 'preview-cell-empty' : ''} title={value || undefined}>
-                            {!exists ? '[Không có cột]' : value === '' ? '[Trống]' : value}
+                          <td key={index} className={!exists ? 'preview-cell-missing' : value === '' ? 'preview-cell-empty' : ''} title={formatImportPreviewCell(mapping[index] ?? 'ignore', value, exists)}>
+                            {formatImportPreviewCell(mapping[index] ?? 'ignore', value, exists)}
                           </td>
                         )
                       })}

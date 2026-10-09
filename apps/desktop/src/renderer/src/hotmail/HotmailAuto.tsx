@@ -195,6 +195,8 @@ export function HotmailAuto() {
   const excelRange = useExcelRowRange(visibleRows.map((row) => row.accountId), selection, setSelection)
   const selectedIds = useMemo(() => [...selection], [selection])
   const selectedRows = useMemo(() => rows.filter((row) => selection.has(row.accountId)), [rows, selection])
+  const hasTargets = selectedIds.length > 0
+  const actionBusy = busyActions.size > 0
   const rowsWithErrors = useMemo(() => rows.filter((row) => row.lastError), [rows])
   const rowsWithRecovery = useMemo(() => rows.filter((row) => row.backupEmail), [rows])
   const profilesReady = useMemo(() => rows.filter((row) => row.profileStatus === 'available' || row.profileStatus === 'running').length, [rows])
@@ -504,15 +506,16 @@ export function HotmailAuto() {
   return <section className="email-shell">
     <header className="email-commandbar">
       <div className="email-command-primary">
-        <button className="email-button primary" disabled={isBusy('open')} onClick={() => void openMail()}>{isBusy('open') && <Spinner />}Mở mail</button>
-        <label className="email-open-concurrency" title="Số tài khoản Email gửi lệnh mở cùng lúc. Browser Launch Gate toàn app vẫn giữ khoảng cách launch."><span>Mở đồng thời</span><select value={openConcurrency} disabled={isBusy('open')} onChange={(event: ChangeEvent<HTMLSelectElement>) => setOpenConcurrency(Number(event.target.value))}>{EMAIL_OPEN_CONCURRENCY_OPTIONS.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
-        <button className="email-button success" disabled={isBusy('codes')} onClick={() => void getCodes()}>{isBusy('codes') && <Spinner />}Lấy mã</button>
-        <button className="email-button primary" disabled={isBusy('check')} onClick={() => void checkMail()}>{isBusy('check') && <Spinner />}Check Live Mail</button>
-        <button className="email-button secondary" disabled={isBusy('oauth') || selectedRows.length !== 1} onClick={() => void connectMailbox()}>{isBusy('oauth') && <Spinner />}Lấy / cập nhật OAuth</button>
-        <button className="email-button secondary" disabled={isBusy('copy')} onClick={() => void copyEmails()}>{isBusy('copy') && <Spinner />}Copy Email</button>
+        <div className="email-bulk-scope" role="status" aria-live="polite"><strong>{selectedIds.length}</strong><span>TK đang chọn</span></div>
+        <button className="email-button primary" disabled={!hasTargets || actionBusy} onClick={() => void openMail()}>{isBusy('open') && <Spinner />}Mở mail</button>
+        <label className="email-open-concurrency" title="Số tài khoản Email gửi lệnh mở cùng lúc. Browser Launch Gate toàn app vẫn giữ khoảng cách launch."><span>Mở đồng thời</span><select value={openConcurrency} disabled={actionBusy} onChange={(event: ChangeEvent<HTMLSelectElement>) => setOpenConcurrency(Number(event.target.value))}>{EMAIL_OPEN_CONCURRENCY_OPTIONS.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
+        <button className="email-button success" disabled={!hasTargets || actionBusy} onClick={() => void getCodes()}>{isBusy('codes') && <Spinner />}Lấy mã</button>
+        <button className="email-button primary" disabled={!hasTargets || actionBusy} onClick={() => void checkMail()}>{isBusy('check') && <Spinner />}Check Live Mail</button>
+        <button className="email-button secondary" disabled={actionBusy || selectedRows.length !== 1} onClick={() => void connectMailbox()}>{isBusy('oauth') && <Spinner />}Lấy / cập nhật OAuth</button>
+        <button className="email-button secondary" disabled={!hasTargets || actionBusy} onClick={() => void copyEmails()}>{isBusy('copy') && <Spinner />}Copy Email</button>
       </div>
       <div className="email-command-secondary">
-        <button className="email-button ghost" onClick={() => { setSecurityPreset('combo'); setPanel('combo') }}>Hotmail Security</button>
+        <button className="email-button ghost" disabled={!hasTargets} title={!hasTargets ? 'Chọn tài khoản trong bảng để mở Hotmail Security' : `Áp dụng cho ${selectedIds.length} tài khoản đang chọn`} onClick={() => { setSecurityPreset('combo'); setPanel('combo') }}>Hotmail Security ({selectedIds.length})</button>
         <button className="email-button ghost" onClick={() => setPanel('network')}>Proxy / IP</button>
         <button className="email-button ghost" onClick={() => setPanel('logs')}>Nhật ký</button>
         <button className="email-button ghost" onClick={() => setPanel('settings')}>Cài đặt</button>
@@ -527,7 +530,7 @@ export function HotmailAuto() {
         {categoryOptions.map((option) => <option key={option.value} value={option.value}>{option.label} ({option.count})</option>)}
       </select>
       <div className="email-filter-pills">{QUICK_FILTERS.map((filter) => <button key={filter.id} className={quickFilter === filter.id ? 'active' : ''} onClick={() => setQuickFilter(filter.id)}>{filter.label}</button>)}</div>
-      <div className="email-grid-meta"><strong>{selectedRows.length}</strong> đã chọn<span>phủ {excelRange.rangeIds.size} · {visibleRows.length}/{rows.length} đang hiện</span>{selectedRows.length ? <button onClick={clearSelection}>Bỏ chọn</button> : null}</div>
+      <div className="email-grid-meta"><button type="button" disabled={!visibleRows.length} onClick={selectAllVisible}>Chọn đang lọc</button><strong>{selectedRows.length}</strong> đã chọn<span>phủ {excelRange.rangeIds.size} · {visibleRows.length}/{rows.length} đang hiện</span>{selectedRows.length ? <button onClick={clearSelection}>Bỏ chọn</button> : null}</div>
     </div>
 
     <div className="email-health-strip">
@@ -539,7 +542,7 @@ export function HotmailAuto() {
     </div>
 
     {oauthPrompt ? <div className="email-connect-banner"><strong>Kết nối OAuth</strong><span>Mã: <b>{oauthPrompt.userCode ?? '—'}</b></span><span className="mono">{oauthPrompt.verificationUri ?? ''}</span><span>{oauthPrompt.expiresAt ? `Hết hạn ${formatTime(oauthPrompt.expiresAt)}` : ''}</span><button onClick={() => setOauthPrompt(null)}>×</button></div> : null}
-    <div className="email-status-line"><span className="email-status-dot" />{message}</div>
+    <div className="email-status-line" role="status" aria-live="polite"><span className="email-status-dot" />{message}</div>
 
     <div className="email-grid-wrap"><table className="email-grid"><thead><tr>
       <th className="check"><input type="checkbox" checked={allVisibleSelected} onChange={toggleVisible} /></th>
@@ -574,7 +577,7 @@ export function HotmailAuto() {
     <footer className="email-selection-footer"><div><strong>{visibleSelected}</strong> dòng đang hiện được chọn · <strong>{excelRange.rangeIds.size}</strong> dòng phủ gần nhất</div><span>Click/Ctrl/Shift/kéo hoặc checkbox: chọn đúng dòng nhận lệnh · Double-click: mở mail</span></footer>
 
     {panel ? <div className={`email-panel-backdrop${panel === 'combo' ? ' security-modal-backdrop' : ''}`} onMouseDown={() => setPanel(null)}><aside className={`email-side-panel${panel === 'combo' ? ' security-modal' : ''}`} onMouseDown={(event) => event.stopPropagation()}>
-      <div className="email-panel-header"><div><span>EMAIL</span><h2>{panel === 'network' ? 'Proxy / IP' : panel === 'logs' ? 'Nhật ký gần nhất' : panel === 'recovery' ? 'Mail khôi phục' : panel === 'password' ? 'Đổi Password Email' : panel === 'combo' ? 'Hotmail Security' : 'Cài đặt'}</h2></div><button className="email-panel-close" onClick={() => setPanel(null)}>×</button></div>
+      <div className="email-panel-header"><div><span>EMAIL · {selectedIds.length} TK đã chọn</span><h2>{panel === 'network' ? 'Proxy / IP' : panel === 'logs' ? 'Nhật ký gần nhất' : panel === 'recovery' ? 'Mail khôi phục' : panel === 'password' ? 'Đổi Password Email' : panel === 'combo' ? 'Hotmail Security' : 'Cài đặt'}</h2></div><button className="email-panel-close" onClick={() => setPanel(null)}>×</button></div>
 
       {panel === 'combo' ? <HotmailComboPanel selectedIds={selectedIds} rows={panelRows} preset={securityPreset} onMessage={setMessage} onRefresh={refreshRows} /> : null}
 
@@ -658,17 +661,17 @@ export function HotmailAuto() {
       onDismiss={() => setContextMenu(null)}
       className="email-account-context-menu"
     >
-      <div className="email-context-title"><strong>{contextIds.length} tài khoản đã tích</strong><span className="email-context-identity">{contextRow?.accountName ?? contextRow?.uid ?? 'Tài khoản'} · {contextRow?.accountCategory?.trim() || 'Chưa gán nhóm'}</span></div>
+      <div className="email-context-title"><strong>{contextIds.length} tài khoản đang chọn</strong><span className="email-context-identity">{contextRow?.accountName ?? contextRow?.uid ?? 'Tài khoản'} · {contextRow?.accountCategory?.trim() || 'Chưa gán nhóm'}</span></div>
       <button disabled={contextIds.length === 0} onClick={() => { setContextMenu(null); void openMail(contextIds) }}>Mở mail</button>
       <button disabled={contextIds.length === 0} onClick={() => { setContextMenu(null); void getCodes(contextIds) }}>Lấy mã</button>
       <button disabled={contextIds.length === 0} onClick={() => { setContextMenu(null); void checkMail(contextIds) }}>Check Live Mail</button>
       <button disabled={contextIds.length !== 1} onClick={() => { setContextMenu(null); void connectMailbox(contextIds[0]) }}>Lấy / cập nhật OAuth</button>
       <div className="email-context-separator" />
       <button disabled={contextIds.length === 0} onClick={() => { setContextMenu(null); void copyEmails(contextIds) }}>Copy Email</button>
-      <button onClick={() => { setContextMenu(null); setSecurityPreset('add'); setPanel('combo') }}>Thêm Mail KP</button>
-      <button onClick={() => { setContextMenu(null); setSecurityPreset('remove'); setPanel('combo') }}>Xóa Mail KP cũ</button>
-      <button onClick={() => { setContextMenu(null); setSecurityPreset('password'); setPanel('combo') }}>Đổi Password Email</button>
-      <button onClick={() => { setContextMenu(null); setSecurityPreset('combo'); setPanel('combo') }}>Hotmail Security Combo</button>
+      <button disabled={!contextIds.length} onClick={() => { setContextMenu(null); setSecurityPreset('add'); setPanel('combo') }}>Thêm Mail KP ({contextIds.length})</button>
+      <button disabled={!contextIds.length} onClick={() => { setContextMenu(null); setSecurityPreset('remove'); setPanel('combo') }}>Xóa Mail KP cũ ({contextIds.length})</button>
+      <button disabled={!contextIds.length} onClick={() => { setContextMenu(null); setSecurityPreset('password'); setPanel('combo') }}>Đổi Password Email ({contextIds.length})</button>
+      <button disabled={!contextIds.length} onClick={() => { setContextMenu(null); setSecurityPreset('combo'); setPanel('combo') }}>Hotmail Security Combo ({contextIds.length})</button>
       <button onClick={() => { setContextMenu(null); setPanel('logs') }}>Xem trạng thái / lỗi</button>
     </AccountSelectionMenu> : null}
   </section>

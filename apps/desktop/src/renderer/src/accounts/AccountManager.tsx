@@ -104,7 +104,7 @@ export function AccountManager({ onOpenChangeInfoWorkspace }: AccountManagerProp
     'page-auto:grid:accounts:status', 'all',
     (value): value is 'all' | AccountRecord['status'] => value === 'all' || ACCOUNT_STATUSES.includes(value as AccountRecord['status'])
   )
-  const [categoryFilter, setCategoryFilter] = useState('')
+  const [categoryFilter, setCategoryFilter] = useGridPreference('page-auto:grid:accounts:category', '', isGridString)
   const [groupOverview, setGroupOverview] = useState<AccountGroupOverview>(EMPTY_GROUP_OVERVIEW)
   const [groupManagerOpen, setGroupManagerOpen] = useState(false)
   const [groupPickerOpen, setGroupPickerOpen] = useState(false)
@@ -398,7 +398,10 @@ export function AccountManager({ onOpenChangeInfoWorkspace }: AccountManagerProp
   const onImportComplete = async (result: AccountImportResult, operation: AccountImportOperation) => {
     setImportOperation(null)
     const action = operation === 'insert' ? 'Nhập' : 'Cập nhật'
-    setNotice(`${action} dữ liệu: thêm ${result.imported}, cập nhật ${result.updated}, bỏ qua ${result.skipped}${result.errors.length ? `, lỗi ${result.errors.length}` : ''}.`)
+    const errorLines = result.errors.slice(0, 8).map(({ line }) => line).filter((line) => Number.isInteger(line) && line > 0)
+    // Do not repeat backend error content, which might include imported credentials.
+    const lineSummary = errorLines.length ? ` · Dòng lỗi: ${errorLines.join(', ')}${result.errors.length > errorLines.length ? ', …' : ''}` : ''
+    setNotice(`${action} dữ liệu: thêm ${result.imported}, cập nhật ${result.updated}, bỏ qua ${result.skipped}${result.errors.length ? `, lỗi ${result.errors.length}` : ''}.${lineSummary}`)
     await refreshAccountsAndGroups()
   }
 
@@ -443,24 +446,33 @@ export function AccountManager({ onOpenChangeInfoWorkspace }: AccountManagerProp
   return (
     <section className="account-manager">
       <div className="account-grid-panel">
-        <div className="account-toolbar">
+        <div className="account-toolbar account-toolbar-primary" role="toolbar" aria-label="Quản lý tài khoản">
           <div className="toolbar-group">
             <button className="button primary" type="button" onClick={() => setEditorAccount(null)}>+ Thêm tài khoản</button>
             <button className="button secondary" type="button" onClick={() => setImportOperation('insert')}>Nhập tài khoản</button>
             <button className="button secondary" type="button" onClick={() => setImportOperation('update')}>Cập nhật tài khoản</button>
-            <button className="button secondary" type="button" disabled={selected.length !== 1} onClick={() => setEditorAccount(selected[0] ?? null)}>Sửa</button>
-            <button className="button danger" type="button" disabled={selectedIds.size === 0} onClick={() => void deleteSelected()}>Xóa</button>
+            <button className="button secondary" type="button" onClick={() => setGroupManagerOpen(true)}>Quản lý nhóm ({groupOverview.groups.length})</button>
           </div>
           <div className="toolbar-group">
-            <button className="button secondary" type="button" disabled={selectedIds.size === 0} onClick={() => void openChangeInfo()}>Sửa thông tin</button>
-            <button className="button secondary" type="button" disabled={selectedIds.size === 0 || openingProfiles || checkingLive} onClick={() => void openProfile(true)}>Cửa sổ Chrome</button>
-            <button className="button secondary" type="button" disabled={selectedIds.size === 0 || openingProfiles || checkingLive} onClick={() => void checkLiveSelected()}>{checkingLive ? 'Đang Check Live…' : 'Check Live'}</button>
-            <button className="button secondary" type="button" onClick={() => setGroupManagerOpen(true)}>Quản lý nhóm ({groupOverview.groups.length})</button>
-            <button className="button secondary" type="button" disabled={selectedIds.size === 0} onClick={openGroupPicker}>Gán nhóm</button>
             <div className="column-settings-anchor">
-              <button className="button secondary" type="button" onClick={() => setColumnManagerOpen((value) => !value)}>Cột</button>
+              <button className="button secondary" type="button" aria-expanded={columnManagerOpen} aria-haspopup="dialog" onClick={() => setColumnManagerOpen((value) => !value)}>Cột ({visibleColumns.length})</button>
               {columnManagerOpen ? <ColumnManager layout={layout} onChange={persistLayout} onClose={() => setColumnManagerOpen(false)} /> : null}
             </div>
+          </div>
+        </div>
+        <div className="account-toolbar account-toolbar-bulk" role="toolbar" aria-label="Thao tác với tài khoản đã chọn">
+          <div className="account-selection-summary" role="status" aria-live="polite"><strong>{selectedIds.size}</strong> tài khoản đang chọn <span>· {sortedAccounts.length} trong bộ lọc</span></div>
+          <div className="toolbar-group">
+            <button className="button secondary" type="button" disabled={!sortedAccounts.length} onClick={selectAllFiltered}>Chọn đang lọc</button>
+            <button className="button secondary" type="button" disabled={!selectedIds.size} onClick={clearSelection}>Bỏ chọn</button>
+            <span className="account-toolbar-divider" aria-hidden="true" />
+            <button className="button secondary" type="button" disabled={selected.length !== 1} onClick={() => setEditorAccount(selected[0] ?? null)}>Sửa</button>
+            <button className="button secondary" type="button" disabled={!selectedIds.size} onClick={() => void openChangeInfo()}>Sửa thông tin</button>
+            <button className="button secondary" type="button" disabled={!selectedIds.size} onClick={openGroupPicker}>Gán nhóm</button>
+            <button className="button secondary" type="button" disabled={!selectedIds.size} onClick={() => void copySelectedUids()}>Copy UID</button>
+            <button className="button secondary" type="button" disabled={!selectedIds.size || openingProfiles || checkingLive} onClick={() => void openProfile(true)}>Cửa sổ Chrome</button>
+            <button className="button secondary" type="button" disabled={!selectedIds.size || openingProfiles || checkingLive} onClick={() => void checkLiveSelected()}>{checkingLive ? 'Đang Check Live…' : 'Check Live'}</button>
+            <button className="button danger" type="button" disabled={!selectedIds.size} onClick={() => void deleteSelected()}>Xóa ({selectedIds.size})</button>
           </div>
         </div>
 
@@ -479,7 +491,7 @@ export function AccountManager({ onOpenChangeInfoWorkspace }: AccountManagerProp
             <option value={UNGROUPED_CATEGORY_FILTER}>Chưa gán nhóm ({groupOverview.ungroupedCount})</option>
             {groupOverview.groups.map((group) => <option key={group.id} value={group.name}>{group.name} ({group.accountCount})</option>)}
           </select>
-          <span className="grid-state">{loading ? 'Đang tải…' : `${sortedAccounts.length}/${groupOverview.totalAccounts} tài khoản${bulkUidFilter.length ? ` · lọc UID ${bulkUidFilter.length}` : ''} · chọn ${selectedIds.size} · phủ ${excelRange.rangeIds.size}`}</span>
+          <span className="grid-state">{loading ? 'Đang tải…' : `${sortedAccounts.length}/${groupOverview.totalAccounts} đang hiển thị${bulkUidFilter.length ? ` · lọc UID ${bulkUidFilter.length}` : ''}`}</span>
         </div>
 
         {notice ? <div className="notice-bar"><span>{notice}</span><button type="button" onClick={() => setNotice(null)}>×</button></div> : null}
