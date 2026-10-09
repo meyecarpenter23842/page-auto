@@ -14,7 +14,7 @@ describe('Change Info workspace shell', () => {
     expect(accountSource).toContain('selected.map((account) => ({ accountId: account.id, enabled: true }))')
     expect(appSource).toContain('onOpenChangeInfoWorkspace={openChangeInfoWorkspace}')
     expect(appSource).toContain('ACTION_WORKSPACE_OPEN_REQUEST_KEY')
-    expect(appSource).toContain("setActiveRoute('actions')")
+    expect(appSource).toContain("if (!navigateTo('actions')) return")
     expect(actionWorkspaceSource).toContain('window.sessionStorage.getItem(ACTION_WORKSPACE_OPEN_REQUEST_KEY)')
     expect(actionWorkspaceSource).toContain("tab.type === 'change_info'")
     expect(registrySource).toContain("id: 'change_info'")

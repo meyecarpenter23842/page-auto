@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { ACCOUNT_STATUSES, type AccountDraft, type AccountRecord } from '../../../shared/accounts'
+import { confirmWorkspaceNavigation, useUnsavedWorkspaceChanges } from '../workspaceNavigation'
 import { accountStatusLabels, accountToDraft } from './accountManagerModel'
 
 export interface AccountEditorProps {
@@ -12,6 +13,9 @@ export function AccountEditor({ account, onClose, onSaved }: AccountEditorProps)
   const [draft, setDraft] = useState<AccountDraft>(() => account ? accountToDraft(account) : { uid: '', status: 'unknown' })
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const dirty = JSON.stringify(draft) !== JSON.stringify(account ? accountToDraft(account) : { uid: '', status: 'unknown' })
+  useUnsavedWorkspaceChanges(dirty, 'Biểu mẫu tài khoản')
+  const closeEditor = () => { if (!dirty || confirmWorkspaceNavigation()) onClose() }
 
   const setField = <K extends keyof AccountDraft>(field: K, value: AccountDraft[K]) => {
     setDraft((current) => ({ ...current, [field]: value }))
@@ -34,11 +38,11 @@ export function AccountEditor({ account, onClose, onSaved }: AccountEditorProps)
   }
 
   return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+    <div className="modal-backdrop" role="presentation" onMouseDown={closeEditor}>
       <form className="modal account-editor" onSubmit={submit} onMouseDown={(event) => event.stopPropagation()}>
         <div className="modal-header">
           <div><p className="eyebrow">Quản lý tài khoản</p><h2>{account ? `Sửa ${account.uid}` : 'Thêm tài khoản'}</h2></div>
-          <button className="icon-button" type="button" onClick={onClose}>×</button>
+          <button className="icon-button" type="button" onClick={closeEditor}>×</button>
         </div>
 
         <div className="form-grid">
@@ -81,7 +85,7 @@ export function AccountEditor({ account, onClose, onSaved }: AccountEditorProps)
 
         {error ? <div className="inline-error">{error}</div> : null}
         <div className="modal-actions">
-          <button className="button secondary" type="button" onClick={onClose}>Hủy</button>
+          <button className="button secondary" type="button" onClick={closeEditor}>Hủy</button>
           <button className="button primary" type="submit" disabled={saving}>{saving ? 'Đang lưu…' : 'Lưu tài khoản'}</button>
         </div>
       </form>

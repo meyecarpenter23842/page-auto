@@ -29,6 +29,7 @@ import {
   loadPageWallLastUsedState,
   savePageWallLastUsedState
 } from './pageWallLastUsedState'
+import { useUnsavedWorkspaceChanges } from '../workspaceNavigation'
 import './pageWallWorkspace.css'
 import './pageWallRuntimeControls.css'
 
@@ -265,6 +266,7 @@ export function PageWallWorkspace({ activePageId: controlledPageId, scoped = fal
   const [libraryItems, setLibraryItems] = useState<ContentLibraryItem[]>([])
   const [pickerTarget, setPickerTarget] = useState<PickerTarget | null>(null)
   const [scheduleDraft, setScheduleDraft] = useState<ScheduleDraft | null>(null)
+  useUnsavedWorkspaceChanges(scheduleDraft !== null, 'Page Tabs / Lịch Đăng Tường')
   const [postEditor, setPostEditor] = useState<{ target: PickerTarget; item: ContentLibraryItem | null; variantIndex: number } | null>(null)
 
   useEffect(() => {

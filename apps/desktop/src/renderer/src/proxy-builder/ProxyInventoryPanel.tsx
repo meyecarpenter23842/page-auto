@@ -7,6 +7,7 @@ import {
 import type { ProxyCenterFolder, ProxyCenterInventoryRecord, ProxyCenterInventoryStatus } from '../../../shared/proxyBuilder'
 import { AccountSelectionMenu } from '../accounts/AccountSelectionMenu'
 import { useExcelRowRange } from '../accounts/accountTableSelection'
+import { useUnsavedWorkspaceChanges } from '../workspaceNavigation'
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -49,6 +50,7 @@ export function ProxyInventoryPanel() {
   const [folderEditor, setFolderEditor] = useState<FolderEditorState | null>(null)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [importText, setImportText] = useState('')
+  useUnsavedWorkspaceChanges(Boolean(importText.trim() || folderEditor?.value.trim()), 'Kho Proxy / Nhập và thư mục')
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
 

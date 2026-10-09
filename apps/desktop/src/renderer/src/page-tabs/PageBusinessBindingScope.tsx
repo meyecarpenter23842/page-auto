@@ -9,6 +9,7 @@ import {
 import type { PageTabSummary } from '../../../shared/pageTabs'
 import { PageTabsManager } from './PageTabsManagerV2'
 import { PageWallWorkspace } from './PageWallWorkspace'
+import { confirmWorkspaceNavigation } from '../workspaceNavigation'
 import './pageBusinessBindings.css'
 
 interface BindingRecord { workspace: ActionWorkspaceRecord; pageTabId: number }
@@ -59,15 +60,16 @@ export function PageBusinessBindingScope({ businessType, label, children }: Prop
   const activePage = activeBinding ? pages.find((page) => page.id === activeBinding.pageTabId) ?? null : null
   const boundIds = useMemo(() => new Set(bindings.map((item) => item.pageTabId)), [bindings])
   const addPage = async (page: PageTabSummary) => {
+    if (!confirmWorkspaceNavigation()) return
     const created = await window.pageAuto.createActionWorkspace({ type: 'interaction', label: `${page.name} · ${label}`, configJson: serializePageBusinessBindingConfig(businessType, page.id), accounts: [] })
     setPickerOpen(false); await refresh(created.id)
   }
   const removePage = async (binding: BindingRecord, page?: PageTabSummary) => {
-    if (!window.confirm(`Bỏ “${page?.name ?? `Page #${binding.pageTabId}`}” khỏi ${label}? Page gốc không bị xóa.`)) return
+    if (!confirmWorkspaceNavigation() || !window.confirm(`Bỏ “${page?.name ?? `Page #${binding.pageTabId}`}” khỏi ${label}? Page gốc không bị xóa.`)) return
     await window.pageAuto.deleteActionWorkspace({ id: binding.workspace.id }); await refresh()
   }
   return <section className={`page-business-binding-scope business-${businessType}`}>
-    <div className="page-business-page-strip"><div className="page-business-page-scroll">{bindings.map((binding) => { const page = pages.find((item) => item.id === binding.pageTabId); return page ? <div key={binding.workspace.id} className={binding.workspace.id === activeWorkspaceId ? 'page-business-page-chip active' : 'page-business-page-chip'}><button type="button" onClick={() => setActiveWorkspaceId(binding.workspace.id)}><strong>{page.name}</strong></button><button className="remove" type="button" onClick={() => void removePage(binding, page)}>×</button></div> : null })}</div><button className="page-business-add-page" type="button" onClick={() => setPickerOpen(true)}>+ Thêm Page</button></div>
+    <div className="page-business-page-strip"><div className="page-business-page-scroll">{bindings.map((binding) => { const page = pages.find((item) => item.id === binding.pageTabId); return page ? <div key={binding.workspace.id} className={binding.workspace.id === activeWorkspaceId ? 'page-business-page-chip active' : 'page-business-page-chip'}><button type="button" onClick={() => { if (activeWorkspaceId === binding.workspace.id || confirmWorkspaceNavigation()) setActiveWorkspaceId(binding.workspace.id) }}><strong>{page.name}</strong></button><button className="remove" type="button" onClick={() => void removePage(binding, page)}>×</button></div> : null })}</div><button className="page-business-add-page" type="button" onClick={() => setPickerOpen(true)}>+ Thêm Page</button></div>
     {error ? <div className="page-tab-error page-business-binding-error">{error}</div> : null}
     <div className="page-business-binding-content">{activePage ? children({ activePage, allPages: pages }) : <div className="page-business-binding-empty"><strong>Chưa có Page trong tab {label}</strong><span>Page trong Quản lý Page không tự xuất hiện ở đây.</span><button type="button" onClick={() => setPickerOpen(true)}>+ Thêm Page</button></div>}</div>
     {pickerOpen ? <PagePicker pages={pages} boundIds={boundIds} label={label} onClose={() => setPickerOpen(false)} onAdd={addPage} /> : null}

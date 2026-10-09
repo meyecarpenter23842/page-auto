@@ -26,6 +26,7 @@ import {
 } from './hotmailUiModel'
 import { HotmailComboPanel } from './HotmailComboPanel'
 import type { HotmailSecurityPreset } from './hotmailSecurityUiModel'
+import { useUnsavedWorkspaceChanges } from '../workspaceNavigation'
 import './hotmailAuto.css'
 import './hotmailCanonicalGrid.css'
 import './hotmailCompactUx.css'
@@ -160,6 +161,8 @@ export function HotmailAuto() {
   const [draft, setDraft] = useState<SettingsDraft | null>(null)
   const [selection, setSelection] = useState<Set<number>>(new Set())
   const [proxyDirty, setProxyDirty] = useState(false)
+  const settingsDirty = Boolean(draft && settings && JSON.stringify(draft) !== JSON.stringify(settingsDraft(settings)))
+  useUnsavedWorkspaceChanges(settingsDirty || proxyDirty, 'Email / Cài đặt')
   const [busyActions, setBusyActions] = useState<Set<ActionKey>>(new Set())
   const [message, setMessage] = useState('Email dùng chung accountId, Tên TK và Nhóm TK với Account Manager; trạng thái Email tách riêng Facebook.')
   const [oauthPrompt, setOauthPrompt] = useState<HotmailOAuthStartResult | null>(null)
