@@ -65,11 +65,13 @@ try {
   await root.getByRole('button', { name: 'Lưu', exact: true }).click()
   await root.locator('.proxy-center-folders').getByText('Smoke Folder', { exact: true }).waitFor({ state: 'visible' })
 
+  await root.getByRole('button', { name: '+ Nhập Proxy vào kho', exact: true }).click()
   const inventoryInput = root.getByLabel('Nhập proxy vào kho')
   await inventoryInput.fill(`127.0.0.1:${proxyPort}:smoke1:secret1\n127.0.0.1:${proxyPort}:smoke2:secret2`)
   await root.getByRole('button', { name: 'Nhập vào kho (2)', exact: true }).click()
   const inventoryRows = root.locator('.proxy-center-table tbody tr')
   await inventoryRows.nth(1).waitFor({ state: 'visible' })
+  invariant(await inventoryInput.count() === 0, 'Form nhập Proxy chưa thu gọn sau khi lưu.')
 
   const selectAllInventory = root.getByLabel('Chọn tất cả proxy đang lọc')
   await selectAllInventory.click()
