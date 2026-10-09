@@ -57,6 +57,7 @@ export function ProxyInventoryPanel() {
   const [folderEditor, setFolderEditor] = useState<FolderEditorState | null>(null)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [importText, setImportText] = useState('')
+  const [importOpen, setImportOpen] = useState(false)
   useUnsavedWorkspaceChanges(Boolean(importText.trim() || folderEditor?.value.trim()), 'Kho Proxy / Nhập và thư mục')
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
@@ -174,6 +175,7 @@ export function ProxyInventoryPanel() {
       })
       setRows(result.records)
       setImportText('')
+      setImportOpen(false)
       setNotice(
         'Kho Proxy: thêm ' + result.inserted + ', cập nhật ' + result.updated
         + (result.errors.length ? ', lỗi ' + result.errors.length + ' · ' + result.errors[0] : '.')
@@ -283,20 +285,30 @@ export function ProxyInventoryPanel() {
           </div>
           <div className="proxy-builder-inline-actions">
             <input className="proxy-center-search" value={search} onChange={(event) => setSearch(event.currentTarget.value)} placeholder="Tìm proxy / outbound / nguồn / thư mục…" />
-            <select value={status} onChange={(event) => setStatus(event.currentTarget.value as typeof status)}>
+            <label className="proxy-center-filter-label">Kết nối
+              <select aria-label="Lọc trạng thái kết nối Proxy" value={status} onChange={(event) => setStatus(event.currentTarget.value as typeof status)}>
               <option value="all">Tất cả trạng thái</option>
               <option value="live">LIVE</option>
               <option value="dead">DEAD</option>
               <option value="unknown">Chưa test</option>
-            </select>
-            <select value={usage} onChange={(event) => setUsage(event.currentTarget.value as UsageFilter)}>
+              </select>
+            </label>
+            <label className="proxy-center-filter-label">Sử dụng
+              <select aria-label="Lọc trạng thái sử dụng Proxy" value={usage} onChange={(event) => setUsage(event.currentTarget.value as UsageFilter)}>
               <option value="all">Tất cả sử dụng</option>
               <option value="unused">Chưa dùng</option>
               <option value="used">Đã dùng</option>
-            </select>
+              </select>
+            </label>
           </div>
         </div>
-        <div className="proxy-center-import-row">
+        <div className="proxy-center-import-toggle">
+          <button className="button secondary" type="button" aria-expanded={importOpen} aria-controls="proxy-center-import-editor" onClick={() => setImportOpen((open) => !open)}>
+            {importOpen ? 'Thu gọn nhập Proxy' : '+ Nhập Proxy vào kho'}{importLines.length ? ` (${importLines.length} dòng chưa nhập)` : ''}
+          </button>
+          <span>Chọn thư mục, lọc và thao tác trên bảng bên dưới · Mật khẩu luôn được ẩn trong bảng.</span>
+        </div>
+        {importOpen ? <div id="proxy-center-import-editor" className="proxy-center-import-row">
           <textarea
             aria-label="Nhập proxy vào kho"
             value={importText}
@@ -312,7 +324,7 @@ export function ProxyInventoryPanel() {
             </button>
             <span className="proxy-builder-muted">Password được lưu local và luôn mask trên bảng.</span>
           </div>
-        </div>
+        </div> : null}
       </div>
 
       <div className="proxy-center-management">
@@ -381,7 +393,7 @@ export function ProxyInventoryPanel() {
           <div className="proxy-center-selection-bar">
             <div>
               <strong>Danh sách quản lý</strong>
-              <span>Đang chọn {selected.size} · phủ {excelRange.rangeIds.size} · hiển thị {filtered.length}/{rows.length}</span>
+              <span role="status" aria-live="polite">Đang chọn {selected.size} · phủ {excelRange.rangeIds.size} · hiển thị {filtered.length}/{rows.length}</span>
             </div>
             <div className="proxy-builder-inline-actions">
               <button className="button secondary" type="button" disabled={!filtered.length || busy} onClick={() => selectRows(() => true)}>Chọn tất cả lọc</button>
@@ -398,12 +410,16 @@ export function ProxyInventoryPanel() {
               </select>
               <button className="button secondary" type="button" disabled={!selected.size || busy} onClick={() => void moveSelected()}>Chuyển thư mục</button>
             </div>
-            <div className="proxy-builder-inline-actions">
+            <div className="proxy-builder-inline-actions proxy-center-bulk-actions" role="toolbar" aria-label="Thao tác Proxy đã chọn">
+              <button className="button secondary" type="button" disabled={!selected.size || busy} onClick={() => void copyInventory([...selected], 'đang chọn')}>Copy ({selected.size})</button>
+              <button className="button secondary" type="button" disabled={!selected.size || busy} onClick={() => void markUsage([...selected], true, 'đang chọn')}>Đã dùng ({selected.size})</button>
+              <button className="button secondary" type="button" disabled={!selected.size || busy} onClick={() => void markUsage([...selected], false, 'đang chọn')}>Chưa dùng ({selected.size})</button>
               <button className="button secondary" type="button" disabled={!selected.size || busy} onClick={() => void testInventory([...selected])}>Test đã chọn</button>
               <button className="button secondary" type="button" disabled={!filtered.length || busy} onClick={() => void testInventory(filtered.map((item) => item.id))}>Test tập đang lọc</button>
-              <button className="button danger" type="button" disabled={!selected.size || busy} onClick={() => void deleteSelected()}>Xóa khỏi kho</button>
+              <button className="button danger" type="button" disabled={!selected.size || busy} onClick={() => void deleteSelected()}>Xóa ({selected.size})</button>
             </div>
           </div>
+          {busy ? <div className="proxy-center-busy" role="status" aria-live="polite">Đang xử lý Proxy…</div> : null}
           <div className="proxy-builder-table-wrap">
             <table className="data-table proxy-builder-table proxy-center-table">
               <thead><tr>
@@ -490,7 +506,7 @@ export function ProxyInventoryPanel() {
         </AccountSelectionMenu>
       ) : null}
 
-      {notice ? <div className="proxy-builder-notice">{notice}</div> : null}
+      {notice ? <div className="proxy-builder-notice" role="status" aria-live="polite">{notice}</div> : null}
     </section>
   )
 }

@@ -742,3 +742,19 @@ html[data-theme='dark'] .proxy-center-folder-editor input {
   color: var(--pa-dark-text);
   background: var(--pa-dark-surface);
 }
+
+/* Batch 4 - compact Proxy inventory, with import opened on demand. */
+.proxy-center-import-toggle { display:flex;align-items:center;gap:9px;flex-wrap:wrap;padding:5px 9px;border-top:1px solid #e2e8f0; }
+.proxy-center-import-toggle > span { color:#64748b;font-size:10px; }
+.proxy-center-filter-label { display:flex;align-items:center;gap:5px;color:#64748b;font-size:10px;font-weight:700;white-space:nowrap; }
+.proxy-center-filter-label select { min-height:27px; }
+.proxy-center-selection-bar.secondary { gap:8px;flex-wrap:wrap; }
+.proxy-center-bulk-actions { justify-content:flex-end;flex-wrap:wrap; }
+.proxy-center-busy { padding:4px 10px;border-bottom:1px solid #e2e8f0;color:#475569;font-size:11px; }
+.proxy-center-table tbody tr.checked-row td { background:rgba(23,92,211,.075); }
+.proxy-center-table tbody tr.checked-row:hover td { background:rgba(23,92,211,.12); }
+.proxy-center-layout button:focus-visible,.proxy-center-layout select:focus-visible { outline:2px solid #175cd3;outline-offset:1px; }
+html[data-theme='dark'] .proxy-center-import-toggle,html[data-theme='dark'] .proxy-center-busy { border-color:var(--pa-dark-border); }
+html[data-theme='dark'] .proxy-center-import-toggle > span,html[data-theme='dark'] .proxy-center-filter-label,html[data-theme='dark'] .proxy-center-busy { color:var(--pa-dark-muted); }
+html[data-theme='dark'] .proxy-center-table tbody tr.checked-row td { background:rgba(83,177,253,.12); }
+@media (max-width:1180px) { .proxy-center-selection-bar.secondary > .proxy-builder-inline-actions { flex-wrap:wrap; } }

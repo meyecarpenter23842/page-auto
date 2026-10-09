@@ -83,6 +83,7 @@ export function ScannerWorkspace() {
   const [location, setLocation] = useState('')
   const [job, setJob] = useState<ScanJobDetails | null>(null)
   const [selectedResultIds, setSelectedResultIds] = useState<Set<number>>(new Set())
+  const [onlyMatchingGroups, setOnlyMatchingGroups] = useState(false)
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
   const [datasetName, setDatasetName] = useState(defaultDatasetName('group'))
@@ -109,6 +110,12 @@ export function ScannerWorkspace() {
     location: location.trim().toLocaleLowerCase()
   }), [membersMin, membersMax, privacy, location])
   const allEligibleSelected = eligibleIds.length > 0 && eligibleIds.every((id) => selectedResultIds.has(id))
+  const displayedResults = useMemo(
+    () => activeType === 'group' && onlyMatchingGroups
+      ? (job?.results ?? []).filter((result) => eligibleIdSet.has(result.id))
+      : job?.results ?? [],
+    [activeType, job?.results, onlyMatchingGroups, eligibleIdSet]
+  )
 
   useEffect(() => {
     void Promise.all([window.pageAuto.listAccounts({ status: 'all' }), window.pageAutoScanner.listDatasets()]).then(([nextAccounts, nextDatasets]) => {
@@ -125,6 +132,7 @@ export function ScannerWorkspace() {
     setQuery('')
     setJob(null)
     setSelectedResultIds(new Set())
+    setOnlyMatchingGroups(false)
     setNotice(null)
   }, [activeType])
 
@@ -261,9 +269,18 @@ export function ScannerWorkspace() {
           <label>Privacy<select value={privacy} onChange={(event) => setPrivacy(event.currentTarget.value)}><option value="all">Tất cả</option><option value="public">Public</option><option value="private">Private</option></select></label>
           <label>Location<input value={location} onChange={(event) => setLocation(event.currentTarget.value)} placeholder="Tất cả" /></label>
         </div> : null}
+        {activeType === 'group' && Boolean(job?.results.length) ? (
+          <div className="scanner-selection-toolbar" role="toolbar" aria-label="Chọn kết quả Quét Nhóm">
+            <strong>{selectedCount} Group đã chọn</strong>
+            <span>{eligibleIds.length} đạt lọc · {displayedResults.length} đang hiện</span>
+            <button className="button secondary" type="button" disabled={busy || !eligibleIds.length} onClick={() => setSelectedResultIds(new Set(eligibleIds))}>Chọn Group đạt lọc</button>
+            <button className="button secondary" type="button" disabled={busy || !selectedCount} onClick={() => setSelectedResultIds(new Set())}>Bỏ chọn</button>
+            <label><input type="checkbox" checked={onlyMatchingGroups} onChange={(event) => setOnlyMatchingGroups(event.target.checked)} /> Chỉ hiện Group đạt lọc</label>
+          </div>
+        ) : null}
         <div className="scanner-table-wrap"><table className="scanner-table"><thead><tr>{activeType === 'group' ? <th className="scanner-check-column"><input type="checkbox" aria-label="Chọn tất cả Group đạt bộ lọc" checked={allEligibleSelected} disabled={eligibleIds.length === 0} onChange={toggleAllEligible} /></th> : null}{columns.map((column) => <th key={column.key}>{column.label}</th>)}</tr></thead><tbody>
-          {job?.results.map((result) => <tr key={result.id} className={activeType === 'group' && eligibleIdSet.has(result.id) ? 'scanner-row-eligible' : undefined}>{activeType === 'group' ? <td className="scanner-check-column"><input type="checkbox" aria-label={`Chọn Group ${result.entityId}`} checked={selectedResultIds.has(result.id)} onChange={() => toggleResult(result.id)} /></td> : null}{columns.map((column) => <td key={column.key}>{resultValue(result, column.key)}</td>)}</tr>)}
-          {!job?.results.length ? <tr><td colSpan={columns.length + (activeType === 'group' ? 1 : 0)} className="scanner-empty">{activeType === 'group' ? 'Chưa có kết quả Quét Nhóm.' : activeType === 'page' ? 'Chưa có kết quả Quét Page.' : activeType === 'user' ? 'Chưa có kết quả Quét Người dùng.' : 'Chưa có kết quả Thành viên nhóm.'}</td></tr> : null}
+          {displayedResults.map((result) => <tr key={result.id} className={activeType === 'group' ? (selectedResultIds.has(result.id) ? 'scanner-row-selected' : eligibleIdSet.has(result.id) ? 'scanner-row-eligible' : undefined) : undefined}>{activeType === 'group' ? <td className="scanner-check-column"><input type="checkbox" aria-label={`Chọn Group ${result.entityId}`} checked={selectedResultIds.has(result.id)} onChange={() => toggleResult(result.id)} /></td> : null}{columns.map((column) => <td key={column.key}>{resultValue(result, column.key)}</td>)}</tr>)}
+          {!displayedResults.length ? <tr><td colSpan={columns.length + (activeType === 'group' ? 1 : 0)} className="scanner-empty">{activeType === 'group' ? 'Chưa có kết quả Quét Nhóm.' : activeType === 'page' ? 'Chưa có kết quả Quét Page.' : activeType === 'user' ? 'Chưa có kết quả Quét Người dùng.' : 'Chưa có kết quả Thành viên nhóm.'}</td></tr> : null}
         </tbody></table></div>
       </div>
 
@@ -275,11 +292,11 @@ export function ScannerWorkspace() {
         </div>
         <div className="scanner-dataset-actions">
           <span>{datasetCount} Dataset đã lưu</span><input value={datasetName} onChange={(event) => setDatasetName(event.currentTarget.value)} aria-label="Tên Dataset" />
-          <button className="button secondary" type="button" disabled={busy || !job?.results.length || (activeType === 'group' && selectedResultIds.size === 0)} onClick={() => void saveDataset()}>Lưu Dataset</button>
-          <button className="button secondary" type="button" disabled={busy || lastDatasetId === null} onClick={() => void exportCsv()}>Xuất CSV</button>
+          <button className="button secondary" type="button" disabled={busy || !job?.results.length || (activeType === 'group' && selectedResultIds.size === 0)} onClick={() => void saveDataset()}>Lưu Dataset{activeType === 'group' ? ` (${selectedCount})` : ''}</button>
+          <button className="button secondary" type="button" disabled={busy || lastDatasetId === null} title="Xuất Dataset đã lưu gần nhất, không xuất trực tiếp các dòng đang chọn" onClick={() => void exportCsv()}>Xuất CSV</button>
         </div>
       </div>
-      {notice ? <div className="scanner-notice">{notice}</div> : null}
+      {notice ? <div className="scanner-notice" role="status" aria-live="polite">{notice}</div> : null}
     </section>
   )
 }
