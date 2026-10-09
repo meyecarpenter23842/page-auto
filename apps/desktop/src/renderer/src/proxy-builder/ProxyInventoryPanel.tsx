@@ -7,6 +7,7 @@ import {
 import type { ProxyCenterFolder, ProxyCenterInventoryRecord, ProxyCenterInventoryStatus } from '../../../shared/proxyBuilder'
 import { AccountSelectionMenu } from '../accounts/AccountSelectionMenu'
 import { useExcelRowRange } from '../accounts/accountTableSelection'
+import { useGridPreference, isGridString } from '../accounts/gridViewPreferences'
 import { useUnsavedWorkspaceChanges } from '../workspaceNavigation'
 
 function message(error: unknown): string {
@@ -42,9 +43,15 @@ export function ProxyInventoryPanel() {
   const [rows, setRows] = useState<ProxyCenterInventoryRecord[]>([])
   const [folders, setFolders] = useState<ProxyCenterFolder[]>([])
   const [selected, setSelected] = useState<Set<number>>(new Set())
-  const [search, setSearch] = useState('')
-  const [status, setStatus] = useState<'all' | ProxyCenterInventoryStatus>('all')
-  const [usage, setUsage] = useState<UsageFilter>('all')
+  const [search, setSearch] = useGridPreference('page-auto:grid:proxy:search', '', isGridString)
+  const [status, setStatus] = useGridPreference<'all' | ProxyCenterInventoryStatus>(
+    'page-auto:grid:proxy:status', 'all',
+    (value): value is 'all' | ProxyCenterInventoryStatus => ['all', 'live', 'dead', 'unknown'].includes(String(value))
+  )
+  const [usage, setUsage] = useGridPreference<UsageFilter>(
+    'page-auto:grid:proxy:usage', 'all',
+    (value): value is UsageFilter => ['all', 'used', 'unused'].includes(String(value))
+  )
   const [folderFilter, setFolderFilter] = useState('all')
   const [moveFolder, setMoveFolder] = useState('none')
   const [folderEditor, setFolderEditor] = useState<FolderEditorState | null>(null)
@@ -89,7 +96,7 @@ export function ProxyInventoryPanel() {
     })
   }, [rows, folders, search, status, usage, folderFilter])
 
-  const excelRange = useExcelRowRange(filtered.map((item) => item.id))
+  const excelRange = useExcelRowRange(filtered.map((item) => item.id), selected, setSelected)
   const importLines = importText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
   const liveCount = rows.filter((item) => item.status === 'live').length
   const deadCount = rows.filter((item) => item.status === 'dead').length
@@ -99,6 +106,7 @@ export function ProxyInventoryPanel() {
   const folderName = (id: number | null) => id === null ? 'Chưa phân loại' : folders.find((folder) => folder.id === id)?.name ?? 'Thư mục đã xóa'
 
   const selectRows = (predicate: (item: ProxyCenterInventoryRecord) => boolean) => {
+    excelRange.clearRange()
     setSelected(new Set(filtered.filter(predicate).map((item) => item.id)))
   }
 
@@ -108,11 +116,13 @@ export function ProxyInventoryPanel() {
   }
 
   const selectAllFiltered = () => {
+    excelRange.clearRange()
     setSelected(new Set(filtered.map((item) => item.id)))
     setContextMenu(null)
   }
 
   const clearSelection = () => {
+    excelRange.clearRange()
     setSelected(new Set())
     setContextMenu(null)
   }
@@ -371,13 +381,13 @@ export function ProxyInventoryPanel() {
           <div className="proxy-center-selection-bar">
             <div>
               <strong>Danh sách quản lý</strong>
-              <span>Đang tích {selected.size} · phủ {excelRange.rangeIds.size} · hiển thị {filtered.length}/{rows.length}</span>
+              <span>Đang chọn {selected.size} · phủ {excelRange.rangeIds.size} · hiển thị {filtered.length}/{rows.length}</span>
             </div>
             <div className="proxy-builder-inline-actions">
               <button className="button secondary" type="button" disabled={!filtered.length || busy} onClick={() => selectRows(() => true)}>Chọn tất cả lọc</button>
               <button className="button secondary" type="button" disabled={!filtered.some((item) => !isUsed(item)) || busy} onClick={() => selectRows((item) => !isUsed(item))}>Chọn chưa dùng</button>
               <button className="button secondary" type="button" disabled={!filtered.some(isUsed) || busy} onClick={() => selectRows(isUsed)}>Chọn đã dùng</button>
-              <button className="button secondary" type="button" disabled={!selected.size || busy} onClick={() => setSelected(new Set())}>Bỏ chọn</button>
+              <button className="button secondary" type="button" disabled={!selected.size || busy} onClick={clearSelection}>Bỏ chọn</button>
             </div>
           </div>
           <div className="proxy-center-selection-bar secondary">
@@ -405,6 +415,7 @@ export function ProxyInventoryPanel() {
                     checked={Boolean(filtered.length) && filtered.every((item) => selected.has(item.id))}
                     onChange={(event) => {
                       const checked = event.target.checked
+                      excelRange.clearRange()
                       setSelected(checked ? new Set(filtered.map((item) => item.id)) : new Set())
                     }}
                   />
@@ -429,6 +440,7 @@ export function ProxyInventoryPanel() {
                           checked={checked}
                           onChange={(event) => {
                             const nextChecked = event.target.checked
+                            excelRange.clearRange()
                             setSelected((current) => {
                               const next = new Set(current)
                               if (nextChecked) next.add(item.id)
@@ -472,70 +484,9 @@ export function ProxyInventoryPanel() {
           onClearChecked={clearSelection}
           onDismiss={() => setContextMenu(null)}
         >
-          <button
-            type="button"
-            disabled={!excelRange.rangeIds.size || busy}
-            onClick={() => void markUsage(
-              filtered.filter((item) => excelRange.rangeIds.has(item.id)).map((item) => item.id),
-              true,
-              'phần phủ khối'
-            )}
-          >
-            Đánh dấu đã dùng · phần phủ ({excelRange.rangeIds.size})
-          </button>
-          <button
-            type="button"
-            disabled={!excelRange.rangeIds.size || busy}
-            onClick={() => void markUsage(
-              filtered.filter((item) => excelRange.rangeIds.has(item.id)).map((item) => item.id),
-              false,
-              'phần phủ khối'
-            )}
-          >
-            Đánh dấu chưa dùng · phần phủ ({excelRange.rangeIds.size})
-          </button>
-          <button
-            type="button"
-            disabled={!selected.size || busy}
-            onClick={() => void markUsage(
-              rows.filter((item) => selected.has(item.id)).map((item) => item.id),
-              true,
-              'đã tích'
-            )}
-          >
-            Đánh dấu đã dùng · đã tích ({selected.size})
-          </button>
-          <button
-            type="button"
-            disabled={!selected.size || busy}
-            onClick={() => void markUsage(
-              rows.filter((item) => selected.has(item.id)).map((item) => item.id),
-              false,
-              'đã tích'
-            )}
-          >
-            Đánh dấu chưa dùng · đã tích ({selected.size})
-          </button>
-          <button
-            type="button"
-            disabled={!excelRange.rangeIds.size || busy}
-            onClick={() => void copyInventory(
-              filtered.filter((item) => excelRange.rangeIds.has(item.id)).map((item) => item.id),
-              'phần phủ khối'
-            )}
-          >
-            Copy Proxy phần phủ khối ({excelRange.rangeIds.size})
-          </button>
-          <button
-            type="button"
-            disabled={!selected.size || busy}
-            onClick={() => void copyInventory(
-              rows.filter((item) => selected.has(item.id)).map((item) => item.id),
-              'đã tích'
-            )}
-          >
-            Copy Proxy đã tích ({selected.size})
-          </button>
+          <button type="button" disabled={!selected.size || busy} onClick={() => void markUsage([...selected], true, 'đang chọn')}>Đánh dấu đã dùng ({selected.size})</button>
+          <button type="button" disabled={!selected.size || busy} onClick={() => void markUsage([...selected], false, 'đang chọn')}>Đánh dấu chưa dùng ({selected.size})</button>
+          <button type="button" disabled={!selected.size || busy} onClick={() => void copyInventory([...selected], 'đang chọn')}>Copy Proxy ({selected.size})</button>
         </AccountSelectionMenu>
       ) : null}
 
