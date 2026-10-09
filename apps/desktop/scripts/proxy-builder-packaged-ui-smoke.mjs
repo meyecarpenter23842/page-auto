@@ -155,7 +155,8 @@ try {
   await page.mouse.up()
   const scrolled = await scrollHost.evaluate((node) => node.scrollTop)
   const selectedByDrag = await root.locator('.proxy-center-table tbody input[type="checkbox"]:checked').count()
-  invariant(scrolled > initialScroll + 70 && selectedByDrag > 10, 'Kéo phủ không tự cuộn/chọn thêm dòng: scroll=' + scrolled + ', selected=' + selectedByDrag)
+  const scrollGeometry = await scrollHost.evaluate((node) => ({ clientWidth: node.clientWidth, clientHeight: node.clientHeight, offsetWidth: node.offsetWidth, offsetHeight: node.offsetHeight }))
+  invariant(scrolled > initialScroll + 70 && selectedByDrag > 10, 'Kéo phủ không tự cuộn/chọn thêm dòng: scroll=' + scrolled + ', selected=' + selectedByDrag + ', viewport=' + JSON.stringify(scrollGeometry))
 
   await root.getByRole('tab', { name: 'Proxy Checker', exact: true }).click()
 

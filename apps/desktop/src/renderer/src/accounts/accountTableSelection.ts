@@ -172,10 +172,18 @@ export function useExcelRowRange(
       const dy = edgeAutoScrollDelta(drag.pointerY, rect.top, rect.bottom, host.scrollTop, host.scrollHeight, host.clientHeight)
       if (dy) host.scrollTop += dy
     }
+    // On Windows, an overflowing grid can show both scrollbars. elementFromPoint()
+    // over the horizontal scrollbar returns the scroller, not a row, even though
+    // pointer movement is correctly advancing scrollTop. Hit-test the *content*
+    // box (clientWidth/clientHeight), excluding scrollbar gutters on both axes.
+    const hitLeft = rect.left + host.clientLeft + 4
+    const hitRight = Math.min(rect.right - 4, rect.left + host.clientLeft + host.clientWidth - 5)
+    const hitTop = rect.top + host.clientTop + 4
+    const hitBottom = Math.min(rect.bottom - 4, rect.top + host.clientTop + host.clientHeight - 5)
     const headerBottom = drag.rowsRoot.closest('table')?.tHead?.getBoundingClientRect().bottom ?? rect.top
-    const minY = Math.min(rect.bottom - 3, Math.max(rect.top + 3, headerBottom + 3))
-    const x = Math.max(rect.left + 3, Math.min(drag.pointerX, rect.right - 3))
-    const y = Math.max(minY, Math.min(drag.pointerY, rect.bottom - 3))
+    const minY = Math.min(hitBottom, Math.max(hitTop, headerBottom + 3))
+    const x = Math.max(hitLeft, Math.min(drag.pointerX, Math.max(hitLeft, hitRight)))
+    const y = Math.max(minY, Math.min(drag.pointerY, hitBottom))
     const element = document.elementFromPoint(
       Math.max(1, Math.min(x, window.innerWidth - 2)),
       Math.max(1, Math.min(y, window.innerHeight - 2))

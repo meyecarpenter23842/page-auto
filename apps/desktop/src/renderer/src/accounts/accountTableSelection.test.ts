@@ -69,6 +69,8 @@ describe('Excel-style account table selection', () => {
     expect(selectionHelper).toContain("window.addEventListener('pointermove', onPointerMove)")
     expect(selectionHelper).toContain('window.requestAnimationFrame(frame)')
     expect(selectionHelper).toContain('host.scrollTop += dy')
+    expect(selectionHelper).toContain('host.clientHeight - 5')
+    expect(selectionHelper).toContain('host.clientWidth - 5')
     expect(selectionHelper).toContain("element?.closest<HTMLElement>('[data-excel-row-id]')")
     expect(selectionHelper).toContain("window.addEventListener('pointerup', endDrag)")
     expect(selectionHelper).toContain("window.addEventListener('pointercancel', endDrag)")
