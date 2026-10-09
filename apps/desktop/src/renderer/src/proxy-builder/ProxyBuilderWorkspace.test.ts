@@ -133,32 +133,29 @@ describe('Proxy Center inventory/binding + checker/export', () => {
     expect(packagedSmoke).toContain("tbody tr.range-row")
   })
 
-  it('marks painted or checked proxies used/unused through typed IPC', () => {
-    for (const label of [
-      'Đánh dấu đã dùng · phần phủ',
-      'Đánh dấu chưa dùng · phần phủ',
-      'Đánh dấu đã dùng · đã tích',
-      'Đánh dấu chưa dùng · đã tích'
-    ]) expect(inventoryPanel).toContain(label)
+  it('marks the unified selected proxy batch through typed IPC', () => {
+    expect(inventoryPanel).toContain("markUsage([...selected], true, 'đang chọn')")
+    expect(inventoryPanel).toContain("markUsage([...selected], false, 'đang chọn')")
+    expect(inventoryPanel).not.toContain('Đánh dấu đã dùng · phần phủ')
     expect(inventoryPanel).toContain('window.pageAutoProxyBuilder.setInventoryUsage')
     expect(inventoryPanel).toContain('item.assignedAccountCount > 0 || item.manuallyUsed')
     expect(preload).toContain('setInventoryUsage: (input) => ipcRenderer.invoke')
     expect(ipc).toContain('inventory.setManualUsage')
-    expect(packagedSmoke).toContain('Đánh dấu đã dùng · phần phủ (2)')
-    expect(packagedSmoke).toContain('Đánh dấu chưa dùng · đã tích (2)')
+    expect(packagedSmoke).toContain('Đánh dấu đã dùng (2)')
+    expect(packagedSmoke).toContain('Đánh dấu chưa dùng (2)')
   })
 
-  it('copies full proxy credentials from either the paint range or checked rows without exposing secrets to React', () => {
-    expect(inventoryPanel).toContain('Copy Proxy phần phủ khối')
-    expect(inventoryPanel).toContain('Copy Proxy đã tích')
+  it('copies full proxy credentials from the unified selection without exposing secrets to React', () => {
+    expect(inventoryPanel).toContain("copyInventory([...selected], 'đang chọn')")
+    expect(inventoryPanel).not.toContain('Copy Proxy phần phủ khối')
     expect(inventoryPanel).toContain('window.pageAutoProxyBuilder.copyInventoryProxies')
     expect(preload).toContain('copyInventoryProxies: (input) => ipcRenderer.invoke')
     expect(ipc).toContain('clipboard.writeText')
     expect(ipc).toContain("secrets.map((item) => item.rawProxy).join('\\n')")
     expect(ipc).toContain('return { count: secrets.length }')
     expect(packagedSmoke).toContain('clipboard.readText()')
-    expect(packagedSmoke).toContain('Copy Proxy phần phủ khối (2)')
-    expect(packagedSmoke).toContain('Copy Proxy đã tích (2)')
+    expect(packagedSmoke).toContain('Copy Proxy (2)')
+    expect(packagedSmoke).toContain('selectAllInventory.click()')
   })
 
 })
