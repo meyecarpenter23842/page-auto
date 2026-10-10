@@ -12,6 +12,41 @@ import { buildAgentBuilderPrompt, parseAgentPostOutput } from './googleAgentRunt
 const KEY = 'ai.api.connections.encrypted.v1'
 const MAX_CONNECTIONS = 30
 const RESPONSE_LIMIT = 2 * 1024 * 1024
+const MODEL_DISCOVERY_TIMEOUT_MS = 20_000
+const MODEL_TEST_TIMEOUT_MS = 25_000
+const GENERATE_TIMEOUT_MS = 90_000
+
+/** Includes both waiting for HTTP headers AND reading a potentially stalled response body. */
+export async function withAiApiDeadline<T>(
+  run: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number
+): Promise<T> {
+  const controller = new AbortController()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const expired = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`API không phản hồi trong ${Math.ceil(timeoutMs / 1000)} giây. Đã dừng kiểm tra; thử model khác hoặc kiểm tra nhà cung cấp.`))
+      controller.abort()
+    }, timeoutMs)
+  })
+  try {
+    return await Promise.race([run(controller.signal), expired])
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
+}
+
+export function getAiApiHttpError(status: number): string {
+  switch (status) {
+    case 400: return 'HTTP 400: Model không chấp nhận yêu cầu hoặc định dạng chat hiện tại.'
+    case 401: return 'HTTP 401: API Key không hợp lệ hoặc đã hết hiệu lực.'
+    case 403: return 'HTTP 403: Tài khoản chưa được cấp quyền gọi model này.'
+    case 404: return 'HTTP 404: Model hoặc endpoint tạo văn bản không khả dụng. Tải Model thành công không bảo đảm gọi inference được.'
+    case 408: return 'HTTP 408: Máy chủ API không phản hồi kịp.'
+    case 429: return 'HTTP 429: Nhà cung cấp giới hạn lượt gọi hoặc hạn mức tài khoản.'
+    default: return `API trả HTTP ${status}. Kiểm tra quyền truy cập và tình trạng dịch vụ.`
+  }
+}
 interface StoredConnection extends AiApiConnectionView { apiKey: string }
 type Stored = { defaultId: string | null; items: StoredConnection[] }
 function empty(): Stored { return { defaultId: null, items: [] } }
@@ -149,28 +184,37 @@ export class AiApiConnectionService {
     return {provider: input.provider,baseUrl:getBaseUrl(input.provider,input.baseUrl),apiKey}
   }
   private async request(provider: AiApiProvider, baseUrl: string, apiKey: string,
-    path: string, method: 'GET'|'POST', body?: Record<string, unknown>): Promise<Record<string, unknown>> {
-    // User-configured endpoints: only HTTPS public hostname; redirects disabled.
+    path: string, method: 'GET'|'POST', body?: Record<string, unknown>,
+    timeoutMs = method === 'GET' ? MODEL_DISCOVERY_TIMEOUT_MS : GENERATE_TIMEOUT_MS
+  ): Promise<Record<string, unknown>> {
+    // The deadline covers both fetch and response streaming. No provider error body is logged.
     const safeBase = validateAiApiEndpoint(baseUrl)
-    const url = endpoint(safeBase,path)
-    let response: Response
-    try {
-      response = await this.fetchImpl(url,{
-        method,redirect:'error',
-        headers:{...requestHeaders(provider,apiKey),'Content-Type':'application/json'},
-        ...(body ? { body: JSON.stringify(body) } : {}),
-        signal: AbortSignal.timeout(method === 'GET' ? 20000 : 90000)
-      })
-    } catch { throw new Error('Không kết nối được API HTTPS. Kiểm tra URL, mạng và chứng chỉ TLS.') }
-    if (!response.ok) throw new Error('API trả HTTP ' + response.status + '. Kiểm tra key, quyền truy cập và model.')
-    return readJson(response)
+    const url = endpoint(safeBase, path)
+    return withAiApiDeadline(async (signal) => {
+      let response: Response
+      try {
+        response = await this.fetchImpl(url, {
+          method, redirect: 'error',
+          headers: {...requestHeaders(provider, apiKey), 'Content-Type': 'application/json'},
+          ...(body ? {body: JSON.stringify(body)} : {}),
+          signal
+        })
+      } catch {
+        throw new Error('Không kết nối được API HTTPS. Kiểm tra URL, mạng và chứng chỉ TLS.')
+      }
+      if (!response.ok) throw new Error(getAiApiHttpError(response.status))
+      return readJson(response)
+    }, timeoutMs)
   }
   async discover(input: AiApiDiscoveryInput): Promise<AiApiModel[]> {
     const {provider,baseUrl,apiKey} = this.credentials(input)
     const data = await this.request(provider,baseUrl,apiKey,'models','GET')
     return parseApiModels(provider,data)
   }
-  private async completion(provider: AiApiProvider,baseUrl: string,apiKey: string,modelId: string,prompt: string,maxTokens: number): Promise<string> {
+  private async completion(
+    provider: AiApiProvider, baseUrl: string, apiKey: string, modelId: string,
+    prompt: string, maxTokens: number, timeoutMs = GENERATE_TIMEOUT_MS
+  ): Promise<string> {
     const model = validateAiApiModelId(modelId)
     if (prompt.length > 50000) throw new Error('Nội dung đầu vào AI quá dài.')
     let path: string
@@ -185,7 +229,7 @@ export class AiApiConnectionService {
       path = 'chat/completions'
       body = {model,messages:[{role:'user',content:prompt}],max_tokens:maxTokens}
     }
-    const data = await this.request(provider,baseUrl,apiKey,path,'POST',body)
+    const data = await this.request(provider,baseUrl,apiKey,path,'POST',body,timeoutMs)
     let output: unknown
     if (provider === 'gemini') {
       const candidates = data.candidates
@@ -202,7 +246,9 @@ export class AiApiConnectionService {
   }
   async test(input: AiApiTestInput): Promise<boolean> {
     const {provider,baseUrl,apiKey} = this.credentials(input)
-    const result = await this.completion(provider,baseUrl,apiKey,input.modelId,'Trả lời đúng một từ: OK',32)
+    const result = await this.completion(
+      provider, baseUrl, apiKey, input.modelId, 'Trả lời đúng một từ: OK', 32, MODEL_TEST_TIMEOUT_MS
+    )
     return Boolean(result)
   }
   async generate(input: GenerateAiPostsInput): Promise<GenerateAiPostsResult> {

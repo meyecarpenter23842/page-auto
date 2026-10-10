@@ -37,3 +37,5 @@
 .ai-api-saved-entry{min-width:0}.ai-api-saved-model-editor{display:flex;flex-direction:column;gap:8px;padding:12px;margin-bottom:9px;background:#fff;border:1px solid #dbe6f1;border-radius:9px}
 .ai-api-saved-model-editor>strong{font-size:11px;color:#395975}.ai-api-saved-model-editor>label{font-size:10px;color:#687f95;display:flex;gap:7px;align-items:center}
 .ai-api-saved-row{flex-wrap:wrap}.ai-api-saved-row button{min-height:32px}
+
+.ai-api-hint{display:block;font-size:11px;line-height:1.5;color:#74869a;overflow-wrap:anywhere}

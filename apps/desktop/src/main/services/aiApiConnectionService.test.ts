@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { initializeDatabase } from '../database'
-import { AiApiConnectionService, parseApiModels } from './aiApiConnectionService'
+import { AiApiConnectionService, getAiApiHttpError, parseApiModels, withAiApiDeadline } from './aiApiConnectionService'
 
 vi.mock('electron', () => ({
   safeStorage: {
@@ -38,6 +38,51 @@ function postInput(agentId: string) {
 }
 
 describe('AI API connections and model discovery', () => {
+  it('limits slow model checks, aborts network operations and gives a useful error', async () => {
+    vi.useFakeTimers()
+    try {
+      let signal: AbortSignal | undefined
+      const hanging = withAiApiDeadline(async (s) => {
+        signal = s
+        return new Promise<string>(() => undefined)
+      }, 25_000)
+      const expected = expect(hanging).rejects.toThrow('25 giây')
+      await vi.advanceTimersByTimeAsync(25_000)
+      await expected
+      expect(signal?.aborted).toBe(true)
+      const successful = await withAiApiDeadline(async () => 'OK', 25_000)
+      expect(successful).toBe('OK')
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+  it('stops when HTTP headers arrive but the response body never finishes', async () => {
+    vi.useFakeTimers()
+    const stalledFetch = vi.fn(async () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"choices":['))
+        // Simulate a provider that never closes its response stream.
+      }
+    }), { status: 200 })) as unknown as typeof fetch
+    const { runtime, service } = setup(stalledFetch)
+    try {
+      const pending = service.test({...draft, modelId: 'slow-model'})
+      const expected = expect(pending).rejects.toThrow('25 giây')
+      await vi.advanceTimersByTimeAsync(25_000)
+      await expected
+      expect(stalledFetch).toHaveBeenCalledTimes(1)
+    } finally {
+      runtime.close()
+      vi.useRealTimers()
+    }
+  })
+  it('distinguishes provider access, unsupported model and quota responses', () => {
+    expect(getAiApiHttpError(401)).toContain('API Key')
+    expect(getAiApiHttpError(403)).toContain('quyền')
+    expect(getAiApiHttpError(404)).toContain('endpoint')
+    expect(getAiApiHttpError(429)).toContain('hạn mức')
+  })
   it('parses provider catalogs without inventing models', () => {
     expect(parseApiModels('openai-compatible',{data:[{id:'a/model'},{id:'b-model'},{id:'a/model'}]}))
       .toEqual([{id:'a/model',label:'a/model'},{id:'b-model',label:'b-model'}])
