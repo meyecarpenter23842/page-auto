@@ -4,13 +4,15 @@ import type { RotationRuntimeSnapshot, RotationRuntimeStatus } from '../../../sh
 import { indexRotationRuntimes, rotationRuntimeLabel } from './pageRuntimePresentation'
 import { nextSavedWindow, savedWindowCount } from './pageScheduleOverview'
 import { EVERY_DAY_SCHEDULE } from './scheduleEditor'
+import { eligibleSelectedPageIds, updatePageCheckedIds, type BulkPageAction } from './pageOverviewBulk'
+import { pageBusinessPageIdOf, pageBusinessTypeOf } from '../../../shared/pageBusinessBindings'
 import { readOverviewSelectedPageId, saveOverviewSelectedPageId } from './pageOverviewSelection'
 import './pageOverview.css'
 
 type FilterMode = 'all' | 'active' | 'waiting' | 'error' | 'idle'
 type SortMode = 'name' | 'next' | 'status' | 'updated'
 type RuntimeAction = (payload: { pageTabId: number }) => Promise<RotationRuntimeSnapshot>
-interface PageOverviewProps { onOpenGroup: (pageTabId: number) => void }
+interface PageOverviewProps { onOpenGroup: (pageTabId: number) => void; onEditSchedule: (pageTabId: number) => void }
 
 const canStart = (status: RotationRuntimeStatus) => ['idle', 'completed', 'stopped', 'error'].includes(status)
 const canPause = (status: RotationRuntimeStatus) => ['starting', 'running', 'waiting_window'].includes(status)
@@ -22,7 +24,7 @@ const formatWindow = (time: Date | null) => time
   : '—'
 
 /** Read-only overview: Main owns scheduler and storage, even when this component unmounts. */
-export function PageOverviewWorkspace({ onOpenGroup }: PageOverviewProps) {
+export function PageOverviewWorkspace({ onOpenGroup, onEditSchedule }: PageOverviewProps) {
   const [pages, setPages] = useState<PageTabSummary[]>([])
   const [configs, setConfigs] = useState<Record<number, PageTabConfig>>({})
   const [posts, setPosts] = useState<Record<number, number>>({})
@@ -33,6 +35,11 @@ export function PageOverviewWorkspace({ onOpenGroup }: PageOverviewProps) {
   const [filter, setFilter] = useState<FilterMode>('all')
   const [sort, setSort] = useState<SortMode>('name')
   const [busy, setBusy] = useState<Set<number>>(() => new Set())
+  const [checkedIds, setCheckedIds] = useState<Set<number>>(() => new Set())
+  const [rangeAnchorId, setRangeAnchorId] = useState<number | null>(null)
+  const [bulkBusy, setBulkBusy] = useState(false)
+  const [bulkNotice, setBulkNotice] = useState<string | null>(null)
+  const [groupBoundIds, setGroupBoundIds] = useState<Set<number>>(() => new Set())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [now, setNow] = useState(() => new Date())
@@ -41,6 +48,10 @@ export function PageOverviewWorkspace({ onOpenGroup }: PageOverviewProps) {
     try {
       const nextPages = await window.pageAuto.listPageTabs()
       setPages(nextPages)
+      setCheckedIds((current) => new Set([...current].filter((id) => nextPages.some((page) => page.id === id))))
+      const bindings = await window.pageAuto.listActionWorkspaces()
+      setGroupBoundIds(new Set(bindings.filter((workspace) => pageBusinessTypeOf(workspace) === 'group_post')
+        .map((workspace) => pageBusinessPageIdOf(workspace)).filter((id): id is number => id !== null)))
       const nextConfigs: Record<number, PageTabConfig> = {}
       const nextPosts: Record<number, number> = {}
       // Bounded batches keep large Page inventories from flooding Electron Main with IPC calls.
@@ -114,6 +125,79 @@ export function PageOverviewWorkspace({ onOpenGroup }: PageOverviewProps) {
     }
   }
 
+  const visibleIds = filtered.map((page) => page.id)
+  const checkedVisibleCount = visibleIds.filter((id) => checkedIds.has(id)).length
+  const selectedPagesCount = pages.filter((page) => checkedIds.has(page.id)).length
+  const checkedAllVisible = visibleIds.length > 0 && checkedVisibleCount === visibleIds.length
+  const toggleChecked = (id: number, shouldCheck?: boolean, shift = false) => {
+    setCheckedIds((current) => updatePageCheckedIds(
+      current, visibleIds, id, shift ? 'range' : 'toggle', rangeAnchorId, shouldCheck
+    ))
+    if (!shift || !visibleIds.includes(rangeAnchorId ?? -1)) setRangeAnchorId(id)
+  }
+  const selectAllVisible = (checked: boolean) => {
+    setCheckedIds((current) => {
+      const next = new Set(current)
+      for (const id of visibleIds) {
+        if (checked) next.add(id)
+        else next.delete(id)
+      }
+      return next
+    })
+    setRangeAnchorId(null)
+  }
+
+  const eligible = (action: BulkPageAction) => eligibleSelectedPageIds(pages, checkedIds, runtimeById, action).length
+  const bulkLabels: Record<BulkPageAction, string> = {
+    start: 'Start', pause: 'Pause', resume: 'Tiếp tục', stop: 'Stop'
+  }
+  const bulkFunctions: Record<BulkPageAction, RuntimeAction> = {
+    start: window.pageAuto.startPageTabRotation,
+    pause: window.pageAuto.pausePageTabRotation,
+    resume: window.pageAuto.resumePageTabRotation,
+    stop: window.pageAuto.stopPageTabRotation
+  }
+  const runBulk = async (action: BulkPageAction) => {
+    if (bulkBusy || busy.size > 0) return
+    setBulkBusy(true)
+    setBulkNotice(null)
+    try {
+      // Refresh Main-owned statuses immediately before resolving eligible target IDs.
+      const latest = indexRotationRuntimes(await window.pageAuto.listPageTabRotations())
+      setRuntimeById(latest)
+      const targets = eligibleSelectedPageIds(pages, checkedIds, latest, action)
+      if (!targets.length) {
+        setBulkNotice('Không có Page đã chọn nào đủ điều kiện ' + bulkLabels[action] + '.')
+        return
+      }
+      if (!window.confirm(bulkLabels[action] + ' ' + targets.length + ' Page hợp lệ trong '
+        + selectedPagesCount + ' Page đã chọn? Các Page không hợp lệ sẽ được bỏ qua.')) return
+      const succeeded: Array<{ id: number; snapshot: RotationRuntimeSnapshot }> = []
+      const failed: number[] = []
+      // Restrict IPC bursts; these existing Main APIs own the actual scheduler.
+      for (let index = 0; index < targets.length; index += 3) {
+        const chunk = targets.slice(index, index + 3)
+        const results = await Promise.allSettled(chunk.map((pageTabId) => bulkFunctions[action]({ pageTabId })))
+        results.forEach((result, offset) => {
+          const id = chunk[offset]
+          if (id === undefined) return
+          if (result.status === 'fulfilled') succeeded.push({ id, snapshot: result.value })
+          else failed.push(id)
+        })
+      }
+      setRuntimeById((current) => Object.fromEntries([
+        ...Object.entries(current),
+        ...succeeded.map((item) => [String(item.id), item.snapshot] as const)
+      ]))
+      setBulkNotice(bulkLabels[action] + ': thành công ' + succeeded.length + '/' + targets.length
+        + ' Page' + (failed.length ? '; cần kiểm tra Page ID ' + failed.join(', ') + '.' : '.'))
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBulkBusy(false)
+    }
+  }
+
   const activeCount = pages.filter((page) => isActive(runtimeById[page.id]?.status ?? 'idle')).length
   const waitingCount = pages.filter((page) => runtimeById[page.id]?.status === 'waiting_window').length
   const errorCount = pages.filter((page) => runtimeById[page.id]?.status === 'error').length
@@ -153,11 +237,24 @@ export function PageOverviewWorkspace({ onOpenGroup }: PageOverviewProps) {
       <span className="page-overview-match">{filtered.length}/{pages.length} Page</span>
       <button type="button" className="page-overview-detail-toggle" aria-expanded={compactDetailOpen} onClick={() => setCompactDetailOpen((current) => !current)}>{compactDetailOpen ? "← Danh sách Page" : "Chi tiết Page →"}</button>
     </div>
+    <div className="page-overview-bulk" aria-label="Thao tác hàng loạt Page">
+      <strong>Đã chọn {selectedPagesCount} Page</strong>
+      <span>{checkedVisibleCount}/{filtered.length} trong bộ lọc</span>
+      <button type="button" disabled={bulkBusy || checkedAllVisible || filtered.length === 0} onClick={() => selectAllVisible(true)}>Chọn đang lọc</button>
+      <button type="button" disabled={bulkBusy || checkedVisibleCount === 0} onClick={() => selectAllVisible(false)}>Bỏ chọn đang lọc</button>
+      <button type="button" disabled={bulkBusy || selectedPagesCount === 0} onClick={() => { setCheckedIds(new Set()); setRangeAnchorId(null) }}>Bỏ chọn tất cả</button>
+      {(['start', 'pause', 'resume', 'stop'] as BulkPageAction[]).map((action) =>
+        <button type="button" key={action} className={action === 'stop' ? 'danger' : undefined}
+          disabled={bulkBusy || busy.size > 0 || eligible(action) === 0}
+          onClick={() => void runBulk(action)}>{bulkLabels[action]} ({eligible(action)})</button>
+      )}
+    </div>
+    {bulkNotice ? <p role="status" className="page-overview-bulk-notice">{bulkNotice}</p> : null}
     {error ? <div role="alert" className="page-tab-error">{error}</div> : null}
     <div className={compactDetailOpen ? "page-overview-main detail-mode" : "page-overview-main"}>
       <div className="page-overview-table-wrap">
         <table className="page-overview-table">
-          <thead><tr><th>Page</th><th>Trạng thái</th><th>Lịch chạy</th><th>TK</th><th>Group</th><th>Bài</th><th>Khung kế tiếp</th></tr></thead>
+          <thead><tr><th className="page-overview-check-cell"><input type="checkbox" aria-label="Chọn tất cả Page đang lọc" checked={checkedAllVisible} onChange={(event) => selectAllVisible(event.target.checked)} /></th><th>Page</th><th>Trạng thái</th><th>Lịch chạy</th><th>TK</th><th>Group</th><th>Bài</th><th>Khung kế tiếp</th></tr></thead>
           <tbody>
           {filtered.map((page) => {
             const runtime = runtimeById[page.id]
@@ -166,15 +263,24 @@ export function PageOverviewWorkspace({ onOpenGroup }: PageOverviewProps) {
             const next = config ? nextSavedWindow(config.schedules, now) : null
             const windows = config ? savedWindowCount(config.schedules) : page.scheduleCount
             const stateLabel = runtime ? rotationRuntimeLabel(status) : page.status === 'scheduled' ? 'Đã lên lịch' : page.status === 'error' ? 'Lỗi' : rotationRuntimeLabel(status)
-            return <tr key={page.id} className={selectedPage?.id === page.id ? 'selected' : undefined}>
-              <td><button type="button" className="page-overview-page-select" aria-current={selectedPage?.id === page.id ? 'true' : undefined} onClick={() => selectPage(page.id)}><strong title={page.name}>{page.name}</strong><small title={page.pageUid}>UID {page.pageUid}</small></button></td>
+            return <tr key={page.id} className={selectedPage?.id === page.id ? 'selected' : undefined}
+              onClick={(event) => {
+                if (event.shiftKey) toggleChecked(page.id, true, true)
+                else if (event.ctrlKey || event.metaKey) toggleChecked(page.id)
+                else selectPage(page.id)
+              }}>
+              <td className="page-overview-check-cell"><input type="checkbox" aria-label={'Chọn Page ' + page.name}
+                checked={checkedIds.has(page.id)} onClick={(event) => event.stopPropagation()}
+                onChange={(event) => toggleChecked(page.id, event.target.checked, (event.nativeEvent as MouseEvent).shiftKey)} /></td>
+              <td><button type="button" className="page-overview-page-select" aria-current={selectedPage?.id === page.id ? 'true' : undefined}
+                onClick={(event) => { event.stopPropagation(); if (event.shiftKey) toggleChecked(page.id, true, true); else if (event.ctrlKey || event.metaKey) toggleChecked(page.id); else selectPage(page.id) }}><strong title={page.name}>{page.name}</strong><small title={page.pageUid}>UID {page.pageUid}</small></button></td>
               <td><span className={'page-overview-state state-' + (runtime?.status ?? page.status)}>{stateLabel}</span></td>
               <td>{windows} khung bật</td><td>{page.accountCount}</td><td>{page.groupCount}</td><td>{posts[page.id] ?? '—'}</td>
               <td title="Khung giờ cấu hình, không bảo đảm thời điểm chạy">{formatWindow(next)}</td>
             </tr>
           })}
-          {loading && pages.length === 0 ? <tr><td colSpan={7} className="page-overview-empty">Đang tải Page…</td></tr> : null}
-          {!loading && filtered.length === 0 ? <tr><td colSpan={7} className="page-overview-empty">{pages.length ? 'Không có Page phù hợp bộ lọc.' : 'Chưa có Page. Dùng Quản lý Page để tạo mới.'}</td></tr> : null}
+          {loading && pages.length === 0 ? <tr><td colSpan={8} className="page-overview-empty">Đang tải Page…</td></tr> : null}
+          {!loading && filtered.length === 0 ? <tr><td colSpan={8} className="page-overview-empty">{pages.length ? 'Không có Page phù hợp bộ lọc.' : 'Chưa có Page. Dùng Quản lý Page để tạo mới.'}</td></tr> : null}
           </tbody>
         </table>
       </div>
@@ -186,6 +292,10 @@ export function PageOverviewWorkspace({ onOpenGroup }: PageOverviewProps) {
           </div>
           <section className="page-overview-detail-section">
             <div className="page-overview-section-head"><h4>Lịch chạy đã lưu</h4><span>{selectedConfig ? savedWindowCount(selectedConfig.schedules) : selectedPage.scheduleCount} khung bật</span></div>
+            <button type="button" className="page-overview-edit-schedule" disabled={!groupBoundIds.has(selectedPage.id)}
+              title={groupBoundIds.has(selectedPage.id) ? 'Mở lịch của Page này trong editor Đăng Nhóm' : 'Thêm Page này vào nghiệp vụ Nhóm trước khi chỉnh lịch'}
+              onClick={() => onEditSchedule(selectedPage.id)}>Chỉnh lịch Page này</button>
+            {!groupBoundIds.has(selectedPage.id) ? <p className="page-overview-muted">Page chưa gắn vào Nhóm. Dùng Mở cấu hình Nhóm để thêm Page trước.</p> : null}
             {selectedSchedules.length ? <div className="page-overview-schedule-list">
               {selectedSchedules.slice(0, 5).map((schedule) => <div key={schedule.id}><b>{schedule.dayOfWeek === EVERY_DAY_SCHEDULE ? 'Mỗi ngày' : weekdays[schedule.dayOfWeek] ?? '—'}</b><span>{clock(schedule.startMinute)}–{clock(schedule.endMinute)}</span></div>)}
               {selectedSchedules.length > 5 ? <small>Và {selectedSchedules.length - 5} khung khác; mở Nhóm để chỉnh lịch.</small> : null}
@@ -205,10 +315,10 @@ export function PageOverviewWorkspace({ onOpenGroup }: PageOverviewProps) {
             {selectedRuntime?.message ? <p className="page-overview-muted" title={selectedRuntime.message}>{selectedRuntime.message}</p> : null}
             <div className="page-overview-actions">
               <button type="button" className="primary" onClick={() => { saveOverviewSelectedPageId(selectedPage.id); onOpenGroup(selectedPage.id) }}>Mở cấu hình Nhóm</button>
-              <button type="button" disabled={busy.has(selectedPage.id) || !canStart(selectedStatus)} onClick={() => void performAction(selectedPage.id, window.pageAuto.startPageTabRotation)}>Start</button>
-              <button type="button" disabled={busy.has(selectedPage.id) || !canPause(selectedStatus)} onClick={() => void performAction(selectedPage.id, window.pageAuto.pausePageTabRotation)}>Pause</button>
-              <button type="button" disabled={busy.has(selectedPage.id) || !canResume(selectedStatus)} onClick={() => void performAction(selectedPage.id, window.pageAuto.resumePageTabRotation)}>Resume</button>
-              <button type="button" className="danger" disabled={busy.has(selectedPage.id) || !canStop(selectedStatus)} onClick={() => void performAction(selectedPage.id, window.pageAuto.stopPageTabRotation)}>Stop</button>
+              <button type="button" disabled={bulkBusy || busy.has(selectedPage.id) || !canStart(selectedStatus)} onClick={() => void performAction(selectedPage.id, window.pageAuto.startPageTabRotation)}>Start</button>
+              <button type="button" disabled={bulkBusy || busy.has(selectedPage.id) || !canPause(selectedStatus)} onClick={() => void performAction(selectedPage.id, window.pageAuto.pausePageTabRotation)}>Pause</button>
+              <button type="button" disabled={bulkBusy || busy.has(selectedPage.id) || !canResume(selectedStatus)} onClick={() => void performAction(selectedPage.id, window.pageAuto.resumePageTabRotation)}>Resume</button>
+              <button type="button" className="danger" disabled={bulkBusy || busy.has(selectedPage.id) || !canStop(selectedStatus)} onClick={() => void performAction(selectedPage.id, window.pageAuto.stopPageTabRotation)}>Stop</button>
             </div>
           </section>
         </> : <p className="page-overview-muted">Chọn Page trong bảng để xem chi tiết.</p>}

@@ -7,7 +7,7 @@ const overviewCss = readFileSync(new URL('./pageOverview.css', import.meta.url),
 const manager = readFileSync(new URL('./PageTabsManagerV2.tsx', import.meta.url), 'utf8')
 describe('Issue #510 Page Tabs UI regressions', () => {
   it('uses Main-owned status and persisted schedules and keeps existing group controls', () => {
-    expect(core).toContain('<PageOverviewWorkspace onOpenGroup={openGroupPage} />')
+    expect(core).toContain('<PageOverviewWorkspace onOpenGroup={openGroupPage} onEditSchedule={openGroupSchedule} />')
     expect(core).toContain('<CurrentPageRuntimeActions activePageId={activePage.id} />')
     expect(overview).toContain('window.pageAuto.listPageTabRotations()')
     expect(overview).toContain('window.pageAuto.getPageTab({ id: page.id })')
@@ -33,6 +33,17 @@ describe('Issue #510 Page Tabs UI regressions', () => {
     expect(overview).toContain('className="page-overview-detail-toggle"')
     expect(overview).toContain('readOverviewSelectedPageId')
     expect(overview).toContain('saveOverviewSelectedPageId(pageId)')
+  })
+  it('R2 reuses the matching bound Group schedule editor, not a second save path', () => {
+    expect(core).toContain("actions?.pageTabId !== activePageId")
+    expect(core).toContain("setPendingSchedulePageId(pageId)")
+    expect(overview).toContain("onEditSchedule(selectedPage.id)")
+    expect(overview).toContain("window.pageAuto.listActionWorkspaces()")
+    expect(overview).toContain("eligibleSelectedPageIds(pages, checkedIds, latest, action)")
+    expect(overview).toContain("Promise.allSettled")
+    expect(manager).toContain("pageTabId: editorPageId")
+    expect(manager).toContain("schedule: () => setEditorModal('schedule')")
+    expect(manager).toContain("saveSectionOnly('schedule')")
   })
   it('clearly marks Page Edit as unsupported', () => {
     expect(core).toContain("status: 'Chưa hỗ trợ'")

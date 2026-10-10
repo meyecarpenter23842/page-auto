@@ -138,9 +138,78 @@ try {
   await windowPage.locator('.page-overview-detail-head h3').filter({ hasText: 'Smoke Page B' }).waitFor({ state: 'visible' })
   invariant((await windowPage.locator('.page-overview-page-select[aria-current="true"]').innerText()).includes('Smoke Page B'),
     'R1: Page được chọn không khôi phục sau renderer reload.')
+  // R2: selection stays separate from active detail, persists across filters and
+  // only targets visible IDs for select-all/clear-visible.
+  await windowPage.getByRole('checkbox', { name: 'Chọn Page Smoke Page A' }).check()
+  await windowPage.getByRole('checkbox', { name: 'Chọn Page Smoke Page B' }).check()
+  invariant((await windowPage.locator('.page-overview-bulk').innerText()).includes('Đã chọn 2 Page'),
+    'R2: Checkbox A/B không cập nhật số Page đang chọn.')
+  const overviewSearch = windowPage.getByRole('searchbox', { name: 'Tìm Page/UID' })
+  await overviewSearch.fill('Smoke Page A')
+  invariant((await windowPage.locator('.page-overview-bulk').innerText()).includes('Đã chọn 2 Page'),
+    'R2: Lọc bảng làm mất lựa chọn Page B đang ẩn.')
+  await windowPage.getByRole('button', { name: 'Bỏ chọn đang lọc' }).click()
+  invariant((await windowPage.locator('.page-overview-bulk').innerText()).includes('Đã chọn 1 Page'),
+    'R2: Bỏ chọn đang lọc xóa cả lựa chọn ngoài filter.')
+  await overviewSearch.fill('')
+  invariant(await windowPage.getByRole('checkbox', { name: 'Chọn Page Smoke Page B' }).isChecked(),
+    'R2: Page B ngoài bộ lọc bị bỏ chọn.')
+  await windowPage.getByRole('button', { name: 'Bỏ chọn tất cả' }).click()
+  await windowPage.locator('.page-overview-page-select').filter({ hasText: 'Smoke Page A' }).click({ modifiers: ['Control'] })
+  await windowPage.locator('.page-overview-page-select').filter({ hasText: 'Smoke Page B' }).click({ modifiers: ['Shift'] })
+  invariant((await windowPage.locator('.page-overview-bulk').innerText()).includes('Đã chọn 2 Page'),
+    'R2: Ctrl/Shift không chọn đúng range Page A/B.')
+  invariant(await windowPage.getByRole('button', { name: 'Start (2)' }).isEnabled(),
+    'R2: Nút Start batch không hiển thị số Page đủ điều kiện.')
+  invariant(await windowPage.getByRole('button', { name: 'Pause (0)' }).isDisabled(),
+    'R2: Nút Pause không chặn Page đang idle.')
+  await windowPage.getByRole('button', { name: 'Bỏ chọn tất cả' }).click()
+
+  // R2: open exactly Page B's EXISTING Group schedule editor (not a new
+  // store or runtime). Saving its schedule may not touch Page A.
+  await windowPage.locator('.page-overview-page-select').filter({ hasText: 'Smoke Page B' }).click()
+  const schedulesBefore = await windowPage.evaluate(async ({ a, b }) => {
+    const [one, two] = await Promise.all([
+      window.pageAuto.getPageTab({ id: a }), window.pageAuto.getPageTab({ id: b })
+    ])
+    return { a: one?.schedules ?? [], b: two?.schedules ?? [] }
+  }, ids)
+  await windowPage.getByRole('button', { name: 'Chỉnh lịch Page này' }).click()
+  const r2ScheduleDialog = windowPage.getByRole('dialog', { name: 'Ngày và khung giờ' })
+  await r2ScheduleDialog.waitFor({ state: 'visible' })
+  invariant((await windowPage.locator('.page-business-group-pane .page-business-page-chip.active').innerText()).includes('Smoke Page B'),
+    'R2: Chỉnh lịch từ Tổng quan mở nhầm Page khác.')
+  await r2ScheduleDialog.getByRole('button', { name: '+ Khung giờ' }).click()
+  await r2ScheduleDialog.getByRole('button', { name: 'Lưu lịch' }).click()
+  await windowPage.waitForFunction(async ({ pageId, expectedCount }) => {
+    const saved = await window.pageAuto.getPageTab({ id: pageId })
+    return saved?.schedules.length === expectedCount
+  }, { pageId: ids.b, expectedCount: schedulesBefore.b.length + 1 }, { timeout: 20_000 })
+  const schedulesAfter = await windowPage.evaluate(async ({ a, b }) => {
+    const [one, two] = await Promise.all([
+      window.pageAuto.getPageTab({ id: a }), window.pageAuto.getPageTab({ id: b })
+    ])
+    return { a: one?.schedules ?? [], b: two?.schedules ?? [] }
+  }, ids)
+  invariant(JSON.stringify(schedulesAfter.a) === JSON.stringify(schedulesBefore.a),
+    'R2: Chỉnh lịch B đã thay đổi lịch Page A.')
+  invariant(schedulesAfter.b.length === schedulesBefore.b.length + 1,
+    'R2: Editor cũ không lưu thêm khung lịch cho Page B.')
+  await r2ScheduleDialog.getByRole('button', { name: 'Đóng', exact: true }).click()
+  await windowPage.getByRole('tab', { name: /^Tổng quan/ }).click()
+  await windowPage.locator('.page-overview-table').waitFor({ state: 'visible' })
+  await windowPage.locator('.page-overview-page-select').filter({ hasText: 'Smoke Page B' }).click()
+
   await windowPage.screenshot({ path: overviewScreenshotPath, fullPage: true })
   await windowPage.getByRole('tab', { name: /^Nhóm/ }).click()
   await windowPage.locator('.page-business-group-pane .page-business-page-strip').waitFor({ state: 'visible' })
+  // R2 validated B's schedule. Re-select the original baseline Page A for
+  // the legacy Group interaction smoke, without changing the persisted
+  // Overview selection (B is intentionally verified again after restart).
+  await windowPage.locator('.page-business-group-pane .page-business-page-chip')
+    .filter({ hasText: 'Smoke Page A' }).locator('button').first().click()
+  await windowPage.locator('.page-business-group-pane .page-tab-editor-header h2')
+    .filter({ hasText: 'Smoke Page A' }).waitFor({ state: 'visible' })
 
   const groupChips = await tabText('.page-business-group-pane .page-business-page-chip')
   invariant(groupChips.some((text) => text.includes('Smoke Page A')), 'Nhóm thiếu binding Page A.')

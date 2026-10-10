@@ -198,6 +198,21 @@ function CompactGroupConfigControls({ editorActions }: { editorActions: PageGrou
   </>
 }
 
+/** Only open the registered editor after the scoped Page and editor identity agree. */
+function ScheduleEditorLaunchBridge({ activePageId, requestedPageId, actions, onHandled }: {
+  activePageId: number
+  requestedPageId: number | null
+  actions: PageGroupEditorActions | null
+  onHandled: () => void
+}) {
+  useEffect(() => {
+    if (requestedPageId === null || requestedPageId !== activePageId || actions?.pageTabId !== activePageId) return
+    actions.schedule()
+    onHandled()
+  }, [activePageId, requestedPageId, actions, onHandled])
+  return null
+}
+
 function CurrentPageRuntimeActions({ activePageId }: { activePageId: number }) {
   const [runtimeByTab, setRuntimeByTab] = useState<Record<number, RotationRuntimeSnapshot>>({})
   const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null)
@@ -345,9 +360,17 @@ export function PageBusinessWorkspace() {
   const [runtimeControlsOpen, setRuntimeControlsOpen] = useState(false)
   const [selectedPageId, setSelectedPageId] = useState<number | null>(null)
   const [groupEditorActions, setGroupEditorActions] = useState<PageGroupEditorActions | null>(null)
+  const [pendingSchedulePageId, setPendingSchedulePageId] = useState<number | null>(null)
   const openGroupPage = (pageId: number) => {
     if (!confirmWorkspaceNavigation()) return
+    setPendingSchedulePageId(null)
     setSelectedPageId(pageId)
+    setActiveBusiness('groups')
+  }
+  const openGroupSchedule = (pageId: number) => {
+    if (!confirmWorkspaceNavigation()) return
+    setSelectedPageId(pageId)
+    setPendingSchedulePageId(pageId)
     setActiveBusiness('groups')
   }
   const active = useMemo(() => businesses.find((business) => business.id === activeBusiness) ?? businesses[0], [activeBusiness])
@@ -361,19 +384,20 @@ export function PageBusinessWorkspace() {
           role="tab"
           aria-selected={activeBusiness === business.id}
           className={activeBusiness === business.id ? 'page-business-tab active' : 'page-business-tab'}
-          onClick={() => { if (business.id === activeBusiness || confirmWorkspaceNavigation()) setActiveBusiness(business.id) }}
+          onClick={() => { if (business.id === activeBusiness || confirmWorkspaceNavigation()) { setPendingSchedulePageId(null); setActiveBusiness(business.id) } }}
         ><strong>{business.label}</strong><span>{business.status}</span></button>)}
       </div>
       <button className="page-runtime-quick-trigger" type="button" onClick={() => setRuntimeControlsOpen(true)}>Điều khiển Page<small>Start · Pause · Stop</small></button>
     </nav>
 
-    {activeBusiness === 'overview' ? <PageOverviewWorkspace onOpenGroup={openGroupPage} /> : null}
+    {activeBusiness === 'overview' ? <PageOverviewWorkspace onOpenGroup={openGroupPage} onEditSchedule={openGroupSchedule} /> : null}
 
     <div className={activeBusiness === 'groups' ? 'page-business-pane page-business-group-pane active' : 'page-business-pane page-business-group-pane inactive'} role="tabpanel" aria-hidden={activeBusiness !== 'groups'}>
       <PageBusinessBindingScope businessType="group_post" label="Nhóm" preferredPageId={selectedPageId}>
         {({ activePage }) => <>
           <ScopedGroupPostWorkspace activePageId={activePage.id} registerEditorActions={setGroupEditorActions} />
           <CurrentPageRuntimeActions activePageId={activePage.id} />
+          <ScheduleEditorLaunchBridge activePageId={activePage.id} requestedPageId={pendingSchedulePageId} actions={groupEditorActions} onHandled={() => setPendingSchedulePageId(null)} />
         </>}
       </PageBusinessBindingScope>
     </div>
