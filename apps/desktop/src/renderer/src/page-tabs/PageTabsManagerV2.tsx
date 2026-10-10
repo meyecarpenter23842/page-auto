@@ -45,6 +45,7 @@ type EditorModal = 'schedule' | 'groups' | null
 type AccountPickerStatus = AccountStatus | 'all'
 
 export interface PageGroupEditorActions {
+  pageTabId: number
   schedule: () => void
   groups: () => void
   posts: () => void
@@ -299,6 +300,7 @@ export function PageTabsManager({ activePageId: controlledActiveId, scoped = fal
   useEffect(() => {
     if (editorPageId === null || (scoped && editorPageId !== controlledActiveId)) return
     registerEditorActions?.({
+      pageTabId: editorPageId,
       schedule: () => setEditorModal('schedule'),
       groups: () => setEditorModal('groups'),
       posts: () => setPostLibraryOpen(true)
