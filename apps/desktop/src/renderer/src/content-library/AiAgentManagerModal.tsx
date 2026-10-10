@@ -1,10 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { AiAgentCatalogView, AiAgentImportResult, AiAgentRecord } from '../../../shared/aiAgents'
+import type { AiApiConnectionView } from '../../../shared/aiApiConnections'
+import { AiApiConnectionPanel } from './AiApiConnectionPanel'
 import './aiAgentManager.css'
 
 interface AiAgentManagerModalProps {
   catalog: AiAgentCatalogView
   onCatalogChange: (catalog: AiAgentCatalogView) => void
+  apiConnections: AiApiConnectionView[]
+  onApiConnectionsChange: (connections: AiApiConnectionView[]) => void
   onClose: () => void
 }
 
@@ -32,6 +36,8 @@ function resourceId(agent: AiAgentRecord): string {
 export function AiAgentManagerModal({
   catalog,
   onCatalogChange,
+  apiConnections,
+  onApiConnectionsChange,
   onClose
 }: AiAgentManagerModalProps) {
   const [selectedId, setSelectedId] = useState(
@@ -111,9 +117,9 @@ export function AiAgentManagerModal({
       >
         <header className="ai-agent-modal-header">
           <div>
-            <p>AI / AGENT BUILDER</p>
-            <h2>Quản lý Agent</h2>
-            <span>Kết nối Google Cloud rồi chọn Agent đã deploy để tạo bài.</span>
+            <p>AI / API & AGENT BUILDER</p>
+            <h2>Quản lý kết nối AI</h2>
+            <span>Thêm API/JSON, tải model để chọn hoặc dùng Google Agent đã deploy.</span>
           </div>
           <button type="button" aria-label="Đóng" disabled={busy} onClick={onClose}>×</button>
         </header>
@@ -151,6 +157,8 @@ export function AiAgentManagerModal({
           </aside>
 
           <section className="ai-agent-import-panel ai-agent-manager-main">
+            <AiApiConnectionPanel connections={apiConnections} onConnectionsChange={onApiConnectionsChange}/>
+            <div className="ai-api-google-divider"><strong>Google Agent Builder</strong><span>Cấu hình JSON Google Cloud hiện tại được giữ nguyên</span></div>
             <div className="ai-agent-import-card">
               <div className="ai-import-icon" aria-hidden="true">⇧</div>
               <div>

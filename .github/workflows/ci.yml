@@ -108,6 +108,17 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: AI API manager Windows UI smoke
+        run: node apps/desktop/scripts/ai-api-manager-ui-smoke.mjs
+
+      - name: Upload AI API manager UI screenshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: PageAuto-ai-api-manager-${{ github.sha }}
+          path: dist/ai-api-manager-smoke.png
+          if-no-files-found: error
+          retention-days: 7
+
       - name: R5 Windows workspace fixture QA
         run: node apps/desktop/scripts/windows-r5-ui-smoke.mjs
 

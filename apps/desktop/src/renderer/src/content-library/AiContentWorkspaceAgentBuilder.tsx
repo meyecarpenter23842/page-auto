@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { aiApiChoice, aiApiChoiceId, isAiApiChoice, type AiApiConnectionView } from '../../../shared/aiApiConnections'
 import type {
   AiAgentCatalogView,
   AiContentAction,
@@ -45,6 +46,7 @@ function errorMessage(cause: unknown): string {
 export function AiContentWorkspaceAgentBuilder() {
   const [agentManagerOpen, setAgentManagerOpen] = useState(false)
   const [catalog, setCatalog] = useState<AiAgentCatalogView>(EMPTY_CATALOG)
+  const [apiConnections, setApiConnections] = useState<AiApiConnectionView[]>([])
   const [catalogError, setCatalogError] = useState<string | null>(null)
   const [selectedAgent, setSelectedAgent] = useState('')
   const [action, setAction] = useState<AiContentAction>('create')
@@ -72,6 +74,7 @@ export function AiContentWorkspaceAgentBuilder() {
     () => catalog.agents.filter((agent) => agent.enabled),
     [catalog.agents]
   )
+  const currentApi = apiConnections.find((connection) => aiApiChoice(connection.id) === selectedAgent)
   const currentAgent = useMemo(
     () => enabledAgents.find((agent) => agent.id === selectedAgent) ?? null,
     [enabledAgents, selectedAgent]
@@ -83,15 +86,17 @@ export function AiContentWorkspaceAgentBuilder() {
 
   useEffect(() => {
     let active = true
-    void window.pageAuto.getAiAgentCatalog()
-      .then((next) => {
+    void Promise.all([window.pageAuto.getAiAgentCatalog(), window.pageAuto.listAiApiConnections()])
+      .then(([next, connections]) => {
         if (!active) return
         setCatalog(next)
+        setApiConnections(connections)
         setCatalogError(null)
-        const initial = next.defaultAgentId
-          && next.agents.some((agent) => agent.id === next.defaultAgentId && agent.enabled)
-          ? next.defaultAgentId
-          : next.agents.find((agent) => agent.enabled)?.id ?? ''
+        const defaultApi = connections.find((connection) => connection.isDefault)
+        const initial = defaultApi ? aiApiChoice(defaultApi.id)
+          : next.defaultAgentId && next.agents.some((agent) => agent.id === next.defaultAgentId && agent.enabled)
+            ? next.defaultAgentId
+            : next.agents.find((agent) => agent.enabled)?.id ?? ''
         setSelectedAgent(initial)
       })
       .catch((cause) => {
@@ -105,7 +110,8 @@ export function AiContentWorkspaceAgentBuilder() {
     setCatalog(next)
     setCatalogError(null)
     setSelectedAgent((current) => {
-      if (current && next.agents.some((agent) => agent.id === current && agent.enabled)) {
+      if (current && (next.agents.some((agent) => agent.id === current && agent.enabled)
+        || (isAiApiChoice(current) && apiConnections.some((connection)=>connection.id === aiApiChoiceId(current))))) {
         return current
       }
       if (
@@ -118,12 +124,24 @@ export function AiContentWorkspaceAgentBuilder() {
     })
   }
 
+  const applyApiConnections = (next: AiApiConnectionView[]) => {
+    const added = next.find((connection) => !apiConnections.some((old) => old.id === connection.id))
+    setApiConnections(next)
+    setSelectedAgent((current) => {
+      if (added) return aiApiChoice(added.id)
+      if (isAiApiChoice(current) && next.some((connection)=>aiApiChoice(connection.id) === current)) return current
+      const fallback = next.find((connection)=>connection.isDefault)
+      return fallback ? aiApiChoice(fallback.id) : catalog.defaultAgentId ?? catalog.agents.find((agent)=>agent.enabled)?.id ?? ''
+    })
+  }
   const missingInput = useMemo(() => {
-    if (catalogError) return 'Không tải được Agent Builder. Mở Quản lý Agent để kiểm tra.'
-    if (!catalog.credentialConfigured) {
-      return 'Kết nối Google Cloud service account trong Quản lý Agent.'
+    if (catalogError) return 'Không tải được danh sách AI. Mở Quản lý kết nối AI để kiểm tra.'
+    if (!selectedAgent) return 'Kết nối API hoặc Google Agent Builder trước khi tạo bài.'
+    if (isAiApiChoice(selectedAgent)) {
+      if (!apiConnections.some((connection) => connection.id === aiApiChoiceId(selectedAgent))) return 'Kết nối API không còn tồn tại.'
+    } else if (!catalog.credentialConfigured) {
+      return 'Kết nối Google Cloud trong Quản lý Agent.'
     }
-    if (!selectedAgent) return 'Chọn Agent Builder đã deploy trước khi tạo bài.'
     if (action === 'random') {
       if (!randomSourcePosts.length) return 'Dán ít nhất một bài nguồn để Random.'
       return null
@@ -133,6 +151,7 @@ export function AiContentWorkspaceAgentBuilder() {
     return null
   }, [
     action,
+    apiConnections,
     catalog.credentialConfigured,
     catalogError,
     randomSourcePosts.length,
@@ -186,34 +205,38 @@ export function AiContentWorkspaceAgentBuilder() {
   const previewPostCount = incomingBatch ? resultPostCount : postCount
 
   return (
-    <section className="ai-content-workspace" aria-label="Tạo bài bằng Agent Builder">
+    <section className="ai-content-workspace" aria-label="Tạo bài bằng AI">
       <div className="ai-content-topbar">
         <div className="ai-agent-control">
-          <span className="ai-control-label">Agent</span>
+          <span className="ai-control-label">AI / Model</span>
           <select
             value={selectedAgent}
             onChange={(event) => setSelectedAgent(event.target.value)}
-            aria-label="Chọn Agent Builder"
+            aria-label="Chọn AI và Model"
           >
-            <option value="">{enabledAgents.length ? 'Chọn Agent' : 'Chưa có Agent'}</option>
-            {enabledAgents.map((agent) => (
+            <option value="">{enabledAgents.length || apiConnections.length ? 'Chọn AI' : 'Chưa kết nối AI'}</option>
+            {apiConnections.length ? <optgroup label="API / Model">{apiConnections.map((connection) =>
+              <option key={connection.id} value={aiApiChoice(connection.id)}>{connection.name} · {connection.modelId}</option>
+            )}</optgroup> : null}
+            {enabledAgents.length ? <optgroup label="Google Agent Builder">{enabledAgents.map((agent) =>
               <option key={agent.id} value={agent.id}>{agent.name}</option>
-            ))}
+            )}</optgroup> : null}
           </select>
           <button
             className="ai-secondary-button"
             type="button"
             onClick={() => setAgentManagerOpen(true)}
           >
-            <span aria-hidden="true">⚙</span> Quản lý Agent
+            <span aria-hidden="true">⚙</span> Quản lý AI
           </button>
         </div>
 
-        <div className={catalog.credentialConfigured ? 'ai-provider-state connected' : 'ai-provider-state'}>
+        <div className={selectedAgent ? 'ai-provider-state connected' : 'ai-provider-state'}>
           <span />
-          {catalog.credentialConfigured
-            ? `Agent Builder đã kết nối${catalog.projectId ? ` · ${catalog.projectId}` : ''}`
-            : 'Chưa kết nối Google Cloud'}
+          {currentApi ? `API: ${currentApi.name} · ${currentApi.modelId}`
+            : catalog.credentialConfigured
+              ? `Agent Builder đã kết nối${catalog.projectId ? ` · ${catalog.projectId}` : ''}`
+              : 'Chưa kết nối AI'}
         </div>
       </div>
 
@@ -443,13 +466,13 @@ export function AiContentWorkspaceAgentBuilder() {
             <span className={missingInput || generationError ? 'ai-form-hint' : 'ai-form-hint ready'}>
               {generationError
                 ?? missingInput
-                ?? `Sẵn sàng gửi yêu cầu tới ${currentAgent?.name ?? 'Agent Builder'}.`}
+                ?? `Sẵn sàng gửi yêu cầu tới ${currentApi?.name ?? currentAgent?.name ?? 'AI'}.`}
             </span>
             <button
               className="ai-generate-button"
               type="button"
               disabled={Boolean(missingInput) || generating}
-              title={missingInput ?? 'Gửi yêu cầu tới Agent Builder đã chọn'}
+              title={missingInput ?? 'Gửi yêu cầu tới AI đã chọn'}
               onClick={() => void generate()}
             >
               <span aria-hidden="true">✦</span>
@@ -469,6 +492,8 @@ export function AiContentWorkspaceAgentBuilder() {
         <AiAgentManagerModal
           catalog={catalog}
           onCatalogChange={applyCatalog}
+          apiConnections={apiConnections}
+          onApiConnectionsChange={applyApiConnections}
           onClose={() => setAgentManagerOpen(false)}
         />
       ) : null}

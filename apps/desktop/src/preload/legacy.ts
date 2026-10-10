@@ -54,6 +54,7 @@ import {
   type GenerateAiPostsResult,
   type SaveGeminiApiKeyInput
 } from '../shared/aiAgents'
+import { AI_API_IPC, type AiApiConnectionDraft, type AiApiConnectionView, type AiApiDiscoveryInput, type AiApiModel, type AiApiTestInput } from '../shared/aiApiConnections'
 import type { AppSettings, AppSettingsPatch } from '../shared/appSettings'
 import type { BrowserExecutableResult, BrowserTestRequest, BrowserTestResult } from '../shared/browserSettings'
 import type { BrowserDisplayInfo, BrowserRetileResult, BrowserWindowLayoutSettings } from '../shared/browserWindowLayout'
@@ -174,6 +175,13 @@ const api = {
   pauseInteractionWorkspaceRunner: (payload: InteractionWorkspaceRunIdPayload): Promise<InteractionWorkspaceRunSnapshot | null> => ipcRenderer.invoke(INTERACTION_WORKSPACE_RUNNER_IPC.pause, payload) as Promise<InteractionWorkspaceRunSnapshot | null>,
   resumeInteractionWorkspaceRunner: (payload: InteractionWorkspaceRunIdPayload): Promise<InteractionWorkspaceRunSnapshot | null> => ipcRenderer.invoke(INTERACTION_WORKSPACE_RUNNER_IPC.resume, payload) as Promise<InteractionWorkspaceRunSnapshot | null>,
   stopInteractionWorkspaceRunner: (payload: InteractionWorkspaceRunIdPayload): Promise<InteractionWorkspaceRunSnapshot | null> => ipcRenderer.invoke(INTERACTION_WORKSPACE_RUNNER_IPC.stop, payload) as Promise<InteractionWorkspaceRunSnapshot | null>,
+  listAiApiConnections: (): Promise<AiApiConnectionView[]> => ipcRenderer.invoke(AI_API_IPC.list) as Promise<AiApiConnectionView[]>,
+  discoverAiApiModels: (input: AiApiDiscoveryInput): Promise<AiApiModel[]> => ipcRenderer.invoke(AI_API_IPC.discover, input) as Promise<AiApiModel[]>,
+  testAiApiModel: (input: AiApiTestInput): Promise<boolean> => ipcRenderer.invoke(AI_API_IPC.test, input) as Promise<boolean>,
+  saveAiApiConnection: (input: AiApiConnectionDraft): Promise<AiApiConnectionView[]> => ipcRenderer.invoke(AI_API_IPC.save, input) as Promise<AiApiConnectionView[]>,
+  removeAiApiConnection: (id: string): Promise<AiApiConnectionView[]> => ipcRenderer.invoke(AI_API_IPC.remove, id) as Promise<AiApiConnectionView[]>,
+  updateAiApiModel: (payload: { id: string; modelId: string }): Promise<AiApiConnectionView[]> => ipcRenderer.invoke(AI_API_IPC.updateModel, payload) as Promise<AiApiConnectionView[]>,
+  setDefaultAiApiConnection: (id: string): Promise<AiApiConnectionView[]> => ipcRenderer.invoke(AI_API_IPC.setDefault, id) as Promise<AiApiConnectionView[]>,
   getAiAgentCatalog: (): Promise<AiAgentCatalogView> => ipcRenderer.invoke(AI_AGENT_IPC.catalog) as Promise<AiAgentCatalogView>,
   importAiAgentJson: (): Promise<AiAgentImportResult | null> => ipcRenderer.invoke(AI_AGENT_IPC.importJson) as Promise<AiAgentImportResult | null>,
   setAiAgentEnabled: (payload: AiAgentEnabledPayload): Promise<AiAgentCatalogView> => ipcRenderer.invoke(AI_AGENT_IPC.setEnabled, payload) as Promise<AiAgentCatalogView>,
