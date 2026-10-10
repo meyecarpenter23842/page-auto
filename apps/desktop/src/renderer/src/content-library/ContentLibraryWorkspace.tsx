@@ -11,6 +11,7 @@ import {
   type ContentLibrarySetSummary
 } from '../../../shared/contentLibrary'
 import { CONTENT_SPIN_ICON_OPTIONS, spinContent } from '../../../shared/contentSpin'
+import { inspectContentVariants, inspectSpinSyntax } from '../../../shared/contentQuality'
 import {
   ensureEditorVariants,
   insertTextAtSelection,
@@ -31,8 +32,10 @@ interface ItemEditorDraft {
 }
 
 interface PreviewState {
-  mode: 'source' | 'spin'
+  mode: 'source' | 'spin' | 'batch'
   content: string
+  samples?: string[]
+  uniqueCount?: number
 }
 
 interface CategoryDialogState {
@@ -534,6 +537,22 @@ export function ContentLibraryWorkspace() {
     })
   }
 
+  const spinPreviewBatch = () => {
+    if (!activeVariant.trim()) return
+    const samples = Array.from({ length: 10 }, () => spinContent(activeVariant))
+    setPreview({
+      mode: 'batch',
+      content: '',
+      samples,
+      uniqueCount: new Set(samples).size
+    })
+  }
+
+  const qualityWarnings = useMemo(
+    () => inspectContentVariants(editor?.variants ?? []),
+    [editor?.variants]
+  )
+
   const currentIndex = details?.items.findIndex((item) => item.id === selectedItemId) ?? -1
 
   return (
@@ -769,7 +788,7 @@ export function ContentLibraryWorkspace() {
                     >
                       <option value="">Icon Spin…</option>
                       {CONTENT_SPIN_ICON_OPTIONS.map((item) => (
-                        <option key={item.token} value={item.token}>{item.label}</option>
+                        <option key={item.token} value={item.token}>{item.label} · {item.pool.length} ký tự</option>
                       ))}
                     </select>
                     <button className="content-library-spin-skeleton" type="button" onClick={() => insertSpinSnippet('{A|B|C}')}>
@@ -778,9 +797,18 @@ export function ContentLibraryWorkspace() {
                     <div className="content-library-preview-actions content-library-preview-launchers">
                       <button type="button" onClick={showSourcePreview}>Xem gốc</button>
                       <button className="primary" type="button" onClick={spinPreview}>Spin thử</button>
+                      <button type="button" onClick={spinPreviewBatch}>Spin 10 lần</button>
                     </div>
                   </div>
 
+                  <details className="content-library-spin-catalog">
+                    <summary>Xem đủ ký tự trong từng bộ Spin</summary>
+                    <div>
+                      {CONTENT_SPIN_ICON_OPTIONS.map((option) => (
+                        <p key={option.token}><code>{option.token}</code> ({option.pool.length} ký tự) · {option.pool.join(' ')}</p>
+                      ))}
+                    </div>
+                  </details>
                   <p className="content-library-spin-note">
                     <code>A|B|C</code> random cả nhánh; <code>{'{A|B|C}'}</code> random đúng cấp hiện tại rồi tiếp tục xử lý nhóm lồng bên trong.
                     Token cần tên thật như <code>[u]</code>/<code>[f]</code> sẽ giữ nguyên nếu flow không có context.
@@ -858,6 +886,12 @@ export function ContentLibraryWorkspace() {
                       <strong>{formatUpdated(details.updatedAt)}</strong>
                     </div>
                     <p>Canonical chỉ lưu cú pháp Spin. Kết quả random không ghi ngược vào bài gốc.</p>
+                    {qualityWarnings.length ? (
+                      <details className="content-library-quality-notice">
+                        <summary>{qualityWarnings.length} cảnh báo nội dung / Spin (không tự sửa bài)</summary>
+                        {qualityWarnings.slice(0, 8).map((warning) => <p key={warning}>{warning}</p>)}
+                      </details>
+                    ) : null}
                     <button className="content-library-save" type="button" disabled={busy} onClick={() => void saveItem()}>
                       {busy ? 'Đang lưu...' : editor.id === null ? 'Thêm vào thư viện' : 'Lưu bài viết'}
                     </button>
@@ -883,16 +917,23 @@ export function ContentLibraryWorkspace() {
             <div className="content-library-preview-modal-head">
               <div>
                 <p className="eyebrow">XEM TRƯỚC BÀI</p>
-                <h3>{previewMode === 'spin' ? 'Spin thử' : 'Bản gốc'}</h3>
+                <h3>{previewMode === 'batch' ? 'Spin thử 10 lần' : previewMode === 'spin' ? 'Spin thử' : 'Bản gốc'}</h3>
               </div>
               <button type="button" aria-label="Đóng xem trước" onClick={() => setPreview(null)}>×</button>
             </div>
             <div className="content-library-preview-modal-body">
-              {preview.content}
+              {preview.samples ? (
+                <div className="content-library-spin-batch">
+                  <strong>{preview.uniqueCount}/{preview.samples.length} kết quả khác nhau trong lượt thử</strong>
+                  {inspectSpinSyntax(activeVariant).map((warning) => <p className="content-library-spin-warning" key={warning}>{warning}</p>)}
+                  {preview.samples.map((sample, index) => <pre key={index}><span>#{index + 1}</span> {sample}</pre>)}
+                </div>
+              ) : preview.content}
             </div>
             <div className="content-library-preview-modal-actions">
               <button type="button" onClick={showSourcePreview}>Xem gốc</button>
               <button className="primary" type="button" onClick={spinPreview}>Spin thử</button>
+              <button type="button" onClick={spinPreviewBatch}>Spin 10 lần</button>
               <button type="button" onClick={() => setPreview(null)}>Đóng</button>
             </div>
           </section>

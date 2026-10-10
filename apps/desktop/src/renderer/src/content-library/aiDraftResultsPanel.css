@@ -10,7 +10,7 @@
 .ai-agent-output-bridge summary small{font-size:9px;color:#91a0b0}
 .ai-agent-output-bridge summary>b{border-radius:999px;background:#eef5fd;color:#3e76b5;padding:4px 7px;font-size:9px}
 .ai-agent-output-body{padding:0 10px 9px}
-.ai-agent-output-body textarea{box-sizing:border-box;width:100%;min-height:78px;max-height:150px;resize:vertical;border:1px solid #d8e2ec;border-radius:8px;padding:8px 9px;font-family:inherit;font-size:10.5px;line-height:1.5;color:#34495e;outline:0}
+.ai-agent-output-body textarea{box-sizing:border-box;width:100%;min-height:150px;max-height:300px;resize:vertical;border:1px solid #d8e2ec;border-radius:8px;padding:8px 9px;font-family:inherit;font-size:10.5px;line-height:1.5;color:#34495e;outline:0}
 .ai-agent-output-body textarea:focus{border-color:#82b7fa;box-shadow:0 0 0 3px rgba(22,119,255,.07)}
 .ai-agent-output-body>div{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:6px}
 .ai-agent-output-body span{font-size:9px;color:#8292a4}
@@ -85,10 +85,16 @@
 @media(max-width:1040px){.ai-results-workspace{grid-template-columns:1fr}.ai-draft-list{max-height:180px}.ai-draft-editor{grid-template-rows:auto auto minmax(180px,1fr) auto auto}.ai-media-grid{grid-template-columns:1fr 82px}.ai-media-grid>.ai-media-field:last-child{grid-column:1/-1}}
 
 /* Once drafts exist, remove debug/status chrome so the result list and editor own the canvas. */
-.ai-results-canvas:has(.ai-results-workspace){gap:0;padding:8px 12px 12px}
-.ai-results-canvas:has(.ai-results-workspace)>.ai-agent-output-bridge,
-.ai-results-canvas:has(.ai-results-workspace)>.ai-results-toolbar,
+.ai-results-canvas:has(.ai-results-workspace){gap:8px;padding:8px 12px 12px}
 .ai-results-canvas:has(.ai-results-workspace)>.ai-batch-notice.success{display:none}
 .ai-results-canvas:has(.ai-results-workspace)>.ai-batch-notice.warning,
 .ai-results-canvas:has(.ai-results-workspace)>.ai-batch-notice.error{margin-bottom:8px}
 .ai-results-canvas:has(.ai-results-workspace)>.ai-results-workspace{flex:1 1 auto;height:100%;min-height:0}
+
+/* Raw AI output stays accessible via its collapsible header even after reading drafts. */
+.ai-agent-output-bridge summary strong{font-size:12px}
+.ai-agent-output-body textarea{font-size:12px}
+.ai-quality-notice{flex:0 0 auto;border:1px solid #e4b965;border-radius:8px;padding:7px 10px;background:#fff9ed;color:#84570d;font-size:11px}
+.ai-quality-notice summary{cursor:pointer;font-weight:700}
+.ai-quality-notice ul{margin:7px 0 2px;padding-left:19px;max-height:86px;overflow-y:auto;line-height:1.5}
+html[data-theme='dark'] .ai-quality-notice{background:#30291e;border-color:#8b6b35;color:#f4dba7}

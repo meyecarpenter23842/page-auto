@@ -24,6 +24,15 @@ describe('aiDraftResults', () => {
     expect(countSavableAiDrafts(batch.drafts)).toBe(3)
   })
 
+  it('retains random variants and attaches spin/duplicate warnings as advice', () => {
+    const batch = buildAiDraftBatch('Giá tốt hôm nay\n|\nGIÁ TỐT HÔM NAY\n|\n{A|B', 3, 'quality', 'random')
+    expect(batch.valid).toBe(true)
+    expect(batch.warnings.some((warning) => warning.includes('trùng nội dung'))).toBe(true)
+    expect(batch.warnings.some((warning) => warning.includes('Ngoặc Spin'))).toBe(true)
+    expect(batch.drafts).toHaveLength(1)
+    expect(getAiDraftVariantCount(batch.drafts[0]!)).toBe(3)
+  })
+
   it('keeps partial create output usable while warning about requested count', () => {
     const batch = buildAiDraftBatch('A\n|\nB', 3, 'partial')
     expect(batch).toMatchObject({ valid: false, actualCount: 2, expectedCount: 3 })

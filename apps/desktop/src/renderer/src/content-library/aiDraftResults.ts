@@ -8,6 +8,7 @@ import {
   type CreateContentLibraryItemInput
 } from '../../../shared/contentLibrary'
 import { validateAiPostOutput } from './aiPostOutputFormat'
+import { inspectContentVariants } from '../../../shared/contentQuality'
 
 export const CONTENT_LIBRARY_EXTERNAL_CHANGE_EVENT = 'page-auto:content-library-external-change'
 
@@ -41,6 +42,7 @@ export interface AiDraftBatch {
   actualCount: number
   valid: boolean
   message: string
+  warnings: string[]
 }
 
 function defaultImageConfig(): ContentLibraryImageConfig {
@@ -71,6 +73,7 @@ export function buildAiDraftBatch(
   mode: AiDraftBatchMode = 'create'
 ): AiDraftBatch {
   const validation = validateAiPostOutput(value, expectedCount)
+  const warnings = inspectContentVariants(validation.posts)
   const drafts = mode === 'random'
     ? buildRandomDraft(validation.posts, batchId)
     : validation.posts.map((content, index) => ({
@@ -97,6 +100,7 @@ export function buildAiDraftBatch(
     actualCount: validation.actualCount,
     valid: validation.valid,
     message,
+    warnings,
     drafts
   }
 }

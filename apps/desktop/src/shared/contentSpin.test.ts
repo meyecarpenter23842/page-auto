@@ -27,6 +27,12 @@ describe('contentSpin', () => {
     expect(spinContent('[u] / [f]', { recipientName: 'Nguyễn Văn An', random: () => 0 })).toBe('[u] / Văn An')
   })
 
+  it('uses the full token pool rather than just the two label samples', () => {
+    for (const option of CONTENT_SPIN_ICON_OPTIONS) {
+      expect(option.pool.length).toBeGreaterThan(option.samples.length)
+    }
+  })
+
   it('resolves every icon token from its own configured pool', () => {
     for (const option of CONTENT_SPIN_ICON_OPTIONS) {
       const first = spinContent(option.token, { random: () => 0 })
