@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 
 const mainSource = readFileSync(new URL('./main.tsx', import.meta.url), 'utf8')
 const settingsSource = readFileSync(new URL('./settings/SettingsPanel.tsx', import.meta.url), 'utf8')
+const settingsNavigationSource = readFileSync(new URL('./settings/settingsNavigation.ts', import.meta.url), 'utf8')
 const appearanceSource = readFileSync(new URL('./settings/AppearanceSettingsSection.tsx', import.meta.url), 'utf8')
 const themeCss = readFileSync(new URL('./theme.css', import.meta.url), 'utf8')
 
@@ -15,7 +16,8 @@ describe('app-wide light/dark theme integration', () => {
   })
 
   it('exposes Giao diện inside Settings with explicit Sáng/Tối choices', () => {
-    expect(settingsSource).toContain("{ id: 'appearance', label: 'Giao diện', mark: 'UI' }")
+    expect(settingsSource).toContain("import { settingsSections, settingsGroups")
+    expect(settingsNavigationSource).toContain("{ id: 'appearance', label: 'Giao diện', mark: 'UI', group: 'general'")
     expect(settingsSource).toContain('<AppearanceSettingsSection />')
     expect(appearanceSource).toContain("{ id: 'light', label: 'Sáng'")
     expect(appearanceSource).toContain("{ id: 'dark', label: 'Tối'")
