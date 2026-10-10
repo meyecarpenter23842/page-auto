@@ -197,7 +197,7 @@ export function AiApiConnectionPanel({ connections, onConnectionsChange }: Props
       <label>Cấu hình JSON (provider, baseUrl, apiKey, name)</label>
       <textarea value={jsonValue} onChange={event=>setJsonValue(event.target.value)} rows={4}
         placeholder={'{"provider":"openai-compatible","name":"NVIDIA","baseUrl":"https://integrate.api.nvidia.com/v1","apiKey":"..."}'} spellCheck={false}/>
-      <div><button type="button" onClick={parseJson}>Đọc cấu hình</button><small>Google service-account JSON: dùng mục Google Agent Builder, không dán khóa riêng tại đây.</small></div>
+      <div><button type="button" onClick={parseJson}>Đọc cấu hình</button><small>JSON cấu hình API sử dụng provider, baseUrl và apiKey; không nhập service-account JSON của Google Cloud.</small></div>
     </div> : null}
     <div className="ai-api-model-block">
       <div className="ai-api-model-heading"><strong>Chọn Model</strong><span>{models.length ? models.length + ' model từ API' : 'Chưa tải model'}</span></div>
@@ -242,7 +242,7 @@ export function AiApiConnectionPanel({ connections, onConnectionsChange }: Props
             <button type="button" onClick={()=>setEditingId('')} disabled={Boolean(busy)}>Hủy</button>
           </div>
         </div> : null}
-      </div>) : <p className="ai-api-empty">Chưa lưu API nào. Google Agent Builder vẫn hoạt động độc lập.</p>}
+      </div>) : <p className="ai-api-empty">Chưa lưu API nào. Các kết nối API của anh sẽ hiện tại đây.</p>}
     </div>
   </div>
 }

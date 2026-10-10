@@ -32,10 +32,24 @@ try {
   let page=launched.page
   await toAi(page)
   await page.getByRole('button',{name:/Quản lý AI/}).click()
-  const modal=page.getByRole('dialog',{name:'Quản lý Agent'})
+  const modal=page.getByRole('dialog',{name:'Quản lý AI'})
   await modal.waitFor({state:'visible'})
-  assert(await modal.getByText('Kết nối Google Agent Builder').count() === 1,
-    'Existing Google Agent Builder panel must remain')
+  assert(await modal.getByText('Google Agent Builder').count() === 0,
+    'Removed Google Agent Builder must never appear in AI manager')
+  const legacyMethods = await page.evaluate(() => ({
+    catalog: typeof window.pageAuto.getAiAgentCatalog,
+    importJson: typeof window.pageAuto.importAiAgentJson
+  }))
+  assert(legacyMethods.catalog === 'undefined' && legacyMethods.importJson === 'undefined',
+    'Removed Google Agent Builder preload API must not be exposed')
+  // Electron's initial fixture window can be 1084x655. Set the QA viewport
+  // before judging the modal size, and assert proportional screen utilization.
+  await page.setViewportSize({width:1280,height:800})
+  const geometry = await modal.boundingBox()
+  const viewport = await page.evaluate(() => ({width:window.innerWidth,height:window.innerHeight}))
+  assert(geometry && geometry.width >= viewport.width * 0.9
+    && geometry.height >= viewport.height * 0.9,
+    'AI manager must occupy at least 90% of the available viewport: ' + JSON.stringify({geometry, viewport}))
   assert(await modal.getByRole('button',{name:/Tải danh sách Model/}).isDisabled(),
     'Do not call model API without a key')
   await modal.getByLabel('Tên kết nối').fill('API fixture')
@@ -49,6 +63,11 @@ try {
     'Secret must not appear in visible text')
   await page.setViewportSize({width:1280,height:800})
   await page.screenshot({path:screen,fullPage:true})
+  await page.setViewportSize({width:1084,height:655})
+  const compact = await modal.boundingBox()
+  assert(compact && compact.width <= 1084 && compact.height <= 655 && compact.width >= 1000,
+    'AI manager must fit smaller Windows viewport: ' + JSON.stringify(compact))
+  await page.setViewportSize({width:1280,height:800})
   await modal.getByRole('button',{name:'Đóng',exact:true}).last().click()
   assert(await page.getByRole('combobox',{name:'Chọn AI và Model'}).inputValue() !== '',
     'New API must be selectable in composer')
@@ -68,11 +87,11 @@ try {
   const selected=await page.getByRole('combobox',{name:'Chọn AI và Model'}).inputValue()
   assert(selected.startsWith('api:'),'Saved API model is not restored after app restart')
   await page.getByRole('button',{name:/Quản lý AI/}).click()
-  const m=page.getByRole('dialog',{name:'Quản lý Agent'})
+  const m=page.getByRole('dialog',{name:'Quản lý AI'})
   page.once('dialog', dialog => void dialog.accept())
   await m.getByRole('button',{name:'Xóa API fixture'}).click()
   await page.waitForFunction(() => document.querySelector('.ai-api-empty')?.textContent?.includes('Chưa lưu API nào'))
-  console.log('AI API manager smoke passed: save/select/restart/remove, no live provider requests.')
+  console.log('AI API-only manager smoke passed: expanded responsive dialog, no Google legacy APIs, save/select/restart/remove, no live provider requests.')
 } finally {
   if (app) await app.close().catch(()=>undefined)
   rmSync(dataDirectory,{recursive:true,force:true})

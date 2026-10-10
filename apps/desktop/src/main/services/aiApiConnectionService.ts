@@ -7,7 +7,7 @@ import {
   validateAiApiDraft, validateAiApiEndpoint, validateAiApiModelId
 } from '../../shared/aiApiConnections'
 import { assertGenerateAiPostsInput, joinAiPosts, type GenerateAiPostsInput, type GenerateAiPostsResult } from '../../shared/aiAgents'
-import { buildAgentBuilderPrompt, parseAgentPostOutput } from './googleAgentRuntimeService'
+import { buildAiPostPrompt, parseAiPostOutput } from './aiPostPrompt'
 
 const KEY = 'ai.api.connections.encrypted.v1'
 const MAX_CONNECTIONS = 30
@@ -255,9 +255,9 @@ export class AiApiConnectionService {
     assertGenerateAiPostsInput(input)
     if (!input.agentId.startsWith('api:')) throw new Error('Không phải kết nối API.')
     const stored = this.byId(input.agentId.slice(4))
-    const prompt = buildAgentBuilderPrompt(input)
+    const prompt = buildAiPostPrompt(input)
     const text = await this.completion(stored.provider,stored.baseUrl,stored.apiKey,stored.modelId,prompt,Math.min(8192,Math.max(512,input.postCount*450)))
-    const posts = parseAgentPostOutput(text)
+    const posts = parseAiPostOutput(text)
     if (!posts.length) throw new Error('Model không trả bài viết nào.')
     return {
       agentId: input.agentId, model: stored.modelId, posts,
