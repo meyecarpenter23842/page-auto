@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { keepDialogTabFocus } from '../components/dialogTabFocus'
 import {
   CANONICAL_CONTENT_LIBRARY_SET_ID,
   type ContentLibraryItem,
@@ -92,11 +93,24 @@ export function CanonicalPostPicker({
     [activeSetId, sets]
   )
   const selectedPostIds = useMemo(() => new Set(selected.keys()), [selected])
-  useEffect(() => {
-    const onEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose() }
-    window.addEventListener('keydown', onEscape)
-    return () => window.removeEventListener('keydown', onEscape)
-  }, [onClose])
+  const dialogRef = useRef<HTMLElement | null>(null)
+  // Capture before the search field autoFocus runs, so closing returns to its opener.
+  const returnFocusRef = useRef<HTMLElement | null>(
+    typeof document !== 'undefined' && document.activeElement instanceof HTMLElement ? document.activeElement : null
+  )
+  useEffect(() => () => {
+    if (returnFocusRef.current?.isConnected) returnFocusRef.current.focus()
+  }, [])
+
+  const handleDialogKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      event.stopPropagation()
+      onClose()
+      return
+    }
+    keepDialogTabFocus(event, dialogRef.current)
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -223,9 +237,12 @@ export function CanonicalPostPicker({
     <div className="canonical-post-picker-backdrop" role="presentation" onMouseDown={onClose}>
       <section
         className="canonical-post-picker"
+        ref={dialogRef}
         role="dialog"
+        tabIndex={-1}
         aria-modal="true"
         aria-label={title}
+        onKeyDown={handleDialogKeyDown}
         onMouseDown={(event) => event.stopPropagation()}
       >
         <header className="canonical-post-picker-head">

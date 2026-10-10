@@ -203,6 +203,10 @@ try {
   await windowPage.screenshot({ path: overviewScreenshotPath, fullPage: true })
   await windowPage.getByRole('tab', { name: /^Nhóm/ }).click()
   await windowPage.locator('.page-business-group-pane .page-business-page-strip').waitFor({ state: 'visible' })
+  // Binding chips mount before the async Page Tab editor; wait for the actual
+  // account/config regions before measuring the R3 layout (fixes smoke race).
+  await windowPage.locator('.page-business-group-pane .pt-account-panel-tall').waitFor({ state: 'visible' })
+  await windowPage.locator('.page-business-group-pane .pt-compact-config-launchers').waitFor({ state: 'visible' })
   // R3 Group whole-screen evidence and geometry at supported desktop viewport sizes.
   for (const { width, height } of overviewR1Screenshots) {
     await windowPage.setViewportSize({ width, height })
@@ -347,6 +351,24 @@ try {
   invariant(postRegionText.includes('Thêm bài'), 'Đăng Tường thiếu thao tác thêm bài canonical.')
   invariant(postRegionText.includes('Sửa bài'), 'Đăng Tường thiếu thao tác sửa bài canonical.')
   invariant(postRegionText.includes('Bỏ chọn'), 'Đăng Tường thiếu thao tác bỏ bài đang chọn.')
+
+  // R4b: validate real shared modal keyboard behavior without starting a post.
+  const choosePostButton = windowPage.locator('.business-page_wall_post [data-testid="page-wall-selected-post"]').getByRole('button', { name: 'Chọn từ Thư viện' })
+  await choosePostButton.click()
+  const canonicalDialog = windowPage.getByRole('dialog', { name: 'Chọn bài cho Đăng Tường' })
+  await canonicalDialog.waitFor({ state: 'visible' })
+  invariant(await canonicalDialog.evaluate((dialog) => dialog.contains(document.activeElement)),
+    'R4b: Canonical picker did not receive keyboard focus.')
+  await windowPage.screenshot({
+    path: resolve(appDirectory, '../../dist/canonical-post-picker-r4b.png'),
+    fullPage: true
+  })
+  await windowPage.keyboard.press('Escape')
+  await canonicalDialog.waitFor({ state: 'hidden' })
+  await windowPage.waitForFunction(() => {
+    const opener = document.querySelector('.business-page_wall_post [data-testid="page-wall-selected-post"] .page-wall-post-actions button')
+    return document.activeElement === opener
+  }, null, { timeout: 5000 })
 
   const nowPanelText = await windowPage.locator('.business-page_wall_post .page-wall-now-panel').innerText()
   invariant(nowPanelText.includes('Chạy đúng các TK đang tick'), 'Đăng ngay chưa mô tả chạy đúng TK đang tick.')

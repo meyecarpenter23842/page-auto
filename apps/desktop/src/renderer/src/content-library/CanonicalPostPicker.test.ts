@@ -37,6 +37,15 @@ describe('Common Canonical Post Picker foundation', () => {
     expect(picker).not.toContain('<select')
   })
 
+  it('traps modal Tab/Escape, restores focus, and fits short Windows viewports', () => {
+    expect(picker).toContain('keepDialogTabFocus(event, dialogRef.current)')
+    expect(picker).toContain("event.key === 'Escape'")
+    expect(picker).toContain('returnFocusRef.current.focus()')
+    expect(picker).toContain('aria-modal="true"')
+    expect(styles).toContain('max-height: calc(100vh - 16px)')
+    expect(styles).toContain('min-height: 0;')
+  })
+
   it('returns canonical post identity and immutable UI material only', () => {
     expect(picker).toContain('postId: number')
     expect(picker).toContain('sourceSetId: number')
