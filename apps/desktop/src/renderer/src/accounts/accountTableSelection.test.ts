@@ -54,6 +54,19 @@ describe('Excel-style account table selection', () => {
     expect(sorted(ctrlRemoved)).toEqual([10, 40])
   })
 
+  it('preserves checked selection IDs with 3, 10 and 100 visible rows', () => {
+    for (const size of [3, 10, 100]) {
+      const ids = Array.from({ length: size }, (_, i) => i + 101)
+      const click = nextExcelRowRange(ids, new Set<number>(), null, ids[0]!)
+      const range = nextExcelRowRange(ids, click.ids, click.anchorId, ids[size - 1]!, { shiftKey: true })
+      expect(sorted(range.ids)).toEqual(ids)
+      const removed = nextExcelRowRange(ids, range.ids, range.anchorId, ids[1]!, { ctrlKey: true })
+      expect(removed.ids.size).toBe(size - 1)
+      expect(removed.ids.has(ids[1]!)).toBe(false)
+      expect(nextExcelDragRange(ids, removed.ids, ids[1]!, ids[1]!, 'add').size).toBe(size)
+    }
+  })
+
   it('keeps large filtered ranges in visible order without selecting hidden target IDs', () => {
     const ids = Array.from({ length: 1000 }, (_, i) => i + 1).filter((id) => id % 2 === 0)
     const afterShift = nextExcelRowRange(ids, new Set([999]), 20, 200, { shiftKey: true })
