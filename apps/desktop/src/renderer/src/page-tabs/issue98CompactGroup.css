@@ -441,3 +441,80 @@ html[data-theme='dark'] .page-business-group-pane .pt-compact-config-actions > b
   background: #303945;
   border-color: #485566;
 }
+
+/* Issue #521 R3: viewport-safe density; scope all changes to the Group business pane. */
+.page-business-group-pane .page-tab-two-column {
+  min-height: 0;
+  align-items: start;
+}
+.page-business-group-pane .page-tab-left-pane,
+.page-business-group-pane .page-tab-right-pane {
+  min-width: 0;
+  min-height: 0;
+}
+.page-business-group-pane .pt-account-panel-tall {
+  min-height: 0;
+  max-height: min(52vh, 480px);
+}
+.page-business-group-pane .pt-account-panel-tall .pt-account-grid-wrap {
+  min-height: 0;
+  max-height: min(38vh, 360px);
+  overscroll-behavior: contain;
+}
+.page-business-group-pane .pt-account-grid th,
+.page-business-group-pane .pt-account-grid td {
+  font-size: 11px;
+}
+.page-business-group-pane .pt-live-preview.runtime-idle,
+.page-business-group-pane .pt-live-preview.runtime-completed,
+.page-business-group-pane .pt-live-preview.runtime-stopped {
+  min-height: 0;
+  max-height: 116px;
+  align-content: start;
+}
+.page-business-group-pane .pt-live-preview.runtime-running,
+.page-business-group-pane .pt-live-preview.runtime-starting,
+.page-business-group-pane .pt-live-preview.runtime-paused {
+  min-height: 140px;
+  max-height: min(38vh, 340px);
+  overflow: auto;
+}
+.page-business-group-pane .pt-live-runtime-state,
+.page-business-group-pane .pt-live-preview-empty,
+.page-business-group-pane .pt-live-preview > p { font-size: 11px; }
+.page-business-group-pane .page-tab-header-actions,
+.page-business-group-pane .page-tab-runtime-actions {
+  min-width: 0;
+  flex-wrap: wrap;
+  row-gap: 5px;
+}
+.page-business-group-pane .page-tab-header-actions > .pt-button,
+.page-business-group-pane .page-tab-runtime-actions .pt-button {
+  min-height: 32px;
+}
+.page-business-group-pane .pt-status-badge,
+.page-business-group-pane .pt-dirty-badge,
+.page-business-group-pane .pt-saved-badge,
+.page-business-group-pane .page-tab-runtime-state {
+  font-size: 10px !important;
+}
+.page-business-group-pane .page-tab-editor-header p:not(.eyebrow) {
+  font-size: 11px !important;
+}
+.page-business-group-pane .pt-compact-config-launchers {
+  flex-wrap: wrap;
+  align-items: center;
+  row-gap: 8px;
+}
+.page-business-group-pane .pt-compact-config-actions {
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.page-business-group-pane :is(button, input, select):focus-visible {
+  outline: 2px solid #175cd3;
+  outline-offset: 2px;
+}
+@media (max-width: 1180px) {
+  .page-business-group-pane .page-tab-right-pane { min-height: 0; }
+  .page-business-group-pane .page-tab-two-column { overflow: auto; }
+}

@@ -203,6 +203,35 @@ try {
   await windowPage.screenshot({ path: overviewScreenshotPath, fullPage: true })
   await windowPage.getByRole('tab', { name: /^Nhóm/ }).click()
   await windowPage.locator('.page-business-group-pane .page-business-page-strip').waitFor({ state: 'visible' })
+  // R3 Group whole-screen evidence and geometry at supported desktop viewport sizes.
+  for (const { width, height } of overviewR1Screenshots) {
+    await windowPage.setViewportSize({ width, height })
+    const layout = await windowPage.evaluate(() => {
+      const root = document.querySelector('.page-business-group-pane')
+      const account = root?.querySelector('.pt-account-panel-tall')
+      const preview = root?.querySelector('.pt-live-preview')
+      const config = root?.querySelector('.pt-compact-config-launchers')
+      const controls = root?.querySelector('.page-tab-header-actions')
+      if (!root || !account || !preview || !config || !controls) return null
+      const rect = (element) => {
+        const { left, top, right, bottom, width, height } = element.getBoundingClientRect()
+        return { left, top, right, bottom, width, height }
+      }
+      return { account: rect(account), preview: rect(preview), config: rect(config), controls: rect(controls) }
+    })
+    invariant(layout !== null, 'R3: Missing Group layout regions at ' + width + 'x' + height)
+    invariant(layout.account.height > 0 && layout.account.height <= height * 0.8,
+      'R3: Account panel consumes unreasonable height: ' + JSON.stringify(layout))
+    invariant(layout.preview.height > 0 && layout.preview.height <= height * 0.6,
+      'R3: Idle preview consumes unreasonable height: ' + JSON.stringify(layout))
+    invariant(layout.config.width > 0 && layout.controls.width > 0,
+      'R3: Group config/controls collapsed: ' + JSON.stringify(layout))
+    await windowPage.screenshot({
+      path: resolve(appDirectory, '../../dist/page-group-r3-' + width + 'x' + height + '.png'),
+      fullPage: true
+    })
+  }
+  await windowPage.setViewportSize(originalViewport)
   // R2 validated B's schedule. Re-select the original baseline Page A for
   // the legacy Group interaction smoke, without changing the persisted
   // Overview selection (B is intentionally verified again after restart).
