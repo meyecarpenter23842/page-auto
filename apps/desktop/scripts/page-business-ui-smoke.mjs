@@ -11,6 +11,12 @@ const mainEntry = join(appDirectory, 'out', 'main', 'index.js')
 const dataDirectory = mkdtempSync(join(tmpdir(), 'page-auto-page-business-ui-'))
 const screenshotPath = resolve(appDirectory, '../../dist/page-business-ui-smoke.png')
 const overviewScreenshotPath = resolve(appDirectory, '../../dist/page-overview-layout-smoke.png')
+const overviewR1Screenshots = [
+  { width: 1084, height: 655 },
+  { width: 1280, height: 800 },
+  { width: 1366, height: 768 },
+  { width: 1920, height: 1080 }
+]
 mkdirSync(dirname(screenshotPath), { recursive: true })
 
 let electronApp
@@ -88,6 +94,50 @@ try {
   await windowPage.locator('.page-overview-page-select').filter({ hasText: 'Smoke Page B' }).click()
   invariant((await windowPage.locator('.page-overview-detail').innerText()).includes('Smoke Page B'), 'Panel chi tiết chưa cập nhật theo Page được chọn.')
   invariant(await windowPage.locator('.page-overview-detail .page-overview-actions button').count() === 5, 'Thiếu điều khiển Page trong panel chi tiết.')
+
+  // R1: the overview must show inventory + selected details side by side at
+  // Windows desktop viewport sizes, not send the details below the fold.
+  const originalViewport = windowPage.viewportSize()
+  for (const { width, height } of overviewR1Screenshots) {
+    await windowPage.setViewportSize({ width, height })
+    const rects = await windowPage.evaluate(() => {
+      const table = document.querySelector('.page-overview-table-wrap')?.getBoundingClientRect()
+      const detail = document.querySelector('.page-overview-detail')?.getBoundingClientRect()
+      const root = document.querySelector('.page-overview')?.getBoundingClientRect()
+      return root && table && detail ? {
+        root: { top: root.top, bottom: root.bottom, right: root.right },
+        table: { top: table.top, bottom: table.bottom, right: table.right, width: table.width },
+        detail: { top: detail.top, bottom: detail.bottom, left: detail.left, right: detail.right, width: detail.width }
+      } : null
+    })
+    invariant(rects !== null, 'R1: Thiếu vùng Tổng quan.')
+    invariant(rects.table.width > 170 && rects.detail.width >= 280, 'R1: Hai vùng bị co/collapse ' + width + 'x' + height + ': ' + JSON.stringify(rects))
+    invariant(Math.abs(rects.table.top - rects.detail.top) <= 3, 'R1: Panel bị đẩy xuống dưới bảng ' + width + 'x' + height + ': ' + JSON.stringify(rects))
+    invariant(rects.table.right <= rects.detail.left + 3 && rects.detail.right <= rects.root.right + 3,
+      'R1: Panel chồng/tràn ngoài Tổng quan ' + width + 'x' + height + ': ' + JSON.stringify(rects))
+    invariant(rects.detail.bottom <= rects.root.bottom + 3 && rects.table.bottom <= rects.root.bottom + 3,
+      'R1: Vùng vượt chiều cao Tổng quan ' + width + 'x' + height + ': ' + JSON.stringify(rects))
+    await windowPage.screenshot({
+      path: resolve(appDirectory, '../../dist/page-overview-r1-' + width + 'x' + height + '.png')
+    })
+  }
+
+  // A true narrow window uses an explicit list/detail switch, not an unseen
+  // detail block after a tall table.
+  await windowPage.setViewportSize({ width: 840, height: 680 })
+  await windowPage.getByRole('button', { name: 'Chi tiết Page →' }).click()
+  invariant(await windowPage.locator('.page-overview-detail').isVisible(), 'R1: Chuyển sang chi tiết ở màn hình hẹp thất bại.')
+  invariant(await windowPage.locator('.page-overview-table-wrap').isHidden(), 'R1: Bảng còn chiếm chỗ ở chế độ chi tiết hẹp.')
+  await windowPage.getByRole('button', { name: '← Danh sách Page' }).click()
+  invariant(await windowPage.locator('.page-overview-table-wrap').isVisible(), 'R1: Không trở lại danh sách Page ở màn hình hẹp.')
+  if (originalViewport) await windowPage.setViewportSize(originalViewport)
+
+  // Renderer reload emulates navigation recreation; selected Page remains
+  // a UI preference and never updates Page config.
+  await windowPage.reload()
+  await windowPage.locator('.page-overview-detail-head h3').filter({ hasText: 'Smoke Page B' }).waitFor({ state: 'visible' })
+  invariant((await windowPage.locator('.page-overview-page-select[aria-current="true"]').innerText()).includes('Smoke Page B'),
+    'R1: Page được chọn không khôi phục sau renderer reload.')
   await windowPage.screenshot({ path: overviewScreenshotPath, fullPage: true })
   await windowPage.getByRole('tab', { name: /^Nhóm/ }).click()
   await windowPage.locator('.page-business-group-pane .page-business-page-strip').waitFor({ state: 'visible' })

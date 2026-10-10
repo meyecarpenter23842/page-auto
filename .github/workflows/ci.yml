@@ -55,6 +55,7 @@ jobs:
           path: |
             dist/page-business-ui-smoke.png
             dist/page-overview-layout-smoke.png
+            dist/page-overview-r1-*.png
           if-no-files-found: error
           retention-days: 7
 
