@@ -203,6 +203,10 @@ try {
   await windowPage.screenshot({ path: overviewScreenshotPath, fullPage: true })
   await windowPage.getByRole('tab', { name: /^Nhóm/ }).click()
   await windowPage.locator('.page-business-group-pane .page-business-page-strip').waitFor({ state: 'visible' })
+  // Binding chips mount before the async Page Tab editor; wait for the actual
+  // account/config regions before measuring the R3 layout (fixes smoke race).
+  await windowPage.locator('.page-business-group-pane .pt-account-panel-tall').waitFor({ state: 'visible' })
+  await windowPage.locator('.page-business-group-pane .pt-compact-config-launchers').waitFor({ state: 'visible' })
   // R3 Group whole-screen evidence and geometry at supported desktop viewport sizes.
   for (const { width, height } of overviewR1Screenshots) {
     await windowPage.setViewportSize({ width, height })
