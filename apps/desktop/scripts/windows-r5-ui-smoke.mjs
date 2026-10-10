@@ -46,7 +46,9 @@ async function openRoute(page, label, title, selector) {
   await page.locator('.sidebar-nav').getByRole('button', { name: label, exact: true }).click()
   await page.waitForFunction((name) =>
     document.querySelector('.sidebar-nav button[aria-current="page"] .nav-label')?.textContent?.trim() === name, label)
-  await page.locator('main.workspace .topbar h1').filter({ hasText: title }).waitFor({ state: 'visible' })
+  // Some full-height workspaces intentionally hide the redundant app topbar.
+  // Verify route identity in DOM and that actual workspace content is visible.
+  await page.locator('main.workspace .topbar h1').filter({ hasText: title }).waitFor({ state: 'attached' })
   await page.locator(selector).waitFor({ state: 'visible', timeout: 15000 })
   assert(await page.locator('.sidebar-nav button[aria-current="page"]').count() === 1, 'R5: route selection ' + label)
 }
@@ -61,7 +63,7 @@ async function capture(page, label, width, height, theme) {
     return { sidebarRight: sidebar.right, workspaceLeft: workspace.left, workspaceWidth: workspace.width,
       headerHeight: header.height, dpr: window.devicePixelRatio }
   })
-  assert(box && box.workspaceWidth > 100 && box.headerHeight > 0, 'R5: missing shell ' + label)
+  assert(box && box.workspaceWidth > 100, 'R5: missing workspace shell ' + label)
   assert(box.sidebarRight <= box.workspaceLeft + 4, 'R5: shell overlaps ' + label + ' ' + width)
   const file = 'r5-' + label.replace(/[^A-Za-z]+/g, '-').toLowerCase()
     + '-' + width + 'x' + height + '-' + theme + '.png'
