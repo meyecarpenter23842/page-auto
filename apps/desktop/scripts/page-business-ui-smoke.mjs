@@ -10,6 +10,7 @@ const appDirectory = resolve(import.meta.dirname, '..')
 const mainEntry = join(appDirectory, 'out', 'main', 'index.js')
 const dataDirectory = mkdtempSync(join(tmpdir(), 'page-auto-page-business-ui-'))
 const screenshotPath = resolve(appDirectory, '../../dist/page-business-ui-smoke.png')
+const overviewScreenshotPath = resolve(appDirectory, '../../dist/page-overview-layout-smoke.png')
 mkdirSync(dirname(screenshotPath), { recursive: true })
 
 let electronApp
@@ -84,6 +85,10 @@ try {
   await windowPage.getByRole('button', { name: 'Page Tabs' }).click()
   await windowPage.locator('.page-overview-table').waitFor({ state: 'visible' })
   await windowPage.locator('.page-overview-table tbody tr').filter({ hasText: 'Smoke Page A' }).waitFor({ state: 'visible' })
+  await windowPage.locator('.page-overview-page-select').filter({ hasText: 'Smoke Page B' }).click()
+  invariant((await windowPage.locator('.page-overview-detail').innerText()).includes('Smoke Page B'), 'Panel chi tiết chưa cập nhật theo Page được chọn.')
+  invariant(await windowPage.locator('.page-overview-detail .page-overview-actions button').count() === 5, 'Thiếu điều khiển Page trong panel chi tiết.')
+  await windowPage.screenshot({ path: overviewScreenshotPath, fullPage: true })
   await windowPage.getByRole('tab', { name: /^Nhóm/ }).click()
   await windowPage.locator('.page-business-group-pane .page-business-page-strip').waitFor({ state: 'visible' })
 
@@ -102,7 +107,23 @@ try {
     invariant(compactLabels.some((label) => label.includes(expected)), `UI compact Nhóm thiếu nút ${expected}.`)
   }
   invariant(await windowPage.locator('.page-business-group-pane .pt-identity-panel').isHidden(), 'Card Nhận diện cũ vẫn chiếm layout Nhóm.')
-  invariant(await windowPage.locator('.page-business-group-pane .pt-business-panel').isHidden(), 'Cụm card Lịch/Group/Bài viết cũ vẫn hiển thị trong Nhóm.')
+  invariant(await windowPage.locator('.page-business-group-pane .pt-business-panel').isVisible(), 'Cấu hình Lịch/Group/Bài viết không hiển thị trong Nhóm.')
+  const groupGeometry = await windowPage.evaluate(() => {
+    const get = (selector) => document.querySelector(selector)?.getBoundingClientRect()
+    const right = get('.page-business-group-pane .page-tab-right-pane')
+    const launcher = get('.page-business-group-pane .pt-compact-config-launchers')
+    const business = get('.page-business-group-pane .pt-business-panel')
+    const preview = get('.page-business-group-pane .pt-live-preview')
+    return right && launcher && business && preview ? {
+      right: { x: right.x, right: right.right },
+      launcher: { x: launcher.x, right: launcher.right, top: launcher.top, bottom: launcher.bottom },
+      business: { top: business.top, bottom: business.bottom },
+      preview: { top: preview.top }
+    } : null
+  })
+  invariant(groupGeometry !== null, 'Thiếu vùng layout Nhóm để kiểm tra tọa độ.')
+  invariant(groupGeometry.launcher.x >= groupGeometry.right.x - 2 && groupGeometry.launcher.right <= groupGeometry.right.right + 2, 'Nút cấu hình tràn khỏi cột bên phải.')
+  invariant(groupGeometry.launcher.bottom <= groupGeometry.business.top + 2 && groupGeometry.business.bottom <= groupGeometry.preview.top + 2, 'Cấu hình và Preview chồng lấn nhau.')
   invariant(await windowPage.locator('.page-business-group-pane .pt-right-summary').isHidden(), 'Summary card cũ vẫn chiếm diện tích Preview.')
 
   const rotationInputWidth = await windowPage.locator('.page-business-group-pane .pt-rotation-grid input[type="number"]').first().evaluate((element) => element.getBoundingClientRect().width)
@@ -137,7 +158,7 @@ try {
   invariant(groupLayout.child >= groupLayout.content - 2, `Scoped child Nhóm không fill vùng action: ${JSON.stringify(groupLayout)}`)
   invariant(groupLayout.manager >= groupLayout.child - 2, `PageTabsManager không fill scoped child: ${JSON.stringify(groupLayout)}`)
   invariant(groupLayout.workspace > Math.max(120, groupLayout.content * 0.65), `Workspace Đăng Nhóm bị co về 0: ${JSON.stringify(groupLayout)}`)
-  invariant(groupLayout.preview > 180, `Preview runtime không còn là vùng chính của layout Nhóm compact: ${JSON.stringify(groupLayout)}`)
+  invariant(groupLayout.preview >= 110 && groupLayout.preview <= 225, `Preview chiếm quá nhiều không gian hoặc bị collapse: ${JSON.stringify(groupLayout)}`)
 
   invariant((await windowPage.locator('.page-business-group-pane .page-tab-editor-header h2').innerText()).includes('Smoke Page A'), 'Nhóm không load config Page A ban đầu.')
 
@@ -255,7 +276,8 @@ try {
     wallMultiTimeScheduleUi: true,
     newPageNotAutoBound: true,
     unlinkKeepsCanonical: true,
-    screenshotPath
+    screenshotPath,
+    overviewScreenshotPath
   })
 } catch (error) {
   if (windowPage) {

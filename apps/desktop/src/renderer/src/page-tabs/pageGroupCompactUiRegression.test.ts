@@ -20,10 +20,14 @@ describe('Page Nhóm compact UI regression', () => {
     expect(coreSource).toContain('editorActions?.posts()')
   })
 
-  it('removes the old large config cards from the visible Nhóm layout', () => {
-    expect(compactCssSource).toMatch(/\.page-business-group-pane \.pt-identity-panel,[\s\S]*\.pt-business-panel\s*\{\s*display:\s*none !important;/)
+  it('keeps identity as modal while showing operational configuration in the right pane', () => {
+    expect(compactCssSource).toMatch(/\.page-business-group-pane \.pt-identity-panel\s*\{\s*display:\s*none !important;/)
+    expect(compactCssSource).toMatch(/\.page-business-group-pane \.pt-business-panel\s*\{\s*display:\s*block !important;/)
     expect(compactCssSource).toMatch(/\.page-business-group-pane \.pt-right-summary\s*\{\s*display:\s*none !important;/)
     expect(compactCssSource).toContain('.page-business-group-pane .pt-compact-config-launchers')
+    expect(compactCssSource).toContain('position: static;')
+    expect(compactCssSource).toContain('grid-row: 2;')
+    expect(coreSource).toContain("root.querySelector<HTMLElement>('.page-tab-right-pane')")
     expect(compactCssSource).toContain('.page-business-group-pane .pt-rotation-grid')
     expect(compactCssSource).toContain("width: 64px !important;")
   })

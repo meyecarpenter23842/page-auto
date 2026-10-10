@@ -139,7 +139,7 @@ function CompactGroupConfigControls({ editorActions }: { editorActions: PageGrou
     const root = document.querySelector<HTMLElement>('.page-business-group-pane')
     if (!root) return
     const syncTargets = () => {
-      setPortalTarget(root.querySelector<HTMLElement>('.page-tab-left-pane'))
+      setPortalTarget(root.querySelector<HTMLElement>('.page-tab-right-pane'))
       setIdentityPanel(root.querySelector<HTMLElement>('.pt-identity-panel'))
     }
     syncTargets()

@@ -52,7 +52,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: PageAuto-page-business-ui-${{ github.sha }}
-          path: dist/page-business-ui-smoke.png
+          path: |
+            dist/page-business-ui-smoke.png
+            dist/page-overview-layout-smoke.png
           if-no-files-found: error
           retention-days: 7
 
