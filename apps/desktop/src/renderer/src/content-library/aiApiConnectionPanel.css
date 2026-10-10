@@ -39,3 +39,10 @@
 .ai-api-saved-row{flex-wrap:wrap}.ai-api-saved-row button{min-height:32px}
 
 .ai-api-hint{display:block;font-size:11px;line-height:1.5;color:#74869a;overflow-wrap:anywhere}
+
+/* Model verification: clear 60/120-second choice and a real cancellable action. */
+.ai-api-test-duration{display:flex;align-items:center;gap:9px;color:#5d7187;font-size:11px;font-weight:700}
+.ai-api-test-duration select{width:auto!important;min-width:106px!important}
+.ai-api-form-buttons .ai-api-cancel-test{border-color:#d3a9ad;color:#a33e45;background:#fff5f5}
+html[data-theme='dark'] .ai-api-test-duration{color:#c1cedd}
+html[data-theme='dark'] .ai-api-form-buttons .ai-api-cancel-test{background:#332124;color:#ffd0d0;border-color:#96575c}

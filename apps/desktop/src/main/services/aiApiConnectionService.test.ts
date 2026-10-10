@@ -45,12 +45,12 @@ describe('AI API connections and model discovery', () => {
       const hanging = withAiApiDeadline(async (s) => {
         signal = s
         return new Promise<string>(() => undefined)
-      }, 25_000)
-      const expected = expect(hanging).rejects.toThrow('25 giây')
-      await vi.advanceTimersByTimeAsync(25_000)
+      }, 60_000)
+      const expected = expect(hanging).rejects.toThrow('60 giây')
+      await vi.advanceTimersByTimeAsync(60_000)
       await expected
       expect(signal?.aborted).toBe(true)
-      const successful = await withAiApiDeadline(async () => 'OK', 25_000)
+      const successful = await withAiApiDeadline(async () => 'OK', 60_000)
       expect(successful).toBe('OK')
       expect(vi.getTimerCount()).toBe(0)
     } finally {
@@ -68,13 +68,53 @@ describe('AI API connections and model discovery', () => {
     const { runtime, service } = setup(stalledFetch)
     try {
       const pending = service.test({...draft, modelId: 'slow-model'})
-      const expected = expect(pending).rejects.toThrow('25 giây')
-      await vi.advanceTimersByTimeAsync(25_000)
+      const expected = expect(pending).rejects.toThrow('60 giây')
+      await vi.advanceTimersByTimeAsync(60_000)
       await expected
       expect(stalledFetch).toHaveBeenCalledTimes(1)
     } finally {
       runtime.close()
       vi.useRealTimers()
+    }
+  })
+  it('aborts a slow model test on user cancellation instead of waiting for its deadline', async () => {
+    const pendingNetwork = vi.fn(async (_url: string | URL | Request, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new Error('network aborted')), { once: true })
+      })
+    ) as unknown as typeof fetch
+    const { runtime, service } = setup(pendingNetwork)
+    const cancel = new AbortController()
+    try {
+      const pending = service.test({ ...draft, timeoutMs: 120_000 }, cancel.signal)
+      cancel.abort()
+      await expect(pending).rejects.toThrow('Đã hủy kiểm tra')
+      expect(pendingNetwork).toHaveBeenCalledTimes(1)
+    } finally {
+      runtime.close()
+    }
+  })
+  it('rejects unsupported test timeouts instead of accepting arbitrary remote deadlines', async () => {
+    const fake = vi.fn() as unknown as typeof fetch
+    const { runtime, service } = setup(fake)
+    try {
+      await expect(service.test({ ...draft, timeoutMs: 999_999 })).rejects.toThrow('60 hoặc 120')
+      expect(fake).not.toHaveBeenCalled()
+    } finally {
+      runtime.close()
+    }
+  })
+  it('shows only a safe provider code, never echoed free-text errors or API credentials', async () => {
+    const fake = vi.fn(async () => new Response(JSON.stringify({
+      error: { code: 'model_not_found', message: 'Never display sensitive-test-key' }
+    }), { status: 404, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch
+    const { runtime, service } = setup(fake)
+    try {
+      const pending = service.test(draft)
+      await expect(pending).rejects.toThrow('model_not_found')
+      await expect(service.test(draft)).rejects.not.toThrow('sensitive-test-key')
+    } finally {
+      runtime.close()
     }
   })
   it('distinguishes provider access, unsupported model and quota responses', () => {

@@ -4,7 +4,7 @@ import type Database from 'better-sqlite3'
 import {
   API_PROVIDER_DEFAULTS, type AiApiConnectionDraft, type AiApiConnectionView,
   type AiApiDiscoveryInput, type AiApiModel, type AiApiProvider, type AiApiTestInput,
-  validateAiApiDraft, validateAiApiEndpoint, validateAiApiModelId
+  validateAiApiDraft, validateAiApiEndpoint, validateAiApiModelId, validateAiModelTestTimeout
 } from '../../shared/aiApiConnections'
 import { assertGenerateAiPostsInput, joinAiPosts, type GenerateAiPostsInput, type GenerateAiPostsResult } from '../../shared/aiAgents'
 import { buildAiPostPrompt, parseAiPostOutput } from './aiPostPrompt'
@@ -13,26 +13,37 @@ const KEY = 'ai.api.connections.encrypted.v1'
 const MAX_CONNECTIONS = 30
 const RESPONSE_LIMIT = 2 * 1024 * 1024
 const MODEL_DISCOVERY_TIMEOUT_MS = 20_000
-const MODEL_TEST_TIMEOUT_MS = 25_000
 const GENERATE_TIMEOUT_MS = 90_000
 
 /** Includes both waiting for HTTP headers AND reading a potentially stalled response body. */
 export async function withAiApiDeadline<T>(
   run: (signal: AbortSignal) => Promise<T>,
-  timeoutMs: number
+  timeoutMs: number,
+  externalSignal?: AbortSignal
 ): Promise<T> {
+  if (externalSignal?.aborted) throw new Error('Đã hủy kiểm tra Model.')
   const controller = new AbortController()
   let timer: ReturnType<typeof setTimeout> | undefined
+  let onCancel: (() => void) | undefined
   const expired = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => {
-      reject(new Error(`API không phản hồi trong ${Math.ceil(timeoutMs / 1000)} giây. Đã dừng kiểm tra; thử model khác hoặc kiểm tra nhà cung cấp.`))
+      reject(new Error(`API không phản hồi trong ${Math.ceil(timeoutMs / 1000)} giây. Đã dừng yêu cầu; có thể thử thời gian dài hơn.`))
       controller.abort()
     }, timeoutMs)
+    if (externalSignal) {
+      onCancel = () => {
+        reject(new Error('Đã hủy kiểm tra Model.'))
+        controller.abort()
+      }
+      externalSignal.addEventListener('abort', onCancel, { once: true })
+      if (externalSignal.aborted) onCancel?.()
+    }
   })
   try {
     return await Promise.race([run(controller.signal), expired])
   } finally {
     if (timer !== undefined) clearTimeout(timer)
+    if (externalSignal && onCancel) externalSignal.removeEventListener('abort', onCancel)
   }
 }
 
@@ -46,6 +57,20 @@ export function getAiApiHttpError(status: number): string {
     case 429: return 'HTTP 429: Nhà cung cấp giới hạn lượt gọi hoặc hạn mức tài khoản.'
     default: return `API trả HTTP ${status}. Kiểm tra quyền truy cập và tình trạng dịch vụ.`
   }
+}
+/** Only a provider's machine-readable error code is shown; never echo its free-text body. */
+function safeProviderDiagnostic(body: Record<string, unknown>): string {
+  const error = body.error && typeof body.error === 'object' ? body.error as Record<string, unknown> : {}
+  const raw = typeof error.code === 'string' ? error.code : typeof error.type === 'string' ? error.type : ''
+  // Allowlist avoids leaking an arbitrary echoed credential as a provider code.
+  const knownCodes = new Set([
+    'model_not_found', 'invalid_model', 'unsupported_model', 'not_found',
+    'permission_denied', 'forbidden', 'unauthorized', 'invalid_request_error',
+    'insufficient_quota', 'rate_limit_exceeded', 'resource_exhausted',
+    'model_deprecated', 'unsupported_operation', 'invalid_api_key'
+  ])
+  if (!knownCodes.has(raw.toLowerCase())) return ''
+  return ` Mã provider: ${raw.toLowerCase()}.`
 }
 interface StoredConnection extends AiApiConnectionView { apiKey: string }
 type Stored = { defaultId: string | null; items: StoredConnection[] }
@@ -185,7 +210,8 @@ export class AiApiConnectionService {
   }
   private async request(provider: AiApiProvider, baseUrl: string, apiKey: string,
     path: string, method: 'GET'|'POST', body?: Record<string, unknown>,
-    timeoutMs = method === 'GET' ? MODEL_DISCOVERY_TIMEOUT_MS : GENERATE_TIMEOUT_MS
+    timeoutMs = method === 'GET' ? MODEL_DISCOVERY_TIMEOUT_MS : GENERATE_TIMEOUT_MS,
+    externalSignal?: AbortSignal
   ): Promise<Record<string, unknown>> {
     // The deadline covers both fetch and response streaming. No provider error body is logged.
     const safeBase = validateAiApiEndpoint(baseUrl)
@@ -200,11 +226,15 @@ export class AiApiConnectionService {
           signal
         })
       } catch {
+        if (signal.aborted) throw new Error('Yêu cầu AI đã được hủy hoặc quá thời gian chờ.')
         throw new Error('Không kết nối được API HTTPS. Kiểm tra URL, mạng và chứng chỉ TLS.')
       }
-      if (!response.ok) throw new Error(getAiApiHttpError(response.status))
+      if (!response.ok) {
+        const body = await readJson(response).catch(() => ({} as Record<string, unknown>))
+        throw new Error(getAiApiHttpError(response.status) + safeProviderDiagnostic(body))
+      }
       return readJson(response)
-    }, timeoutMs)
+    }, timeoutMs, externalSignal)
   }
   async discover(input: AiApiDiscoveryInput): Promise<AiApiModel[]> {
     const {provider,baseUrl,apiKey} = this.credentials(input)
@@ -213,7 +243,8 @@ export class AiApiConnectionService {
   }
   private async completion(
     provider: AiApiProvider, baseUrl: string, apiKey: string, modelId: string,
-    prompt: string, maxTokens: number, timeoutMs = GENERATE_TIMEOUT_MS
+    prompt: string, maxTokens: number, timeoutMs = GENERATE_TIMEOUT_MS,
+    externalSignal?: AbortSignal
   ): Promise<string> {
     const model = validateAiApiModelId(modelId)
     if (prompt.length > 50000) throw new Error('Nội dung đầu vào AI quá dài.')
@@ -229,7 +260,7 @@ export class AiApiConnectionService {
       path = 'chat/completions'
       body = {model,messages:[{role:'user',content:prompt}],max_tokens:maxTokens}
     }
-    const data = await this.request(provider,baseUrl,apiKey,path,'POST',body,timeoutMs)
+    const data = await this.request(provider,baseUrl,apiKey,path,'POST',body,timeoutMs,externalSignal)
     let output: unknown
     if (provider === 'gemini') {
       const candidates = data.candidates
@@ -244,10 +275,11 @@ export class AiApiConnectionService {
     if (typeof output !== 'string' || !output.trim()) throw new Error('Model không trả nội dung văn bản. Kiểm tra khả năng của model.')
     return output.trim()
   }
-  async test(input: AiApiTestInput): Promise<boolean> {
+  async test(input: AiApiTestInput, externalSignal?: AbortSignal): Promise<boolean> {
+    const timeoutMs = validateAiModelTestTimeout(input.timeoutMs)
     const {provider,baseUrl,apiKey} = this.credentials(input)
     const result = await this.completion(
-      provider, baseUrl, apiKey, input.modelId, 'Trả lời đúng một từ: OK', 32, MODEL_TEST_TIMEOUT_MS
+      provider, baseUrl, apiKey, input.modelId, 'Trả lời ngắn gọn một từ: OK', 256, timeoutMs, externalSignal
     )
     return Boolean(result)
   }
