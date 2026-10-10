@@ -97,7 +97,7 @@ try {
 
   // R1: the overview must show inventory + selected details side by side at
   // Windows desktop viewport sizes, not send the details below the fold.
-  const originalViewport = windowPage.viewportSize()
+  const originalViewport = windowPage.viewportSize() ?? await windowPage.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }))
   for (const { width, height } of overviewR1Screenshots) {
     await windowPage.setViewportSize({ width, height })
     const rects = await windowPage.evaluate(() => {
@@ -130,7 +130,7 @@ try {
   invariant(await windowPage.locator('.page-overview-table-wrap').isHidden(), 'R1: Bảng còn chiếm chỗ ở chế độ chi tiết hẹp.')
   await windowPage.getByRole('button', { name: '← Danh sách Page' }).click()
   invariant(await windowPage.locator('.page-overview-table-wrap').isVisible(), 'R1: Không trở lại danh sách Page ở màn hình hẹp.')
-  if (originalViewport) await windowPage.setViewportSize(originalViewport)
+  await windowPage.setViewportSize(originalViewport)
 
   // Renderer reload emulates navigation recreation; selected Page remains
   // a UI preference and never updates Page config.
@@ -312,6 +312,30 @@ try {
   await windowPage.getByRole('dialog', { name: 'Thiết lập lịch đăng' }).waitFor({ state: 'visible' })
   await windowPage.screenshot({ path: screenshotPath, fullPage: true })
 
+  // R1 end-to-end: restart Electron with the same disposable test data and
+  // verify the selected Page survives a full process restart, not just reload.
+  await electronApp.close()
+  electronApp = await electron.launch({
+    executablePath: electronExecutable,
+    args: [mainEntry],
+    cwd: appDirectory,
+    env: { ...process.env, PAGE_AUTO_DATA_DIR: dataDirectory }
+  })
+  windowPage = await electronApp.firstWindow()
+  await windowPage.locator('.app-shell').waitFor({ state: 'visible', timeout: 30_000 })
+  if (!(await windowPage.locator('.page-overview-table').isVisible())) {
+    await windowPage.getByRole('button', { name: 'Page Tabs' }).click()
+  }
+  await windowPage.locator('.page-overview-table').waitFor({ state: 'visible' })
+  await windowPage.locator('.page-overview-page-select[aria-current="true"]')
+    .filter({ hasText: 'Smoke Page B' }).waitFor({ state: 'visible' })
+  await windowPage.locator('.page-overview-detail-head h3')
+    .filter({ hasText: 'Smoke Page B' }).waitFor({ state: 'visible' })
+  await windowPage.screenshot({
+    path: resolve(appDirectory, '../../dist/page-overview-r1-restart.png'),
+    fullPage: true
+  })
+
   console.log('Page business UI smoke passed:', {
     actionWorkspaceClean: true,
     groupUiRendered: true,
@@ -327,7 +351,8 @@ try {
     newPageNotAutoBound: true,
     unlinkKeepsCanonical: true,
     screenshotPath,
-    overviewScreenshotPath
+    overviewScreenshotPath,
+    fullRestartSelectionPreserved: true
   })
 } catch (error) {
   if (windowPage) {
