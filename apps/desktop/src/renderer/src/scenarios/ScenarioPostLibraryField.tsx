@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { keepDialogTabFocus } from '../components/dialogTabFocus'
 import {
   DEFAULT_PAGE_TAB_IMAGE,
   parsePostVariantText,
@@ -38,6 +39,8 @@ function normalizeOrder(posts: readonly ScenarioActionPostInput[]): ScenarioActi
 
 export function ScenarioPostLibraryField({ posts, onChange }: Props) {
   const [pickerOpen, setPickerOpen] = useState(false)
+  const createTriggerRef = useRef<HTMLButtonElement | null>(null)
+  const createDialogRef = useRef<HTMLElement | null>(null)
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState('')
   const [name, setName] = useState('')
@@ -103,6 +106,7 @@ export function ScenarioPostLibraryField({ posts, onChange }: Props) {
   const closeCreate = () => {
     setCreating(false)
     resetCreate()
+    createTriggerRef.current?.focus()
   }
 
   const addNew = () => {
@@ -136,7 +140,7 @@ export function ScenarioPostLibraryField({ posts, onChange }: Props) {
       </div>
 
       <div className="post-library-toolbar">
-        <button className="scenario-button primary" type="button" onClick={() => { resetCreate(); setCreating(true) }}>+ Bài mới</button>
+        <button ref={createTriggerRef} className="scenario-button primary" type="button" onClick={() => { resetCreate(); setCreating(true) }}>+ Bài mới</button>
         <button className="scenario-button" type="button" onClick={() => setPickerOpen(true)}>Chọn từ thư viện</button>
         <small>{posts.filter((post) => post.enabled).length}/{posts.length} bài bật</small>
       </div>
@@ -169,10 +173,10 @@ export function ScenarioPostLibraryField({ posts, onChange }: Props) {
 
       {creating ? (
         <div className="scenario-modal-backdrop" role="presentation" onMouseDown={closeCreate}>
-          <section className="scenario-modal action-config-modal post-create-modal" role="dialog" aria-modal="true" aria-label="Tạo bài mới" onMouseDown={(event) => event.stopPropagation()}>
+          <section ref={createDialogRef} tabIndex={-1} className="scenario-modal action-config-modal post-create-modal" role="dialog" aria-modal="true" aria-label="Tạo bài mới" onKeyDown={(event) => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeCreate() } else keepDialogTabFocus(event, createDialogRef.current) }} onMouseDown={(event) => event.stopPropagation()}>
             <div className="scenario-modal-head">
               <div><p className="scenario-kicker">KHO BÀI VIẾT GỐC</p><h3>Tạo bài mới</h3></div>
-              <button type="button" onClick={closeCreate}>×</button>
+              <button type="button" aria-label="Đóng tạo bài mới" onClick={closeCreate}>×</button>
             </div>
             <div className="action-config-form post-create-form">
               <p className="post-create-note">Tạo bài vào kho gốc và bind ngay vào action này.</p>

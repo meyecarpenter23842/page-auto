@@ -348,6 +348,22 @@ try {
   invariant(postRegionText.includes('Sửa bài'), 'Đăng Tường thiếu thao tác sửa bài canonical.')
   invariant(postRegionText.includes('Bỏ chọn'), 'Đăng Tường thiếu thao tác bỏ bài đang chọn.')
 
+  // R4b: shared canonical picker is a real modal, returns keyboard focus to the launcher.
+  const choosePostButton = windowPage.locator('.business-page_wall_post [data-testid="page-wall-selected-post"]').getByRole('button', { name: 'Chọn từ Thư viện' })
+  await choosePostButton.click()
+  const canonicalDialog = windowPage.getByRole('dialog', { name: 'Chọn bài từ Thư viện' })
+  await canonicalDialog.waitFor({ state: 'visible' })
+  invariant(await canonicalDialog.evaluate((dialog) => dialog.contains(document.activeElement)),
+    'R4b: Canonical picker did not receive keyboard focus.')
+  await windowPage.screenshot({
+    path: resolve(appDirectory, '../../dist/canonical-post-picker-r4b.png'),
+    fullPage: true
+  })
+  await windowPage.keyboard.press('Escape')
+  await canonicalDialog.waitFor({ state: 'hidden' })
+  invariant(await choosePostButton.evaluate((button) => document.activeElement === button),
+    'R4b: Canonical picker did not restore focus to opener.')
+
   const nowPanelText = await windowPage.locator('.business-page_wall_post .page-wall-now-panel').innerText()
   invariant(nowPanelText.includes('Chạy đúng các TK đang tick'), 'Đăng ngay chưa mô tả chạy đúng TK đang tick.')
   invariant(nowPanelText.includes('Chưa chọn tài khoản') || nowPanelText.includes('Chưa chọn bài viết'), 'Đăng ngay không nói rõ lý do chưa thể chạy.')
