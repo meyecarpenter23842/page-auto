@@ -9,6 +9,8 @@ import {
   type AiDraftResult
 } from './aiDraftResults'
 import { AI_POST_DELIMITER } from './aiPostOutputFormat'
+import { parseContentVariantText } from '../../../shared/contentLibrary'
+import { inspectContentVariants } from '../../../shared/contentQuality'
 import './aiDraftResultsPanel.css'
 
 export interface AiIncomingDraftBatch {
@@ -61,6 +63,9 @@ export function AiDraftResultsPanel({
     () => drafts.find((draft) => draft.id === activeId) ?? drafts[0] ?? null,
     [activeId, drafts]
   )
+  const qualityWarnings = useMemo(() => inspectContentVariants(drafts.flatMap((draft) =>
+    draft.kind === 'variant_group' ? parseContentVariantText(draft.content) : [draft.content]
+  )), [drafts])
   const groupedRandomDraft = useMemo(
     () => drafts.find((draft) => draft.kind === 'variant_group') ?? null,
     [drafts]
@@ -84,10 +89,10 @@ export function AiDraftResultsPanel({
     setDrafts(batch.drafts)
     setActiveId(batch.drafts[0]?.id ?? '')
 
-    const messages = [batch.message, warning]
+    const messages = [batch.message, ...batch.warnings, warning]
       .filter((value): value is string => Boolean(value?.trim()))
     setNotice({
-      kind: batch.valid && !warning ? 'success' : 'warning',
+      kind: batch.valid && !warning && batch.warnings.length === 0 ? 'success' : 'warning',
       message: messages.join(' ')
     })
   }
@@ -304,6 +309,13 @@ export function AiDraftResultsPanel({
 
         {notice ? (
           <div className={`ai-batch-notice ${notice.kind}`}>{notice.message}</div>
+        ) : null}
+
+        {qualityWarnings.length ? (
+          <details className="ai-quality-notice" open>
+            <summary>Kiểm tra chất lượng · {qualityWarnings.length} cảnh báo (không tự xóa bài)</summary>
+            <ul>{qualityWarnings.slice(0, 8).map((warning, index) => <li key={index}>{warning}</li>)}</ul>
+          </details>
         ) : null}
 
         {drafts.length ? (

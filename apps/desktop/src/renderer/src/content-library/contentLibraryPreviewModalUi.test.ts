@@ -26,6 +26,13 @@ describe('Content Library compact editor preview UI', () => {
     expect(workspace).toContain("content: activeVariant ? spinContent(activeVariant)")
   })
 
+  it('offers ten non-persisted spin samples and displays full token pools', () => {
+    expect(workspace).toContain('onClick={spinPreviewBatch}')
+    expect(workspace).toContain('new Set(samples).size')
+    expect(workspace).toContain('content-library-spin-catalog')
+    expect(workspace).toContain("option.pool.join(' ')")
+  })
+
   it('locks the editor viewport and gives scrolling to the article textarea', () => {
     expect(styles).toMatch(/\.content-library-editor-body\s*\{[^}]*overflow:\s*hidden/s)
     expect(styles).toMatch(/\.content-library-editor-layout\s*\{[^}]*flex:\s*1/s)

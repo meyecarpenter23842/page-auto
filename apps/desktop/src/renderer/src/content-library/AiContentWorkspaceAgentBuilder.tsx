@@ -387,11 +387,11 @@ export function AiContentWorkspaceAgentBuilder() {
                 >
                   <option value="">Không dùng</option>
                   {CONTENT_SPIN_ICON_OPTIONS.map((option) => (
-                    <option key={option.token} value={option.token}>{option.label}</option>
+                    <option key={option.token} value={option.token}>{option.label} · {option.pool.length} ký tự</option>
                   ))}
                 </select>
                 <small>
-                  AI giữ nguyên token như [r3] ở đầu dòng; Page-Auto tự spin khi đăng. App cũng hỗ trợ [u] [g] [f] [n] [d] [t] [w].
+                  Hai ký tự trong tên token chỉ là ví dụ; xem số lượng thực tế bên cạnh. AI giữ nguyên token như [r3] để Page-Auto spin khi đăng. Token ngữ cảnh: [u] [g] [f] [n] [d] [t] [w].
                 </small>
               </label>
 
