@@ -31,6 +31,7 @@ import {
   runtimeProgressLabel
 } from './pageRuntimePresentation'
 import { collapseEveryDaySchedules, EVERY_DAY_SCHEDULE, expandEveryDaySchedules } from './scheduleEditor'
+import { sortScheduleEditorRows } from './pageScheduleOverview'
 import { useUnsavedWorkspaceChanges } from '../workspaceNavigation'
 import './pageTabs.css'
 import './pageTabsWorkspace.css'
@@ -43,9 +44,16 @@ type ConfigSection = 'accounts' | 'identity' | 'rotation' | 'schedule' | 'groups
 type EditorModal = 'schedule' | 'groups' | null
 type AccountPickerStatus = AccountStatus | 'all'
 
+export interface PageGroupEditorActions {
+  schedule: () => void
+  groups: () => void
+  posts: () => void
+}
+
 export interface PageTabsManagerProps {
   activePageId?: number
   scoped?: boolean
+  registerEditorActions?: ((actions: PageGroupEditorActions | null) => void) | undefined
 }
 
 function minutesToTime(minutes: number): string {
@@ -268,7 +276,7 @@ function AccountPicker({ accounts, selectedIds, onClose, onApply }: AccountPicke
   )
 }
 
-export function PageTabsManager({ activePageId: controlledActiveId, scoped = false }: PageTabsManagerProps = {}) {
+export function PageTabsManager({ activePageId: controlledActiveId, scoped = false, registerEditorActions }: PageTabsManagerProps = {}) {
   const [tabs, setTabs] = useState<PageTabSummary[]>([])
   const [activeId, setActiveId] = useState<number | null>(controlledActiveId ?? null)
   const [config, setConfig] = useState<PageTabConfig | null>(null)
@@ -286,6 +294,17 @@ export function PageTabsManager({ activePageId: controlledActiveId, scoped = fal
   const [postLibraryOpen, setPostLibraryOpen] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const editorPageId = config?.id ?? null
+
+  useEffect(() => {
+    if (editorPageId === null || (scoped && editorPageId !== controlledActiveId)) return
+    registerEditorActions?.({
+      schedule: () => setEditorModal('schedule'),
+      groups: () => setEditorModal('groups'),
+      posts: () => setPostLibraryOpen(true)
+    })
+    return () => registerEditorActions?.(null)
+  }, [editorPageId, controlledActiveId, scoped, registerEditorActions])
 
   const refreshTabs = useCallback(async (preferredId?: number) => {
     const nextTabs = await window.pageAuto.listPageTabs()
@@ -511,6 +530,7 @@ export function PageTabsManager({ activePageId: controlledActiveId, scoped = fal
   const groupCount = config ? parseGroupText(config.groupUids.join('\n')).length : 0
   const enabledAccountCount = config?.accounts.filter((item) => item.enabled).length ?? 0
   const enabledScheduleCount = config?.schedules.filter((item) => item.enabled && !scheduleIsInvalid(item)).length ?? 0
+  const scheduleRows = sortScheduleEditorRows(config?.schedules ?? [])
   const enabledPostCount = postLibrary?.posts.filter((item) => item.enabled).length ?? 0
   const variantCount = postLibrary?.posts.reduce((sum, item) => sum + item.variants.length, 0) ?? 0
   const imagePostCount = postLibrary?.posts.filter((item) => item.image.folderPath.trim()).length ?? 0
@@ -619,8 +639,8 @@ export function PageTabsManager({ activePageId: controlledActiveId, scoped = fal
       {!scoped && createOpen ? <CreateTabModal onClose={() => setCreateOpen(false)} onCreate={createTab} /> : null}
       {config && accountPickerOpen ? <AccountPicker accounts={accounts} selectedIds={config.accounts.map((item) => item.accountId)} onClose={() => setAccountPickerOpen(false)} onApply={applyAccountSelection} /> : null}
 
-      {config && editorModal === 'schedule' ? <ConfigModal eyebrow="Lịch chạy" title="Ngày và khung giờ" onClose={() => setEditorModal(null)} actions={<><button className="pt-button secondary" type="button" onClick={addSchedule}>+ Khung giờ</button><button className="pt-button primary" type="button" disabled={!dirtySections.has('schedule') || savingSection !== null} onClick={() => void saveSectionOnly('schedule')}>{savingSection === 'schedule' ? 'Đang lưu…' : 'Lưu lịch'}</button></>}>
-        <div className="pt-schedule-list">{config.schedules.map((schedule, index) => <div className="pt-schedule-row" key={`${schedule.id}:${index}`}><label><span>Bật</span><input type="checkbox" checked={schedule.enabled} onChange={(event) => updateSchedule(index, { enabled: event.target.checked })} /></label><label><span>Ngày</span><select value={schedule.dayOfWeek === EVERY_DAY_SCHEDULE ? 1 : schedule.dayOfWeek} disabled={schedule.dayOfWeek === EVERY_DAY_SCHEDULE} onChange={(event) => updateSchedule(index, { dayOfWeek: Number(event.target.value) })}>{dayLabels.map((label, day) => <option key={label} value={day}>{label}</option>)}</select><span className="pt-schedule-every-day"><input type="checkbox" checked={schedule.dayOfWeek === EVERY_DAY_SCHEDULE} onChange={(event) => updateSchedule(index, { dayOfWeek: event.target.checked ? EVERY_DAY_SCHEDULE : 1 })} /> Mỗi ngày</span></label><label><span>Từ</span><input type="time" value={minutesToTime(schedule.startMinute)} onChange={(event) => updateSchedule(index, { startMinute: timeToMinutes(event.target.value) })} /></label><label><span>Đến</span><input type="time" value={minutesToTime(schedule.endMinute)} onChange={(event) => updateSchedule(index, { endMinute: timeToMinutes(event.target.value) })} /></label><button className="pt-remove-button" type="button" onClick={() => patchConfig('schedule', { schedules: config.schedules.filter((_, itemIndex) => itemIndex !== index) })}>Xóa</button></div>)}{config.schedules.length === 0 ? <div className="pt-empty-row">Chưa có lịch. Tab vẫn có thể chạy thủ công.</div> : null}</div>
+      {config && editorModal === 'schedule' ? <ConfigModal eyebrow="Lịch chạy" title={dirtySections.has('schedule') ? "Ngày và khung giờ · Chưa lưu" : "Ngày và khung giờ · Đã lưu"} onClose={() => setEditorModal(null)} actions={<><button className="pt-button secondary" type="button" onClick={addSchedule}>+ Khung giờ</button><button className="pt-button primary" type="button" disabled={!dirtySections.has('schedule') || savingSection !== null} onClick={() => void saveSectionOnly('schedule')}>{savingSection === 'schedule' ? 'Đang lưu…' : 'Lưu lịch'}</button></>}>
+        <div className="pt-schedule-list" aria-label="Lịch sắp theo thứ rồi giờ">{scheduleRows.map(({ schedule, index }) => <div className="pt-schedule-row" key={`${schedule.id}:${index}`}><label><span>Bật</span><input type="checkbox" checked={schedule.enabled} onChange={(event) => updateSchedule(index, { enabled: event.target.checked })} /></label><label><span>Ngày</span><select value={schedule.dayOfWeek === EVERY_DAY_SCHEDULE ? 1 : schedule.dayOfWeek} disabled={schedule.dayOfWeek === EVERY_DAY_SCHEDULE} onChange={(event) => updateSchedule(index, { dayOfWeek: Number(event.target.value) })}>{dayLabels.map((label, day) => <option key={label} value={day}>{label}</option>)}</select><span className="pt-schedule-every-day"><input type="checkbox" checked={schedule.dayOfWeek === EVERY_DAY_SCHEDULE} onChange={(event) => updateSchedule(index, { dayOfWeek: event.target.checked ? EVERY_DAY_SCHEDULE : 1 })} /> Mỗi ngày</span></label><label><span>Từ</span><input type="time" value={minutesToTime(schedule.startMinute)} onChange={(event) => updateSchedule(index, { startMinute: timeToMinutes(event.target.value) })} /></label><label><span>Đến</span><input type="time" value={minutesToTime(schedule.endMinute)} onChange={(event) => updateSchedule(index, { endMinute: timeToMinutes(event.target.value) })} /></label><button className="pt-remove-button" type="button" onClick={() => patchConfig('schedule', { schedules: config.schedules.filter((_, itemIndex) => itemIndex !== index) })}>Xóa</button></div>)}{config.schedules.length === 0 ? <div className="pt-empty-row">Chưa có lịch. Tab vẫn có thể chạy thủ công.</div> : null}</div>
       </ConfigModal> : null}
 
       {config && editorModal === 'groups' ? <ConfigModal eyebrow="Group Set" title="Danh sách Group UID" onClose={() => setEditorModal(null)} actions={<><button className="pt-button secondary" type="button" onClick={() => void importGroups()}>Import TXT/CSV</button><button className="pt-button primary" type="button" disabled={!dirtySections.has('groups') || savingSection !== null} onClick={() => void saveSectionOnly('groups')}>{savingSection === 'groups' ? 'Đang lưu…' : 'Lưu Group'}</button></>}>
