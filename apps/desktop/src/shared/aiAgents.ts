@@ -118,7 +118,7 @@ export interface RemoteAgentDescriptor {
 }
 
 export function assertGenerateAiPostsInput(input: GenerateAiPostsInput): void {
-  if (!input.agentId.trim()) throw new Error('Chưa chọn Agent Builder.')
+  if (!input.agentId.trim()) throw new Error('Chưa chọn kết nối AI.')
   if (!Number.isInteger(input.postCount) || input.postCount < 1 || input.postCount > 50) {
     throw new Error('Số lượng bài phải từ 1 đến 50.')
   }
