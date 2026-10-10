@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { aiApiChoice, type AiApiConnectionView } from '../../../shared/aiApiConnections'
+import { aiApiChoice, isAiApiChoice, type AiApiConnectionView } from '../../../shared/aiApiConnections'
 import type {
   AiContentAction,
   GenerateAiPostsResult
