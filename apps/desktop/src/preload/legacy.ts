@@ -173,6 +173,7 @@ const api = {
   listAiApiConnections: (): Promise<AiApiConnectionView[]> => ipcRenderer.invoke(AI_API_IPC.list) as Promise<AiApiConnectionView[]>,
   discoverAiApiModels: (input: AiApiDiscoveryInput): Promise<AiApiModel[]> => ipcRenderer.invoke(AI_API_IPC.discover, input) as Promise<AiApiModel[]>,
   testAiApiModel: (input: AiApiTestInput): Promise<boolean> => ipcRenderer.invoke(AI_API_IPC.test, input) as Promise<boolean>,
+  cancelAiApiTest: (requestId: string): Promise<boolean> => ipcRenderer.invoke(AI_API_IPC.cancelTest, requestId) as Promise<boolean>,
   saveAiApiConnection: (input: AiApiConnectionDraft): Promise<AiApiConnectionView[]> => ipcRenderer.invoke(AI_API_IPC.save, input) as Promise<AiApiConnectionView[]>,
   removeAiApiConnection: (id: string): Promise<AiApiConnectionView[]> => ipcRenderer.invoke(AI_API_IPC.remove, id) as Promise<AiApiConnectionView[]>,
   updateAiApiModel: (payload: { id: string; modelId: string }): Promise<AiApiConnectionView[]> => ipcRenderer.invoke(AI_API_IPC.updateModel, payload) as Promise<AiApiConnectionView[]>,

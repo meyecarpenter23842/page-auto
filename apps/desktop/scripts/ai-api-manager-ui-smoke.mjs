@@ -56,6 +56,19 @@ try {
   await modal.getByLabel('API Key').fill('fixture-do-not-use-as-a-real-secret')
   await modal.getByLabel('Nhập Model ID thủ công khi API không hỗ trợ liệt kê').check()
   await modal.getByLabel('Model ID dự phòng').fill('test/model')
+  assert(await modal.getByRole('button',{name:'Lưu kết nối'}).isDisabled(),
+    'An unverified model must not be saved through the AI manager')
+  await modal.getByLabel('Thời gian kiểm tra Model').selectOption('120000')
+  // This fixture must never contact NVIDIA or consume an actual API quota.
+  // Replace only the Main-process test handler for this isolated smoke run.
+  await app.evaluate(({ ipcMain }) => {
+    ipcMain.removeHandler('ai-api:test')
+    ipcMain.handle('ai-api:test', (_event, input) => input?.modelId === 'test/model')
+  })
+  await modal.getByRole('button',{name:'Kiểm tra Model', exact:true}).click()
+  await modal.getByText('Model đã trả nội dung văn bản; có thể lưu kết nối.').waitFor({state:'visible'})
+  assert(await modal.getByRole('button',{name:'Lưu kết nối'}).isEnabled(),
+    'A successful text response must enable saving the verified model')
   await modal.getByRole('button',{name:'Lưu kết nối'}).click()
   await modal.getByText('Đã lưu kết nối và model bằng mã hóa cục bộ.',{exact:false}).waitFor({state:'visible'})
   assert((await modal.getByLabel('API Key').inputValue())==='', 'Key should clear after saving')

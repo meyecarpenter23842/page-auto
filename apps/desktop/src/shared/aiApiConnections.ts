@@ -1,5 +1,5 @@
 export const AI_API_IPC = {
-  list: 'ai-api:list', discover: 'ai-api:discover', test: 'ai-api:test',
+  list: 'ai-api:list', discover: 'ai-api:discover', test: 'ai-api:test', cancelTest: 'ai-api:cancel-test',
   save: 'ai-api:save', remove: 'ai-api:remove', setDefault: 'ai-api:set-default', updateModel: 'ai-api:update-model'
 } as const
 
@@ -26,7 +26,21 @@ export interface AiApiDiscoveryInput {
   apiKey: string
   connectionId?: string
 }
-export interface AiApiTestInput extends AiApiDiscoveryInput { modelId: string }
+export const AI_MODEL_TEST_TIMEOUT_OPTIONS_MS = [60_000, 120_000] as const
+export const DEFAULT_AI_MODEL_TEST_TIMEOUT_MS = AI_MODEL_TEST_TIMEOUT_OPTIONS_MS[0]
+export function validateAiModelTestTimeout(value: unknown): number {
+  if (value === undefined) return DEFAULT_AI_MODEL_TEST_TIMEOUT_MS
+  if (typeof value !== 'number' || !AI_MODEL_TEST_TIMEOUT_OPTIONS_MS.some((limit) => limit === value)) {
+    throw new Error('Thời gian kiểm tra Model phải là 60 hoặc 120 giây.')
+  }
+  return value
+}
+export interface AiApiTestInput extends AiApiDiscoveryInput {
+  modelId: string
+  timeoutMs?: number
+  /** Per-test cancellation identity; never persisted. */
+  requestId?: string
+}
 export interface AiApiModel { id: string; label: string }
 export const API_PROVIDER_DEFAULTS: Record<AiApiProvider, string> = {
   'openai-compatible': 'https://integrate.api.nvidia.com/v1',

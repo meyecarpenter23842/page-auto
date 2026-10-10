@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  API_PROVIDER_DEFAULTS,
-  type AiApiConnectionView, type AiApiModel, type AiApiProvider
+  API_PROVIDER_DEFAULTS, DEFAULT_AI_MODEL_TEST_TIMEOUT_MS, AI_MODEL_TEST_TIMEOUT_OPTIONS_MS,
+  type AiApiConnectionView, type AiApiModel, type AiApiProvider, type AiApiTestInput
 } from '../../../shared/aiApiConnections'
 import { withAiApiUiTimeout } from './aiApiUiTimeout'
 import './aiApiConnectionPanel.css'
@@ -36,6 +36,9 @@ export function AiApiConnectionPanel({ connections, onConnectionsChange }: Props
   const [busy, setBusy] = useState<'discover' | 'test' | 'save' | 'saved' | null>(null)
   const [notice, setNotice] = useState<Notice>(null)
   const [tested, setTested] = useState('')
+  const [testTimeoutMs, setTestTimeoutMs] = useState<number>(DEFAULT_AI_MODEL_TEST_TIMEOUT_MS)
+  const activeTestId = useRef<string | null>(null)
+  const [editingTested, setEditingTested] = useState('')
   const [editingId, setEditingId] = useState('')
   const [editingModels, setEditingModels] = useState<AiApiModel[]>([])
   const [editingSelected, setEditingSelected] = useState('')
@@ -44,6 +47,11 @@ export function AiApiConnectionPanel({ connections, onConnectionsChange }: Props
     () => models.filter((model) => (model.id + ' ' + model.label).toLowerCase().includes(search.toLowerCase())),
     [models, search]
   )
+  useEffect(() => () => {
+    const requestId = activeTestId.current
+    if (requestId) void window.pageAuto.cancelAiApiTest(requestId).catch(() => undefined)
+    activeTestId.current = null
+  }, [])
   const clearModels = () => { setModels([]); setModelId(''); setTested(''); setNotice(null) }
   const selectPreset = (value: string) => {
     const index = Number(value)
@@ -94,17 +102,51 @@ export function AiApiConnectionPanel({ connections, onConnectionsChange }: Props
       setNotice({type:'error',text:error instanceof Error ? error.message : 'Không tải được model.'})
     } finally { setBusy(null) }
   }
-  const test = async () => {
-    setBusy('test'); setNotice(null); setTested('')
+  const modelTest = async (
+    input: AiApiTestInput, mode: 'test' | 'saved', onSuccess: () => void, successMessage: string
+  ) => {
+    const requestId = `model-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+    activeTestId.current = requestId
+    setBusy(mode); setNotice(null)
     try {
-      await withAiApiUiTimeout(window.pageAuto.testAiApiModel({...credentials(),modelId}))
-      setTested(modelId)
-      setNotice({type:'success',text:'Model phản hồi thành công. Có thể lưu kết nối.'})
+      const result = await withAiApiUiTimeout(
+        window.pageAuto.testAiApiModel({ ...input, timeoutMs: testTimeoutMs, requestId }),
+        testTimeoutMs + 10_000
+      )
+      if (activeTestId.current !== requestId) return
+      if (result !== true) throw new Error('Model chưa trả lời bằng văn bản.')
+      onSuccess()
+      setNotice({type:'success',text:successMessage})
     } catch (error) {
-      setNotice({type:'error',text:error instanceof Error ? error.message : 'Không gọi được model.'})
-    } finally { setBusy(null) }
+      if (activeTestId.current !== requestId) return
+      void window.pageAuto.cancelAiApiTest(requestId).catch(() => undefined)
+      const message = error instanceof Error ? error.message : 'Không gọi được model.'
+      setNotice({type:'error',text:message.replace(/^Error invoking remote method '[^']+': Error: /, '')})
+    } finally {
+      if (activeTestId.current === requestId) {
+        activeTestId.current = null
+        setBusy(null)
+      }
+    }
+  }
+  const cancelModelTest = () => {
+    const requestId = activeTestId.current
+    if (!requestId) return
+    activeTestId.current = null
+    void window.pageAuto.cancelAiApiTest(requestId).catch(() => undefined)
+    setBusy(null)
+    setNotice({type:'warning',text:'Đã gửi lệnh hủy kiểm tra. Kết quả muộn của lượt này sẽ bị bỏ qua.'})
+  }
+  const test = async () => {
+    setTested('')
+    await modelTest({...credentials(),modelId},'test',
+      () => setTested(modelId),'Model đã trả nội dung văn bản; có thể lưu kết nối.')
   }
   const save = async () => {
+    if (!modelId || tested !== modelId) {
+      setNotice({type:'warning',text:'Vui lòng kiểm tra Model thành công trước khi lưu.'})
+      return
+    }
     setBusy('save');setNotice(null)
     try {
       const next = await window.pageAuto.saveAiApiConnection({...credentials(),name,modelId})
@@ -117,7 +159,7 @@ export function AiApiConnectionPanel({ connections, onConnectionsChange }: Props
     } finally { setBusy(null) }
   }
   const editStoredModel = async (item: AiApiConnectionView) => {
-    setEditingId(item.id);setEditingModels([]);setEditingSelected(item.modelId);setEditingManual(false)
+    setEditingId(item.id);setEditingModels([]);setEditingSelected(item.modelId);setEditingManual(false);setEditingTested('')
     setBusy('saved');setNotice(null)
     try {
       const next=await window.pageAuto.discoverAiApiModels({
@@ -133,20 +175,25 @@ export function AiApiConnectionPanel({ connections, onConnectionsChange }: Props
     } finally {setBusy(null)}
   }
   const testStoredModel = async (item: AiApiConnectionView) => {
-    setBusy('saved');setNotice(null)
-    try {
-      await withAiApiUiTimeout(window.pageAuto.testAiApiModel({connectionId:item.id,provider:item.provider,baseUrl:item.baseUrl,apiKey:'',modelId:editingSelected}))
-      setNotice({type:'success',text:'Model từ kết nối đã lưu hoạt động.'})
-    } catch(error) {
-      setNotice({type:'error',text:error instanceof Error?error.message:'Kiểm tra model thất bại.'})
-    } finally {setBusy(null)}
+    setEditingTested('')
+    await modelTest(
+      {connectionId:item.id,provider:item.provider,baseUrl:item.baseUrl,apiKey:'',modelId:editingSelected},
+      'saved',
+      () => setEditingTested(editingSelected),
+      'Model từ kết nối đã lưu đã trả nội dung văn bản. Có thể lưu model mới.'
+    )
   }
   const updateStoredModel = async (item: AiApiConnectionView) => {
+    if (!editingSelected || editingTested !== editingSelected) {
+      setNotice({type:'warning',text:'Kiểm tra Model mới thành công trước khi thay đổi kết nối đã lưu.'})
+      return
+    }
     setBusy('saved');setNotice(null)
     try {
       const next=await window.pageAuto.updateAiApiModel({id:item.id,modelId:editingSelected})
       onConnectionsChange(next)
       setEditingId('')
+      setEditingTested('')
       setNotice({type:'success',text:'Đã lưu Model mới; lần sau không cần chọn lại.'})
     } catch(error) {
       setNotice({type:'error',text:error instanceof Error?error.message:'Không lưu được model.'})
@@ -208,13 +255,21 @@ export function AiApiConnectionPanel({ connections, onConnectionsChange }: Props
         {modelId && !visibleModels.some(m=>m.id===modelId) ? <option value={modelId}>{modelId}</option> : null}
       </select> : <input aria-label="Model ID dự phòng" value={modelId} onChange={e=>{setModelId(e.target.value);setTested('')}} placeholder="Model ID theo tài liệu API" />}
       <label className="ai-api-manual"><input type="checkbox" checked={manualModel} onChange={e=>{setManualModel(e.target.checked);setModelId('');setTested('')}}/> Nhập Model ID thủ công khi API không hỗ trợ liệt kê</label>
+      <label className="ai-api-test-duration">Thời gian kiểm tra
+        <select aria-label="Thời gian kiểm tra Model" value={testTimeoutMs} disabled={Boolean(busy)} onChange={event=>setTestTimeoutMs(Number(event.target.value))}>
+          {AI_MODEL_TEST_TIMEOUT_OPTIONS_MS.map(ms=><option key={ms} value={ms}>{ms/1000} giây</option>)}
+        </select>
+      </label>
       <div className="ai-api-form-buttons">
-        <button type="button" onClick={()=>void test()} disabled={Boolean(busy)||!modelId||!apiKey.trim()}> {busy==='test' ? 'Đang kiểm tra (tối đa 25 giây)...' : 'Kiểm tra Model'}</button>
-        <button className="ai-primary-button" type="button" onClick={()=>void save()} disabled={Boolean(busy)||!modelId||!apiKey.trim()||!baseUrl.trim()}>
+        <button type="button" onClick={()=>void test()} disabled={Boolean(busy)||!modelId||!apiKey.trim()}>
+          {busy==='test' ? `Đang kiểm tra (tối đa ${testTimeoutMs/1000} giây)...` : 'Kiểm tra Model'}
+        </button>
+        {busy==='test' && activeTestId.current ? <button className="ai-api-cancel-test" type="button" onClick={cancelModelTest}>Hủy kiểm tra</button> : null}
+        <button className="ai-primary-button" type="button" onClick={()=>void save()} disabled={Boolean(busy)||!modelId||!apiKey.trim()||!baseUrl.trim()||tested!==modelId}>
           {busy==='save' ? 'Đang lưu...' : 'Lưu kết nối'}
         </button>
       </div>
-      <small className="ai-api-hint">API có thể liệt kê cả model ảnh hoặc model không được cấp quyền tạo văn bản. Kiểm tra thử tối đa 25 giây, sau đó app tự báo kết quả.</small>
+      <small className="ai-api-hint">API có thể liệt kê cả model ảnh hoặc model không được cấp quyền tạo văn bản. Chọn 60 hoặc 120 giây. Chỉ sau khi model trả văn bản thành công mới lưu được. HTTP 404 không nhất thiết là lỗi API key.</small>
       {tested===modelId && modelId ? <small className="ai-api-ok">✓ Model đã phản hồi trong lượt cấu hình này</small> : null}
     </div>
     {notice ? <p className={'ai-api-notice '+notice.type} role="status">{notice.text}</p> : null}
@@ -230,16 +285,17 @@ export function AiApiConnectionPanel({ connections, onConnectionsChange }: Props
         {editingId === item.id ? <div className="ai-api-saved-model-editor">
           <strong>Tải lại danh sách Model · {item.name}</strong>
           {editingManual || !editingModels.length ?
-            <input aria-label="Model ID lưu lại" value={editingSelected} onChange={e=>setEditingSelected(e.target.value)} placeholder="Model ID theo tài liệu API"/> :
-            <select aria-label="Chọn Model mới" value={editingSelected} onChange={e=>setEditingSelected(e.target.value)}>
+            <input aria-label="Model ID lưu lại" value={editingSelected} disabled={Boolean(busy)} onChange={e=>{setEditingSelected(e.target.value);setEditingTested('')}} placeholder="Model ID theo tài liệu API"/> :
+            <select aria-label="Chọn Model mới" disabled={Boolean(busy)} value={editingSelected} onChange={e=>{setEditingSelected(e.target.value);setEditingTested('')}}>
               {editingModels.map(m=><option key={m.id} value={m.id}>{m.label}</option>)}
             </select>}
-          <label><input type="checkbox" checked={editingManual} onChange={e=>setEditingManual(e.target.checked)}/> Chế độ nhập thủ công</label>
+          <label><input type="checkbox" disabled={Boolean(busy)} checked={editingManual} onChange={e=>{setEditingManual(e.target.checked);setEditingTested('')}}/> Chế độ nhập thủ công</label>
           <div className="ai-api-form-buttons">
             <button type="button" disabled={Boolean(busy)} onClick={()=>void editStoredModel(item)}>Tải lại Model</button>
-            <button type="button" disabled={Boolean(busy)||!editingSelected} onClick={()=>void testStoredModel(item)}>Kiểm tra</button>
-            <button className="ai-primary-button" type="button" disabled={Boolean(busy)||!editingSelected} onClick={()=>void updateStoredModel(item)}>Lưu Model mới</button>
-            <button type="button" onClick={()=>setEditingId('')} disabled={Boolean(busy)}>Hủy</button>
+            <button type="button" disabled={Boolean(busy)||!editingSelected} onClick={()=>void testStoredModel(item)}>Kiểm tra · {testTimeoutMs/1000}s</button>
+            {busy==='saved' && activeTestId.current ? <button className="ai-api-cancel-test" type="button" onClick={cancelModelTest}>Hủy kiểm tra</button> : null}
+            <button className="ai-primary-button" type="button" disabled={Boolean(busy)||!editingSelected||editingTested!==editingSelected} onClick={()=>void updateStoredModel(item)}>Lưu Model mới</button>
+            <button type="button" onClick={()=>{setEditingId('');setEditingTested('')}} disabled={Boolean(busy)}>Đóng chỉnh sửa</button>
           </div>
         </div> : null}
       </div>) : <p className="ai-api-empty">Chưa lưu API nào. Các kết nối API của anh sẽ hiện tại đây.</p>}

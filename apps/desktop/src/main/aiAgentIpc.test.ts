@@ -22,9 +22,11 @@ vi.mock('electron', () => ({
   }
 }))
 import { registerAiAgentIpcHandlers } from './aiAgentIpc'
+import { AiApiConnectionService } from './services/aiApiConnectionService'
 
 const dirs: string[] = []
 afterEach(() => {
+  vi.restoreAllMocks()
   mock.handlers.clear()
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
@@ -46,11 +48,38 @@ describe('AI API-only IPC registration', () => {
       const generate = mock.handlers.get('ai-agent:generate-posts')
       expect(generate).toBeDefined()
       expect(() => generate?.({}, { agentId: 'old-google-agent-123' })).toThrow('đã được gỡ')
-      expect(mock.handlers.size).toBe(8)
+      expect(mock.handlers.has('ai-api:cancel-test')).toBe(true)
+      expect(mock.handlers.size).toBe(9)
     } finally {
       handlers.dispose()
       expect(mock.handlers.size).toBe(0)
       database.close()
     }
   })
+  it('cancels only the owning renderer test and cleans up pending requests', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'page-auto-model-cancel-'))
+    dirs.push(directory)
+    const database = initializeDatabase(join(directory, 'page-auto.sqlite'))
+    const spy = vi.spyOn(AiApiConnectionService.prototype, 'test').mockImplementation(async (_input, signal) =>
+      new Promise<boolean>((_resolve, reject) => {
+        signal?.addEventListener('abort', () => reject(new Error('Đã hủy kiểm tra Model.')), { once: true })
+      })
+    )
+    const handlers = registerAiAgentIpcHandlers(database.client)
+    try {
+      const test = mock.handlers.get('ai-api:test')!
+      const cancel = mock.handlers.get('ai-api:cancel-test')!
+      const sender = { sender: { id: 12 } }
+      const pending = Promise.resolve(test(sender, { requestId: 'check-123', modelId: 'model/demo' }))
+      expect(cancel({ sender: { id: 13 } }, 'check-123')).toBe(false)
+      expect(cancel(sender, 'check-123')).toBe(true)
+      await expect(pending).rejects.toThrow('Đã hủy kiểm tra')
+      expect(cancel(sender, 'check-123')).toBe(false)
+      expect(spy).toHaveBeenCalledTimes(1)
+    } finally {
+      handlers.dispose()
+      database.close()
+    }
+  })
+
 })
