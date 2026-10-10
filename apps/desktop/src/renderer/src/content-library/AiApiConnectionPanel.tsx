@@ -3,6 +3,7 @@ import {
   API_PROVIDER_DEFAULTS,
   type AiApiConnectionView, type AiApiModel, type AiApiProvider
 } from '../../../shared/aiApiConnections'
+import { withAiApiUiTimeout } from './aiApiUiTimeout'
 import './aiApiConnectionPanel.css'
 
 interface Props {
@@ -96,7 +97,7 @@ export function AiApiConnectionPanel({ connections, onConnectionsChange }: Props
   const test = async () => {
     setBusy('test'); setNotice(null); setTested('')
     try {
-      await window.pageAuto.testAiApiModel({...credentials(),modelId})
+      await withAiApiUiTimeout(window.pageAuto.testAiApiModel({...credentials(),modelId}))
       setTested(modelId)
       setNotice({type:'success',text:'Model phản hồi thành công. Có thể lưu kết nối.'})
     } catch (error) {
@@ -134,7 +135,7 @@ export function AiApiConnectionPanel({ connections, onConnectionsChange }: Props
   const testStoredModel = async (item: AiApiConnectionView) => {
     setBusy('saved');setNotice(null)
     try {
-      await window.pageAuto.testAiApiModel({connectionId:item.id,provider:item.provider,baseUrl:item.baseUrl,apiKey:'',modelId:editingSelected})
+      await withAiApiUiTimeout(window.pageAuto.testAiApiModel({connectionId:item.id,provider:item.provider,baseUrl:item.baseUrl,apiKey:'',modelId:editingSelected}))
       setNotice({type:'success',text:'Model từ kết nối đã lưu hoạt động.'})
     } catch(error) {
       setNotice({type:'error',text:error instanceof Error?error.message:'Kiểm tra model thất bại.'})
@@ -208,11 +209,12 @@ export function AiApiConnectionPanel({ connections, onConnectionsChange }: Props
       </select> : <input aria-label="Model ID dự phòng" value={modelId} onChange={e=>{setModelId(e.target.value);setTested('')}} placeholder="Model ID theo tài liệu API" />}
       <label className="ai-api-manual"><input type="checkbox" checked={manualModel} onChange={e=>{setManualModel(e.target.checked);setModelId('');setTested('')}}/> Nhập Model ID thủ công khi API không hỗ trợ liệt kê</label>
       <div className="ai-api-form-buttons">
-        <button type="button" onClick={()=>void test()} disabled={Boolean(busy)||!modelId||!apiKey.trim()}> {busy==='test' ? 'Đang kiểm tra...' : 'Kiểm tra Model'}</button>
+        <button type="button" onClick={()=>void test()} disabled={Boolean(busy)||!modelId||!apiKey.trim()}> {busy==='test' ? 'Đang kiểm tra (tối đa 25 giây)...' : 'Kiểm tra Model'}</button>
         <button className="ai-primary-button" type="button" onClick={()=>void save()} disabled={Boolean(busy)||!modelId||!apiKey.trim()||!baseUrl.trim()}>
           {busy==='save' ? 'Đang lưu...' : 'Lưu kết nối'}
         </button>
       </div>
+      <small className="ai-api-hint">API có thể liệt kê cả model ảnh hoặc model không được cấp quyền tạo văn bản. Kiểm tra thử tối đa 25 giây, sau đó app tự báo kết quả.</small>
       {tested===modelId && modelId ? <small className="ai-api-ok">✓ Model đã phản hồi trong lượt cấu hình này</small> : null}
     </div>
     {notice ? <p className={'ai-api-notice '+notice.type} role="status">{notice.text}</p> : null}
