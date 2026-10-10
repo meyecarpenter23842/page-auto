@@ -54,6 +54,16 @@ describe('Excel-style account table selection', () => {
     expect(sorted(ctrlRemoved)).toEqual([10, 40])
   })
 
+  it('keeps large filtered ranges in visible order without selecting hidden target IDs', () => {
+    const ids = Array.from({ length: 1000 }, (_, i) => i + 1).filter((id) => id % 2 === 0)
+    const afterShift = nextExcelRowRange(ids, new Set([999]), 20, 200, { shiftKey: true })
+    expect(afterShift.ids.size).toBe(91)
+    expect([...afterShift.ids].every((id) => id % 2 === 0 && id >= 20 && id <= 200)).toBe(true)
+    const afterCtrl = nextExcelRowRange(ids, afterShift.ids, afterShift.anchorId, 400, { ctrlKey: true })
+    expect(afterCtrl.ids.has(400)).toBe(true)
+    expect(afterCtrl.ids.has(999)).toBe(false)
+  })
+
   it('auto-scrolls near the viewport edge but not beyond either end', () => {
     expect(edgeAutoScrollDelta(197, 0, 200, 0, 1000, 200)).toBeGreaterThan(0)
     expect(edgeAutoScrollDelta(1, 0, 200, 500, 1000, 200)).toBeLessThan(0)

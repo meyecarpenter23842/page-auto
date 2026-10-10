@@ -89,6 +89,7 @@ try {
   invariant(await root.getByRole('button', { name: 'Quét', exact: true }).isDisabled(), 'Thành viên nhóm production phải yêu cầu Account khi DB smoke chưa có account.')
 
   await root.getByRole('tab', { name: 'Quét Nhóm', exact: true }).click()
+  invariant((await root.locator('.scanner-selection-toolbar').count()) === 0, 'R4a: Scanner toolbar must stay hidden before scan results exist.')
   await windowPage.screenshot({ path: screenshotPath, fullPage: true })
 } finally {
   if (electronApp) await electronApp.close().catch(() => undefined)

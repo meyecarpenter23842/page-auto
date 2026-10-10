@@ -13,3 +13,10 @@ html[data-theme='dark'] .scanner-selection-toolbar { background:var(--pa-dark-su
 html[data-theme='dark'] .scanner-selection-toolbar strong { color:#8cc8ff; }
 html[data-theme='dark'] .scanner-selection-toolbar > span { color:var(--pa-dark-muted); }
 html[data-theme='dark'] .scanner-table tbody tr.scanner-row-selected td { background:rgba(83,177,253,.15); }
+
+/* R4a: Scanner uses the same range affordance as Account/Email/Proxy; no new target state. */
+.scanner-table tbody tr[data-excel-row-id] { cursor: default; user-select: none; }
+.scanner-table tbody tr[data-excel-row-id]:focus-within td { outline-offset: -2px; }
+.scanner-table tbody tr.scanner-row-selected td { background: #e8f1ff; }
+html[data-theme='dark'] .scanner-table tbody tr.scanner-row-selected td { background: rgba(83,177,253,.2); }
+.scanner-selection-toolbar > span { white-space: normal; min-width: 160px; }

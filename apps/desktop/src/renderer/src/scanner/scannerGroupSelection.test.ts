@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import type { ScanResultRecord } from '../../../shared/scanner'
 import { eligibleGroupResultIds, groupResultMatchesSelectionFilters, reconcileGroupResultSelection } from './scannerGroupSelection'
@@ -20,7 +21,18 @@ function result(
   }
 }
 
+const scannerSource = readFileSync(new URL('./ScannerWorkspace.tsx', import.meta.url), 'utf8')
+
 describe('scanner group auto-selection', () => {
+  it('uses the canonical selected IDs for Scanner range drag and dataset save', () => {
+    expect(scannerSource).toContain('useExcelRowRange(eligibleIds, selectedResultIds, setSelectedResultIds)')
+    expect(scannerSource).toContain('data-excel-row-id=')
+    expect(scannerSource).toContain('resultRange.onRowPointerDown(event, result.id)')
+    expect(scannerSource).toContain('resultRange.onRowPointerEnter(result.id)')
+    expect(scannerSource).toContain('resultIds: groupSelection')
+    expect(scannerSource).toContain('aria-selected=')
+  })
+
   it('matches members, privacy and location from loaded Facebook metadata text', () => {
     const item = result(1, {
       members: 58_000,
