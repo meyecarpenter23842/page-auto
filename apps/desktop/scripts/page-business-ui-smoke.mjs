@@ -82,6 +82,9 @@ try {
   invariant(!actionTabs.includes('Tham gia nhóm'), 'Page-bound Tham gia nhóm vẫn lọt vào Hành động.')
 
   await windowPage.getByRole('button', { name: 'Page Tabs' }).click()
+  await windowPage.locator('.page-overview-table').waitFor({ state: 'visible' })
+  await windowPage.locator('.page-overview-table tbody tr').filter({ hasText: 'Smoke Page A' }).waitFor({ state: 'visible' })
+  await windowPage.getByRole('tab', { name: /^Nhóm/ }).click()
   await windowPage.locator('.page-business-group-pane .page-business-page-strip').waitFor({ state: 'visible' })
 
   const groupChips = await tabText('.page-business-group-pane .page-business-page-chip')

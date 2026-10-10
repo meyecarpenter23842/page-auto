@@ -13,7 +13,11 @@ describe('Page Nhóm compact UI regression', () => {
     expect(coreSource).toContain('<span>Lịch chạy</span>')
     expect(coreSource).toContain('<span>Group</span>')
     expect(coreSource).toContain('<span>Bài viết</span>')
-    expect(coreSource).toContain("activeBusiness === 'groups' ? <CompactGroupConfigControls />")
+    expect(coreSource).toContain("activeBusiness === 'groups' ? <CompactGroupConfigControls editorActions={groupEditorActions} />")
+    expect(coreSource).not.toContain('openExistingEditor =')
+    expect(coreSource).toContain('editorActions?.schedule()')
+    expect(coreSource).toContain('editorActions?.groups()')
+    expect(coreSource).toContain('editorActions?.posts()')
   })
 
   it('removes the old large config cards from the visible Nhóm layout', () => {
@@ -25,7 +29,7 @@ describe('Page Nhóm compact UI regression', () => {
   })
 
   it('does not regress Page selection back to synthetic DOM synchronization', () => {
-    expect(bindingScopeSource).toContain('<PageTabsManager activePageId={activePageId} scoped />')
+    expect(bindingScopeSource).toContain('<PageTabsManager activePageId={activePageId} scoped registerEditorActions={registerEditorActions} />')
     expect(bindingScopeSource).not.toContain("querySelectorAll<HTMLButtonElement>('.page-tab-chip')")
     expect(bindingScopeSource).not.toContain("dispatchEvent(new Event('change'")
     expect(bindingScopeSource).not.toContain('setInterval(sync, 150)')

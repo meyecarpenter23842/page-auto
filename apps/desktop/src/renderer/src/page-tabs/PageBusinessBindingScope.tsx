@@ -7,20 +7,20 @@ import {
   type GenericPageBusinessType
 } from '../../../shared/pageBusinessBindings'
 import type { PageTabSummary } from '../../../shared/pageTabs'
-import { PageTabsManager } from './PageTabsManagerV2'
+import { PageTabsManager, type PageGroupEditorActions } from './PageTabsManagerV2'
 import { PageWallWorkspace } from './PageWallWorkspace'
 import { confirmWorkspaceNavigation } from '../workspaceNavigation'
 import './pageBusinessBindings.css'
 
 interface BindingRecord { workspace: ActionWorkspaceRecord; pageTabId: number }
 export interface PageBusinessBindingContext { activePage: PageTabSummary; allPages: PageTabSummary[] }
-interface Props { businessType: GenericPageBusinessType; label: string; children: (context: PageBusinessBindingContext) => ReactNode }
+interface Props { businessType: GenericPageBusinessType; label: string; preferredPageId?: number | null; children: (context: PageBusinessBindingContext) => ReactNode }
 
-function PagePicker({ pages, boundIds, label, onClose, onAdd }: {
-  pages: PageTabSummary[]; boundIds: Set<number>; label: string; onClose: () => void; onAdd: (page: PageTabSummary) => Promise<void>
+function PagePicker({ pages, boundIds, label, preferredPageId, onClose, onAdd }: {
+  pages: PageTabSummary[]; boundIds: Set<number>; label: string; preferredPageId?: number | null | undefined; onClose: () => void; onAdd: (page: PageTabSummary) => Promise<void>
 }) {
   const available = pages.filter((page) => !boundIds.has(page.id))
-  const [selectedId, setSelectedId] = useState<number | null>(available[0]?.id ?? null)
+  const [selectedId, setSelectedId] = useState<number | null>(available.find((page) => page.id === preferredPageId)?.id ?? available[0]?.id ?? null)
   const [busy, setBusy] = useState(false)
   return <div className="page-business-picker-backdrop" role="presentation" onMouseDown={onClose}>
     <section className="page-business-picker" role="dialog" aria-modal="true" aria-label={`Thêm Page vào ${label}`} onMouseDown={(event) => event.stopPropagation()}>
@@ -32,7 +32,7 @@ function PagePicker({ pages, boundIds, label, onClose, onAdd }: {
   </div>
 }
 
-export function PageBusinessBindingScope({ businessType, label, children }: Props) {
+export function PageBusinessBindingScope({ businessType, label, preferredPageId, children }: Props) {
   const [pages, setPages] = useState<PageTabSummary[]>([])
   const [bindings, setBindings] = useState<BindingRecord[]>([])
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<number | null>(null)
@@ -56,6 +56,11 @@ export function PageBusinessBindingScope({ businessType, label, children }: Prop
     setError(null)
   }, [businessType])
   useEffect(() => { void refresh().catch((cause) => setError(cause instanceof Error ? cause.message : String(cause))) }, [refresh])
+  useEffect(() => {
+    if (preferredPageId == null) return
+    const selected = bindings.find((binding) => binding.pageTabId === preferredPageId)
+    setActiveWorkspaceId(selected?.workspace.id ?? null)
+  }, [preferredPageId, bindings])
   const activeBinding = bindings.find((item) => item.workspace.id === activeWorkspaceId) ?? null
   const activePage = activeBinding ? pages.find((page) => page.id === activeBinding.pageTabId) ?? null : null
   const boundIds = useMemo(() => new Set(bindings.map((item) => item.pageTabId)), [bindings])
@@ -72,9 +77,9 @@ export function PageBusinessBindingScope({ businessType, label, children }: Prop
     <div className="page-business-page-strip"><div className="page-business-page-scroll">{bindings.map((binding) => { const page = pages.find((item) => item.id === binding.pageTabId); return page ? <div key={binding.workspace.id} className={binding.workspace.id === activeWorkspaceId ? 'page-business-page-chip active' : 'page-business-page-chip'}><button type="button" onClick={() => { if (activeWorkspaceId === binding.workspace.id || confirmWorkspaceNavigation()) setActiveWorkspaceId(binding.workspace.id) }}><strong>{page.name}</strong></button><button className="remove" type="button" onClick={() => void removePage(binding, page)}>×</button></div> : null })}</div><button className="page-business-add-page" type="button" onClick={() => setPickerOpen(true)}>+ Thêm Page</button></div>
     {error ? <div className="page-tab-error page-business-binding-error">{error}</div> : null}
     <div className="page-business-binding-content">{activePage ? children({ activePage, allPages: pages }) : <div className="page-business-binding-empty"><strong>Chưa có Page trong tab {label}</strong><span>Page trong Quản lý Page không tự xuất hiện ở đây.</span><button type="button" onClick={() => setPickerOpen(true)}>+ Thêm Page</button></div>}</div>
-    {pickerOpen ? <PagePicker pages={pages} boundIds={boundIds} label={label} onClose={() => setPickerOpen(false)} onAdd={addPage} /> : null}
+    {pickerOpen ? <PagePicker pages={pages} boundIds={boundIds} label={label} preferredPageId={preferredPageId} onClose={() => setPickerOpen(false)} onAdd={addPage} /> : null}
   </section>
 }
 
-export function ScopedGroupPostWorkspace({ activePageId }: { activePageId: number }) { return <div className="page-business-scoped-child ready"><PageTabsManager activePageId={activePageId} scoped /></div> }
+export function ScopedGroupPostWorkspace({ activePageId, registerEditorActions }: { activePageId: number; registerEditorActions?: (actions: PageGroupEditorActions | null) => void }) { return <div className="page-business-scoped-child ready"><PageTabsManager activePageId={activePageId} scoped registerEditorActions={registerEditorActions} /></div> }
 export function ScopedPageWallWorkspace({ activePageId }: { activePageId: number }) { return <PageWallWorkspace activePageId={activePageId} scoped /> }

@@ -14,7 +14,7 @@ describe('Page business binding regression', () => {
     expect(bindingScopeSource).not.toContain("querySelectorAll<HTMLButtonElement>('.page-tab-chip')")
     expect(bindingScopeSource).not.toContain("dispatchEvent(new Event('change'")
     expect(bindingScopeSource).not.toContain('setInterval(sync, 150)')
-    expect(bindingScopeSource).toContain('<PageTabsManager activePageId={activePageId} scoped />')
+    expect(bindingScopeSource).toContain('<PageTabsManager activePageId={activePageId} scoped registerEditorActions={registerEditorActions} />')
     expect(bindingScopeSource).toContain('<PageWallWorkspace activePageId={activePageId} scoped />')
   })
 

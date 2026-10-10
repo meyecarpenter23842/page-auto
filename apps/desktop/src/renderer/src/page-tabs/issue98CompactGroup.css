@@ -78,7 +78,9 @@
   white-space: nowrap;
 }
 
-.pt-compact-config-actions > button:hover {
+.pt-compact-config-actions > button:disabled { opacity: .48; cursor: not-allowed; }
+
+.pt-compact-config-actions > button:not(:disabled):hover {
   color: #175cd3;
   border-color: #8fb3f1;
   background: #f0f6ff;

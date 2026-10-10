@@ -10,13 +10,15 @@ import {
 } from './PageBusinessBindingScope'
 import { PageJoinGroupWorkspace } from './PageJoinGroupWorkspace'
 import { PageScenarioWorkspace } from './PageScenarioWorkspace'
+import { PageOverviewWorkspace } from './PageOverviewWorkspace'
+import type { PageGroupEditorActions } from './PageTabsManagerV2'
 import { confirmWorkspaceNavigation } from '../workspaceNavigation'
 import './pageBusinessWorkspace.css'
 import './pageTabs3c.css'
 import './pageTabs3d.css'
 import './issue98CompactGroup.css'
 
-type PageBusinessId = 'groups' | 'wall' | 'edit' | 'join' | 'scenario'
+type PageBusinessId = 'overview' | 'groups' | 'wall' | 'edit' | 'join' | 'scenario'
 type RuntimeAction = (payload: { pageTabId: number }) => Promise<RotationRuntimeSnapshot>
 type GroupConfigLauncherId = 'identity' | 'schedule' | 'groups' | 'posts'
 
@@ -31,6 +33,7 @@ interface PageBusinessDefinition {
 }
 
 const businesses: PageBusinessDefinition[] = [
+  { id: 'overview', label: 'Tổng quan', status: 'Page & lịch', title: 'Tổng quan Page', description: 'Theo dõi Page và lịch từ dữ liệu đã lưu.', items: [] },
   {
     id: 'groups',
     label: 'Nhóm',
@@ -52,7 +55,7 @@ const businesses: PageBusinessDefinition[] = [
   {
     id: 'edit',
     label: 'Sửa Page',
-    status: 'UI shell',
+    status: 'Chưa hỗ trợ',
     title: 'Sửa Page',
     description: 'Page được bind riêng cho nghiệp vụ Sửa Page; phần thao tác Facebook vẫn giữ đúng boundary Common Runtime.',
     bindingType: 'page_edit',
@@ -127,7 +130,7 @@ function GroupConfigIcon({ id }: { id: GroupConfigLauncherId }) {
   return <svg {...common}><path d="M6 3.5h8l4 4V20H6z" /><path d="M14 3.5V8h4" /><path d="M9 12h6" /><path d="M9 15.5h6" /></svg>
 }
 
-function CompactGroupConfigControls() {
+function CompactGroupConfigControls({ editorActions }: { editorActions: PageGroupEditorActions | null }) {
   const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null)
   const [identityPanel, setIdentityPanel] = useState<HTMLElement | null>(null)
   const [identityOpen, setIdentityOpen] = useState(false)
@@ -174,12 +177,6 @@ function CompactGroupConfigControls() {
     return () => window.removeEventListener('keydown', closeOnEscape)
   }, [identityOpen])
 
-  const openExistingEditor = (label: 'Lịch chạy' | 'Group Set' | 'Bài viết') => {
-    const rows = Array.from(document.querySelectorAll<HTMLElement>('.page-business-group-pane .pt-business-row'))
-    const row = rows.find((item) => item.querySelector<HTMLElement>('.pt-business-copy > span')?.textContent?.trim() === label)
-    row?.querySelector<HTMLButtonElement>('button')?.click()
-  }
-
   if (!portalTarget) return null
   const closeButtonTarget = identityPanel?.querySelector<HTMLElement>('.pt-panel-heading') ?? null
 
@@ -189,9 +186,9 @@ function CompactGroupConfigControls() {
         <div className="pt-compact-config-title"><span>Cấu hình</span><small>Mở khi cần</small></div>
         <div className="pt-compact-config-actions">
           <button type="button" title="Nhận diện Page" onClick={() => setIdentityOpen(true)}><GroupConfigIcon id="identity" /><span>Nhận diện</span></button>
-          <button type="button" title="Lịch chạy" onClick={() => openExistingEditor('Lịch chạy')}><GroupConfigIcon id="schedule" /><span>Lịch chạy</span></button>
-          <button type="button" title="Danh sách Group" onClick={() => openExistingEditor('Group Set')}><GroupConfigIcon id="groups" /><span>Group</span></button>
-          <button type="button" title="Thư viện bài viết" onClick={() => openExistingEditor('Bài viết')}><GroupConfigIcon id="posts" /><span>Bài viết</span></button>
+          <button type="button" title="Lịch chạy" disabled={!editorActions} onClick={() => editorActions?.schedule()}><GroupConfigIcon id="schedule" /><span>Lịch chạy</span></button>
+          <button type="button" title="Danh sách Group" disabled={!editorActions} onClick={() => editorActions?.groups()}><GroupConfigIcon id="groups" /><span>Group</span></button>
+          <button type="button" title="Thư viện bài viết" disabled={!editorActions} onClick={() => editorActions?.posts()}><GroupConfigIcon id="posts" /><span>Bài viết</span></button>
         </div>
       </section>,
       portalTarget
@@ -344,8 +341,15 @@ function BoundPlaceholder({ business }: { business: PageBusinessDefinition }) {
 }
 
 export function PageBusinessWorkspace() {
-  const [activeBusiness, setActiveBusiness] = useState<PageBusinessId>('groups')
+  const [activeBusiness, setActiveBusiness] = useState<PageBusinessId>('overview')
   const [runtimeControlsOpen, setRuntimeControlsOpen] = useState(false)
+  const [selectedPageId, setSelectedPageId] = useState<number | null>(null)
+  const [groupEditorActions, setGroupEditorActions] = useState<PageGroupEditorActions | null>(null)
+  const openGroupPage = (pageId: number) => {
+    if (!confirmWorkspaceNavigation()) return
+    setSelectedPageId(pageId)
+    setActiveBusiness('groups')
+  }
   const active = useMemo(() => businesses.find((business) => business.id === activeBusiness) ?? businesses[0], [activeBusiness])
 
   return <div className="page-tabs-route page-business-workspace">
@@ -363,10 +367,12 @@ export function PageBusinessWorkspace() {
       <button className="page-runtime-quick-trigger" type="button" onClick={() => setRuntimeControlsOpen(true)}>Điều khiển Page<small>Start · Pause · Stop</small></button>
     </nav>
 
+    {activeBusiness === 'overview' ? <PageOverviewWorkspace onOpenGroup={openGroupPage} /> : null}
+
     <div className={activeBusiness === 'groups' ? 'page-business-pane page-business-group-pane active' : 'page-business-pane page-business-group-pane inactive'} role="tabpanel" aria-hidden={activeBusiness !== 'groups'}>
-      <PageBusinessBindingScope businessType="group_post" label="Nhóm">
+      <PageBusinessBindingScope businessType="group_post" label="Nhóm" preferredPageId={selectedPageId}>
         {({ activePage }) => <>
-          <ScopedGroupPostWorkspace activePageId={activePage.id} />
+          <ScopedGroupPostWorkspace activePageId={activePage.id} registerEditorActions={setGroupEditorActions} />
           <CurrentPageRuntimeActions activePageId={activePage.id} />
         </>}
       </PageBusinessBindingScope>
@@ -377,7 +383,7 @@ export function PageBusinessWorkspace() {
     {activeBusiness === 'join' ? <PageJoinGroupWorkspace /> : null}
     {activeBusiness === 'scenario' ? <PageBusinessBindingScope businessType="run_scenario" label="Chạy kịch bản">{({ activePage }) => <PageScenarioWorkspace page={activePage} />}</PageBusinessBindingScope> : null}
 
-    {activeBusiness === 'groups' ? <CompactGroupConfigControls /> : null}
+    {activeBusiness === 'groups' ? <CompactGroupConfigControls editorActions={groupEditorActions} /> : null}
     {runtimeControlsOpen ? <PageRuntimeQuickControls onClose={() => setRuntimeControlsOpen(false)} /> : null}
   </div>
 }
