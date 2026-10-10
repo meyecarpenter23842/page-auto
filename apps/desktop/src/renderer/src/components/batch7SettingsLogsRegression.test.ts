@@ -11,6 +11,15 @@ describe('Issue #510 Batch 7 Settings and Logs invariants', () => {
     expect(settings).toContain('<AdvancedSettingsSection appInfo={appInfo} />')
     expect(settings).not.toContain('updateAppSettings(')
   })
+  it('R4c keeps Settings scroll inside its menu and logs keyboard/secret safety', () => {
+    const settingsStyle = readFileSync(new URL('../settings/settingsNavigation.css', import.meta.url), 'utf8')
+    const logsStyle = readFileSync(new URL('../logs/executionLogsBatch7.css', import.meta.url), 'utf8')
+    expect(settingsStyle).toContain('.settings-menu-scroll { overscroll-behavior: contain; scrollbar-gutter: stable; }')
+    expect(logs).toContain('onKeyDown={onDetailKeyDown}')
+    expect(logs).toContain('detailOpenerRef.current?.focus()')
+    expect(logs).toContain('setError(sanitizedLogError(null, cause instanceof Error ? cause.message : String(cause)))')
+    expect(logsStyle).toContain('max-height: calc(100vh - 24px)')
+  })
   it('uses existing typed log filters, keeps retry contract, only copies sanitized errors', () => {
     expect(logs).toContain('window.pageAuto.listExecutionLogs(filters)')
     expect(logs).toContain('window.pageAuto.retryExecutionLogItem({ runItemId: log.runItemId })')

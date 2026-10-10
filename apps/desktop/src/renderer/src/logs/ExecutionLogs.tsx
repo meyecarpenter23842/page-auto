@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import type { AccountRecord } from '../../../shared/accounts'
 import type { ExecutionLogFilters, ExecutionLogRecord } from '../../../shared/executionLogs'
 import type { PageTabSummary } from '../../../shared/pageTabs'
@@ -28,6 +28,33 @@ export function ExecutionLogs() {
   const [detailId, setDetailId] = useState<number | null>(null)
   const [retryingId, setRetryingId] = useState<number | null>(null)
   const sequence = useRef(0)
+  const detailOpenerRef = useRef<HTMLButtonElement | null>(null)
+  const closeDetail = () => {
+    setDetailId(null)
+    detailOpenerRef.current?.focus()
+  }
+  const onDetailKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      event.stopPropagation()
+      closeDetail()
+      return
+    }
+    if (event.key !== 'Tab') return
+    const focusable = [...event.currentTarget.querySelectorAll<HTMLElement>(
+      'button:not([disabled]),a[href],input:not([disabled]),select:not([disabled]),textarea:not([disabled])'
+    )].filter((element) => element.getClientRects().length > 0)
+    const first = focusable[0]
+    const last = focusable[focusable.length - 1]
+    if (!first || !last) return
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault()
+      last.focus()
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault()
+      first.focus()
+    }
+  }
   const [loading, setLoading] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -49,7 +76,7 @@ export function ExecutionLogs() {
       const next = await window.pageAuto.listExecutionLogs(filters)
       if (requestId === sequence.current) setLogs(next)
     } catch (cause) {
-      if (requestId === sequence.current) setError(cause instanceof Error ? cause.message : String(cause))
+      if (requestId === sequence.current) setError(sanitizedLogError(null, cause instanceof Error ? cause.message : String(cause)))
     } finally {
       if (requestId === sequence.current) setLoading(false)
     }
@@ -62,7 +89,7 @@ export function ExecutionLogs() {
       window.pageAuto.listAccounts()
     ]).then(([pageTabs, accountRows]) => {
       if (mounted) { setTabs(pageTabs); setAccounts(accountRows) }
-    }).catch((cause) => { if (mounted) setError(cause instanceof Error ? cause.message : String(cause)) })
+    }).catch((cause) => { if (mounted) setError(sanitizedLogError(null, cause instanceof Error ? cause.message : String(cause))) })
     void load()
     return () => { mounted = false; sequence.current += 1 }
     // Initial load intentionally uses the empty filters.
@@ -79,7 +106,7 @@ export function ExecutionLogs() {
       setNotice(response.message)
       await load()
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      setError(sanitizedLogError(null, cause instanceof Error ? cause.message : String(cause)))
     } finally { setRetryingId(null) }
   }
 
@@ -162,7 +189,7 @@ export function ExecutionLogs() {
                   {log.imagePaths.length ? <span title={log.imagePaths.join('\n')}>{log.imagePaths.length} ảnh · content #{log.contentIndex ?? '—'}</span> : null}
                 </td>
                 <td>
-                  <button className="execution-log-detail-button" type="button" onClick={() => setDetailId(log.id)}>Chi tiết</button>{' '}
+                  <button className="execution-log-detail-button" type="button" onClick={(event) => { detailOpenerRef.current = event.currentTarget; setDetailId(log.id) }}>Chi tiết</button>{' '}
                   <button
                     className="retry-button"
                     type="button"
@@ -178,12 +205,12 @@ export function ExecutionLogs() {
         </table>
       </div>
       {detail ? <div className="execution-log-modal-backdrop" role="presentation"
-        onMouseDown={(event) => { if (event.target === event.currentTarget) setDetailId(null) }}>
+        onMouseDown={(event) => { if (event.target === event.currentTarget) closeDetail() }}>
         <section className="execution-log-modal" role="dialog" aria-modal="true" aria-label="Chi tiết execution log"
-          onKeyDown={(event) => { if (event.key === 'Escape') { event.stopPropagation(); setDetailId(null) } }}>
+          onKeyDown={onDetailKeyDown}>
           <header className="execution-log-modal-head">
             <div><h2>Execution log #{detail.id}</h2><small>{formatTime(detail.timestamp)} · {detail.action} · {detail.result}</small></div>
-            <button type="button" autoFocus aria-label="Đóng chi tiết" onClick={() => setDetailId(null)}>Đóng</button>
+            <button type="button" autoFocus aria-label="Đóng chi tiết" onClick={closeDetail}>Đóng</button>
           </header>
           <dl>
             <dt>Page / Account</dt><dd>#{detail.pageTabId ?? '—'} / #{detail.accountId ?? '—'}</dd>
