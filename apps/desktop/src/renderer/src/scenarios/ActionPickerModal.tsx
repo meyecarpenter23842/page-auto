@@ -16,6 +16,11 @@ interface ActionPickerModalProps {
 
 const SCENARIO_ACTIONS = ACTION_REGISTRY.filter((definition) => definition.id !== 'group_post')
 
+function actionActorLabel(definition: ActionDefinition): string {
+  if (definition.capabilities.actors.includes('profile') && definition.capabilities.actors.includes('page')) return 'Profile + Page'
+  return definition.capabilities.actors[0] === 'page' ? 'Page' : 'Profile'
+}
+
 export function ActionPickerModal({ onClose, onSelect }: ActionPickerModalProps) {
   const [query, setQuery] = useState('')
   const [selectedId, setSelectedId] = useState(SCENARIO_ACTIONS[0]?.id ?? '')
@@ -53,11 +58,11 @@ export function ActionPickerModal({ onClose, onSelect }: ActionPickerModalProps)
               <p className="action-picker-description">{visibleSelected.description}</p>
               <div className="action-picker-meta">
                 <div><span>Nhóm</span><strong>{ACTION_CATEGORIES.find((item) => item.id === visibleSelected.category)?.label}</strong></div>
-                <div><span>Actor</span><strong>{visibleSelected.capabilities.actors.length === 2 ? 'Profile + Page' : 'Profile'}</strong></div>
+                <div><span>Actor</span><strong>{actionActorLabel(visibleSelected)}</strong></div>
                 <div><span>Cấu hình</span><strong>{visibleSelected.configSchema.fields.length} trường</strong></div>
                 <div><span>Runtime</span><strong>{visibleSelected.runtimeStatus === 'ready' ? 'Executor sẵn sàng' : 'Placeholder'}</strong></div>
               </div>
-              <div className={visibleSelected.runtimeStatus === 'ready' ? 'action-placeholder-card ready-card' : 'action-placeholder-card'}><strong>{visibleSelected.runtimeStatus === 'ready' ? 'Module riêng đã có executor' : 'Chưa có executor'}</strong><p>{visibleSelected.runtimeStatus === 'ready' ? 'Kịch Bản dùng profile/tài khoản; automation Page được quản lý ở tab Page riêng.' : `Hiện có ${readyCount} action đã có executor. Action này sẽ làm ở lô sau.`}</p></div>
+              <div className={visibleSelected.runtimeStatus === 'ready' ? 'action-placeholder-card ready-card' : 'action-placeholder-card'}><strong>{visibleSelected.runtimeStatus === 'ready' ? 'Module riêng đã có executor' : 'Chưa có executor'}</strong><p>{visibleSelected.runtimeStatus === 'ready' ? 'Action sẽ chạy qua Common Runtime/worker tương ứng với actor đã cấu hình.' : `Hiện có ${readyCount} action đã có executor. Action này sẽ làm ở lô sau.`}</p></div>
             </> : <div className="scenario-empty">Chọn một hành động.</div>}
           </aside>
         </div>

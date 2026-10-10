@@ -1,6 +1,7 @@
 import type { Locator, Page } from 'playwright-core'
 import type { ActionConfig, ActionResult } from '../../../../shared/actionRegistry'
 import type { ActionRunControl, ActionRunRequest } from '../../../../shared/actionRuntime'
+import { pollActionVerificationState } from '../actionVerification'
 
 export type ActionPageResolver = (request: ActionRunRequest) => Promise<Page | null>
 
@@ -70,17 +71,123 @@ export async function sleepWithControl(control: ActionRunControl, delayMs: numbe
   return !control.isStopped()
 }
 
-export async function firstVisible(page: Page | Locator, selectors: readonly string[]): Promise<Locator | null> {
-  for (const selector of selectors) {
-    const locator = page.locator(selector).first()
-    if (await locator.isVisible().catch(() => false)) return locator
+const MAX_VISIBLE_CANDIDATES_PER_SELECTOR = 32
+const MAX_RENDERED_TEXT_CANDIDATES = 100
+const SUBMITTED_TEXT_VERIFY_TIMEOUT_MS = 3000
+const SUBMITTED_TEXT_VERIFY_POLL_MS = 150
+const CLICKABLE_TEXT_ANCESTOR = 'xpath=ancestor-or-self::*[self::button or @role="button" or @tabindex="0" or self::a][1]'
+
+function exactAriaButtonName(selector: string): string | null {
+  return selector.match(/^\[role="button"\]\[aria-label="([^"]+)"\]$/)?.[1] ?? null
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+async function firstVisibleCandidate(locator: Locator): Promise<Locator | null> {
+  const count = Math.min(await locator.count().catch(() => 0), MAX_VISIBLE_CANDIDATES_PER_SELECTOR)
+  for (let index = 0; index < count; index += 1) {
+    const candidate = locator.nth(index)
+    if (await candidate.isVisible().catch(() => false)) return candidate
   }
   return null
+}
+
+async function clickableTextFallback(scope: Page | Locator, name: string): Promise<Locator | null> {
+  const textMatches = scope.getByText(name, { exact: true })
+  const count = Math.min(await textMatches.count().catch(() => 0), MAX_VISIBLE_CANDIDATES_PER_SELECTOR)
+  for (let index = 0; index < count; index += 1) {
+    const text = textMatches.nth(index)
+    if (!await text.isVisible().catch(() => false)) continue
+
+    const clickable = text.locator(CLICKABLE_TEXT_ANCESTOR).first()
+    if (await clickable.isVisible().catch(() => false)) return clickable
+
+    // Facebook sometimes puts the visible Like/Thích text inside a clickable wrapper that exposes
+    // neither role=button nor a stable aria-label/tabindex. Clicking the visible text itself still
+    // bubbles through the real control, and is safer than guessing another unstable selector.
+    return text
+  }
+  return null
+}
+
+async function accessibleButtonFallback(scope: Page | Locator, name: string): Promise<Locator | null> {
+  const exact = await firstVisibleCandidate(scope.getByRole('button', { name, exact: true }))
+  if (exact) return exact
+
+  if (!/^(?:Like|Thích)$/i.test(name)) return null
+  const prefix = new RegExp(`^${escapeRegExp(name)}(?:$|\\s|[:.,])`, 'i')
+  const accessible = await firstVisibleCandidate(scope.getByRole('button', { name: prefix }))
+  if (accessible) return accessible
+
+  return clickableTextFallback(scope, name)
+}
+
+export async function firstVisible(page: Page | Locator, selectors: readonly string[]): Promise<Locator | null> {
+  for (const selector of selectors) {
+    const direct = await firstVisibleCandidate(page.locator(selector))
+    if (direct) return direct
+
+    const accessibleName = exactAriaButtonName(selector)
+    if (!accessibleName) continue
+    const fallback = await accessibleButtonFallback(page, accessibleName)
+    if (fallback) return fallback
+  }
+  return null
+}
+
+async function isRenderedSubmittedText(candidate: Locator): Promise<boolean> {
+  if (!await candidate.isVisible().catch(() => false)) return false
+  return candidate.evaluate((element) => {
+    return element.closest('[contenteditable="true"], [role="textbox"], textarea, input') === null
+  }).catch(() => false)
+}
+
+/**
+ * Counts rendered exact text while ignoring composer/editor content. This lets comment actions
+ * distinguish a real DOM mutation from text that is merely still sitting in the input after Enter.
+ */
+export async function visibleSubmittedTextCount(scope: Page | Locator, text: string): Promise<number> {
+  const value = text.trim()
+  if (!value) return 0
+  const matches = scope.getByText(value, { exact: true })
+  const count = Math.min(await matches.count().catch(() => 0), MAX_RENDERED_TEXT_CANDIDATES)
+  let visible = 0
+  for (let index = 0; index < count; index += 1) {
+    if (await isRenderedSubmittedText(matches.nth(index))) visible += 1
+  }
+  return visible
+}
+
+/**
+ * Verifies that submitting text created a new rendered occurrence. Existing identical comments are
+ * safe because callers capture the baseline before filling the composer.
+ */
+export async function waitForSubmittedTextIncrease(
+  page: Page,
+  scope: Page | Locator,
+  text: string,
+  baseline: number,
+  timeoutMs = SUBMITTED_TEXT_VERIFY_TIMEOUT_MS
+): Promise<boolean> {
+  const value = text.trim()
+  if (!value) return false
+  const verified = await pollActionVerificationState(
+    async () => await visibleSubmittedTextCount(scope, value) > baseline ? true : null,
+    {
+      timeoutMs,
+      intervalMs: SUBMITTED_TEXT_VERIFY_POLL_MS,
+      wait: (delayMs) => page.waitForTimeout(delayMs).then(() => true).catch(() => false)
+    }
+  )
+  return verified === true
 }
 
 export async function clickFirstVisible(page: Page | Locator, selectors: readonly string[]): Promise<boolean> {
   const locator = await firstVisible(page, selectors)
   if (!locator) return false
+  await locator.scrollIntoViewIfNeeded().catch(() => undefined)
   return locator.click({ timeout: 5000 }).then(() => true).catch(() => false)
 }
 

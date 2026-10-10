@@ -1,5 +1,6 @@
 import type {
   ContentMode,
+  GroupOrderMode,
   PageTabImageConfig,
   PageTabRotationConfig,
   PageTabScheduleInput,
@@ -44,6 +45,8 @@ export interface RunSnapshot {
   image: PageTabImageConfig
   postMode?: PostSelectionMode
   posts?: RunSnapshotPost[]
+  /** Backward compatible for runs created before Group-order support. */
+  groupOrderMode?: GroupOrderMode
   groupSourceCount: number
 }
 
@@ -79,6 +82,8 @@ export interface RunItem {
   groupUid: string
   sortOrder: number
   status: RunItemStatus
+  /** Present for Batch 4 run_items. Optional keeps legacy snapshots/test fixtures compatible. */
+  claimedByAccountId?: number | null
   attemptCount: number
   lastError: string | null
   startedAt: number | null
@@ -102,6 +107,8 @@ export interface RunIdPayload {
 export interface CompleteRunItemPayload {
   runId: number
   itemId: number
+  /** Runtime callers must pass the account owner. Omitted is legacy/test compatibility only. */
+  accountId?: number
   status: RunItemTerminalStatus
   errorMessage?: string
 }

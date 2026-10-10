@@ -1,35 +1,45 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { AppInfo } from '../../../ipc/channels'
-import type { BrowserSettings } from '../../../shared/appSettings'
+import type { AdvancedSettings, BrowserSettings } from '../../../shared/appSettings'
 import './settingsSections.css'
 
 interface AdvancedSettingsSectionProps { appInfo: AppInfo | null }
 type BusyState = 'save' | 'export' | 'restore' | null
 
 function copyBrowser(settings: BrowserSettings): BrowserSettings { return { ...settings } }
+function copyAdvanced(settings: AdvancedSettings): AdvancedSettings { return { ...settings } }
 function errorText(caught: unknown): string { return caught instanceof Error ? caught.message : String(caught) }
 
 export function AdvancedSettingsSection({ appInfo }: AdvancedSettingsSectionProps) {
   const [saved, setSaved] = useState<BrowserSettings | null>(null)
   const [draft, setDraft] = useState<BrowserSettings | null>(null)
+  const [savedAdvanced, setSavedAdvanced] = useState<AdvancedSettings | null>(null)
+  const [draftAdvanced, setDraftAdvanced] = useState<AdvancedSettings | null>(null)
   const [busy, setBusy] = useState<BusyState>(null)
   const [feedback, setFeedback] = useState<{ kind: 'ok' | 'bad'; text: string } | null>(null)
-  const dirty = useMemo(() => Boolean(saved && draft && JSON.stringify(saved) !== JSON.stringify(draft)), [draft, saved])
+  const dirty = useMemo(() => Boolean(
+    saved && draft && savedAdvanced && draftAdvanced
+    && (JSON.stringify(saved) !== JSON.stringify(draft) || JSON.stringify(savedAdvanced) !== JSON.stringify(draftAdvanced))
+  ), [draft, draftAdvanced, saved, savedAdvanced])
 
   useEffect(() => {
     void window.pageAuto.getAppSettings().then((settings) => {
       const browser = copyBrowser(settings.browser)
+      const advanced = copyAdvanced(settings.advanced)
       setSaved(browser); setDraft(copyBrowser(browser))
+      setSavedAdvanced(advanced); setDraftAdvanced(copyAdvanced(advanced))
     }).catch((caught) => setFeedback({ kind: 'bad', text: errorText(caught) }))
   }, [])
 
   const save = async () => {
-    if (!draft) return
+    if (!draft || !draftAdvanced) return
     setBusy('save'); setFeedback(null)
     try {
-      const next = await window.pageAuto.updateAppSettings({ browser: draft })
+      const next = await window.pageAuto.updateAppSettings({ browser: draft, advanced: draftAdvanced })
       const browser = copyBrowser(next.browser)
+      const advanced = copyAdvanced(next.advanced)
       setSaved(browser); setDraft(copyBrowser(browser))
+      setSavedAdvanced(advanced); setDraftAdvanced(copyAdvanced(advanced))
       setFeedback({ kind: 'ok', text: 'Đã lưu cài đặt nâng cao.' })
     } catch (caught) { setFeedback({ kind: 'bad', text: errorText(caught) }) } finally { setBusy(null) }
   }
@@ -50,17 +60,18 @@ export function AdvancedSettingsSection({ appInfo }: AdvancedSettingsSectionProp
     } catch (caught) { setFeedback({ kind: 'bad', text: errorText(caught) }) } finally { setBusy(null) }
   }
 
-  if (!draft) return <div className="settings-empty">Đang đọc cài đặt nâng cao...</div>
+  if (!draft || !draftAdvanced) return <div className="settings-empty">Đang đọc cài đặt nâng cao...</div>
 
   return <div className="settings-section settings-section-with-actions">
     <div className="settings-section-content"><div className="advanced-section">
       <div className="advanced-grid">
         <label className="toggle-card wide"><div><strong>Tắt tăng tốc phần cứng</strong><small>Dùng khi VPS hoặc máy yếu gặp lỗi hiển thị Chrome.</small></div><input type="checkbox" checked={draft.disableGpu} onChange={(event) => { setDraft({ ...draft, disableGpu: event.target.checked }); setFeedback(null) }} /></label>
+        <label className="toggle-card wide"><div><strong>Khởi động cùng Windows</strong><small>{appInfo?.isPackaged ? 'Tự mở PAGE-AUTO khi anh đăng nhập Windows. Bỏ tích để gỡ khỏi startup.' : 'Chỉ áp dụng cho bản PAGE-AUTO portable/packaged trên Windows.'}</small></div><input type="checkbox" checked={draftAdvanced.startWithWindows ?? false} disabled={!appInfo?.isPackaged} onChange={(event) => { setDraftAdvanced({ ...draftAdvanced, startWithWindows: event.target.checked }); setFeedback(null) }} /></label>
         <div className="info-card"><span>Phiên bản PAGE-AUTO</span><strong>{appInfo ? `v${appInfo.version}` : '...'}</strong><small>{appInfo?.isPackaged ? 'Bản portable' : 'Bản development'}</small></div>
         <div className="info-card path-card"><span>Data</span><strong title={appInfo?.dataDirectory ?? ''}>{appInfo?.dataDirectory ?? '...'}</strong><small>SQLite, profile, log và screenshot.</small></div>
       </div>
       <div className="backup-box"><div><strong>Sao lưu cấu hình</strong><p>Backup không chứa password, cookie, 2FA, proxy password hay CAPTCHA API key.</p></div><div><button className="settings-button primary" type="button" disabled={busy !== null} onClick={() => void exportBackup()}>{busy === 'export' ? 'Đang xuất...' : 'Xuất backup'}</button><button className="settings-button" type="button" disabled={busy !== null} onClick={() => void restoreBackup()}>{busy === 'restore' ? 'Đang khôi phục...' : 'Khôi phục backup'}</button></div></div>
     </div></div>
-    <div className="inline-settings-actions"><span className={`inline-settings-feedback ${feedback?.kind ?? ''}`}>{feedback?.text ?? 'Backup cấu hình loại bỏ dữ liệu đăng nhập nhạy cảm.'}</span><div><button type="button" className="settings-button" disabled={!dirty || busy !== null} onClick={() => saved && setDraft(copyBrowser(saved))}>Hủy</button><button type="button" className="settings-button primary" disabled={!dirty || busy !== null} onClick={() => void save()}>{busy === 'save' ? 'Đang lưu...' : 'Lưu nâng cao'}</button></div></div>
+    <div className="inline-settings-actions"><span className={`inline-settings-feedback ${feedback?.kind ?? ''}`}>{feedback?.text ?? 'Backup cấu hình loại bỏ dữ liệu đăng nhập nhạy cảm.'}</span><div><button type="button" className="settings-button" disabled={!dirty || busy !== null} onClick={() => { if (saved) setDraft(copyBrowser(saved)); if (savedAdvanced) setDraftAdvanced(copyAdvanced(savedAdvanced)) }}>Hủy</button><button type="button" className="settings-button primary" disabled={!dirty || busy !== null} onClick={() => void save()}>{busy === 'save' ? 'Đang lưu...' : 'Lưu nâng cao'}</button></div></div>
   </div>
 }

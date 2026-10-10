@@ -4,6 +4,7 @@ import type { PageWallPostTaskDescriptor } from '../../../shared/facebookTasks'
 import type { PostingJobResult } from '../../../shared/posting'
 import type { FacebookCommonStepResult } from '../../facebook/facebookCommonRuntime'
 import { PageWallPostFlow } from './pageWallPostFlow'
+import { PageWallUsePagePrompt } from './pageWallUsePagePrompt'
 
 export interface PreparedPageWallRuntime {
   page: Page
@@ -79,9 +80,13 @@ export class PageWallTask {
 
     const access = await this.runtime.checkAccessBlock('sau khi mở Tường Page')
     if (access.status !== 'success') return access
+
+    const usePage = await new PageWallUsePagePrompt(this.runtime).complete()
+    if (usePage.status !== 'success') return usePage
+
     return {
       status: 'success',
-      message: 'Đã mở Tường Page bằng prepared Facebook runtime.'
+      message: 'Đã mở Tường Page và xử lý interstitial Use Page nếu xuất hiện.'
     }
   }
 

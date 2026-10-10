@@ -5,7 +5,11 @@ import {
   type ActionResult
 } from '../../shared/actionRegistry'
 import { applyK433GroupInteractionActionOverrides } from '../../shared/k433GroupInteractionActionOverrides'
-import type { ActionPreparationResult, ActionRunRequest } from '../../shared/actionRuntime'
+import {
+  ACTION_VERIFICATION_UNCERTAIN_CODE,
+  type ActionPreparationResult,
+  type ActionRunRequest
+} from '../../shared/actionRuntime'
 import {
   ActionExecutorRegistry,
   ActionRunner,
@@ -152,6 +156,39 @@ describe('ActionRunner', () => {
     expect(summary.result.status).toBe('success')
     expect(summary.attempts).toBe(2)
     expect(calls).toBe(2)
+  })
+
+  it('never blind-retries a consequential action whose final state is uncertain', async () => {
+    const host = new ReadyHost()
+    const executors = new ActionExecutorRegistry()
+    let calls = 0
+    executors.register({
+      actionType: 'view_newsfeed',
+      execute: async (): Promise<ActionResult> => {
+        calls += 1
+        return {
+          status: 'failed',
+          code: ACTION_VERIFICATION_UNCERTAIN_CODE,
+          message: 'clicked but final state cannot be confirmed'
+        }
+      }
+    })
+    const runner = new ActionRunner(host, executors)
+    const summary = await runner.run({
+      ...profileRequest,
+      retry: {
+        maxAttempts: 3,
+        delayMs: 0,
+        retryableCodes: [ACTION_VERIFICATION_UNCERTAIN_CODE]
+      }
+    }, immediateControl())
+
+    expect(summary.result).toMatchObject({
+      status: 'failed',
+      code: ACTION_VERIFICATION_UNCERTAIN_CODE
+    })
+    expect(summary.attempts).toBe(1)
+    expect(calls).toBe(1)
   })
 
   it('stops before session preparation when runtime is cancelled', async () => {

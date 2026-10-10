@@ -1,0 +1,100 @@
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode
+} from 'react'
+import { createPortal } from 'react-dom'
+import { clampContextMenuPoint } from './accountTableSelection'
+
+interface AccountSelectionMenuProps {
+  x: number
+  y: number
+  checkedCount: number
+  rangeCount: number
+  totalCount: number
+  onCheckRange: () => void
+  onCheckAll: () => void
+  onClearChecked: () => void
+  onDismiss?: () => void
+  className?: string
+  children?: ReactNode
+}
+
+export function AccountSelectionMenu({
+  x,
+  y,
+  checkedCount,
+  rangeCount,
+  totalCount,
+  onCheckRange,
+  onCheckAll,
+  onClearChecked,
+  onDismiss,
+  className,
+  children
+}: AccountSelectionMenuProps) {
+  const menuRef = useRef<HTMLDivElement>(null)
+  const [position, setPosition] = useState({ x, y })
+  const [submenuSide, setSubmenuSide] = useState<'left' | 'right'>('right')
+
+  useLayoutEffect(() => {
+    const menu = menuRef.current
+    if (!menu) return
+    const rect = menu.getBoundingClientRect()
+    const next = clampContextMenuPoint(x, y, rect.width, rect.height, window.innerWidth, window.innerHeight)
+    setPosition(next)
+    setSubmenuSide(next.x + rect.width + 220 + 8 > window.innerWidth ? 'left' : 'right')
+  }, [x, y, checkedCount, rangeCount, totalCount])
+
+  useEffect(() => {
+    if (!onDismiss) return
+    const dismissOutside = (event: PointerEvent) => {
+      if (menuRef.current?.contains(event.target as Node)) return
+      onDismiss()
+    }
+    const dismissEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') onDismiss() }
+    const dismiss = () => onDismiss()
+    document.addEventListener('pointerdown', dismissOutside, true)
+    window.addEventListener('keydown', dismissEscape)
+    window.addEventListener('blur', dismiss)
+    window.addEventListener('resize', dismiss)
+    window.addEventListener('scroll', dismiss, true)
+    return () => {
+      document.removeEventListener('pointerdown', dismissOutside, true)
+      window.removeEventListener('keydown', dismissEscape)
+      window.removeEventListener('blur', dismiss)
+      window.removeEventListener('resize', dismiss)
+      window.removeEventListener('scroll', dismiss, true)
+    }
+  }, [onDismiss])
+
+  const menu = (
+    <div
+      ref={menuRef}
+      className={`account-selection-menu${className ? ` ${className}` : ''}`}
+      style={{ left: position.x, top: position.y }}
+      onPointerDown={(event) => event.stopPropagation()}
+      onMouseDown={(event) => event.stopPropagation()}
+    >
+      <div className="account-selection-menu-meta">
+        <span>Đang chọn <strong>{checkedCount}</strong></span>
+        <span>Phủ khối <strong>{rangeCount}</strong></span>
+      </div>
+      {children ? <><div className="account-selection-menu-actions">{children}</div><div className="account-selection-menu-separator" /></> : null}
+      <div className="account-selection-submenu">
+        <button type="button" className="account-selection-submenu-trigger">
+          <span>Chọn</span><span aria-hidden="true">›</span>
+        </button>
+        <div className={`account-selection-submenu-panel ${submenuSide === 'left' ? 'open-left' : ''}`}>
+          <button type="button" disabled={rangeCount === 0} onClick={onCheckRange}>Phần đang phủ khối ({rangeCount})</button>
+          <button type="button" disabled={totalCount === 0} onClick={onCheckAll}>Chọn tất cả ({totalCount})</button>
+        </div>
+      </div>
+      <button type="button" disabled={checkedCount === 0} onClick={onClearChecked}>Bỏ chọn tất cả</button>
+    </div>
+  )
+
+  return createPortal(menu, document.body)
+}

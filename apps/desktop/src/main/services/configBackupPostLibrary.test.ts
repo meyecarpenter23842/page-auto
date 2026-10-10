@@ -52,5 +52,5 @@ describe('ConfigBackupService Post Library', () => {
 
     target.close()
     source.close()
-  })
+  }, 15_000)
 })

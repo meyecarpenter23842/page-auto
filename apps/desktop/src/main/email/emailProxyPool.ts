@@ -18,6 +18,7 @@ export interface EmailProxyCandidate {
 interface EmailProxyHealth {
   failCount: number
   cooldownUntil: number
+  status: 'live' | 'die'
 }
 
 const BASE_PROXY_COOLDOWN_MS = 30_000
@@ -147,14 +148,20 @@ export class EmailProxyPool {
   }
 
   recordFailure(candidate: EmailProxyCandidate): void {
-    const current = this.health.get(candidate.key) ?? { failCount: 0, cooldownUntil: 0 }
+    const current = this.health.get(candidate.key) ?? { failCount: 0, cooldownUntil: 0, status: 'die' as const }
     const failCount = current.failCount + 1
     const cooldownMs = Math.min(MAX_PROXY_COOLDOWN_MS, BASE_PROXY_COOLDOWN_MS * (2 ** Math.min(4, failCount - 1)))
-    this.health.set(candidate.key, { failCount, cooldownUntil: this.now() + cooldownMs })
+    this.health.set(candidate.key, { failCount, cooldownUntil: this.now() + cooldownMs, status: 'die' })
   }
 
   recordSuccess(candidate: EmailProxyCandidate): void {
-    this.health.delete(candidate.key)
+    this.health.set(candidate.key, { failCount: 0, cooldownUntil: 0, status: 'live' })
+  }
+
+  candidateAt(index: number): EmailProxyCandidate | null {
+    const settings = this.getSettings()
+    if (!Number.isInteger(index) || index < 0 || index >= settings.entries.length) return null
+    return parseEmailProxyLine(settings.entries[index] ?? '')
   }
 
   cooldownCount(): number {
@@ -196,6 +203,15 @@ export class EmailProxyPool {
       poolSize: candidates.length,
       currentProxy: settings.mode === 'direct' ? null : (this.peek()?.display ?? null),
       activeSessions: this.sessions.size,
+      entries: candidates.map((candidate, index) => {
+        const health = this.health.get(candidate.key)
+        return {
+          index,
+          proxy: candidate.display,
+          status: health?.status ?? 'untested',
+          cooldownUntil: health && health.cooldownUntil > this.now() ? health.cooldownUntil : null
+        }
+      }),
       message: effectiveMessage
     }
   }

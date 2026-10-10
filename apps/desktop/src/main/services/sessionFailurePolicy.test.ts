@@ -8,20 +8,15 @@ function settings(patch: Partial<SessionSettings> = {}): SessionSettings {
 }
 
 describe('resolveSessionFailureDecision', () => {
-  it('continues to the next account for a generic expired session by default', () => {
-    const result: PostingJobResult = { status: 'needs_login', code: 'needs_login', message: 'expired' }
-    expect(resolveSessionFailureDecision(result, settings())).toEqual({ kind: 'session_expired', action: 'continue' })
-  })
-
-  it('can pause the Page Tab for generic expired sessions', () => {
+  it('continues to the next account for a generic expired session even when the legacy setting says stop', () => {
     const result: PostingJobResult = { status: 'needs_login', code: 'needs_login', message: 'expired' }
     expect(resolveSessionFailureDecision(result, settings({ onSessionExpired: 'needs_login_stop' }))).toEqual({
       kind: 'session_expired',
-      action: 'stop'
+      action: 'continue'
     })
   })
 
-  it('always pauses unresolved before-run login repair so the next account cannot open beside the retained browser', () => {
+  it('treats unresolved before-run login as an account-turn failure instead of pausing the Page Tab', () => {
     const result: PostingJobResult = {
       status: 'needs_login',
       code: 'needs_login',
@@ -32,58 +27,43 @@ describe('resolveSessionFailureDecision', () => {
         message: 'Facebook vẫn đang ở màn đăng nhập/2FA.'
       }
     }
-    expect(resolveSessionFailureDecision(result, settings({ onSessionExpired: 'needs_login_continue' }))).toEqual({
+    expect(resolveSessionFailureDecision(result, settings({ onSessionExpired: 'needs_login_stop' }))).toEqual({
       kind: 'session_expired',
-      action: 'stop'
-    })
-  })
-
-  it.each(['282', '956', 'disabled'] as const)('treats checkpoint %s as a terminal account turn even when the legacy checkpoint setting says stop', (checkpointKind) => {
-    const result: PostingJobResult = {
-      status: 'needs_login',
-      code: 'verification_required',
-      message: `checkpoint ${checkpointKind}`,
-      sessionValidation: {
-        phase: 'before_run',
-        state: 'verification_required',
-        message: `checkpoint ${checkpointKind}`,
-        checkpointKind
-      }
-    }
-    expect(resolveSessionFailureDecision(result, settings({ onCheckpoint: 'needs_login_stop' }))).toEqual({
-      kind: 'checkpoint',
       action: 'continue'
     })
   })
 
-  it('always pauses an unidentified checkpoint instead of rotating by the legacy continue setting', () => {
-    const result: PostingJobResult = {
-      status: 'needs_login',
-      code: 'verification_required',
-      message: 'manual checkpoint',
-      sessionValidation: {
-        phase: 'before_run',
-        state: 'verification_required',
-        message: 'manual checkpoint',
-        checkpointKind: 'unknown'
+  it.each(['282', '956', 'disabled', 'unknown'] as const)(
+    'ends only the current account turn for checkpoint %s',
+    (checkpointKind) => {
+      const result: PostingJobResult = {
+        status: 'needs_login',
+        code: 'verification_required',
+        message: `checkpoint ${checkpointKind}`,
+        sessionValidation: {
+          phase: 'before_run',
+          state: 'verification_required',
+          message: `checkpoint ${checkpointKind}`,
+          checkpointKind
+        }
       }
+      expect(resolveSessionFailureDecision(result, settings({ onCheckpoint: 'needs_login_stop' }))).toEqual({
+        kind: 'checkpoint',
+        action: 'continue'
+      })
     }
-    expect(resolveSessionFailureDecision(result, settings({ onCheckpoint: 'needs_login_continue' }))).toEqual({
-      kind: 'checkpoint',
-      action: 'stop'
-    })
-  })
+  )
 
-  it('pauses an unclassified verification result instead of assuming it is 282/956/disabled', () => {
+  it('continues for an unclassified verification result instead of pausing the whole Page Tab', () => {
     const result: PostingJobResult = {
       status: 'needs_login',
       code: 'verification_required',
       message: 'manual checkpoint',
       sessionValidation: { phase: 'before_run', state: 'verification_required', message: 'manual checkpoint' }
     }
-    expect(resolveSessionFailureDecision(result, settings({ onCheckpoint: 'needs_login_continue' }))).toEqual({
+    expect(resolveSessionFailureDecision(result, settings({ onCheckpoint: 'needs_login_stop' }))).toEqual({
       kind: 'checkpoint',
-      action: 'stop'
+      action: 'continue'
     })
   })
 
@@ -95,5 +75,10 @@ describe('resolveSessionFailureDecision', () => {
     }
     expect(resolveSessionFailureDecision(result, settings())).toEqual({ kind: 'session_expired', action: 'continue' })
     expect(result.status).toBe('success')
+  })
+
+  it('ignores unrelated posting failures', () => {
+    const result: PostingJobResult = { status: 'failed', code: 'composer_not_found', message: 'composer' }
+    expect(resolveSessionFailureDecision(result, settings())).toBeNull()
   })
 })

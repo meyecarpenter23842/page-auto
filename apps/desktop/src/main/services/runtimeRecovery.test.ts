@@ -43,7 +43,7 @@ function createFixture(groupUids: string[]) {
 }
 
 describe('RuntimeRecoveryService', () => {
-  it('pauses crashed running runs and moves processing items to manual review without touching pending queue', () => {
+  it('keeps an enabled interrupted run running while moving uncertain processing items to manual review', () => {
     const { runtime, tab, runs, logs, recovery } = createFixture(['g1', 'g2'])
     const created = runs.createForPageTab(tab.id)
     runs.resume(created.run.id)
@@ -51,8 +51,8 @@ describe('RuntimeRecoveryService', () => {
     if (!claimed) throw new Error('Expected claimed item')
 
     const summary = recovery.recoverInterruptedRuns()
-    expect(summary).toEqual({ pausedRuns: 1, reviewItems: 1 })
-    expect(runs.get(created.run.id)?.run.status).toBe('paused')
+    expect(summary).toEqual({ pausedRuns: 0, reviewItems: 1 })
+    expect(runs.get(created.run.id)?.run.status).toBe('running')
     expect(runs.listItems(created.run.id).map((item) => item.status)).toEqual(['failed', 'pending'])
 
     const recoveryLog = logs.getLatestForRunItem(claimed.id)
@@ -65,7 +65,22 @@ describe('RuntimeRecoveryService', () => {
     runtime.close()
   })
 
-  it('closes an exhausted interrupted run instead of leaving an empty paused run', () => {
+  it('is idempotent for the same interrupted run and does not create or pause another run', () => {
+    const { runtime, tab, runs, recovery } = createFixture(['g1', 'g2'])
+    const created = runs.createForPageTab(tab.id)
+    runs.resume(created.run.id)
+    const claimed = runs.claimNext(created.run.id)
+    if (!claimed) throw new Error('Expected claimed item')
+
+    expect(recovery.recoverInterruptedRuns()).toEqual({ pausedRuns: 0, reviewItems: 1 })
+    expect(recovery.recoverInterruptedRuns()).toEqual({ pausedRuns: 0, reviewItems: 0 })
+    expect(runs.getLatestForPageTab(tab.id)?.run.id).toBe(created.run.id)
+    expect(runs.get(created.run.id)?.run.status).toBe('running')
+    expect(runs.listItems(created.run.id).map((item) => item.status)).toEqual(['failed', 'pending'])
+    runtime.close()
+  })
+
+  it('closes an exhausted interrupted run instead of leaving an empty active run', () => {
     const { runtime, tab, runs, recovery } = createFixture(['g1'])
     const created = runs.createForPageTab(tab.id)
     runs.resume(created.run.id)

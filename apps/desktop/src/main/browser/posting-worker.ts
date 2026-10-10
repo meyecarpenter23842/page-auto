@@ -1,4 +1,5 @@
 import type { BrowserWindowPlacement } from '../../shared/browserWindowLayout'
+import { isBrowserLaunchPermitResult } from '../../shared/browserLaunchPermit'
 import type { EmailCodeWorkerResponseMessage } from '../../shared/emailCode'
 import type { FacebookPostWorkerRequestMessage } from '../../shared/facebookTasks'
 import { createEmailCodeWorkerRpc } from '../email/emailCodeWorkerRpc'
@@ -61,6 +62,7 @@ function exitSoon(exitCode: number): void {
 
 parentPort.on('message', (event) => {
   if (emailCodeRpc.handleMessage(event.data)) return
+  if (isBrowserLaunchPermitResult(event.data)) return
   const payload = event.data as FacebookPostWorkerRequestMessage | RetileRequest | EmailCodeWorkerResponseMessage | { type?: string }
   if (payload?.type === 'shutdown') {
     if (shuttingDown) return

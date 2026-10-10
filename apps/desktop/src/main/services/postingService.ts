@@ -13,6 +13,8 @@ import {
   type BrowserWindowLayoutSettings,
   type BrowserWindowPlacement
 } from '../../shared/browserWindowLayout'
+import { accountStatusFromCheckpointKind } from '../../shared/facebookAccountState'
+import { facebookSessionPolicyStateFromRuntimeState } from '../../shared/facebookSessionPolicy'
 import {
   pageWallPostTaskFromBase,
   type FacebookPostTaskJobRequest,
@@ -61,6 +63,14 @@ function hasInvalidSession(result: PostingJobResult): boolean {
 
 function hasValidSession(result: PostingJobResult): boolean {
   return result.sessionValidation?.state === 'valid' || result.status === 'success'
+}
+
+function invalidAccountStatus(result: PostingJobResult): AccountRecord['status'] {
+  if (result.sessionValidation?.accountStatus) return result.sessionValidation.accountStatus
+  if (result.sessionValidation?.state === 'verification_required') {
+    return accountStatusFromCheckpointKind(result.sessionValidation.checkpointKind)
+  }
+  return 'needs_login'
 }
 
 function shouldReleasePreflightItem(result: PostingJobResult): boolean {
@@ -124,7 +134,7 @@ export class PostingService {
 
     // External-profile preflight intentionally happens before claimNext(). A missing
     // Root\\UID must not claim/consume a Group run item and must never fall back.
-    const item = this.runs.claimNext(payload.runId)
+    const item = this.runs.claimNext(payload.runId, account.id)
     if (!item) {
       const current = this.runs.get(payload.runId)
       if (!current) throw new Error(`Không tìm thấy phiên #${payload.runId} sau khi lấy hàng chờ.`)
@@ -133,13 +143,13 @@ export class PostingService {
 
     const material = selectRunPost(details.run.snapshot, item)
     if (!material) {
-      const run = this.runs.completeItem({ runId: payload.runId, itemId: item.id, status: 'failed', errorMessage: 'Thư viện bài viết không có bài hợp lệ.' })
+      const run = this.runs.completeItem({ runId: payload.runId, itemId: item.id, accountId: account.id, status: 'failed', errorMessage: 'Thư viện bài viết không có bài hợp lệ.' })
       return { accountId: account.id, item, result: terminalFailure('Thư viện bài viết không có bài hợp lệ.', 'no_content'), run }
     }
 
     const images = await selectRunImages(material.image, item)
     if (images.missing && material.image.missingPolicy === 'skip') {
-      const run = this.runs.completeItem({ runId: payload.runId, itemId: item.id, status: 'skipped' })
+      const run = this.runs.completeItem({ runId: payload.runId, itemId: item.id, accountId: account.id, status: 'skipped' })
       return { accountId: account.id, item, result: { status: 'skipped', code: 'missing_media', message: 'Thiếu ảnh theo cấu hình của bài; Group được bỏ qua trong phiên hiện tại.' }, run }
     }
 
@@ -187,6 +197,7 @@ export class PostingService {
       const run = this.runs.releaseItem({
         runId: payload.runId,
         itemId: item.id,
+        accountId: account.id,
         errorMessage: result.message
       })
       return { accountId: account.id, item: null, result, run }
@@ -195,6 +206,7 @@ export class PostingService {
     const run = this.runs.completeItem({
       runId: payload.runId,
       itemId: item.id,
+      accountId: account.id,
       status: result.status === 'success' ? 'success' : result.status === 'skipped' ? 'skipped' : 'failed',
       ...(result.status === 'success' || result.status === 'skipped' ? {} : { errorMessage: result.message })
     })
@@ -241,7 +253,7 @@ export class PostingService {
       }
     }
 
-    return this.executeFacebookPostTask(pageWallPostTaskFromBase(base))
+    return this.executeFacebookPostTask(pageWallPostTaskFromBase(base, input.hashtags ?? ''))
   }
 
   async executeFacebookPostTask(job: FacebookPostTaskJobRequest): Promise<PostingJobResult> {
@@ -317,9 +329,13 @@ export class PostingService {
           message: redactExecutionText(publicWorkerResult.sessionValidation.message, accountSecrets(account)) ?? 'Kiểm tra phiên đăng nhập thất bại.'
         }
       : undefined
+    const sessionPolicyState = safeValidation
+      ? facebookSessionPolicyStateFromRuntimeState(safeValidation.state)
+      : null
     const result: PostingJobResult = {
       ...publicWorkerResult,
       message: safeMessage,
+      sessionPolicyState,
       ...(safeValidation ? { sessionValidation: safeValidation } : {}),
       ...(publicWorkerResult.accountName?.trim() ? { accountName: publicWorkerResult.accountName.trim() } : {})
     }
@@ -329,7 +345,7 @@ export class PostingService {
     if (hasInvalidSession(result)) {
       this.accounts.update(account.id, {
         name: syncedName,
-        status: 'needs_login',
+        status: invalidAccountStatus(result),
         cookieStatus: 'needs_login',
         lastCookieCheck: now,
         lastUsedAt: now
@@ -344,6 +360,8 @@ export class PostingService {
         lastUsedAt: now
       })
     } else {
+      // Runtime/task failures (proxy, Page, Group, composer, publish, browser, worker)
+      // are not account-health evidence and must preserve the master account status.
       this.accounts.update(account.id, { name: syncedName, lastUsedAt: now })
     }
 

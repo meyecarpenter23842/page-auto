@@ -80,6 +80,21 @@ describe('Microsoft page ownership', () => {
     expect(unrelated.closedFlag).toBe(false)
   })
 
+  it('retires an Outlook operator page when Microsoft spawns a replacement auth page', async () => {
+    const context = fakeContext()
+    const unrelated = fakePage('https://example.com/operator-tab', context)
+    const outlook = fakePage('https://outlook.live.com/mail/0/', context)
+    const pagesAtFlowStart = new Set<Page>(context.pagesList)
+    const login = fakePage('https://login.live.com/oauth20_authorize.srf?state=new', context)
+
+    const adopted = await adoptNewestMicrosoftFlowPage(outlook, pagesAtFlowStart)
+
+    expect(adopted).toBe(login)
+    expect(outlook.closedFlag).toBe(true)
+    expect(login.closedFlag).toBe(false)
+    expect(unrelated.closedFlag).toBe(false)
+  })
+
   it('closes opener and detached auth siblings but preserves Outlook and unrelated tabs', async () => {
     const context = fakeContext()
     const unrelated = fakePage('https://example.com/operator-tab', context)

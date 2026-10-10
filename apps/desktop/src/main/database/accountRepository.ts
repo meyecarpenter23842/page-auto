@@ -259,8 +259,19 @@ export class AccountRepository {
   }
 
   import(request: AccountImportRequest): AccountImportResult {
-    const parsed = parseAccountImport(request)
     const operation = resolveImportOperation(request)
+    const requestedTargetGroupName = operation === 'insert' ? request.targetGroupName?.trim() ?? '' : ''
+    let targetGroupName = ''
+
+    if (requestedTargetGroupName) {
+      const targetGroup = this.client
+        .prepare('SELECT name FROM account_groups WHERE name = ? COLLATE NOCASE')
+        .get(requestedTargetGroupName) as { name: string } | undefined
+      if (!targetGroup) throw new Error('Nhóm được chọn không còn tồn tại.')
+      targetGroupName = targetGroup.name
+    }
+
+    const parsed = parseAccountImport(targetGroupName ? { ...request, targetGroupName } : request)
     const result: AccountImportResult = {
       imported: 0,
       updated: 0,
@@ -274,7 +285,16 @@ export class AccountRepository {
 
         if (operation === 'insert') {
           if (existing) {
-            result.skipped += 1
+            if (targetGroupName && existing.category?.trim() !== targetGroupName) {
+              try {
+                this.update(existing.id, { category: targetGroupName })
+                result.updated += 1
+              } catch (error) {
+                result.errors.push({ line: 0, message: error instanceof Error ? error.message : String(error) })
+              }
+            } else {
+              result.skipped += 1
+            }
             continue
           }
 

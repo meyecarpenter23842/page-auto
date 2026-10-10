@@ -22,12 +22,14 @@ export interface BrowserPlacementSnapshot {
 }
 
 // Browser placement is a global desktop concern. Different IPC/runtime services may own
-// separate BrowserWindowLayoutManager instances, but they must coordinate one slot pool
-// so Profile, Page posting and Scenario Chrome never tile on top of each other.
+// separate BrowserWindowLayoutManager instances, but Facebook managers coordinate one
+// shared slot pool so Profile, Page posting and Scenario Chrome never tile on top of each
+// other. Email injects its own pool because Email and Facebook Chrome for the same account
+// are distinct windows and must not collapse onto one slot.
 const SHARED_BROWSER_SLOT_POOL = new BrowserSlotPool()
 
 export class BrowserWindowLayoutManager {
-  private readonly slots = SHARED_BROWSER_SLOT_POOL
+  constructor(private readonly slots: BrowserSlotPool = SHARED_BROWSER_SLOT_POOL) {}
 
   claim(accountId: number, owner: BrowserWindowOwner): void {
     const result = this.slots.claim(accountId, owner)

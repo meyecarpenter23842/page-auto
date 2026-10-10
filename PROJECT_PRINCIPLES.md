@@ -2,6 +2,8 @@
 
 > Đây là tài liệu nguyên tắc chung của dự án và là entrypoint bắt buộc trước `PROJECT_PLAN.md`/`ARCHITECTURE.md` khi thay đổi kiến trúc hoặc data ownership. Nếu wording legacy trong tài liệu cũ mâu thuẫn với một invariant được **explicitly supersede** tại đây thì invariant mới hơn được ưu tiên; implementation phải mở migration/cleanup riêng thay vì tiếp tục nhân rộng mô hình cũ.
 >
+> **Project-wide invariant không được thay đổi ngầm trong một feature/bugfix. Muốn đổi invariant phải được người sở hữu dự án chấp thuận rõ ràng và cập nhật tài liệu invariant trước khi sửa implementation. Code cũ mâu thuẫn với invariant mới được xem là technical debt cần migration, không được dùng làm lý do nhân rộng behavior sai.**
+>
 > **Precedence riêng cho dữ liệu bài viết:** Issue #188 và mục Canonical Post Library bên dưới **supersede** wording K4.5.1/K4.5.2 cũ trong `PROJECT_PLAN.md` (đặc biệt phần mở đầu K4.5.1, §5.5, §9, §12, §13) và `ARCHITECTURE.md` §24 khi các đoạn đó mô tả `content_sets/content_items`, “global source” hoặc `contentSetId` như kiến trúc đích. Các đoạn cũ đó chỉ mô tả source/compatibility transition hiện tại cho tới khi #188 migration hoàn tất; không được dùng để mở rộng thêm mô hình Content Set.
 
 ## 1. Canonical Post Library — một kho bài viết gốc duy nhất
@@ -64,3 +66,138 @@ Nguyên tắc Canonical Post Library **không thay đổi** các boundary khác 
 - Không spam commit/CI. Gom lỗi cùng nguyên nhân, sửa một lượt, local test khi có môi trường rồi mới push.
 - Sau push phải theo CI tới toàn bộ workflow bắt buộc xanh mới báo xong.
 - Không merge PR nếu chưa có lệnh merge rõ ràng. Không deploy/release nếu chưa có lệnh riêng.
+
+## 4. Global Runtime Invariants — Delay, Concurrency và Browser Launch
+
+Các quy tắc trong mục này áp dụng cho **toàn bộ ứng dụng**, không phụ thuộc Page Tab, Kịch Bản, Workspace, Account Manager hay loại action. Implementation cũ mâu thuẫn với các invariant này là technical debt cần migration; không được dùng behavior cũ để định nghĩa lại semantics.
+
+### 4.1. Global Facebook Action Delay
+
+- `browser.actionDelayMinMs` / `browser.actionDelayMaxMs` là **delay thao tác Facebook dùng chung toàn app**.
+- Mọi thao tác Facebook có tác động thực tế như navigation, click, nhập dữ liệu, upload, submit hoặc thao tác UI tương đương phải đi qua Facebook Common pacing.
+- Workspace/action/business module không được tự bypass global pacing hoặc tạo một bản global delay riêng.
+- Delay riêng của nghiệp vụ như delay giữa bài, delay giữa Group, delay đổi account hoặc delay giữa action trong Kịch Bản là **delay cộng thêm**, không thay thế Global Facebook Action Delay.
+- Exception chỉ dành cho flow kỹ thuật thật sự time-critical và phải được định nghĩa tại Common Runtime; từng action không được tự quyết định bypass.
+
+### 4.2. Global Browser Launch Spacing
+
+- `runtime.browserLaunchSpacingMs` có một nghĩa duy nhất: **khoảng cách tối thiểu giữa hai lần thực sự mở Chrome/Profile mới trên toàn ứng dụng**.
+- UI/tài liệu không được diễn đạt field này thành “Delay mở Chrome giữa Page Tab” vì semantics là app-wide.
+- Mọi nơi có khả năng tạo Chrome mới đều phải đi qua **một Global Browser Launch Gate duy nhất thuộc Electron Main**: Account Manager, Page Tabs, Kịch Bản, Workspace, login/checkpoint và module tương lai.
+- Không được tạo `BrowserLaunchGate` riêng theo worker manager, workspace, Page hoặc business flow.
+- Không được dùng `runId`, `scopeId`, Page UID, workspace ID hoặc định danh tương tự để bỏ qua global launch spacing.
+- Khi nhiều profile được yêu cầu mở cùng lúc, request có thể xếp hàng nhưng actual launch phải tuần tự theo gate:
+
+```text
+Chrome 1 mở
+↓ browserLaunchSpacingMs
+Chrome 2 mở
+↓ browserLaunchSpacingMs
+Chrome 3 mở
+...
+```
+
+- Reuse/attach một Chrome đã mở không phải launch mới và không tiêu thụ launch spacing.
+
+### 4.3. Concurrency và Browser Launch Spacing là hai khái niệm độc lập
+
+- **Concurrency** = tối đa bao nhiêu account/Chrome được phép hoạt động đồng thời trong một orchestration/workspace.
+- **Browser Launch Spacing** = tốc độ các Chrome mới được phép thực sự xuất hiện.
+- Có concurrency lớn không cho phép bulk-launch Chrome.
+
+Ví dụ:
+
+```text
+Account concurrency = 10
+Browser launch spacing = 5 giây
+
+0s   Chrome 1
+5s   Chrome 2
+10s  Chrome 3
+...
+45s  Chrome 10
+```
+
+App vẫn có thể đạt 10 account chạy đồng thời sau khi các slot được lấp đầy, nhưng không được mở cả 10 Chrome tại cùng thời điểm.
+
+### 4.4. Account Concurrency là orchestration rule dùng chung
+
+- Workspace/flow có nhiều account phải dùng common orchestration/rolling-pool primitive thay vì tự viết cơ chế cấp account song song riêng nếu primitive chung đáp ứng được.
+- Mỗi workflow phải khai báo rõ concurrency policy của nó; không suy đoán từ UI hoặc code legacy.
+- Nếu workflow cho phép chạy song song, `accountConcurrency` là config/runtime policy của workflow, phải được validate và **snapshot khi Start**; thay đổi UI giữa phiên không đổi run đang chạy.
+- Config/record legacy không có `accountConcurrency` phải giữ **default `1`** để tương thích hành vi cũ.
+- `group_post` Page Tab **không còn là business invariant bắt buộc tuần tự**. Wording cũ “`group_post` luôn tuần tự/hiện giữ tuần tự cho tới batch riêng” được Issue #263 supersede: `accountConcurrency = 1` giữ behavior legacy; khi người dùng chủ động đặt `> 1` thì orchestration phải chạy **rolling/refill**, không batch barrier.
+- Cùng một account tuyệt đối không được hai Page/Workspace/Kịch Bản điều khiển đồng thời. `AccountExecutionCoordinator` là global account lock/lease dùng chung trong Electron Main và mọi runner phải tôn trọng.
+- Account đang bị workflow khác giữ global lease không được chiếm chết một concurrency slot nếu còn account khác trong queue acquire được; common pool phải bỏ qua tạm và quay lại account bị lock sau.
+- Account concurrency không được bypass Global Browser Launch Spacing; pool có thể có N slot active nhưng Chrome/Profile mới vẫn phải đi qua một global launch gate duy nhất.
+
+### 4.5. Không implementation cục bộ rule toàn app
+
+Business/workspace module không được tự sở hữu hoặc tự định nghĩa lại:
+
+- global browser launch gate;
+- global Facebook action pacing;
+- global account execution lock;
+- global runtime limits có semantics app-wide.
+
+Các module chỉ được đọc/sử dụng service chung từ Electron Main/Facebook Common Runtime. Nếu cần thay đổi một semantics app-wide, phải cập nhật mục invariant này trước rồi mới migration implementation.
+
+### 4.6. Group run-item claim/reservation khi có nhiều account
+
+Khi một run có nhiều account active cùng consume Group snapshot, chống trùng phải được bảo đảm tại **DB/repository boundary**, không dựa vào việc worker “đọc nhanh/chậm”:
+
+```text
+pending -> claimed/processing(owner) -> success
+                           |
+                           +-> release/retry hoặc failed theo policy
+```
+
+Invariant bắt buộc:
+
+- Claim một `run_item` phải atomic; không dùng `SELECT pending` rồi update tách rời theo cách hai worker có thể cùng nhận một Group.
+- Một `run_item` tại một thời điểm chỉ có tối đa một owner/claim; account khác chỉ được cấp item chưa claim hoặc đã release hợp lệ.
+- Success chỉ consume item trong **run hiện tại**; Group source gốc không bị xóa và run/time window sau clone lại từ source.
+- Pause không cấp claim/account mới; Resume tiếp tục snapshot cũ. Stop/crash/recovery phải có policy trả/recover claim đang giữ, không để `processing` treo vĩnh viễn.
+- Page Tab `group_post` và Scenario/Kịch Bản/flow khác nếu cùng consume `run_items` phải dùng **một claim primitive chung**, không tạo implementation chống trùng riêng theo workspace.
+- Trước migration schema phải audit model hiện có và chỉ thêm ownership/recovery field tối thiểu nếu status hiện tại chưa đủ; không thêm cột chỉ vì đoán.
+
+Audit Issue #263 tại `main@8adb1e2faf98d2990d5be7de494d4d05df2e1325` xác nhận `run_items` đã có `pending/processing/success/failed/skipped`, attempt/timestamp và `RunRepository.claimNext()` dùng transaction + conditional update, nhưng chưa lưu owner account/worker. Batch implementation phải tận dụng nền hiện có và bổ sung ownership/recovery tối thiểu nếu cần.
+
+### 4.7. Facebook Common Session Policy — `VALID / LOGGED_OUT / CHECKPOINT`
+
+Issue #266 chốt **một policy session duy nhất cho toàn app**. Mọi entrypoint có thể mở/chạy Facebook account (Account Manager, Kịch Bản, Tương tác, Nhóm, Page, Page Tab, Page Wall, scheduler/recovery và module tương lai) phải đi qua Facebook Common Runtime/Common Session Policy; business module không được vá login/checkpoint riêng theo từng màn.
+
+Top-level policy chỉ có ba trạng thái:
+
+- `VALID`: session đã được xác minh hợp lệ và đúng account UID; mới được phép chạy action/business target.
+- `LOGGED_OUT`: Facebook không còn session hợp lệ nhưng **không phải checkpoint**. Runtime phải tự recovery login trước khi trả quyền chạy action.
+- `CHECKPOINT`: bất kỳ checkpoint/identity verification/security review/account lock/disabled challenge/unsupported checkpoint nào cần xử lý thủ công. Account phải dừng Facebook action ngay; không auto-bypass.
+
+Recovery invariant cho `LOGGED_OUT`:
+
+1. Ngay tại execution/recovery boundary, Electron Main phải đọc lại **account canonical mới nhất từ DB**. Run snapshot được phép freeze business config/order nhưng **không được freeze cookie/password/2FA/UserAgent/proxy thành nguồn credential lâu dài**.
+2. Thứ tự recovery cố định: **cookie canonical mới nhất -> UID/UserName + password -> 2FA nếu Facebook yêu cầu trong login flow**.
+3. 2FA trong luồng login bình thường **không phải checkpoint**. Thiếu/sai 2FA giữ account ở nhánh login (`two_factor_required`/`two_factor_failed`) và không được chạy action cho tới khi login hợp lệ.
+4. Sau recovery phải verify session + account identity/UID; `click()`/navigation/submit thành công không được coi là recovery thành công.
+5. Khi recovery thành công, cookie mới đọc từ browser phải được persist lại canonical account; chỉ sau đó policy mới trở về `VALID` và workflow tiếp tục từ boundary an toàn.
+
+Checkpoint invariant:
+
+- Gặp `CHECKPOINT` ở trước action, giữa action, sau action, Page switch hay navigation đều phải kết thúc lượt Facebook của account đó và persist typed account status phù hợp (`checkpoint_*`, identity/security review, locked, disabled challenge...).
+- Multi-account workflow chỉ tiếp tục bằng account khác theo business policy; account checkpoint không được giữ chết slot/lease/claim/browser.
+- Pause/Resume/restart không được tin session snapshot cũ. Trước khi account quay lại pool phải chạy Common Session Gate bằng canonical credential mới nhất và chỉ tiếp tục khi xác nhận `VALID`.
+- Selector/detection checkpoint, login chain và account identity verification thuộc Common Runtime; business runner chỉ consume typed result và áp dụng orchestration policy.
+
+## 5. Email/Mailbox Module Isolation
+
+Mọi Email/Microsoft implementation phải tuân theo ownership trong `EMAIL_ARCHITECTURE.md` và `ARCHITECTURE.md` §28.
+
+Invariant bắt buộc:
+
+- **Mỗi loại mail/provider là một module độc lập.** Inboxes, FviaInboxes, MailtoPlus và Hotmail/Outlook Mailbox không chia sẻ DOM/selector/recovery implementation chỉ vì cùng phục vụ việc lấy code.
+- **Microsoft Auth và Hotmail/Outlook Mailbox là hai module khác nhau.** Microsoft Auth sở hữu surface/state đăng nhập Microsoft; Hotmail/Outlook Mailbox sở hữu việc đọc mailbox.
+- Microsoft Auth chỉ được yêu cầu code qua typed mailbox contract/router; không được import concrete provider driver/provider hoặc branch theo DOM/URL/poll/reload riêng của provider.
+- Router/Common chỉ được resolve provider, giữ contract/challenge identity và chuyển typed request/result. Provider-specific DOM, URL, popup/vignette, reload/recovery, polling policy và browser lifecycle phải nằm trong module provider tương ứng.
+- Provider không được quyết định Microsoft Auth đã authenticated; Microsoft Auth không được điều khiển internals của provider.
+- Recovery nhiều vòng phải giữ durable challenge/message identity; `messageKey` đã submit trong auth/recovery session không được dùng lại.
+- Source hiện tại mâu thuẫn với invariant này là technical debt cần migrate theo E-MOD-1..E-MOD-6; không được dùng coupling legacy làm mẫu cho provider mới hoặc bugfix mới.

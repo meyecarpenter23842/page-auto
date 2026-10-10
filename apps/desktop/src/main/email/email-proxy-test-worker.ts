@@ -2,6 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { chromium, type BrowserContext } from 'playwright-core'
+import '../browser/browserRuntime'
 
 interface ProxyConfig { server: string; username?: string; password?: string }
 interface ProxyTestCommand { type: 'test-proxy'; executablePath: string; proxy: ProxyConfig | null }

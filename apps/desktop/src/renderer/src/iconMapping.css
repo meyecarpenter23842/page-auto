@@ -56,24 +56,19 @@
 }
 
 .nav-icon {
-  color: transparent;
+  color: inherit;
   font-size: 0;
-  background-color: transparent;
-  background-image: var(--pa-icon-sprite);
-  background-repeat: no-repeat;
-  background-size: 800% 500%;
+  background: none;
   border-color: transparent;
 }
 
-.nav-item:nth-child(1) .nav-icon { background-position: 28.571429% 0%; }
-.nav-item:nth-child(2) .nav-icon { background-position: 0% 0%; }
-.nav-item:nth-child(3) .nav-icon { background-position: 14.285714% 0%; }
-.nav-item:nth-child(4) .nav-icon { background-position: 42.857143% 0%; }
-.nav-item:nth-child(5) .nav-icon { background-position: 57.142857% 0%; }
+.nav-icon svg {
+  display: block;
+}
 
 .nav-item.active .nav-icon {
-  color: transparent;
-  background-color: transparent;
+  color: inherit;
+  background: none;
   border-color: transparent;
 }
 

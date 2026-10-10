@@ -12,6 +12,10 @@ import {
   type PostSelectionMode,
   type SavePageTabPostItemInput
 } from '../../../shared/pageTabs'
+import {
+  CanonicalPostPicker,
+  type CanonicalPostPickerValue
+} from '../content-library/CanonicalPostPicker'
 import './postLibrary.css'
 
 interface Draft extends SavePageTabPostItemInput {
@@ -55,6 +59,17 @@ function fromCanonical(item: CanonicalPostSummary, sortOrder: number): Draft {
   }
 }
 
+function canonicalFromPicker(value: CanonicalPostPickerValue): CanonicalPostSummary {
+  return {
+    postId: value.postId,
+    name: value.item.name,
+    variants: [...value.item.variants],
+    image: { ...value.item.image },
+    createdAt: value.item.createdAt,
+    updatedAt: value.item.updatedAt
+  }
+}
+
 function newDraft(index: number): Draft {
   return {
     key: key(), postId: null, canonical: null, name: `Bài viết ${index + 1}`,
@@ -91,48 +106,10 @@ function overridden(draft: Draft): boolean {
     || draft.image.imagesPerPost !== base.image.imagesPerPost || draft.image.missingPolicy !== base.image.missingPolicy
 }
 
-function pickerPreview(item: CanonicalPostSummary): string {
-  const text = item.variants[0]?.replace(/\s+/g, ' ').trim()
-  if (text) return text
-  return item.image.folderPath ? 'Bài chỉ dùng ảnh, chưa có nội dung chữ.' : 'Chưa có nội dung xem trước.'
-}
-
-function Picker({ items, bound, onPick, onClose }: {
-  items: CanonicalPostSummary[]
-  bound: Set<number>
-  onPick: (item: CanonicalPostSummary) => void
-  onClose: () => void
-}) {
-  const [search, setSearch] = useState('')
-  const rows = useMemo(() => {
-    const query = search.trim().toLowerCase()
-    return items.filter((item) => !query || [item.name, ...item.variants].some((value) => value.toLowerCase().includes(query)))
-  }, [items, search])
-  return <div className="page-tab-modal-backdrop" role="presentation" onMouseDown={onClose}>
-    <section className="page-tab-modal pt-post-library-modal pt-post-picker-modal" role="dialog" aria-modal="true" onMouseDown={(e) => e.stopPropagation()}>
-      <div className="page-tab-modal-header pt-post-library-header"><div><p className="eyebrow">Kho bài viết gốc</p><h2>Chọn từ thư viện</h2><p className="pt-post-library-subtitle">Chỉ gắn bài có sẵn vào Page, không tạo bản copy.</p></div><button className="page-tab-icon-button" onClick={onClose}>×</button></div>
-      <div className="pt-post-picker-toolbar"><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Tìm tên hoặc nội dung…"/><span>{rows.length} bài · {bound.size} đang dùng</span></div>
-      <div className="pt-post-picker-list">{rows.map((item) => {
-        const isBound = bound.has(item.postId)
-        return <div className={isBound ? 'pt-post-picker-row bound' : 'pt-post-picker-row'} key={item.postId}>
-          <button className="pt-post-picker-copy" disabled={isBound} onClick={() => onPick(item)}>
-            <div className="pt-post-picker-title"><strong>{item.name}</strong><span>#{item.postId}</span></div>
-            <p className="pt-post-picker-preview">{pickerPreview(item)}</p>
-            <div className="pt-post-picker-meta"><span>{item.variants.length} biến thể</span><span>{item.image.folderPath ? `${item.image.imagesPerPost} ảnh/lượt` : 'Không ảnh'}</span><span>{item.image.mode === 'random' ? 'Ảnh ngẫu nhiên' : item.image.mode === 'filename_match' ? 'Khớp Group UID' : 'Ảnh lần lượt'}</span></div>
-          </button>
-          <button className={isBound ? 'pt-post-picker-action bound' : 'pt-post-picker-action'} disabled={isBound} onClick={() => onPick(item)}>{isBound ? 'Đang dùng' : 'Chọn'}</button>
-        </div>
-      })}{!rows.length ? <div className="pt-post-empty">Không có bài phù hợp.</div> : null}</div>
-      <div className="page-tab-modal-actions"><button className="pt-button secondary" onClick={onClose}>Đóng</button></div>
-    </section>
-  </div>
-}
-
 export function PostLibraryModal({ pageTabId, initialLibrary, onClose, onSaved }: Props) {
   const initial = useMemo(() => initialLibrary.posts.map(fromBinding), [initialLibrary])
   const [mode, setMode] = useState<PostSelectionMode>(initialLibrary.mode)
   const [posts, setPosts] = useState<Draft[]>(initial)
-  const [available, setAvailable] = useState(initialLibrary.availablePosts)
   const [selected, setSelected] = useState<string | null>(initial[0]?.key ?? null)
   const [editor, setEditor] = useState<Draft | null>(initial[0] ? { ...initial[0], image: copyImage(initial[0].image) } : null)
   const [creating, setCreating] = useState(false)
@@ -166,8 +143,19 @@ export function PostLibraryModal({ pageTabId, initialLibrary, onClose, onSaved }
     if (editorDirty && !window.confirm('Bỏ thay đổi chưa áp dụng và tạo bài mới?')) return
     const next = newDraft(posts.length); setSelected(null); setEditor(next); setCreating(true); setEditorDirty(true); setError(null)
   }
-  const pickExisting = (item: CanonicalPostSummary) => {
-    const next = fromCanonical(item, posts.length); setPosts((old) => [...old, next]); setSelected(next.key); setEditor(next); setCreating(false); setEditorDirty(false); setDirty(true); setPicker(false)
+  const pickExisting = (values: CanonicalPostPickerValue[]) => {
+    const additions = values
+      .filter((value) => !bound.has(value.postId))
+      .map((value, index) => fromCanonical(canonicalFromPicker(value), posts.length + index))
+    if (!additions.length) { setPicker(false); return }
+    const focus = additions[0]!
+    setPosts((old) => [...old, ...additions])
+    setSelected(focus.key)
+    setEditor(focus)
+    setCreating(false)
+    setEditorDirty(false)
+    setDirty(true)
+    setPicker(false)
   }
   const applyEditor = () => {
     if (!editor) return
@@ -215,7 +203,7 @@ export function PostLibraryModal({ pageTabId, initialLibrary, onClose, onSaved }
       if (editor && (editorDirty || creating)) { validate(editor); const normalized = { ...editor, variants: parsePostVariantText(editor.variantText), image: copyImage(editor.image) }; next = creating ? [...posts, normalized] : posts.map((item) => item.key === normalized.key ? normalized : item) }
       next.forEach(validate)
       const saved = await window.pageAuto.savePageTabPostLibrary({ pageTabId, mode, posts: next.map(toInput) })
-      const drafts = saved.posts.map(fromBinding); setPosts(drafts); setAvailable(saved.availablePosts); setMode(saved.mode); setDirty(false); setEditorDirty(false); setCreating(false)
+      const drafts = saved.posts.map(fromBinding); setPosts(drafts); setMode(saved.mode); setDirty(false); setEditorDirty(false); setCreating(false)
       const first = drafts[0] ?? null; setSelected(first?.key ?? null); setEditor(first ? { ...first, image: copyImage(first.image) } : null); onSaved(saved)
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)) } finally { setSaving(false) }
   }
@@ -249,6 +237,6 @@ export function PostLibraryModal({ pageTabId, initialLibrary, onClose, onSaved }
         <div className="page-tab-modal-actions"><span className="pt-modal-save-note">Run snapshot khi Start; sửa sau Start không đổi phiên đang chạy.</span><button className="pt-button secondary" onClick={close}>Đóng</button><button className="pt-button primary" disabled={saving || !unsaved} onClick={() => void save()}>{saving ? 'Đang lưu…' : 'Lưu thay đổi'}</button></div>
       </section>
     </div>
-    {picker ? <Picker items={available} bound={bound} onPick={pickExisting} onClose={() => setPicker(false)}/> : null}
+    {picker ? <CanonicalPostPicker mode="multiple" title="Chọn bài cho Đăng Nhóm" disabledPostIds={[...bound]} onApply={pickExisting} onClose={() => setPicker(false)} /> : null}
   </>
 }

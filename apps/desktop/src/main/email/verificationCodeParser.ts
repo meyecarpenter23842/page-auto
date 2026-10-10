@@ -29,8 +29,11 @@ const KEYWORDS = [
   'verify'
 ]
 
+const EMAIL_ADDRESS = /[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9.-]+\.[a-z]{2,}/gi
+const LABELLED_NUMERIC_CODE = /(?:verification|security|one[- ]?time|single[- ]?use)\s+code(?:\s+is)?\s*[:#-]?\s*(\d{4,8})|mã\s+(?:xác minh|bảo mật|đăng nhập)(?:\s+là)?\s*[:#-]?\s*(\d{4,8})/gi
 const NUMERIC_CODE = /(?<!\d)(\d{4,8})(?!\d)/g
 const ALPHANUMERIC_CODE = /\b([A-Z0-9]{6,8})\b/g
+const YEAR_LIKE_CODE = /^(?:19|20)\d{2}$/
 
 function scoreMessage(message: MailMessageSnapshot, now: number): number {
   const text = `${message.sender}\n${message.subject}\n${message.bodyPreview}\n${message.bodyText}`.toLowerCase()
@@ -46,14 +49,41 @@ function scoreMessage(message: MailMessageSnapshot, now: number): number {
   return score
 }
 
+function uniqueCodes(values: Array<string | undefined>): string[] {
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const value of values) {
+    if (!value || seen.has(value)) continue
+    seen.add(value)
+    result.push(value)
+  }
+  return result
+}
+
 function candidatesFromMessage(message: MailMessageSnapshot): string[] {
-  const text = `${message.subject}\n${message.bodyPreview}\n${message.bodyText}`
-  const numeric = Array.from(text.matchAll(NUMERIC_CODE), (match) => match[1]).filter((value): value is string => Boolean(value))
+  // Email local-parts can legitimately contain 4-8 digit runs (for example
+  // owner37063b2401@fivermail.com). They are identifiers, not OTP candidates.
+  const rawText = `${message.subject}\n${message.bodyPreview}\n${message.bodyText}`
+  const text = rawText.replace(EMAIL_ADDRESS, ' ')
+  const labelled = uniqueCodes(Array.from(text.matchAll(LABELLED_NUMERIC_CODE), (match) => match[1] ?? match[2]))
+  if (labelled.length > 0) return labelled
+
+  const numeric = uniqueCodes(Array.from(text.matchAll(NUMERIC_CODE), (match) => match[1]))
+    // A standalone current/copyright year such as 2026 is common in Microsoft
+    // message chrome and must never outrank the actual OTP merely because it is
+    // the first numeric run in the rendered body.
+    .filter((value) => !YEAR_LIKE_CODE.test(value))
+
+  // Live Microsoft security codes are normally six digits. Prefer a six-digit
+  // candidate over unrelated 4/5/7/8-digit references when the message does not
+  // explicitly label the code. Labelled codes above remain authoritative even
+  // when a provider/account uses another supported length.
+  const sixDigit = numeric.filter((value) => value.length === 6)
+  if (sixDigit.length > 0) return sixDigit
   if (numeric.length > 0) return numeric
 
   if (KEYWORDS.some((keyword) => text.toLowerCase().includes(keyword))) {
-    return Array.from(text.toUpperCase().matchAll(ALPHANUMERIC_CODE), (match) => match[1])
-      .filter((value): value is string => typeof value === 'string')
+    return uniqueCodes(Array.from(text.toUpperCase().matchAll(ALPHANUMERIC_CODE), (match) => match[1]))
       .filter((value) => /\d/.test(value) && /[A-Z]/.test(value))
   }
   return []

@@ -14,10 +14,13 @@ Nguyên tắc cốt lõi:
 - Page không phải account; Page được switch theo Page UID từ session account.
 - **1 Page Tab = 1 Page UID + một container nhiều nghiệp vụ của Page đó**, không còn được hiểu là chỉ một cấu hình đăng Group.
 - Danh sách account của Page được dùng làm nguồn chung; từng nghiệp vụ có cấu hình/runtime riêng khi cần.
-- Account trong cùng một phiên/nghiệp vụ của Page chạy tuần tự, không song song.
-- Nhiều Page Tab khác nhau có thể chạy song song theo giới hạn cấu hình.
+- `accountConcurrency` là policy của từng orchestration/workspace, không phải một giới hạn cố định toàn app. Config/record legacy thiếu field phải giữ default `1`; workflow cho phép parallel phải snapshot giá trị này khi Start.
+- `group_post` Page Tab không còn bị khóa bởi invariant “bắt buộc tuần tự”: `TK song song = 1` giữ behavior legacy, còn `>1` phải chạy rolling/refill qua common account lease và atomic Group claim theo Issue #263.
+- Workspace `Tương tác` là reference implementation hiện tại của **rolling pool/cuốn chiếu**: luôn cố giữ tối đa N account active; slot nào kết thúc thì account kế tiếp vào ngay, không chờ cả nhóm N account cùng xong.
+- Nhiều Page Tab/workspace khác nhau có thể chạy song song theo giới hạn cấu hình và account-level lock.
 - Group gốc không bị xóa; mỗi run Group clone snapshot riêng để chống trùng trong phiên.
 - Bài viết gốc nằm trong Thư viện Bài viết chung; consumer snapshot nội dung khi tạo run.
+- Hashtag cuối bài là metadata của bài canonical trong Thư viện Bài viết, không phải cấu hình riêng của Page Wall. Page Wall snapshot source hashtag riêng, worker spin nội dung và hashtag độc lập rồi mới ghép; consumer khác giữ behavior hiện tại.
 - React chỉ làm UI; renderer không truy cập DB/browser trực tiếp.
 - Electron Main quản lý SQLite, scheduler và worker lifecycle.
 - Playwright chạy ở worker/utility process riêng để browser lỗi không làm treo UI.
@@ -82,8 +85,10 @@ Ràng buộc:
 
 - Renderer chỉ gọi typed IPC qua preload.
 - Main giữ quyền DB, filesystem và worker.
-- Một Page Tab/nghiệp vụ đang chạy không được tạo chạy song song nhiều account trong chính phiên đó.
-- Nhiều Page Tab có thể chạy song song theo giới hạn cấu hình.
+- Concurrency là policy của từng orchestration/business workspace, không phải giả định cố định toàn app. Workflow cho phép parallel dùng common rolling pool theo `accountConcurrency`; legacy/default = `1`.
+- `group_post` Page Tab được phép configurable account concurrency theo Issue #263; `1` giữ semantics tuần tự cũ, `>1` phải rolling/refill và dùng Group claim atomic.
+- Cùng một account không được bị hai workflow điều khiển đồng thời; mọi flow phải tôn trọng account-level execution coordinator/lease dùng chung.
+- Nhiều Page Tab/workspace có thể chạy song song khi không tranh cùng account và còn giới hạn runtime cho phép.
 - Mỗi browser action/provider action phải có typed result; không viết một script dài khó bảo trì.
 
 ### 3.2. Tầng A — Facebook dùng chung
@@ -111,6 +116,9 @@ Tầng này quản lý phiên nhưng **không biết selector/nút Facebook cụ
 
 - account nào đang chạy;
 - account nào đã chạy lượt trong phiên;
+- policy tuần tự hoặc concurrency của workspace;
+- rolling pool/slot refill khi workspace hỗ trợ chạy song song;
+- account-level lease để không chạy trùng cùng một account giữa nhiều workflow;
 - số bài/account;
 - delay giữa bài;
 - delay đổi account;
@@ -274,9 +282,11 @@ Giữ toàn bộ nghiệp vụ hiện tại:
 - số bài/account
 - delay bài, delay đổi account
 - ngày chạy + nhiều time windows
+- `TK song song` / `accountConcurrency`: legacy/default `1`; người dùng có thể chủ động tăng và khi `>1` phải chạy rolling/refill, không chia batch
+- account đang bận ở workflow khác không được chiếm chết slot nếu còn account khác runnable
 - sequential/random ở consumer
 - runtime/log
-- snapshot Group chống trùng trong phiên
+- snapshot Group chống trùng trong phiên với claim/reservation atomic khi có nhiều account active
 - snapshot bài viết khi mở run để thư viện gốc có thể sửa độc lập
 
 ### 5.2. Đăng Tường (`page_wall_post`)
@@ -346,13 +356,17 @@ Group Set gốc luôn giữ nguyên.
 Group Set gốc -> clone -> run_items
 ```
 
-Run item: pending / processing / success / failed / skipped.
+Run item hiện có trạng thái: pending / processing / success / failed / skipped.
 
 Constraint hiện tại: `UNIQUE(run_id, group_uid)`.
 
+Khi nhiều account chạy cùng một run, allocator phải claim item atomically tại repository/DB boundary. Một `run_item` chỉ được có tối đa một owner/claim tại một thời điểm; account khác chỉ lấy item chưa claim hoặc đã release hợp lệ. Success consume item trong run hiện tại; lỗi trước khi hoàn thành target phải release/retry/terminal-fail theo policy rõ, không để `processing` treo sau Stop/crash/recovery.
+
 Chỉ consume group khỏi run hiện tại khi publish được xác nhận success theo policy hiện hành. Không xóa group khỏi source và không coi click nút Đăng là success.
 
-Refactor kiến trúc không được làm thay đổi hành vi Group đang chạy ổn nếu batch đó không chủ đích thay đổi nghiệp vụ.
+Pause không cấp claim mới; Resume tiếp tục snapshot cũ. Run/time window sau tạo snapshot mới từ Group source gốc.
+
+Refactor kiến trúc không được làm thay đổi hành vi Group đang chạy ổn ngoài semantics concurrency/claim đã được Issue #263 chốt.
 
 ---
 
@@ -446,7 +460,8 @@ Facebook Common
 
 Run Orchestration
   Scheduler
-  Account turn / rotation
+  Account turn / rotation / rolling account pool
+  Account execution lease
   Pause / Resume / Stop
   Worker lifecycle
   Runtime status / logs
@@ -474,6 +489,47 @@ App restart không mất config/lịch sử. Item đang processing mà publish c
 Retry chỉ áp dụng lỗi được policy đánh dấu an toàn; lỗi publish_unconfirmed/manual_review không auto-retry.
 
 Orchestration không được chứa Facebook selector cụ thể.
+
+### 8.1. Rolling account concurrency cho workspace Tương tác
+
+- `accountConcurrency` là config orchestration, không phải một atomic Facebook action.
+- Giá trị hiện hành cho UI/runtime Tương tác là `1..20`; config legacy không có field này phải parse về `1` để giữ compatibility.
+- Khi Start, config và account order được freeze vào snapshot. Thay đổi `TK song song` trên UI sau đó không đổi phiên đang chạy.
+- Runner dùng **rolling pool**, không chia batch: nếu N slot đang chạy và một account hoàn tất/needs-attention/off, slot vừa trống được cấp account kế tiếp ngay khi phiên còn runnable.
+- Account đang bị một workflow khác giữ global execution lease không được chiếm một slot rỗng nếu còn account khác trong queue có thể acquire; queue sẽ quay lại account bị lock sau.
+- Pause/Resume/Stop phải tác động trên toàn bộ account active trong pool và không cấp account mới khi phiên paused/stopping.
+- `Tương tác` là reference implementation hiện có của contract rolling-pool; Issue #263 mở cùng contract cho các multi-account flow khác thay vì viết pool riêng.
+
+### 8.2. Issue #263 — chuẩn hóa Account Concurrency toàn các runner
+
+Audit tại `main@8adb1e2faf98d2990d5be7de494d4d05df2e1325` chốt ma trận hiện trạng và lộ trình:
+
+| Flow | Hiện trạng audit | Policy đích |
+| --- | --- | --- |
+| Tương tác | đã dùng `runRollingAccountPool` + `tryAcquireLease()` | giữ configurable rolling concurrency |
+| Kịch Bản/Scenario | custom `Promise.all` worker-loop + `accountExecution.run()` | migrate sang common rolling pool; locked account không chiếm slot |
+| Nhóm standalone | common pool nhưng hard-code `concurrency: 1` | thêm `accountConcurrency`, legacy/default `1` |
+| Page → Tham gia nhóm | common pool nhưng hard-code `concurrency: 1` | thêm `accountConcurrency`, legacy/default `1` |
+| Page Tab `group_post` | `RotationService` tuần tự | configurable `accountConcurrency`, default `1`; `>1` rolling + Group claim atomic |
+| Page Wall job | một account/job | giữ single-account job; không thêm concurrency giả nếu orchestration không cần |
+
+Yêu cầu chung:
+
+- Config/DB/IPC/UI của flow được mở parallel phải validate và snapshot concurrency khi Start.
+- Common rolling pool phải refill ngay khi slot trống; không dùng batch barrier.
+- Global `AccountExecutionCoordinator` vẫn là một lock table toàn Main; không tạo lock riêng theo workspace.
+- Global Browser Launch Spacing độc lập với concurrency; tăng slot không được bulk-launch Chrome.
+- Pause không cấp account/claim mới; Resume dùng snapshot cũ; Stop ngừng cấp việc mới và recovery phải giải phóng resource/claim đúng policy.
+
+Audit `run_items` cho thấy model hiện có status/attempt/timestamp và `RunRepository.claimNext()` đã dùng transaction + conditional update để tránh hai update cùng thắng, nhưng chưa lưu owner account/worker. Batch `group_post` concurrency phải tận dụng model này, bổ sung ownership/recovery tối thiểu nếu cần và dùng chung primitive cho Scenario/flow khác cùng consume `run_items`.
+
+Thứ tự implementation Issue #263:
+
+1. Docs + repo-wide audit.
+2. Chuẩn hóa common orchestration; migrate Scenario + regression global lease/slot refill.
+3. Mở concurrency Nhóm standalone và Page → Tham gia nhóm, gồm config/IPC/UI/snapshot, default `1`.
+4. Mở Page Tab `group_post` + atomic Group claim/release/recovery.
+5. Regression toàn ma trận + CI; không merge khi chưa có lệnh.
 
 ---
 
@@ -637,6 +693,13 @@ Các phase nền cũ vẫn có giá trị lịch sử: Bootstrap -> Account -> S
 
 - Group source/run chống trùng không đổi ngoài thay đổi được chốt.
 - Group Post trước/sau refactor common runtime phải giữ cùng observable behavior.
+- `group_post` với `accountConcurrency = 1` phải giữ behavior tuần tự legacy; `>1` phải rolling/refill và không có hai account claim cùng Group run item.
+- Workspace Tương tác có regression chứng minh rolling pool: với concurrency 2, account thứ 3 bắt đầu ngay khi một trong hai slot đầu kết thúc dù slot còn lại vẫn đang chạy.
+- Scenario/Kịch Bản sau migration phải dùng common rolling-pool contract thay vì custom worker-loop, đồng thời giữ delay/pause/error semantics hiện có.
+- Nhóm standalone và Page → Tham gia nhóm: legacy config thiếu `accountConcurrency` phải parse về `1`; khi `>1` slot trống phải refill ngay.
+- Account bị global lock không làm mất một concurrency slot khi còn account khác có thể chạy; cùng một account không chạy trùng giữa workflow.
+- Config legacy của Tương tác không có `accountConcurrency` phải giữ default 1; giới hạn concurrency được validate trước worker launch.
+- Pause/Resume/Stop/crash recovery không được để Group claim hoặc account lease treo; Group source gốc vẫn đầy đủ cho run/time window mới.
 - Session/login/2FA/checkpoint/Page switch có test ở common layer, không duplicate test implementation trong từng business.
 - Orchestration test không phụ thuộc Facebook selector.
 - Worker crash/browser failure không làm treo renderer.
@@ -655,18 +718,19 @@ Live bug liên quan checkpoint/2FA continuation chỉ được coi fixed sau liv
 2. Custom Import map tối thiểu 9 cột và mở rộng theo input.
 3. Account giữ persistent session qua restart.
 4. Page Tab là container của một Page và hỗ trợ nhiều nghiệp vụ rõ ràng.
-5. Account tuần tự trong một phiên/nghiệp vụ; nhiều Page Tab có thể chạy song song.
+5. Mọi multi-account flow có concurrency policy explicit. `group_post` legacy/default `1` giữ tuần tự; `TK song song > 1` dùng rolling concurrency + atomic Group claim, không batch barrier và vẫn tôn trọng global account lock.
 6. Login/2FA/checkpoint/account identity/Page switch có một nguồn Facebook Common dùng chung, không copy theo nghiệp vụ.
-7. Group source không bị phá; run chống trùng và Group vẫn chạy sau refactor.
+7. Group source không bị phá; success chỉ consume run item hiện tại, không hai account claim cùng Group, run/time window sau clone lại source.
 8. UI Page có `Nhóm / Đăng Tường / Sửa Page`, compact control và preview runtime theo kế hoạch.
 9. Status gốc account và status trong phiên Page tách biệt.
-10. Pause/resume/stop/recovery/log hoạt động và orchestration không biết selector Facebook.
+10. Pause/resume/stop/recovery/log hoạt động và orchestration không biết selector Facebook; account lease/Group claim không bị treo.
 11. Secret không lộ mặc định; CAPTCHA provider key không nằm trong backup/log.
 12. External Profile Root khi bật resolve `Root\UID` strict, không clone/fallback.
 13. Windows artifact là portable folder/ZIP với PageAuto.exe.
 14. Đăng Tường và Sửa Page sử dụng common runtime, không nhân bản code Group/session.
 15. Thư viện Bài viết là nguồn global dùng chung; Page/Kịch Bản không sở hữu bản copy DB riêng và run dùng snapshot.
 16. Các lỗi checkpoint + post-2FA continuation chỉ đóng sau live retest thực tế.
+17. Account concurrency không bypass Global Browser Launch Spacing; tăng `TK song song` không được bulk-launch Chrome.
 
 ---
 
@@ -703,3 +767,33 @@ Live bug liên quan checkpoint/2FA continuation chỉ được coi fixed sau liv
 - Trước mọi commit/push phải báo rõ phạm vi thay đổi nếu cuộc trao đổi hiện tại chưa cho phép thao tác đó.
 
 **Baseline này là quyết định hiện hành để code.**
+
+---
+
+## 16. Data root ổn định trước Installer/Updater — quyết định 2026-09-06
+
+Lô chuẩn bị installer đầu tiên thay đổi **ownership vị trí dữ liệu runtime**, nhưng chưa thay đổi packaging sang installer:
+
+- Windows artifact của lô này vẫn giữ portable folder/ZIP và `PageAuto.exe`; NSIS/Setup/R2 updater thuộc lô sau.
+- DB, browser profile do app quản lý, log, screenshot, backup và checkpoint asset không còn được coi là dữ liệu đi theo thư mục cài/chứa executable.
+- Data root mặc định trên Windows là `%LOCALAPPDATA%\PageAuto\data`.
+- `PAGE_AUTO_DATA_DIR` vẫn là override explicit dành cho vận hành/dev và khi có override app không tự adopt nguồn legacy khác.
+- Lần chạy đầu tiên mà data root mới chưa có `page-auto.sqlite`, Main được phép adopt dữ liệu legacy theo thứ tự: packaged `<PageAuto.exe>\..\data` trước, sau đó `app.getPath('userData')\data`.
+- Adopt luôn **copy**, không move/xóa nguồn cũ. Toàn bộ source được copy qua staging; chỉ đổi target sau khi copy hoàn tất.
+- Trước khi `initializeDatabase()` chạy migration schema trên bản đã adopt, phải có snapshot `page-auto.sqlite` và sidecar `-wal/-shm` (nếu tồn tại) dưới `backups/pre-stable-data-root-*`.
+- Nếu target mới đã có DB thì đó là canonical data và không được adopt/ghi đè lại từ nguồn legacy.
+- Nếu target mới đã tồn tại nhưng chưa có DB, phải bảo toàn target đó thành sibling `data-before-adoption-*` trước khi activate bản legacy đã copy.
+- Nếu copy/activate lỗi, không được âm thầm tạo DB trắng thay thế dữ liệu cũ; staging được dọn và target đã displaced phải rollback khi có thể.
+- Browser profile/account/session/cookie thật tiếp tục không commit Git và không được đóng gói vào release artifact.
+
+Regression tối thiểu cho data root:
+
+1. packaged và dev cùng resolve về stable LocalAppData khi có `LOCALAPPDATA`;
+2. override vẫn thắng;
+3. portable legacy -> stable root giữ nguyên source + copy đủ profile/DB;
+4. dev legacy `userData/data` -> stable root;
+5. restart lần hai không migrate/overwrite lại;
+6. target chưa có DB được bảo toàn trước adoption;
+7. không có legacy DB thì tạo layout mới bình thường.
+
+Việc test bằng **DB/profile thật đang dùng trên máy Windows** là acceptance riêng trước khi chuyển sang lô NSIS: đóng app cũ, backup data hiện tại, chạy build mới, kiểm tra account/Page/settings/content/session/profile còn nguyên, restart lần hai và xác nhận không adopt lại.

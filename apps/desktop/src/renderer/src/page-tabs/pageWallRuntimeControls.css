@@ -1,0 +1,94 @@
+.page-wall-now-options {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 7px;
+  padding: 8px 10px;
+  border: 1px solid var(--wall-border);
+  border-radius: 8px;
+  background: var(--wall-panel-2);
+}
+
+.page-wall-now-options > label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  color: var(--wall-text);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.page-wall-now-options > label > div {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.page-wall-now-options input {
+  width: 72px;
+  min-height: 28px;
+  padding: 4px 7px;
+  border: 1px solid var(--wall-border-strong);
+  border-radius: 7px;
+  color: var(--wall-text);
+  background: var(--wall-panel);
+  font: inherit;
+}
+
+.page-wall-now-options small {
+  color: var(--wall-muted);
+  font-size: 9px;
+  line-height: 1.35;
+}
+
+.page-wall-plan-row {
+  grid-template-columns: 7px minmax(0, 1fr) auto auto auto 22px;
+}
+
+.page-wall-plan-row.runtime-running i {
+  background: #3b82f6;
+  animation: page-wall-runtime-pulse 1s ease-in-out infinite alternate;
+}
+
+.page-wall-plan-row.runtime-completed i { background: var(--wall-success); }
+.page-wall-plan-row.runtime-disabled i { background: #64748b; }
+.page-wall-plan-row.runtime-needs_attention i { background: var(--wall-warning); }
+.page-wall-plan-row.runtime-failed i { background: #dc2626; }
+.page-wall-plan-row.runtime-active i { background: var(--wall-accent); }
+
+.page-wall-plan-row .page-wall-plan-toggle {
+  min-width: 52px;
+  padding: 4px 6px;
+  border: 1px solid var(--wall-border-strong);
+  border-radius: 6px;
+  color: var(--wall-text);
+  background: var(--wall-panel-2);
+  font-weight: 800;
+}
+
+.page-wall-plan-row .page-wall-plan-toggle.resume {
+  color: var(--wall-accent);
+}
+
+.page-wall-plan-toggle-spacer {
+  width: 52px;
+}
+
+.page-wall-history-note {
+  display: block;
+  margin: 8px 13px 0;
+  padding: 7px 9px;
+  border: 1px solid color-mix(in srgb, var(--wall-warning) 45%, var(--wall-border));
+  border-radius: 7px;
+  color: var(--wall-warning);
+  background: color-mix(in srgb, var(--wall-warning) 9%, transparent);
+  font-size: 9px;
+  font-weight: 700;
+}
+
+@keyframes page-wall-runtime-pulse {
+  from { opacity: .55; }
+  to { opacity: 1; }
+}

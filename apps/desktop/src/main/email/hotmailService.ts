@@ -306,6 +306,7 @@ export class HotmailService {
             null,
             payload.operation,
             account.backupEmail,
+            recoveryEmail,
             Boolean(payload.confirmCompleted)
           )
           this.runtimeStatus.set(accountId, 'error')
@@ -323,6 +324,7 @@ export class HotmailService {
           proxy,
           payload.operation,
           account.backupEmail,
+          recoveryEmail,
           Boolean(payload.confirmCompleted)
         )
 
@@ -466,6 +468,47 @@ export class HotmailService {
 
   rotateProxy(): HotmailProxyStatus {
     return this.proxyPool.rotate()
+  }
+
+  async testProxyAt(index: number): Promise<HotmailProxyTestResult> {
+    const settings = this.repository.getProfileSettings()
+    const proxy = this.proxyPool.candidateAt(index)
+    if (!proxy) {
+      return { ok: false, proxy: null, publicIp: null, message: 'Proxy Email không còn tồn tại trong pool.' }
+    }
+    const executable = await this.resolveBrowserExecutable(settings.browserExecutable, settings.profileRoot)
+    const result = await testEmailProxy(proxy, executable)
+    if (result.ok) this.proxyPool.recordSuccess(proxy)
+    else this.proxyPool.recordFailure(proxy)
+    return result
+  }
+
+  removeProxyAt(index: number): HotmailProxyStatus {
+    const settings = this.repository.getProxySettings()
+    if (!Number.isInteger(index) || index < 0 || index >= settings.entries.length) {
+      throw new Error('Proxy Email không còn tồn tại trong pool.')
+    }
+    const next = [...settings.entries]
+    next.splice(index, 1)
+    if (settings.mode === 'random_ipv4' && next.length === 0) {
+      throw new Error('Random IPv4 cần ít nhất một proxy. Hãy chuyển sang Trực tiếp trước khi xóa proxy cuối.')
+    }
+    this.repository.saveProxyEntries(next)
+    return this.proxyPool.status('Đã xóa proxy khỏi pool. Phiên Email đang mở giữ nguyên network hiện tại.')
+  }
+
+  replaceProxyAt(index: number, rawProxy: string): HotmailProxyStatus {
+    const settings = this.repository.getProxySettings()
+    if (!Number.isInteger(index) || index < 0 || index >= settings.entries.length) {
+      throw new Error('Proxy Email không còn tồn tại trong pool.')
+    }
+    const replacement = normalizeEmailProxyLines(rawProxy)
+    if (replacement.length !== 1) throw new Error('Thay proxy cần đúng một proxy IPv4 hợp lệ.')
+    const next = [...settings.entries]
+    next[index] = replacement[0]!
+    const normalized = normalizeEmailProxyLines(next.join('\n'))
+    this.repository.saveProxyEntries(normalized)
+    return this.proxyPool.status('Đã thay proxy trong pool. Proxy mới áp dụng cho phiên Email kế tiếp.')
   }
 
   async testProxy(): Promise<HotmailProxyTestResult> {

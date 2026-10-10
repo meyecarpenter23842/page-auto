@@ -15,7 +15,13 @@ export interface CreatePageWallJobInput {
   accountUid: string
   accountName: string | null
   content: string
+  hashtags?: string
   imagePaths: string[]
+}
+
+export interface PageWallBusinessBindingRow {
+  id: number
+  configJson: string
 }
 
 interface PageWallJobRow {
@@ -88,7 +94,16 @@ function parseSessionValidation(value: string | null): PostingSessionValidation 
   }
 }
 
-function rowToRecord(row: PageWallJobRow): PageWallJobRecord {
+function occurrenceKeyFromLogs(logs: PageWallJobLogEntry[]): string | null {
+  for (const entry of logs) {
+    const match = /^\[wall-occurrence:([^\]]+)\]/.exec(entry.message)
+    if (match?.[1]) return match[1]
+  }
+  return null
+}
+
+function rowToRecord(row: PageWallJobRow, hashtags = ''): PageWallJobRecord {
+  const logs = parseLogs(row.logsJson)
   return {
     id: row.id,
     status: row.status as PageWallJobStatus,
@@ -100,7 +115,9 @@ function rowToRecord(row: PageWallJobRow): PageWallJobRecord {
     accountUid: row.accountUid,
     accountName: row.accountName,
     content: row.content,
+    ...(hashtags ? { hashtags } : {}),
     imagePaths: parseStringArray(row.imagePathsJson),
+    occurrenceKey: occurrenceKeyFromLogs(logs),
     resultStatus: row.resultStatus as PageWallJobRecord['resultStatus'],
     resultCode: row.resultCode as PageWallJobRecord['resultCode'],
     resultMessage: row.resultMessage,
@@ -108,7 +125,7 @@ function rowToRecord(row: PageWallJobRow): PageWallJobRecord {
     screenshotPath: row.screenshotPath,
     tracePath: row.tracePath,
     sessionValidation: parseSessionValidation(row.sessionValidationJson),
-    logs: parseLogs(row.logsJson),
+    logs,
     createdAt: row.createdAt,
     startedAt: row.startedAt,
     finishedAt: row.finishedAt,
@@ -120,39 +137,58 @@ function appendLog(logs: PageWallJobLogEntry[], at: number, message: string): Pa
   return [...logs, { at, message }].slice(-50)
 }
 
+function occurrenceMarker(occurrenceKey: string): string {
+  return `[wall-occurrence:${occurrenceKey.trim()}]`
+}
+
 export class PageWallJobRepository {
   constructor(private readonly client: Database.Database) {}
 
+  private hashtagSource(jobId: number): string {
+    const row = this.client.prepare(
+      'SELECT source FROM page_wall_job_hashtags WHERE job_id = ?'
+    ).get(jobId) as { source: string } | undefined
+    return String(row?.source ?? '').trim()
+  }
+
   create(input: CreatePageWallJobInput, now = Date.now()): PageWallJobRecord {
-    const result = this.client.prepare(`
-      INSERT INTO page_wall_jobs (
-        status, scheduled_at, page_tab_id, page_tab_name, page_uid,
-        account_id, account_uid, account_name, content, image_paths_json,
-        logs_json, created_at, updated_at
-      ) VALUES ('pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      input.scheduledAt,
-      input.pageTabId,
-      input.pageTabName,
-      input.pageUid,
-      input.accountId,
-      input.accountUid,
-      input.accountName,
-      input.content,
-      JSON.stringify(input.imagePaths),
-      JSON.stringify([{ at: now, message: 'Đã tạo lịch hẹn đăng.' } satisfies PageWallJobLogEntry]),
-      now,
-      now
-    )
-    const created = this.get(Number(result.lastInsertRowid))
-    if (!created) throw new Error('Không thể đọc lại lịch Đăng Tường vừa tạo.')
-    return created
+    return this.insert(input, now, 'Đã tạo lịch hẹn đăng.')
+  }
+
+  recurringOccurrenceExists(pageTabId: number, occurrenceKey: string): boolean {
+    const marker = occurrenceMarker(occurrenceKey)
+    if (marker === '[wall-occurrence:]') return false
+    return Boolean(this.client.prepare(`
+      SELECT 1
+      FROM page_wall_jobs
+      WHERE page_tab_id = ? AND instr(logs_json, ?) > 0
+      LIMIT 1
+    `).get(pageTabId, marker))
+  }
+
+  createRecurringOccurrence(input: CreatePageWallJobInput, occurrenceKey: string, now = Date.now()): PageWallJobRecord | null {
+    const marker = occurrenceMarker(occurrenceKey)
+    if (marker === '[wall-occurrence:]') throw new Error('Occurrence key không hợp lệ.')
+    const create = this.client.transaction(() => {
+      if (this.recurringOccurrenceExists(input.pageTabId, occurrenceKey)) return null
+      return this.insert(input, now, `${marker} Đã tạo occurrence từ Lịch chạy.`)
+    })
+    return create()
+  }
+
+  listPageWallBusinessBindings(): PageWallBusinessBindingRow[] {
+    const rows = this.client.prepare(`
+      SELECT id, config_json AS configJson
+      FROM action_workspaces
+      ORDER BY id
+    `).all() as Array<Record<string, unknown>>
+    return rows.map((row) => ({ id: Number(row.id), configJson: String(row.configJson) }))
   }
 
   get(id: number): PageWallJobRecord | null {
     const row = this.client.prepare(`SELECT ${selectColumns} FROM page_wall_jobs WHERE id = ?`)
       .get(id) as PageWallJobRow | undefined
-    return row ? rowToRecord(row) : null
+    return row ? rowToRecord(row, this.hashtagSource(row.id)) : null
   }
 
   list(limit = 200): PageWallJobRecord[] {
@@ -166,7 +202,7 @@ export class PageWallJobRepository {
         id DESC
       LIMIT ?
     `).all(safeLimit) as PageWallJobRow[]
-    return rows.map(rowToRecord)
+    return rows.map((row) => rowToRecord(row, this.hashtagSource(row.id)))
   }
 
   claimNextDue(now: number, excludedPageTabIds: number[] = []): PageWallJobRecord | null {
@@ -183,7 +219,7 @@ export class PageWallJobRepository {
       `).get(now, ...excludedPageTabIds) as PageWallJobRow | undefined
       if (!row) return null
 
-      const current = rowToRecord(row)
+      const current = rowToRecord(row, this.hashtagSource(row.id))
       const logs = appendLog(current.logs, now, 'Đến giờ chạy; scheduler đã nhận job.')
       const updated = this.client.prepare(`
         UPDATE page_wall_jobs
@@ -264,7 +300,7 @@ export class PageWallJobRepository {
       `).all() as PageWallJobRow[]
 
       for (const row of rows) {
-        const current = rowToRecord(row)
+        const current = rowToRecord(row, this.hashtagSource(row.id))
         const message = 'Ứng dụng bị đóng hoặc gián đoạn khi job đang chạy. Không tự retry để tránh đăng trùng; cần kiểm tra Tường Page trước khi tạo lịch mới.'
         const logs = appendLog(current.logs, now, message)
         this.client.prepare(`
@@ -277,5 +313,41 @@ export class PageWallJobRepository {
       return rows.length
     })
     return recover()
+  }
+
+  private insert(input: CreatePageWallJobInput, now: number, initialMessage: string): PageWallJobRecord {
+    const insert = this.client.transaction(() => {
+      const result = this.client.prepare(`
+        INSERT INTO page_wall_jobs (
+          status, scheduled_at, page_tab_id, page_tab_name, page_uid,
+          account_id, account_uid, account_name, content, image_paths_json,
+          logs_json, created_at, updated_at
+        ) VALUES ('pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        input.scheduledAt,
+        input.pageTabId,
+        input.pageTabName,
+        input.pageUid,
+        input.accountId,
+        input.accountUid,
+        input.accountName,
+        input.content,
+        JSON.stringify(input.imagePaths),
+        JSON.stringify([{ at: now, message: initialMessage } satisfies PageWallJobLogEntry]),
+        now,
+        now
+      )
+      const jobId = Number(result.lastInsertRowid)
+      const hashtagSource = input.hashtags?.trim() ?? ''
+      if (hashtagSource) {
+        this.client.prepare(
+          'INSERT INTO page_wall_job_hashtags (job_id, source) VALUES (?, ?)'
+        ).run(jobId, hashtagSource)
+      }
+      return jobId
+    })
+    const created = this.get(insert())
+    if (!created) throw new Error('Không thể đọc lại lịch Đăng Tường vừa tạo.')
+    return created
   }
 }

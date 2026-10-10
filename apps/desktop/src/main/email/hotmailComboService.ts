@@ -12,7 +12,9 @@ import type {
   HotmailComboOperation,
   HotmailComboRecoveryOperation,
   HotmailComboStage,
-  HotmailComboStageResult
+  HotmailComboStageResult,
+  HotmailSecurityAction,
+  HotmailSecurityTarget
 } from '../../shared/emailCombo'
 import { EmailCommonRuntime } from './emailCommonRuntime'
 import { inspectEmailProfile } from './emailProfileResolver'
@@ -22,6 +24,7 @@ import { validateEmailPassword } from './emailPasswordActionPolicy'
 import {
   advanceEmailComboStage,
   emailComboStagePlan,
+  emailSecurityStagePlan,
   recoveryOperationForCombo,
   redactEmailComboSecrets
 } from './emailComboActionPolicy'
@@ -30,10 +33,12 @@ type ResolveEmailBrowserExecutable = (requestedExecutable: string, profileRoot: 
 
 interface ActiveComboAccount {
   accountId: number
-  operation: HotmailComboOperation
+  operation: HotmailComboOperation | null
   recoveryOperation: HotmailComboRecoveryOperation
   recoveryEmail: string
   newPassword: string
+  oldBackupEmail: string | null
+  allowManualContinuation: boolean
   stages: HotmailComboStage[]
   stageIndex: number
   history: HotmailComboStageResult[]
@@ -95,6 +100,8 @@ export class HotmailComboService {
     if (this.active.size > 0) {
       throw new Error('Đang có Combo Email chờ xử lý thủ công. Hoàn tất flow đó trước khi mở combo mới.')
     }
+
+    if (payload.actions?.length) return await this.startSecurityWorkflow(payload)
     if (!payload.operation) throw new Error('Chưa chọn loại Combo Email.')
 
     const newPassword = validateEmailPassword(payload.newPassword)
@@ -104,7 +111,65 @@ export class HotmailComboService {
 
     const results: HotmailComboActionResult[] = []
     for (const accountId of uniqueAccountIds(payload.accountIds)) {
-      results.push(await this.startAccount(accountId, payload.operation, recoveryOperation, recoveryEmail, newPassword))
+      results.push(await this.startAccount({
+        accountId,
+        operation: payload.operation,
+        recoveryOperation,
+        recoveryEmail,
+        newPassword,
+        stages: emailComboStagePlan(payload.operation),
+        allowManualContinuation: true
+      }))
+    }
+    return { results }
+  }
+
+  private async startSecurityWorkflow(payload: HotmailComboActionPayload): Promise<HotmailComboBatchResult> {
+    const actions = [...new Set(payload.actions ?? [])] as HotmailSecurityAction[]
+    const stages = emailSecurityStagePlan(actions)
+    if (stages.length === 0) throw new Error('Chưa chọn hành động Hotmail Security.')
+
+    const targets = new Map<number, HotmailSecurityTarget>()
+    for (const item of payload.targets ?? []) {
+      if (!Number.isInteger(item.accountId) || item.accountId <= 0) continue
+      targets.set(item.accountId, item)
+    }
+    const accountIds = uniqueAccountIds(payload.accountIds.length ? payload.accountIds : [...targets.keys()])
+    const results: HotmailComboActionResult[] = []
+
+    for (const accountId of accountIds) {
+      const target = targets.get(accountId)
+      let recoveryEmail = ''
+      let newPassword = ''
+
+      if (actions.includes('add_recovery')) {
+        recoveryEmail = validateRecoveryAction('add', target?.recoveryEmail ?? null) ?? ''
+        if (!recoveryEmail) {
+          results.push(this.simpleError(accountId, 'Thiếu Mail KP mới hợp lệ cho account này.'))
+          continue
+        }
+      }
+      if (actions.includes('password')) {
+        try {
+          newPassword = validateEmailPassword(target?.newPassword)
+        } catch (error) {
+          results.push(this.simpleError(accountId, error instanceof Error ? error.message : 'Password mới không hợp lệ.'))
+          continue
+        }
+      }
+
+      results.push(await this.startAccount({
+        accountId,
+        operation: null,
+        recoveryOperation: 'add',
+        recoveryEmail,
+        newPassword,
+        stages,
+        // Security challenges (password reauth, recovery verification, CAPTCHA/manual review)
+        // must keep the same Chrome/profile/worker alive. Closing here destroys the
+        // Microsoft session immediately after the user completes the challenge.
+        allowManualContinuation: true
+      }))
     }
     return { results }
   }
@@ -129,17 +194,22 @@ export class HotmailComboService {
     return { results }
   }
 
-  private async startAccount(
-    accountId: number,
-    operation: HotmailComboOperation,
-    recoveryOperation: HotmailComboRecoveryOperation,
-    recoveryEmail: string,
+  private async startAccount(input: {
+    accountId: number
+    operation: HotmailComboOperation | null
+    recoveryOperation: HotmailComboRecoveryOperation
+    recoveryEmail: string
     newPassword: string
-  ): Promise<HotmailComboActionResult> {
+    stages: HotmailComboStage[]
+    allowManualContinuation: boolean
+  }): Promise<HotmailComboActionResult> {
+    const { accountId, operation, recoveryOperation, recoveryEmail, newPassword, stages, allowManualContinuation } = input
     const account = this.accounts.getById(accountId)
     if (!account) return this.simpleError(accountId, 'Account không tồn tại.')
     if (!account.email) return this.simpleError(accountId, 'Account chưa có Email Microsoft.', account.backupEmail)
-    if (account.emailPassword === newPassword) return this.simpleError(accountId, 'Password Email mới trùng Password canonical hiện tại.', account.backupEmail)
+    if (stages.includes('password') && account.emailPassword === newPassword) {
+      return this.simpleError(accountId, 'Password Email mới trùng Password canonical hiện tại.', account.backupEmail)
+    }
 
     const settings = this.repository.getProfileSettings()
     const inspection = await inspectEmailProfile(settings.profileRoot, account.uid)
@@ -153,12 +223,7 @@ export class HotmailComboService {
       const executable = await this.resolveBrowserExecutable(settings.browserExecutable, settings.profileRoot)
       const attachedExternally = inspection.status === 'running' && !manager.isOpen(accountId)
       proxy = attachedExternally ? null : (this.proxyPool.assignment(accountId) ?? this.proxyPool.acquire(accountId))
-      const opened = await manager.openWorkflow('combo', account, settings.profileRoot, executable, proxy)
-      if (opened.proxyManagedExternally) this.proxyPool.release(accountId)
-      if (proxy && !opened.proxyManagedExternally) {
-        if (opened.status === 'started' || opened.status === 'already_open') this.proxyPool.recordSuccess(proxy)
-        else if (/proxy/i.test(opened.message)) this.proxyPool.recordFailure(proxy)
-      }
+      const opened = manager.beginWorkflow('combo', accountId)
       if (opened.status !== 'started' && opened.status !== 'already_open') {
         const safeMessage = redactEmailComboSecrets(opened.message, [newPassword, account.emailPassword, proxy?.password, proxy?.username])
         return this.simpleError(accountId, safeMessage, account.backupEmail, opened.status)
@@ -170,15 +235,17 @@ export class HotmailComboService {
         recoveryOperation,
         recoveryEmail,
         newPassword,
-        stages: emailComboStagePlan(operation),
+        oldBackupEmail: account.backupEmail,
+        allowManualContinuation,
+        stages: [...stages],
         stageIndex: 0,
         history: [],
         completedStages: [],
         manager,
         executable,
         profileRoot: settings.profileRoot,
-        proxy: opened.proxyManagedExternally ? null : proxy,
-        proxyManagedExternally: opened.proxyManagedExternally,
+        proxy,
+        proxyManagedExternally: false,
         passwordUpdated: false,
         backupEmail: account.backupEmail
       }
@@ -220,7 +287,9 @@ export class HotmailComboService {
 
       this.repository.updateEmailState(state.accountId, { lastError: safeMessage })
       if (outcome.status === 'needs_attention') {
-        return this.finishResult(state, 'needs_attention', safeMessage, stage)
+        const result = this.finishResult(state, 'needs_attention', safeMessage, stage)
+        if (!state.allowManualContinuation) this.finishAccount(state)
+        return result
       }
 
       const result = this.finishResult(state, outcome.status, safeMessage)
@@ -238,6 +307,7 @@ export class HotmailComboService {
     if (!account) return { status: 'error', message: 'Account không còn tồn tại.' }
 
     if (stage === 'password') {
+      if (!state.newPassword) return { status: 'error', message: 'Thiếu Password mới cho stage đổi Password.' }
       const result = await state.manager.runWorkflowPasswordAction(
         'combo',
         account,
@@ -247,6 +317,13 @@ export class HotmailComboService {
         state.newPassword,
         confirmCompleted
       )
+      if (result.proxyManagedExternally) {
+        state.proxyManagedExternally = true
+        if (state.proxy) this.proxyPool.release(state.accountId)
+        state.proxy = null
+      } else if (state.proxy) {
+        this.proxyPool.recordSuccess(state.proxy)
+      }
       if (result.status === 'success') {
         this.accounts.update(state.accountId, { emailPassword: state.newPassword })
         state.passwordUpdated = true
@@ -259,6 +336,11 @@ export class HotmailComboService {
     }
 
     const recoveryOperation: HotmailRecoveryOperation = stage === 'recovery_remove' ? 'remove' : state.recoveryOperation
+    if (recoveryOperation === 'remove' && !state.oldBackupEmail) {
+      return { status: 'success', message: 'Account không có Mail KP cũ; bỏ qua stage xóa.' }
+    }
+
+    const recoveryTarget = recoveryOperation === 'remove' ? state.oldBackupEmail : state.recoveryEmail
     const result = await state.manager.runWorkflowRecoveryAction(
       'combo',
       account,
@@ -266,16 +348,27 @@ export class HotmailComboService {
       state.executable,
       state.proxyManagedExternally ? null : state.proxy,
       recoveryOperation,
-      account.backupEmail,
+      recoveryOperation === 'remove' ? state.oldBackupEmail : account.backupEmail,
+      recoveryTarget,
       confirmCompleted
     )
+    if (result.proxyManagedExternally) {
+      state.proxyManagedExternally = true
+      if (state.proxy) this.proxyPool.release(state.accountId)
+      state.proxy = null
+    } else if (state.proxy) {
+      this.proxyPool.recordSuccess(state.proxy)
+    }
     if (result.status === 'success') {
-      const nextBackupEmail = canonicalBackupEmailAfterRecoverySuccess(
-        recoveryOperation,
-        recoveryOperation === 'remove' ? null : state.recoveryEmail
-      )
-      const updated = this.accounts.update(state.accountId, { backupEmail: nextBackupEmail })
-      state.backupEmail = updated.backupEmail
+      if (recoveryOperation === 'remove') {
+        const keepNewRecovery = state.completedStages.includes('recovery_write') && Boolean(state.recoveryEmail)
+        const updated = this.accounts.update(state.accountId, { backupEmail: keepNewRecovery ? state.recoveryEmail : null })
+        state.backupEmail = updated.backupEmail
+      } else {
+        const nextBackupEmail = canonicalBackupEmailAfterRecoverySuccess(recoveryOperation, state.recoveryEmail)
+        const updated = this.accounts.update(state.accountId, { backupEmail: nextBackupEmail })
+        state.backupEmail = updated.backupEmail
+      }
     }
     return {
       status: result.status,

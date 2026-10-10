@@ -1,6 +1,22 @@
 import type { FacebookProfileErrorCode } from './facebookProfile'
 
-export const ACCOUNT_STATUSES = ['unknown', 'valid', 'needs_login', 'disabled'] as const
+export const ACCOUNT_STATUSES = [
+  'unknown',
+  'valid',
+  'needs_login',
+  'login_failed',
+  'two_factor_required',
+  'two_factor_failed',
+  'email_code_required',
+  'checkpoint_282',
+  'checkpoint_956',
+  'identity_verification_required',
+  'security_review_required',
+  'locked',
+  'disabled',
+  'checkpoint_unknown',
+  'needs_attention'
+] as const
 export type AccountStatus = (typeof ACCOUNT_STATUSES)[number]
 
 export interface AccountRecord {
@@ -76,7 +92,7 @@ export interface AccountImportRequest {
   rawText: string
   delimiter: string
   mapping: AccountImportMapping
-  /** Existing group selected in the Import UI. For new accounts this overrides mapped Category/Folder. */
+  /** Existing group selected in the Import UI. New UIDs are created there; existing UIDs are moved there without overwriting other fields. */
   targetGroupName?: string
   /** @deprecated Kept for backward-compatible callers/tests. Prefer operation. */
   duplicatePolicy?: DuplicatePolicy

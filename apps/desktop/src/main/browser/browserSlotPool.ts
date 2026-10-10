@@ -1,4 +1,4 @@
-export type BrowserWindowOwner = 'profile' | 'posting' | 'scenario'
+export type BrowserWindowOwner = 'profile' | 'posting' | 'scenario' | 'email'
 
 interface BrowserSlotEntry {
   slotIndex: number
@@ -35,6 +35,10 @@ export interface BrowserSlotSnapshotEntry {
  * reference the same persistent Chrome. Released slots are reused from the lowest index
  * without moving any other active account. Dense re-numbering is explicit via compact()
  * and is reserved for the operator-triggered re-tile action.
+ *
+ * Email uses this same allocator contract with an independent BrowserSlotPool instance,
+ * so a Facebook Chrome and an Email Chrome for the same account can coexist without
+ * being assigned the same physical slot by accident.
  */
 export class BrowserSlotPool {
   private readonly entries = new Map<number, BrowserSlotEntry>()

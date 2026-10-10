@@ -68,6 +68,7 @@ export type GroupPostTaskJobRequest = NormalizedFacebookTaskJobBase & {
 }
 
 export type PageWallPostTaskJobRequest = NormalizedFacebookTaskJobBase & {
+  hashtags?: string
   task: PageWallPostTaskDescriptor
 }
 
@@ -98,11 +99,13 @@ export function legacyPostingJobFromGroupTask(job: GroupPostTaskJobRequest): Pos
   }
 }
 
-export function pageWallPostTaskFromBase(base: FacebookTaskJobBase): PageWallPostTaskJobRequest {
+export function pageWallPostTaskFromBase(base: FacebookTaskJobBase, hashtags = ''): PageWallPostTaskJobRequest {
   const commonPageUid = base.pageUid.trim()
   const targetUid = commonPageUid || base.sessionAccount.uid.trim()
+  const hashtagSource = hashtags.trim()
   return {
     ...base,
+    ...(hashtagSource ? { hashtags: hashtagSource } : {}),
     executionMode: 'one_shot',
     task: {
       type: 'page_wall_post',

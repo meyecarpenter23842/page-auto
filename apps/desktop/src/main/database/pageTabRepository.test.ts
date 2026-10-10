@@ -7,6 +7,7 @@ import { initializeDatabase } from './index'
 import { PageTabRepository } from './pageTabRepository'
 
 const tempDirectories: string[] = []
+const avatarDataUrl = 'data:image/jpeg;base64,/9j/4AAQSkZJRg=='
 
 afterEach(() => {
   for (const directory of tempDirectories.splice(0)) {
@@ -21,7 +22,7 @@ function createRuntime() {
 }
 
 describe('PageTabRepository', () => {
-  it('persists full tab config and restores current account references', () => {
+  it('persists full tab config, compact avatar and current account references', () => {
     const runtime = createRuntime()
     const accounts = new AccountRepository(runtime.client)
     const tabs = new PageTabRepository(runtime.client)
@@ -33,6 +34,7 @@ describe('PageTabRepository', () => {
     const saved = tabs.update(tab.id, {
       name: 'Page A',
       pageUid: '90001',
+      avatarDataUrl,
       rotation: {
         postsPerAccount: 5,
         postDelayMinSeconds: 180,
@@ -50,6 +52,7 @@ describe('PageTabRepository', () => {
         { dayOfWeek: 1, startMinute: 810, endMinute: 1020, enabled: true, sortOrder: 1 }
       ],
       groupUids: ['g1', 'g2', 'g1', '  g3  '],
+      groupOrderMode: 'random',
       contentMode: 'round_robin',
       contents: ['First post', ' Second post ', ''],
       image: {
@@ -60,7 +63,9 @@ describe('PageTabRepository', () => {
       }
     })
 
+    expect(saved.avatarDataUrl).toBe(avatarDataUrl)
     expect(saved.rotation.accountOrderMode).toBe('random')
+    expect(saved.groupOrderMode).toBe('random')
     expect(saved.rotation.postsPerAccount).toBe(5)
     expect(saved.accounts[0]?.postsPerTurn).toBe(3)
     expect(saved.accounts.map((item) => item.uid)).toEqual(['10002', '10001'])
@@ -78,11 +83,12 @@ describe('PageTabRepository', () => {
 
     accounts.update(second.id, { name: 'Account Two Updated' })
     expect(tabs.get(tab.id)?.accounts[0]?.name).toBe('Account Two Updated')
+    expect(tabs.get(tab.id)?.avatarDataUrl).toBe(avatarDataUrl)
 
     runtime.close()
   })
 
-  it('deep-copies tab config while keeping account references', () => {
+  it('deep-copies tab config, avatar and account references', () => {
     const runtime = createRuntime()
     const accounts = new AccountRepository(runtime.client)
     const tabs = new PageTabRepository(runtime.client)
@@ -92,6 +98,7 @@ describe('PageTabRepository', () => {
     tabs.update(original.id, {
       name: 'Page A',
       pageUid: '90001',
+      avatarDataUrl,
       rotation: {
         postsPerAccount: 2,
         postDelayMinSeconds: 60,
@@ -103,6 +110,7 @@ describe('PageTabRepository', () => {
       accounts: [{ accountId: account.id, enabled: true, sortOrder: 0, postsPerTurn: null }],
       schedules: [{ dayOfWeek: 2, startMinute: 540, endMinute: 720, enabled: true, sortOrder: 0 }],
       groupUids: ['g1', 'g2'],
+      groupOrderMode: 'random',
       contentMode: 'sequential',
       contents: ['hello'],
       image: { folderPath: 'D:\\images', mode: 'sequential', imagesPerPost: 1, missingPolicy: 'text_only' }
@@ -112,7 +120,9 @@ describe('PageTabRepository', () => {
     expect(copy.id).not.toBe(original.id)
     expect(copy.name).toBe('Page A Copy')
     expect(copy.pageUid).toBe('90001')
+    expect(copy.avatarDataUrl).toBe(avatarDataUrl)
     expect(copy.rotation.accountOrderMode).toBe('random')
+    expect(copy.groupOrderMode).toBe('random')
     expect(copy.accounts.map((item) => item.accountId)).toEqual([account.id])
     expect(copy.groupUids).toEqual(['g1', 'g2'])
     expect(copy.contents).toEqual(['hello'])
@@ -121,6 +131,35 @@ describe('PageTabRepository', () => {
     expect(tabs.delete(original.id)).toBe(true)
     expect(tabs.get(original.id)).toBeNull()
     expect(tabs.get(copy.id)?.accounts[0]?.accountId).toBe(account.id)
+
+    runtime.close()
+  })
+
+  it('rejects malformed avatar data while allowing it to be cleared', () => {
+    const runtime = createRuntime()
+    const tabs = new PageTabRepository(runtime.client)
+    const tab = tabs.create({ name: 'Page A', pageUid: '90001' })
+    const base = {
+      name: 'Page A',
+      pageUid: '90001',
+      rotation: {
+        postsPerAccount: 1,
+        postDelayMinSeconds: 1,
+        postDelayMaxSeconds: 2,
+        accountDelayMinSeconds: 1,
+        accountDelayMaxSeconds: 2
+      },
+      accounts: [],
+      schedules: [],
+      groupUids: [],
+      contentMode: 'sequential' as const,
+      contents: [],
+      image: { folderPath: '', mode: 'sequential' as const, imagesPerPost: 1, missingPolicy: 'text_only' as const }
+    }
+
+    expect(() => tabs.update(tab.id, { ...base, avatarDataUrl: 'https://example.com/avatar.jpg' }))
+      .toThrow('Ảnh đại diện Page không hợp lệ')
+    expect(tabs.update(tab.id, { ...base, avatarDataUrl: null }).avatarDataUrl).toBeNull()
 
     runtime.close()
   })
@@ -161,7 +200,7 @@ describe('PageTabRepository', () => {
     runtime.close()
   })
 
-  it('rejects invalid delay windows, account order modes and missing account references', () => {
+  it('rejects invalid delay windows, account/group order modes and missing account references', () => {
     const runtime = createRuntime()
     const tabs = new PageTabRepository(runtime.client)
     const tab = tabs.create({ name: 'Page A', pageUid: '90001' })
@@ -202,6 +241,25 @@ describe('PageTabRepository', () => {
       contents: [],
       image: { folderPath: '', mode: 'sequential', imagesPerPost: 1, missingPolicy: 'text_only' }
     })).toThrow('Chế độ thứ tự tài khoản')
+
+    expect(() => tabs.update(tab.id, {
+      name: 'Page A',
+      pageUid: '90001',
+      rotation: {
+        postsPerAccount: 1,
+        postDelayMinSeconds: 1,
+        postDelayMaxSeconds: 2,
+        accountDelayMinSeconds: 1,
+        accountDelayMaxSeconds: 2
+      },
+      accounts: [],
+      schedules: [],
+      groupUids: [],
+      groupOrderMode: 'bad' as 'random',
+      contentMode: 'sequential',
+      contents: [],
+      image: { folderPath: '', mode: 'sequential', imagesPerPost: 1, missingPolicy: 'text_only' }
+    })).toThrow('Chế độ thứ tự Group')
 
     expect(() => tabs.update(tab.id, {
       name: 'Page A',

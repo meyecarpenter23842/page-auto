@@ -6,10 +6,11 @@ import {
   waitForComposerStage,
   type RobustComposerDetector
 } from '../../browser/posting/robustComposerDetector'
+import { PageWallComposerSuggestionGuard } from './pageWallComposerSuggestion'
 import type { PreparedPageWallRuntime } from './pageWallTask'
 
 const PAGE_WALL_ADVANCE_PATTERN = /^(next|tiếp|tiếp theo)$/i
-const PAGE_WALL_OPTIONAL_CTA_TITLE_PATTERN = /^(speak to people directly|nói chuyện trực tiếp với mọi người)$/i
+export const PAGE_WALL_OPTIONAL_CTA_TITLE_PATTERN = /^(speak (?:to|with) people directly|nói chuyện (?:trực tiếp với mọi người|với mọi người trực tiếp))$/i
 const PAGE_WALL_OPTIONAL_CTA_ADD_PATTERN = /^(add button|thêm nút)$/i
 const PAGE_WALL_OPTIONAL_CTA_DISMISS_PATTERN = /^(not now|để sau|lúc khác|không phải bây giờ)$/i
 
@@ -168,7 +169,7 @@ async function resolvePageWallAdvanceCandidate(page: Locator, container: Locator
   return { button: null, strategy: 'none', counts }
 }
 
-async function resolvePageWallOptionalCtaPrompt(pageRoot: Locator): Promise<PageWallOptionalCtaPromptResolution> {
+export async function resolvePageWallOptionalCtaPrompt(pageRoot: Locator): Promise<PageWallOptionalCtaPromptResolution> {
   const empty: PageWallOptionalCtaPromptResolution = {
     dismissButton: null,
     titleVisible: 0,
@@ -259,6 +260,16 @@ export class PageWallPublishAction {
   }
 
   async click(container: Locator): Promise<PostingJobResult> {
+    const suggestionGuard = new PageWallComposerSuggestionGuard(
+      this.runtime.page,
+      this.networkTimeoutMs
+    )
+    const initialSuggestion = await suggestionGuard.dismissIfPresent(
+      this.composerDetector,
+      'before-publish-stage'
+    )
+    if (initialSuggestion.status !== 'success') return initialSuggestion
+
     let lastAdvanceDiagnostics = 'strategy=not-probed'
     const pageRoot = this.runtime.page.locator('body')
     const ready = await waitForPageWallPublishStage(
@@ -329,6 +340,12 @@ export class PageWallPublishAction {
       if (access.status !== 'success') return commonResult(access)
       this.diagnostic('stage=optional_cta_access ready')
     }
+
+    const finalSuggestion = await suggestionGuard.dismissIfPresent(
+      this.composerDetector,
+      'before-final-post-click'
+    )
+    if (finalSuggestion.status !== 'success') return finalSuggestion
 
     this.diagnostic('stage=final_publish_wait')
     return new PublishAction(

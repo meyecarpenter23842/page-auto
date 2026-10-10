@@ -1,7 +1,18 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Page } from 'playwright-core'
 import type { PageWallPostTaskDescriptor } from '../../../shared/facebookTasks'
 import type { PostingJobResult } from '../../../shared/posting'
+
+const mocks = vi.hoisted(() => ({
+  usePageComplete: vi.fn()
+}))
+
+vi.mock('./pageWallUsePagePrompt', () => ({
+  PageWallUsePagePrompt: class {
+    complete = mocks.usePageComplete
+  }
+}))
+
 import {
   PageWallTask,
   pageWallUrl,
@@ -43,6 +54,14 @@ function runtime(overrides: Partial<PreparedPageWallRuntime> = {}): {
 }
 
 describe('PageWallTask', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.usePageComplete.mockResolvedValue({
+      status: 'success',
+      message: 'no Use Page prompt'
+    })
+  })
+
   it('builds a Page wall URL from Page UID', () => {
     expect(pageWallUrl(' 90001 ')).toBe('https://www.facebook.com/profile.php?id=90001')
   })
@@ -58,6 +77,7 @@ describe('PageWallTask', () => {
     )
     expect(prepared.waitForTimeout).toHaveBeenCalledWith(700)
     expect(prepared.checkAccessBlock).toHaveBeenCalledWith('sau khi mở Tường Page')
+    expect(mocks.usePageComplete).toHaveBeenCalledTimes(1)
     expect(result.status).toBe('success')
   })
 
@@ -74,6 +94,22 @@ describe('PageWallTask', () => {
       status: 'needs_login',
       code: 'verification_required',
       message: 'Facebook yêu cầu checkpoint.'
+    })
+    expect(mocks.usePageComplete).not.toHaveBeenCalled()
+  })
+
+  it('stops before composer work when the Use Page interstitial cannot be completed', async () => {
+    mocks.usePageComplete.mockResolvedValueOnce({
+      status: 'failed',
+      code: 'page_navigation_failed',
+      message: 'Use Page still blocking.'
+    })
+    const prepared = runtime()
+
+    await expect(new PageWallTask(prepared.value, task()).prepare()).resolves.toEqual({
+      status: 'failed',
+      code: 'page_navigation_failed',
+      message: 'Use Page still blocking.'
     })
   })
 

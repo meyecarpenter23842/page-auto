@@ -17,8 +17,8 @@ export interface JoinGroupActionDependencies extends BaseViewActionDependencies 
 export const JOIN_GROUP_SELECTORS = [
   '[role="button"][aria-label="Join group"]',
   '[role="button"][aria-label="Tham gia nhóm"]',
-  'div[role="button"]:has-text("Join group")',
-  'div[role="button"]:has-text("Tham gia nhóm")',
+  '[role="button"]:has-text("Join group")',
+  '[role="button"]:has-text("Tham gia nhóm")',
   'button:has-text("Join group")',
   'button:has-text("Tham gia nhóm")'
 ] as const
@@ -26,8 +26,8 @@ export const JOIN_GROUP_SELECTORS = [
 const JOINED_SELECTORS = [
   '[role="button"][aria-label="Joined"]',
   '[role="button"][aria-label="Đã tham gia"]',
-  'div[role="button"]:has-text("Joined")',
-  'div[role="button"]:has-text("Đã tham gia")',
+  '[role="button"]:has-text("Joined")',
+  '[role="button"]:has-text("Đã tham gia")',
   'button:has-text("Joined")',
   'button:has-text("Đã tham gia")'
 ] as const
@@ -35,26 +35,26 @@ const JOINED_SELECTORS = [
 const PENDING_SELECTORS = [
   '[role="button"][aria-label*="Cancel request" i]',
   '[role="button"][aria-label*="Hủy yêu cầu" i]',
-  'div[role="button"]:has-text("Pending")',
-  'div[role="button"]:has-text("Đang chờ")',
-  'div[role="button"]:has-text("Hủy yêu cầu")',
+  '[role="button"]:has-text("Pending")',
+  '[role="button"]:has-text("Đang chờ")',
+  '[role="button"]:has-text("Hủy yêu cầu")',
   'button:has-text("Pending")',
   'button:has-text("Đang chờ")',
   'button:has-text("Hủy yêu cầu")'
 ] as const
 
 const SUBMIT_SELECTORS = [
-  'div[role="button"]:has-text("Submit")',
-  'div[role="button"]:has-text("Gửi")',
+  '[role="button"]:has-text("Submit")',
+  '[role="button"]:has-text("Gửi")',
   'button:has-text("Submit")',
   'button:has-text("Gửi")',
-  'div[role="button"]:has-text("Join group")',
-  'div[role="button"]:has-text("Tham gia nhóm")'
+  '[role="button"]:has-text("Join group")',
+  '[role="button"]:has-text("Tham gia nhóm")'
 ] as const
 
 const CANCEL_SELECTORS = [
-  'div[role="button"]:has-text("Cancel")',
-  'div[role="button"]:has-text("Hủy")',
+  '[role="button"]:has-text("Cancel")',
+  '[role="button"]:has-text("Hủy")',
   'button:has-text("Cancel")',
   'button:has-text("Hủy")',
   '[aria-label="Close"]',
@@ -62,9 +62,18 @@ const CANCEL_SELECTORS = [
 ] as const
 
 const NON_GROUP_SURFACES = new Set(['discover', 'feed', 'joins', 'notifications', 'search'])
+const JOIN_CLICK_SETTLE_MS = 700
 
 export type GroupPrivacy = 'open' | 'closed' | 'unknown'
 export type JoinAttemptOutcome = 'joined' | 'requested' | 'skipped_approval' | 'unverified'
+export type DirectGroupMembershipState = 'joined' | 'requested' | null
+
+interface JoinClickObservation {
+  outcome: JoinAttemptOutcome
+  dialog: Locator | null
+  originalButtonVisible: boolean
+  targetStillMatches: boolean
+}
 
 export function normalizeGroupUrl(value: string): string {
   const input = value.trim()
@@ -149,7 +158,9 @@ function localeMatches(text: string, locale: string): boolean {
 export function groupTextMatchesFilters(text: string, config: ActionConfig): boolean {
   if (configBoolean(config, 'memberFilterEnabled')) {
     const members = extractGroupMemberCount(text)
-    if (members === null || members < configNumber(config, 'memberMin', 0)) return false
+    const minimum = configNumber(config, 'memberMin', 0)
+    const maximum = configNumber(config, 'memberMax', 0)
+    if (members === null || members < minimum || (maximum > 0 && members > maximum)) return false
   }
 
   const privacy = detectGroupPrivacy(text)
@@ -175,6 +186,7 @@ export function configuredGroupTargets(config: ActionConfig): string[] {
 }
 
 async function candidateContainer(button: Locator): Promise<Locator | null> {
+  // Discovery-card fallback only. It is not the Group Interaction post-scope contract.
   const article = button.locator('xpath=ancestor::*[@role="article"][1]')
   if (await article.count().catch(() => 0)) return article
   const groupCard = button.locator('xpath=ancestor::div[.//a[contains(@href,"/groups/")]][1]')
@@ -182,7 +194,7 @@ async function candidateContainer(button: Locator): Promise<Locator | null> {
   return null
 }
 
-async function candidateGroupIdentity(button: Locator): Promise<string | null> {
+export async function candidateGroupIdentity(button: Locator): Promise<string | null> {
   const container = await candidateContainer(button)
   if (!container) return null
   const links = container.locator('a[href*="/groups/"]')
@@ -211,6 +223,39 @@ async function candidateContainerByIdentity(page: Page, identity: string): Promi
   return null
 }
 
+async function firstVisibleForDirectGroup(
+  page: Page,
+  selectors: readonly string[],
+  targetIdentity: string
+): Promise<boolean> {
+  for (const selector of selectors) {
+    const matches = page.locator(selector)
+    const count = await matches.count().catch(() => 0)
+    for (let index = 0; index < count; index += 1) {
+      const candidate = matches.nth(index)
+      if (!await candidate.isVisible().catch(() => false)) continue
+      const identity = await candidateGroupIdentity(candidate)
+      if (identity === null || identity === targetIdentity) return true
+    }
+  }
+  return false
+}
+
+export async function directGroupMembershipState(page: Page): Promise<DirectGroupMembershipState> {
+  const targetIdentity = groupIdentityFromHref(page.url())
+  if (!targetIdentity) return null
+  if (await firstVisibleForDirectGroup(page, JOINED_SELECTORS, targetIdentity)) return 'joined'
+  if (await firstVisibleForDirectGroup(page, PENDING_SELECTORS, targetIdentity)) return 'requested'
+  return null
+}
+
+export async function joinButtonBelongsToDirectGroup(page: Page, button: Locator): Promise<boolean> {
+  const targetIdentity = groupIdentityFromHref(page.url())
+  if (!targetIdentity) return true
+  const candidateIdentity = await candidateGroupIdentity(button)
+  return candidateIdentity === null || candidateIdentity === targetIdentity
+}
+
 export async function joinCandidateText(button: Locator): Promise<string> {
   const container = await candidateContainer(button)
   if (container) {
@@ -221,11 +266,21 @@ export async function joinCandidateText(button: Locator): Promise<string> {
 }
 
 export async function findSurfaceJoinButtons(page: Page): Promise<Locator | null> {
+  let firstNonEmpty: Locator | null = null
   for (const selector of JOIN_GROUP_SELECTORS) {
     const buttons = page.locator(selector)
-    if (await buttons.count().catch(() => 0)) return buttons
+    const count = await buttons.count().catch(() => 0)
+    if (count <= 0) continue
+    firstNonEmpty ??= buttons
+
+    // Responsive Facebook layouts can leave a hidden duplicate for one selector while the
+    // actionable control is rendered by a later selector/element variant. Do not stop merely
+    // because the first selector matched stale/hidden DOM.
+    for (let index = 0; index < count; index += 1) {
+      if (await buttons.nth(index).isVisible().catch(() => false)) return buttons
+    }
   }
-  return null
+  return firstNonEmpty
 }
 
 async function visibleJoinDialog(page: Page): Promise<Locator | null> {
@@ -273,11 +328,53 @@ async function verifyJoinOutcome(page: Page, candidateIdentity: string | null): 
   }
 
   if (isDirectGroupPageUrl(page.url())) {
-    if (await firstVisible(page, JOINED_SELECTORS)) return 'joined'
-    if (await firstVisible(page, PENDING_SELECTORS)) return 'requested'
+    const state = await directGroupMembershipState(page)
+    if (state) return state
   }
 
   return 'unverified'
+}
+
+async function observeJoinClick(
+  page: Page,
+  button: Locator,
+  candidateIdentity: string | null
+): Promise<JoinClickObservation> {
+  const outcome = await verifyJoinOutcome(page, candidateIdentity)
+  if (outcome !== 'unverified') {
+    return { outcome, dialog: null, originalButtonVisible: false, targetStillMatches: true }
+  }
+
+  const dialog = await visibleJoinDialog(page)
+  if (dialog) {
+    return { outcome, dialog, originalButtonVisible: false, targetStillMatches: true }
+  }
+
+  const originalButtonVisible = await button.isVisible().catch(() => false)
+  const targetStillMatches = originalButtonVisible
+    ? await joinButtonBelongsToDirectGroup(page, button).catch(() => false)
+    : false
+  return { outcome, dialog: null, originalButtonVisible, targetStillMatches }
+}
+
+async function settleAndObserveJoinClick(
+  page: Page,
+  button: Locator,
+  candidateIdentity: string | null,
+  context: ActionExecutorContext
+): Promise<JoinClickObservation | null> {
+  // Technical settle only lets Facebook render a dialog/state transition. Common Runtime owns operator pacing.
+  if (!await sleepWithControl(context.control, JOIN_CLICK_SETTLE_MS)) return null
+  return observeJoinClick(page, button, candidateIdentity)
+}
+
+async function domClickSameJoinControl(button: Locator): Promise<boolean> {
+  return button.evaluate((element) => {
+    const clickable = element as HTMLElement
+    if (typeof clickable.click !== 'function') return false
+    clickable.click()
+    return true
+  }).then((clicked) => clicked === true).catch(() => false)
 }
 
 export async function submitJoinAttempt(
@@ -286,13 +383,58 @@ export async function submitJoinAttempt(
   context: ActionExecutorContext,
   config: ActionConfig
 ): Promise<JoinAttemptOutcome> {
-  const candidateIdentity = await candidateGroupIdentity(button)
-  if (!await button.click({ timeout: 5000 }).then(() => true).catch(() => false)) return 'unverified'
+  // Prefer the direct Group URL as the stable target when the responsive header button has no
+  // local /groups/ link container. This survives Facebook replacing the live Join control.
+  const candidateIdentity = await candidateGroupIdentity(button) ?? groupIdentityFromHref(page.url())
+  const playwrightClicked = await button.click({ timeout: 5000 }).then(() => true).catch(() => false)
+  context.log(
+    'debug',
+    playwrightClicked
+      ? 'Đã gửi Playwright click vào nút Tham gia; đang xác minh UI có chuyển trạng thái thật.'
+      : 'Playwright click nút Tham gia không hoàn tất; đang kiểm tra hậu trạng thái trước khi quyết định fallback.',
+    'join_group_click_playwright',
+    { clicked: playwrightClicked, targetIdentity: candidateIdentity }
+  )
 
-  // Technical settle only lets the dialog/state render. Facebook Common Runtime owns operator pacing.
-  if (!await sleepWithControl(context.control, 700)) return 'unverified'
+  let observation = await settleAndObserveJoinClick(page, button, candidateIdentity, context)
+  if (!observation) return 'unverified'
+  if (observation.outcome !== 'unverified') return observation.outcome
 
-  const dialog = await visibleJoinDialog(page)
+  // A resolved Playwright click is not success by itself. Only retry the physical click when we
+  // have positive evidence that nothing consequential happened: no membership state, no dialog,
+  // and the exact same target Join control is still visibly actionable. If the button disappeared,
+  // a dialog opened, or Joined/Pending appeared, never click Join again; downstream verification
+  // owns the read-only exact-target revisit.
+  if (
+    !observation.dialog
+    && observation.originalButtonVisible
+    && observation.targetStillMatches
+    && !context.control.isStopped()
+  ) {
+    context.log(
+      'debug',
+      'Nút Tham gia của đúng Group đích vẫn còn nguyên sau Playwright click; thử DOM click trên chính control này một lần.',
+      'join_group_click_dom_fallback',
+      { playwrightClicked, targetIdentity: candidateIdentity }
+    )
+    const domClicked = await domClickSameJoinControl(button)
+    context.log(
+      'debug',
+      domClicked
+        ? 'DOM click fallback đã được gửi; đang xác minh lại hậu trạng thái.'
+        : 'DOM click fallback không thực hiện được trên control Tham gia hiện tại.',
+      'join_group_click_dom_fallback_result',
+      { clicked: domClicked, targetIdentity: candidateIdentity }
+    )
+    if (domClicked) {
+      const fallbackObservation = await settleAndObserveJoinClick(page, button, candidateIdentity, context)
+      if (!fallbackObservation) return 'unverified'
+      observation = fallbackObservation
+      if (observation.outcome !== 'unverified') return observation.outcome
+    }
+  }
+
+  const dialog = observation.dialog
   if (dialog) {
     const dialogText = await dialog.innerText().catch(() => '')
     if (shouldSkipApprovalRequest(config) && textRequiresApproval(dialogText)) {
@@ -310,11 +452,22 @@ export async function submitJoinAttempt(
     if (submit) {
       if (context.control.isStopped()) return 'unverified'
       await submit.click({ timeout: 5000 }).catch(() => undefined)
-      if (!await sleepWithControl(context.control, 700)) return 'unverified'
+      if (!await sleepWithControl(context.control, JOIN_CLICK_SETTLE_MS)) return 'unverified'
     }
   }
 
   return verifyJoinOutcome(page, candidateIdentity)
+}
+
+export async function pauseAfterJoinOutcome(
+  context: ActionExecutorContext,
+  config: ActionConfig,
+  outcome: JoinAttemptOutcome
+): Promise<boolean> {
+  if (outcome !== 'unverified') return true
+  const pauseMs = configNumber(config, 'errorPauseMinutes', 0) * 60_000
+  if (pauseMs <= 0) return true
+  return sleepWithControl(context.control, pauseMs)
 }
 
 export async function paceJoinGroup(

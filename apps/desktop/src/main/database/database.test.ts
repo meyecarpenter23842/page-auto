@@ -10,18 +10,32 @@ import { HotmailRepository } from './hotmailRepository'
 import { initializeDatabase } from './index'
 
 const tempDirectories: string[] = []
+const runtimes = new Set<ReturnType<typeof initializeDatabase>>()
 
 afterEach(() => {
+  for (const runtime of runtimes) {
+    try {
+      runtime.close()
+    } catch {
+      // A test may have already closed the runtime explicitly.
+    }
+  }
+  runtimes.clear()
   for (const directory of tempDirectories.splice(0)) {
     rmSync(directory, { recursive: true, force: true })
   }
 })
 
+function trackRuntime(runtime: ReturnType<typeof initializeDatabase>) {
+  runtimes.add(runtime)
+  return runtime
+}
+
 function createRuntime() {
   const directory = mkdtempSync(join(tmpdir(), 'page-auto-db-'))
   tempDirectories.push(directory)
   const databaseFile = join(directory, 'page-auto.sqlite')
-  return { directory, databaseFile, runtime: initializeDatabase(databaseFile) }
+  return { directory, databaseFile, runtime: trackRuntime(initializeDatabase(databaseFile)) }
 }
 
 describe('initializeDatabase', () => {
@@ -43,6 +57,9 @@ describe('initializeDatabase', () => {
     const pageTabColumns = runtime.client
       .prepare('PRAGMA table_info(page_tabs)')
       .all() as Array<{ name: string }>
+    const runItemColumns = runtime.client
+      .prepare('PRAGMA table_info(run_items)')
+      .all() as Array<{ name: string }>
     const emailStateTable = runtime.client
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'account_email_state'")
       .get() as { name: string } | undefined
@@ -57,6 +74,12 @@ describe('initializeDatabase', () => {
       .get() as { name: string } | undefined
     const accountGroupsTable = runtime.client
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'account_groups'")
+      .get() as { name: string } | undefined
+    const storyItemsTable = runtime.client
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'story_items'")
+      .get() as { name: string } | undefined
+    const actionWorkspacePresetsTable = runtime.client
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'action_workspace_presets'")
       .get() as { name: string } | undefined
 
     expect(existsSync(databaseFile)).toBe(true)
@@ -74,12 +97,35 @@ describe('initializeDatabase', () => {
       { version: 11, name: 'scenario_shell' },
       { version: 12, name: 'account_group_manager' },
       { version: 13, name: 'global_content_library' },
-      { version: 14, name: 'canonical_post_library' }
+      { version: 14, name: 'canonical_post_library' },
+      { version: 15, name: 'copy_post_history' },
+      { version: 16, name: 'page_tab_group_order_mode' },
+      { version: 17, name: 'story_library' },
+      { version: 18, name: 'action_workspace_persistence' },
+      { version: 19, name: 'page_business_explicit_bindings' },
+      { version: 20, name: 'page_tab_group_post_concurrency_and_run_claim_owner' },
+      { version: 21, name: 'page_wall_recurring_schedule_rules' },
+      { version: 22, name: 'page_wall_finite_plans' },
+      { version: 23, name: 'page_scenario_schedules' },
+      { version: 24, name: 'action_workspace_presets' },
+      { version: 25, name: 'page_avatar_preview' },
+      { version: 26, name: 'scanner_foundation' },
+      { version: 27, name: 'page_wall_weekly_schedule' },
+      { version: 28, name: 'zalo_foundation' },
+      { version: 29, name: 'zalo_post_bindings' },
+      { version: 30, name: 'page_wall_schedule_post_pool' },
+      { version: 32, name: 'canonical_post_hashtags' },
+      { version: 33, name: 'proxy_center_inventory' },
+      { version: 34, name: 'proxy_center_folders' },
+      { version: 35, name: 'proxy_center_manual_usage' }
     ])
-    expect(schemaVersion?.value).toBe('14')
+    expect(schemaVersion?.value).toBe('35')
     expect(executionLogsTable?.name).toBe('execution_logs')
     expect(postLibraryTable?.name).toBe('page_tab_posts')
     expect(pageTabColumns.some((column) => column.name === 'account_order_mode')).toBe(true)
+    expect(pageTabColumns.some((column) => column.name === 'group_order_mode')).toBe(true)
+    expect(pageTabColumns.some((column) => column.name === 'account_concurrency')).toBe(true)
+    expect(runItemColumns.some((column) => column.name === 'claimed_by_account_id')).toBe(true)
     expect(emailStateTable?.name).toBe('account_email_state')
     expect(emailStateColumns.map((column) => column.name)).toEqual(expect.arrayContaining([
       'oauth_client_id',
@@ -89,6 +135,8 @@ describe('initializeDatabase', () => {
     expect(emailProfileSettingsTable?.name).toBe('email_profile_settings')
     expect(emailProxySettingsTable?.name).toBe('email_proxy_settings')
     expect(accountGroupsTable?.name).toBe('account_groups')
+    expect(storyItemsTable?.name).toBe('story_items')
+    expect(actionWorkspacePresetsTable?.name).toBe('action_workspace_presets')
 
     runtime.close()
   })
@@ -97,12 +145,12 @@ describe('initializeDatabase', () => {
     const { databaseFile, runtime } = createRuntime()
     runtime.close()
 
-    const reopened = initializeDatabase(databaseFile)
+    const reopened = trackRuntime(initializeDatabase(databaseFile))
     const count = reopened.client
       .prepare('SELECT COUNT(*) AS count FROM __page_auto_migrations')
       .get() as { count: number }
 
-    expect(count.count).toBe(14)
+    expect(count.count).toBe(34)
     reopened.close()
   })
 
@@ -148,12 +196,12 @@ describe('initializeDatabase', () => {
       INSERT INTO email_profile_settings (
         id, external_root, browser_executable, oauth_client_id, oauth_tenant, updated_at
       ) VALUES (1, '', '', ?, 'consumers', 100)
-    `).run('legacy-public-client-id')
+    `).run('fixture-client-id')
     client.prepare(`
       INSERT INTO account_email_state (
         account_id, provider, oauth_status, refresh_token_ciphertext, mail_status, updated_at
       ) VALUES (1, 'microsoft', 'valid', ?, 'ready', 123456)
-    `).run('encrypted-legacy-refresh-token')
+    `).run('fixture-refresh-value')
 
     applyHotmailMigration(client)
     applyHotmailMigration(client)
@@ -177,10 +225,10 @@ describe('initializeDatabase', () => {
     ).all() as Array<{ version: number; name: string }>
 
     expect(state).toEqual({
-      oauthClientId: 'legacy-public-client-id',
+      oauthClientId: 'fixture-client-id',
       oauthUpdatedAt: 123456,
       lastTokenCheckAt: null,
-      refreshTokenCiphertext: 'encrypted-legacy-refresh-token'
+      refreshTokenCiphertext: 'fixture-refresh-value'
     })
     expect(migrations).toEqual([
       { version: 8, name: 'hotmail_auto_subsystem' },
@@ -200,7 +248,7 @@ describe('AccountRepository', () => {
       uid: '10001',
       name: 'Account One',
       category: 'Warm',
-      cookie: 'secret-cookie'
+      cookie: 'fixture-cookie'
     })
 
     expect(created.uid).toBe('10001')
@@ -291,7 +339,7 @@ describe('HotmailRepository account binding and security boundary', () => {
     const account = accounts.create({
       uid: '20001',
       email: 'first@outlook.com',
-      emailPassword: 'first-secret',
+      emailPassword: 'fixture-pass-a',
       backupEmail: 'first-backup@example.com'
     })
 
@@ -304,7 +352,7 @@ describe('HotmailRepository account binding and security boundary', () => {
 
     accounts.update(account.id, {
       email: 'second@outlook.com',
-      emailPassword: 'second-secret',
+      emailPassword: 'fixture-pass-b',
       backupEmail: null
     })
 
@@ -316,8 +364,8 @@ describe('HotmailRepository account binding and security boundary', () => {
       backupEmail: null
     })
     expect(rebound?.emailPasswordMasked).toMatch(/^•+$/)
-    expect(JSON.stringify(rebound)).not.toContain('first-secret')
-    expect(JSON.stringify(rebound)).not.toContain('second-secret')
+    expect(JSON.stringify(rebound)).not.toContain('fixture-pass-a')
+    expect(JSON.stringify(rebound)).not.toContain('fixture-pass-b')
 
     runtime.close()
   })
@@ -329,14 +377,14 @@ describe('HotmailRepository account binding and security boundary', () => {
     const account = accounts.create({
       uid: '20002',
       email: 'demo@outlook.com',
-      emailPassword: 'mail-super-secret',
+      emailPassword: 'fixture-mail-pass',
       backupEmail: 'backup@example.com'
     })
 
     hotmail.updateEmailState(account.id, {
       oauthStatus: 'valid',
-      oauthClientId: 'canonical-public-client-id',
-      refreshTokenCiphertext: 'encrypted-refresh-token-value',
+      oauthClientId: 'fixture-canonical-client',
+      refreshTokenCiphertext: 'fixture-refresh-token',
       oauthUpdatedAt: 111,
       lastTokenCheckAt: 222,
       mailStatus: 'ready'
@@ -344,11 +392,11 @@ describe('HotmailRepository account binding and security boundary', () => {
     hotmail.saveSettings({
       profileRoot: 'D:\\MaxHotmail',
       browserExecutable: '',
-      oauthClientId: 'default-public-client-id',
+      oauthClientId: 'fixture-default-client',
       oauthTenant: 'consumers',
       proxyMode: 'random_ipv4',
-      proxyListText: '1.2.3.4:8080:proxy-user:proxy-secret'
-    }, ['1.2.3.4:8080:proxy-user:proxy-secret'])
+      proxyListText: '203.0.113.10:8080:user:pass'
+    }, ['203.0.113.10:8080:user:pass'])
 
     const dashboard = hotmail.listDashboardRows()[0]
     const dashboardJson = JSON.stringify(hotmail.listDashboardRows())
@@ -357,22 +405,22 @@ describe('HotmailRepository account binding and security boundary', () => {
 
     expect(dashboard).toMatchObject({
       accountId: account.id,
-      oauthClientId: 'canonical-public-client-id',
+      oauthClientId: 'fixture-canonical-client',
       hasRefreshToken: true,
       oauthUpdatedAt: 111,
       lastTokenCheckAt: 222
     })
     expect(state).toMatchObject({
       accountId: account.id,
-      oauthClientId: 'canonical-public-client-id',
-      refreshTokenCiphertext: 'encrypted-refresh-token-value'
+      oauthClientId: 'fixture-canonical-client',
+      refreshTokenCiphertext: 'fixture-refresh-token'
     })
-    expect(dashboardJson).not.toContain('mail-super-secret')
-    expect(dashboardJson).not.toContain('encrypted-refresh-token-value')
-    expect(settingsJson).not.toContain('proxy-user')
-    expect(settingsJson).not.toContain('proxy-secret')
+    expect(dashboardJson).not.toContain('fixture-mail-pass')
+    expect(dashboardJson).not.toContain('fixture-refresh-token')
+    expect(settingsJson).not.toContain('user')
+    expect(settingsJson).not.toContain('pass')
     expect(dashboard?.emailPasswordMasked).toMatch(/^•+$/)
-    expect(hotmail.getSettingsView().proxyPreview).toEqual(['http://1.2.3.4:8080'])
+    expect(hotmail.getSettingsView().proxyPreview).toEqual(['http://203.0.113.10:8080'])
 
     runtime.close()
   })

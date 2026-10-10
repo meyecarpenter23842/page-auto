@@ -65,6 +65,33 @@ describe('PageTabWorkerManager', () => {
     expect(manager.status({ pageTabId: 10 }).status).toBe('running')
   })
 
+  it('rehydrates one hundred enabled Page Tab schedulers without user Resume clicks', () => {
+    const controllers = new Map<number, FakeController>()
+    const manager = new PageTabWorkerManager((pageTabId) => {
+      const controller = new FakeController(pageTabId)
+      controllers.set(pageTabId, controller)
+      return controller
+    }, () => 100)
+    const ids = Array.from({ length: 100 }, (_, index) => index + 1)
+
+    const restored = manager.rehydrate(ids)
+
+    expect(restored).toHaveLength(100)
+    expect(restored.every((entry) => entry.status === 'running')).toBe(true)
+    expect([...controllers.values()].reduce((sum, controller) => sum + controller.resumeCalls, 0)).toBe(100)
+    expect([...controllers.values()].reduce((sum, controller) => sum + controller.startCalls, 0)).toBe(0)
+  })
+
+  it('rehydrates a completed window through controller Resume instead of creating a fresh Start run', () => {
+    const controller = new FakeController(10)
+    controller.state = snapshot(10, 'completed')
+    const manager = new PageTabWorkerManager(() => controller)
+
+    expect(manager.rehydrate([10])[0]?.status).toBe('running')
+    expect(controller.resumeCalls).toBe(1)
+    expect(controller.startCalls).toBe(0)
+  })
+
   it('starts a fresh run when Resume is clicked after the previous run completed', () => {
     const controller = new FakeController(10)
     controller.state = snapshot(10, 'completed')

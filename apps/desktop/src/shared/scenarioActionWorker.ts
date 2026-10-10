@@ -1,6 +1,8 @@
+import type { AccountStatus } from './accounts'
 import type { BrowserSettings, NetworkSettings, SessionSettings } from './appSettings'
 import type { BrowserWindowPlacement } from './browserWindowLayout'
 import type { ActionExecutionSummary, ActionLogEvent, ActionRunRequest } from './actionRuntime'
+import type { FacebookSessionPolicyState } from './facebookSessionPolicy'
 
 export interface ScenarioActionSessionAccount {
   id: number
@@ -36,10 +38,14 @@ export interface ScenarioActionWorkerResult {
   sessionCookie: string | null
   accountName: string | null
   sessionState: 'valid' | 'needs_login' | 'verification_required' | null
+  sessionPolicyState?: FacebookSessionPolicyState | null
+  accountStatus?: AccountStatus
 }
 
 export type ScenarioActionWorkerRequestMessage =
   | { type: 'execute'; job: ScenarioActionWorkerJob }
+  | { type: 'pause'; runKey: string }
+  | { type: 'resume'; runKey: string }
   | { type: 'stop'; runKey: string }
   | { type: 'shutdown' }
 

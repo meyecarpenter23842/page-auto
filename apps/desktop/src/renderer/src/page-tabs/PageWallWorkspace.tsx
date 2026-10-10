@@ -1,464 +1,552 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import {
+  CANONICAL_CONTENT_LIBRARY_SET_ID,
+  DEFAULT_CONTENT_LIBRARY_IMAGE,
+  type ContentLibraryImageConfig,
+  type ContentLibraryItem
+} from '../../../shared/contentLibrary'
 import type { PageTabConfig, PageTabSummary } from '../../../shared/pageTabs'
-import type { PageWallRunNowResult } from '../../../shared/pageWall'
-import type { PageWallJobRecord, PageWallJobStatus } from '../../../shared/pageWallJobs'
+import type { PageWallCanonicalPostSelection, PageWallRunNowResult } from '../../../shared/pageWall'
+import {
+  buildPageWallFiniteTasks,
+  canEditPageWallFiniteSchedule,
+  normalizePageWallScheduleMinutes,
+  pageWallFiniteScheduleRuntimeState,
+  pageWallWeekdayLabel,
+  type PageWallFiniteDashboard,
+  type PageWallFinitePlanView
+} from '../../../shared/pageWallFiniteRuntime'
+import type { PageWallPlanPostSource, PageWallPlanStatus } from '../../../shared/pageWallPlans'
+import type { PageWallPostSelectionMode, PageWallSchedulePostPoolRecord } from '../../../shared/pageWallPostPool'
+import {
+  CanonicalPostPicker,
+  type CanonicalPostPickerValue
+} from '../content-library/CanonicalPostPicker'
+import { AccountSelectionMenu } from '../accounts/AccountSelectionMenu'
+import { useExcelRowRange } from '../accounts/accountTableSelection'
+import { comparePageWallScheduleGroups } from './pageWallScheduleOrder'
+import {
+  loadPageWallLastUsedState,
+  savePageWallLastUsedState
+} from './pageWallLastUsedState'
+import { useUnsavedWorkspaceChanges } from '../workspaceNavigation'
 import './pageWallWorkspace.css'
+import './pageWallRuntimeControls.css'
 
-interface WallLogEntry {
-  id: number
-  at: string
-  tone: 'info' | 'success' | 'error' | 'attention'
-  message: string
+export interface PageWallWorkspaceProps { activePageId?: number; scoped?: boolean }
+type Mode = 'now' | 'schedule'
+type PickerTarget = 'workspace' | 'schedule'
+type WallAccount = PageTabConfig['accounts'][number]
+
+const WEEKDAY_OPTIONS = [
+  { value: 0, label: 'CN' },
+  { value: 1, label: 'T2' },
+  { value: 2, label: 'T3' },
+  { value: 3, label: 'T4' },
+  { value: 4, label: 'T5' },
+  { value: 5, label: 'T6' },
+  { value: 6, label: 'T7' }
+] as const
+
+interface PostRef {
+  postId: number
+  postName: string
+  variantIndex: number
 }
 
-function fileName(path: string): string {
-  const parts = path.split(/[\\/]/)
-  return parts[parts.length - 1] || path
+interface ScheduleDraft {
+  planIds: number[]
+  weekdays: number[]
+  times: string[]
+  accountIds: number[]
+  accountConcurrency: number
+  posts: PostRef[]
+  postSelectionMode: PageWallPostSelectionMode
+  enabled: boolean
+  hasHistory: boolean
 }
 
-function statusLabel(status: PageWallRunNowResult['status']): string {
-  if (status === 'success') return 'Thành công'
-  if (status === 'needs_login') return 'Cần đăng nhập / xử lý'
-  if (status === 'skipped') return 'Đã bỏ qua'
-  return 'Thất bại'
+interface ScheduleGroup {
+  key: string
+  plans: PageWallFinitePlanView[]
+  planIds: number[]
+  scheduleKind: 'specific_date' | 'daily'
+  localDate: string | null
+  weekdays: number[]
+  minutes: number[]
+  accountIds: number[]
+  accountConcurrency: number
+  source: PageWallPlanPostSource | null
+  postPool: PageWallSchedulePostPoolRecord | null
+  status: PageWallPlanStatus
+  editable: boolean
 }
 
-function jobStatusLabel(status: PageWallJobStatus): string {
-  if (status === 'pending') return 'Chờ chạy'
-  if (status === 'running') return 'Đang chạy'
-  if (status === 'success') return 'Thành công'
-  if (status === 'cancelled') return 'Đã hủy'
-  return 'Thất bại'
+function timeToMinute(value: string): number {
+  const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(value)
+  return match ? Number(match[1]) * 60 + Number(match[2]) : -1
 }
-
-function logTone(result: PageWallRunNowResult): WallLogEntry['tone'] {
-  if (result.status === 'success') return 'success'
-  if (result.status === 'needs_login' || result.code === 'publish_unconfirmed') return 'attention'
-  if (result.status === 'failed') return 'error'
-  return 'info'
+function minuteToTime(value: number): string { return `${String(Math.floor(value / 60)).padStart(2, '0')}:${String(value % 60).padStart(2, '0')}` }
+function localDateInput(): string { const now = new Date(); const shifted = new Date(now.getTime() - now.getTimezoneOffset() * 60_000); return shifted.toISOString().slice(0, 10) }
+function resultTone(result: PageWallRunNowResult): string { return result.status === 'success' ? 'success' : result.status === 'needs_login' ? 'attention' : 'error' }
+function isWallAccountSelectable(account: WallAccount): boolean { return account.status !== 'disabled' }
+function canonicalPostId(item: ContentLibraryItem): number | null {
+  if (!Number.isSafeInteger(item.id) || item.id >= 0) return null
+  return Math.abs(item.id)
 }
-
-function localDateTimeInput(timestamp: number): string {
-  const date = new Date(timestamp)
-  const shifted = new Date(timestamp - (date.getTimezoneOffset() * 60_000))
-  return shifted.toISOString().slice(0, 16)
+function postRefFromItem(item: ContentLibraryItem, variantIndex: number): PostRef | null {
+  const postId = canonicalPostId(item)
+  return postId ? { postId, postName: item.name, variantIndex } : null
 }
-
-function formatDateTime(timestamp: number | null): string {
-  if (!timestamp) return '—'
-  return new Date(timestamp).toLocaleString('vi-VN', {
-    day: '2-digit', month: '2-digit', year: 'numeric',
-    hour: '2-digit', minute: '2-digit', second: '2-digit'
+function canonicalFromItem(item: ContentLibraryItem, variantIndex: number): PageWallCanonicalPostSelection | null {
+  const ref = postRefFromItem(item, variantIndex)
+  if (!ref) return null
+  return { ...ref, content: item.variants[variantIndex] ?? '', image: { ...item.image } }
+}
+function sourceSignature(source: PageWallPlanPostSource): unknown {
+  return source.kind === 'canonical'
+    ? { kind: 'canonical', postId: source.postId, variantIndex: source.variantIndex }
+    : { kind: 'manual', content: source.content, imagePaths: [...source.imagePaths] }
+}
+function groupSignature(plan: PageWallFinitePlanView): string {
+  if (plan.postPool?.groupKey) return `post-pool:${plan.postPool.groupKey}`
+  return JSON.stringify({
+    scheduleKind: plan.scheduleKind,
+    localDate: plan.localDate,
+    weekdays: plan.weekdays,
+    accountConcurrency: plan.accountConcurrency,
+    tasks: plan.tasks.map((task) => ({ accountId: task.accountId, source: sourceSignature(task.source) }))
   })
 }
-
-function contentPreview(job: PageWallJobRecord): string {
-  const normalized = job.content.trim().replace(/\s+/g, ' ')
-  if (!normalized) return `[Chỉ ảnh · ${job.imagePaths.length} file]`
-  return normalized.length > 150 ? `${normalized.slice(0, 150)}…` : normalized
+function groupStatus(plans: PageWallFinitePlanView[]): PageWallPlanStatus {
+  if (plans.some((plan) => plan.status === 'needs_attention')) return 'needs_attention'
+  if (plans.some((plan) => plan.status === 'active')) return 'active'
+  if (plans.some((plan) => plan.status === 'disabled')) return 'disabled'
+  if (plans.every((plan) => plan.status === 'completed')) return 'completed'
+  return plans[0]?.status ?? 'active'
+}
+function groupSchedulePlans(plans: PageWallFinitePlanView[]): ScheduleGroup[] {
+  const grouped = new Map<string, PageWallFinitePlanView[]>()
+  for (const plan of plans) {
+    const key = groupSignature(plan)
+    const list = grouped.get(key) ?? []
+    list.push(plan)
+    grouped.set(key, list)
+  }
+  return [...grouped.entries()].map(([key, list]) => {
+    const sorted = [...list].sort((left, right) => left.minuteOfDay - right.minuteOfDay || left.id - right.id)
+    const first = sorted[0]!
+    const accountIds = [...new Set<number>(first.tasks.map((task) => task.accountId))]
+    return {
+      key,
+      plans: sorted,
+      planIds: sorted.map((plan) => plan.id),
+      scheduleKind: first.scheduleKind,
+      localDate: first.localDate,
+      weekdays: [...first.weekdays],
+      minutes: sorted.map((plan) => plan.minuteOfDay),
+      accountIds,
+      accountConcurrency: first.accountConcurrency,
+      source: first.tasks[0]?.source ?? null,
+      postPool: first.postPool,
+      status: groupStatus(sorted),
+      editable: first.scheduleKind === 'daily' && canEditPageWallFiniteSchedule(sorted)
+    }
+  }).sort(comparePageWallScheduleGroups)
 }
 
-export function PageWallWorkspace() {
-  const [tabs, setTabs] = useState<PageTabSummary[]>([])
-  const [pageTabId, setPageTabId] = useState<number | null>(null)
-  const [config, setConfig] = useState<PageTabConfig | null>(null)
-  const [accountId, setAccountId] = useState<number | null>(null)
-  const [content, setContent] = useState('')
-  const [imagePaths, setImagePaths] = useState<string[]>([])
-  const [scheduleAt, setScheduleAt] = useState(() => localDateTimeInput(Date.now() + (10 * 60_000)))
-  const [jobs, setJobs] = useState<PageWallJobRecord[]>([])
+function PostEditorModal({ item, variantIndex, onClose, onSaved }: { item: ContentLibraryItem | null; variantIndex: number; onClose: () => void; onSaved: (item: ContentLibraryItem, variantIndex: number) => void }) {
+  const safeIndex = item ? Math.min(variantIndex, Math.max(0, item.variants.length - 1)) : 0
+  const [name, setName] = useState(item?.name ?? '')
+  const [text, setText] = useState(item?.variants[safeIndex] ?? '')
+  const [image, setImage] = useState<ContentLibraryImageConfig>(() => item ? { ...item.image } : { ...DEFAULT_CONTENT_LIBRARY_IMAGE })
   const [busy, setBusy] = useState(false)
-  const [scheduling, setScheduling] = useState(false)
-  const [cancellingJobId, setCancellingJobId] = useState<number | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [jobsLoading, setJobsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [result, setResult] = useState<PageWallRunNowResult | null>(null)
-  const [logs, setLogs] = useState<WallLogEntry[]>([])
-  const logSequence = useRef(0)
-
-  const addLog = (tone: WallLogEntry['tone'], message: string) => {
-    logSequence.current += 1
-    const id = logSequence.current
-    setLogs((entries) => [{
-      id,
-      at: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-      tone,
-      message
-    }, ...entries].slice(0, 20))
+  const imageCountValid = Number.isSafeInteger(image.imagesPerPost) && image.imagesPerPost >= 1 && image.imagesPerPost <= 50
+  const canSave = Boolean(name.trim() && (text.trim() || image.folderPath.trim()) && imageCountValid && !busy)
+  const pickFolder = async () => {
+    const folderPath = await window.pageAuto.pickContentLibraryImageFolder()
+    if (folderPath) setImage((current) => ({ ...current, folderPath }))
   }
-
-  const refreshJobs = useCallback(async (silent = false) => {
+  const save = async () => {
+    if (!canSave) return
+    setBusy(true); setError(null)
     try {
-      const next = await window.pageAuto.listPageWallJobs()
-      setJobs(next)
-      if (!silent) setError(null)
-    } catch (cause) {
-      if (!silent) setError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      if (!silent) setJobsLoading(false)
-    }
-  }, [])
+      const variants = item ? [...item.variants] : ['']
+      if (!variants.length) variants.push('')
+      variants[safeIndex] = text
+      const details = item
+        ? await window.pageAuto.updateContentLibraryItem({ id: item.id, contentSetId: CANONICAL_CONTENT_LIBRARY_SET_ID, name: name.trim(), enabled: true, variants, image })
+        : await window.pageAuto.createContentLibraryItem({ contentSetId: CANONICAL_CONTENT_LIBRARY_SET_ID, name: name.trim(), enabled: true, variants: [text], image })
+      const saved = item
+        ? details.items.find((candidate) => candidate.id === item.id)
+        : [...details.items].sort((left, right) => right.updatedAt - left.updatedAt || Math.abs(right.id) - Math.abs(left.id))[0]
+      if (!saved) throw new Error('Không đọc lại được bài vừa lưu vào Thư viện.')
+      onSaved(saved, item ? safeIndex : 0)
+    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)) }
+    finally { setBusy(false) }
+  }
+  return <div className="page-wall-modal-backdrop editor" role="presentation" onMouseDown={onClose}>
+    <section className="page-wall-post-editor" role="dialog" aria-modal="true" aria-label={item ? 'Sửa bài viết' : 'Thêm bài viết'} onMouseDown={(event) => event.stopPropagation()}>
+      <header><div><small>THƯ VIỆN BÀI VIẾT CHUNG</small><h3>{item ? 'Sửa bài viết' : 'Thêm bài viết'}</h3></div><button type="button" onClick={onClose}>×</button></header>
+      {error ? <div className="page-tab-error">{error}</div> : null}
+      <label><span>Tên bài</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="Ví dụ: Khuyến mãi tháng 9" autoFocus /></label>
+      <label><span>Nội dung{item && item.variants.length > 1 ? ` · biến thể ${safeIndex + 1}/${item.variants.length}` : ''}</span><textarea value={text} onChange={(event) => setText(event.target.value)} placeholder="Nhập nội dung bài…" /></label>
+      <label><span>Số ảnh mỗi bài</span><input aria-label="Số ảnh mỗi bài" type="number" min={1} max={50} value={image.imagesPerPost} onChange={(event) => setImage((current) => ({ ...current, imagesPerPost: Math.max(1, Math.min(50, Number(event.target.value) || 1)) }))} /><small>Mỗi lượt đăng lấy tối đa số ảnh này từ folder đã chọn.</small></label>
+      <div className="page-wall-folder-row"><div><span>Folder ảnh</span><b>{image.folderPath || 'Không dùng ảnh'}</b></div><button className="pt-button secondary" type="button" onClick={() => void pickFolder()}>Chọn folder</button><button type="button" disabled={!image.folderPath} onClick={() => setImage((current) => ({ ...current, folderPath: '' }))}>Bỏ ảnh</button></div>
+      <footer><button type="button" onClick={onClose}>Hủy</button><button className="pt-button primary" type="button" disabled={!canSave} onClick={() => void save()}>{busy ? 'Đang lưu…' : 'Lưu vào Thư viện'}</button></footer>
+    </section>
+  </div>
+}
+
+function ScheduleModal({ draft, accounts, libraryItems, busy, onChange, onChoosePost, onAddPost, onEditPost, onClose, onSave }: {
+  draft: ScheduleDraft
+  accounts: WallAccount[]
+  libraryItems: ContentLibraryItem[]
+  busy: boolean
+  onChange: (next: ScheduleDraft) => void
+  onChoosePost: () => void
+  onAddPost: () => void
+  onEditPost: () => void
+  onClose: () => void
+  onSave: () => void
+}) {
+  const runnable = accounts.filter(isWallAccountSelectable)
+  const runnableIds = runnable.map((account) => account.accountId)
+  const accountRange = useExcelRowRange(runnableIds)
+  const [accountMenu, setAccountMenu] = useState<{ x: number; y: number } | null>(null)
+  const postItems = draft.posts.map((ref) => ({ ref, item: libraryItems.find((item) => canonicalPostId(item) === ref.postId) ?? null }))
+  const toggle = (accountId: number) => onChange({ ...draft, accountIds: draft.accountIds.includes(accountId) ? draft.accountIds.filter((id) => id !== accountId) : [...draft.accountIds, accountId] })
+  const toggleWeekday = (day: number) => onChange({ ...draft, weekdays: draft.weekdays.includes(day) ? draft.weekdays.filter((value) => value !== day) : [...draft.weekdays, day].sort((a, b) => a - b) })
+  const setTime = (index: number, value: string) => onChange({ ...draft, times: draft.times.map((time, current) => current === index ? value : time) })
+  const rawMinutes = draft.times.map(timeToMinute)
+  const uniqueMinutes = (() => { try { return normalizePageWallScheduleMinutes(rawMinutes) } catch { return [] } })()
+  const timesValid = rawMinutes.every((minute) => minute >= 0) && uniqueMinutes.length === draft.times.length
+  const canSave = Boolean(draft.posts.length && draft.accountIds.length && draft.weekdays.length && timesValid && uniqueMinutes.length && !busy)
+  const totalVariants = postItems.reduce((sum, entry) => sum + (entry.item?.variants.length || 1), 0)
+  const modeLabel = draft.postSelectionMode === 'random' ? 'Ngẫu nhiên không trùng vòng' : 'Lần lượt'
+  const postSummary = draft.posts.length ? `${draft.posts.length} bài đã chọn` : 'Chưa chọn bài'
+  const postMeta = draft.posts.length ? `${totalVariants} biến thể · Mỗi khung giờ lấy 1 bài · ${modeLabel}` : 'Chọn một hoặc nhiều bài trước khi lưu lịch'
+  return <div className="page-wall-modal-backdrop schedule" role="presentation" onMouseDown={onClose}>
+    <section className="page-wall-schedule-dialog" role="dialog" aria-modal="true" aria-label="Thiết lập lịch đăng" onMouseDown={(event) => event.stopPropagation()}>
+      <header><div><small>LỊCH ĐĂNG TƯỜNG</small><h3>{draft.planIds.length ? 'Sửa lịch đăng' : 'Hẹn giờ đăng bài'}</h3></div><button type="button" onClick={onClose}>×</button></header>
+      <div className="page-wall-schedule-step">
+        <div className="page-wall-step-title"><b>1. Bộ bài cho lịch</b><span>{draft.posts.length} bài</span></div>
+        <div className={`page-wall-selected-post compact ${draft.posts.length ? 'ready' : 'empty'}`}>
+          <div><small>BỘ BÀI ĐANG CHỌN</small><strong>{postSummary}</strong><span>{postMeta}</span></div>
+          <div><button className="pt-button secondary" type="button" onClick={onChoosePost}>Chọn / quản lý</button><button type="button" onClick={onAddPost}>Thêm bài</button><button type="button" disabled={draft.posts.length !== 1 || !postItems[0]?.item} onClick={onEditPost}>Sửa bài</button></div>
+        </div>
+        <div className="page-wall-post-pool-mode"><span>Cách lấy bài theo từng khung giờ</span><div role="radiogroup" aria-label="Cách lấy bài của lịch"><label><input type="radio" name="page-wall-post-pool-mode" checked={draft.postSelectionMode === 'sequential'} onChange={() => onChange({ ...draft, postSelectionMode: 'sequential' })} /> Lần lượt</label><label><input type="radio" name="page-wall-post-pool-mode" checked={draft.postSelectionMode === 'random'} onChange={() => onChange({ ...draft, postSelectionMode: 'random' })} /> Ngẫu nhiên</label></div><small>{draft.postSelectionMode === 'random' ? 'Dùng hết bộ bài trước khi xáo lại vòng mới.' : 'Đi lần lượt qua bộ bài và tiếp tục ở khung giờ kế tiếp.'}</small></div>
+        {postItems.length ? <div className="page-wall-schedule-post-pool">{postItems.map(({ ref, item }, index) => <div key={ref.postId}><b>{index + 1}</b><span><strong>#{ref.postId} · {item?.name ?? ref.postName}</strong><small>{item?.variants.length || 1} biến thể · {item?.image.folderPath ? `${item.image.imagesPerPost} ảnh/lượt` : 'Không ảnh'}</small></span><button type="button" aria-label={`Bỏ bài ${item?.name ?? ref.postName}`} onClick={() => onChange({ ...draft, posts: draft.posts.filter((post) => post.postId !== ref.postId) })}>×</button></div>)}</div> : null}
+      </div>
+      <div className="page-wall-schedule-step"><b>2. Ngày và giờ đăng bài</b><div className="page-wall-plan-kind">{WEEKDAY_OPTIONS.map((day) => <label key={day.value}><input aria-label={day.label} type="checkbox" checked={draft.weekdays.includes(day.value)} onChange={() => toggleWeekday(day.value)} /> {day.label}</label>)}</div>{!draft.weekdays.length ? <small className="page-wall-time-error">Hãy chọn ít nhất một ngày chạy.</small> : null}<div className="page-wall-time-list">{draft.times.map((time, index) => <div className="page-wall-time-chip" key={`${index}-${time}`}><input type="time" value={time} onChange={(event) => setTime(index, event.target.value)} /><button type="button" aria-label={`Xóa giờ ${time}`} disabled={draft.times.length === 1} onClick={() => onChange({ ...draft, times: draft.times.filter((_value, current) => current !== index) })}>×</button></div>)}<button className="page-wall-add-time" type="button" disabled={draft.times.length >= 12} onClick={() => onChange({ ...draft, times: [...draft.times, '12:00'] })}>+ Thêm giờ</button></div>{!timesValid ? <small className="page-wall-time-error">Giờ chạy phải hợp lệ và không được trùng nhau.</small> : null}</div>
+      <div className="page-wall-schedule-step accounts"><div className="page-wall-step-title"><b>3. Chọn tài khoản muốn đăng</b><span>{draft.accountIds.length}/{runnable.length} TK</span></div><div className="page-wall-mini-account-tools"><button type="button" onClick={() => onChange({ ...draft, accountIds: runnable.map((account) => account.accountId) })}>Chọn tất cả</button><button type="button" onClick={() => onChange({ ...draft, accountIds: [] })}>Bỏ chọn</button><label><span>TK song song</span><input type="number" min={1} max={20} value={draft.accountConcurrency} onChange={(event) => onChange({ ...draft, accountConcurrency: Math.max(1, Math.min(20, Number(event.target.value) || 1)) })} /></label></div><div className="page-wall-schedule-account-table"><table><thead><tr><th></th><th>UID</th><th>Tên</th><th>Trạng thái</th></tr></thead><tbody>{accounts.map((account) => { const canUse = isWallAccountSelectable(account); const selected = draft.accountIds.includes(account.accountId); const ranged = accountRange.rangeIds.has(account.accountId); return <tr key={account.accountId} className={`${selected ? 'selected ' : ''}${ranged ? 'range-row ' : ''}${!canUse ? 'disabled' : ''}`.trim()} onPointerDown={(event) => { if (canUse && !busy) accountRange.onRowPointerDown(event, account.accountId) }} onPointerEnter={() => { if (canUse && !busy) accountRange.onRowPointerEnter(account.accountId) }} onContextMenu={(event) => { if (!canUse || busy) return; event.preventDefault(); accountRange.ensureContextRow(account.accountId); setAccountMenu({ x: event.clientX, y: event.clientY }) }}><td><input type="checkbox" checked={selected} disabled={!canUse || busy} onPointerDown={(event) => event.stopPropagation()} onChange={() => toggle(account.accountId)} /></td><td><b>{account.uid}</b></td><td>{account.name || '—'}</td><td>{account.status}</td></tr> })}</tbody></table></div>{accountMenu ? <AccountSelectionMenu x={accountMenu.x} y={accountMenu.y} checkedCount={draft.accountIds.filter((id) => runnableIds.includes(id)).length} rangeCount={accountRange.rangeIds.size} totalCount={runnableIds.length} onCheckRange={() => { const next = new Set(draft.accountIds); for (const id of accountRange.rangeIds) if (runnableIds.includes(id)) next.add(id); onChange({ ...draft, accountIds: [...next] }); setAccountMenu(null) }} onCheckAll={() => { onChange({ ...draft, accountIds: [...runnableIds] }); setAccountMenu(null) }} onClearChecked={() => { onChange({ ...draft, accountIds: [] }); setAccountMenu(null) }} onDismiss={() => setAccountMenu(null)} /> : null}</div>
+      {draft.hasHistory ? <small className="page-wall-history-note">Lịch đã có lượt chạy. Thay đổi chỉ áp dụng cho lượt kế tiếp; lịch sử cũ được giữ nguyên.</small> : null}
+      <div className="page-wall-schedule-review"><strong>{pageWallWeekdayLabel(draft.weekdays)} · {uniqueMinutes.map(minuteToTime).join(', ') || 'Chưa có giờ'}</strong><span>{postSummary} · {modeLabel} · {draft.accountIds.length} TK · song song {draft.accountConcurrency}</span></div>
+      <footer><button type="button" onClick={onClose}>Hủy</button><button className="pt-button primary" type="button" disabled={!canSave} onClick={onSave}>{busy ? 'Đang lưu…' : 'Lưu lịch'}</button></footer>
+    </section>
+  </div>
+}
+
+export function PageWallWorkspace({ activePageId: controlledPageId, scoped = false }: PageWallWorkspaceProps = {}) {
+  const [tabs, setTabs] = useState<PageTabSummary[]>([])
+  const [pageTabId, setPageTabId] = useState<number | null>(controlledPageId ?? null)
+  const [config, setConfig] = useState<PageTabConfig | null>(null)
+  const [selectedIds, setSelectedIds] = useState<number[]>([])
+  const [restoredPageId, setRestoredPageId] = useState<number | null>(null)
+  const [accountMenu, setAccountMenu] = useState<{ x: number; y: number } | null>(null)
+  const [accountConcurrency, setAccountConcurrency] = useState(1)
+  const [runDelaySeconds, setRunDelaySeconds] = useState(0)
+  const [canonical, setCanonical] = useState<PageWallCanonicalPostSelection | null>(null)
+  const [mode, setMode] = useState<Mode>('now')
+  const [dashboard, setDashboard] = useState<PageWallFiniteDashboard>({ plans: [], jobs: [] })
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [lastResults, setLastResults] = useState<PageWallRunNowResult[]>([])
+  const [libraryItems, setLibraryItems] = useState<ContentLibraryItem[]>([])
+  const [pickerTarget, setPickerTarget] = useState<PickerTarget | null>(null)
+  const [scheduleDraft, setScheduleDraft] = useState<ScheduleDraft | null>(null)
+  useUnsavedWorkspaceChanges(scheduleDraft !== null, 'Page Tabs / Lịch Đăng Tường')
+  const [postEditor, setPostEditor] = useState<{ target: PickerTarget; item: ContentLibraryItem | null; variantIndex: number } | null>(null)
 
   useEffect(() => {
     let cancelled = false
-    void window.pageAuto.listPageTabs()
-      .then((nextTabs) => {
-        if (cancelled) return
-        setTabs(nextTabs)
-        setPageTabId((current) => current && nextTabs.some((tab) => tab.id === current)
-          ? current
-          : nextTabs[0]?.id ?? null)
-        setError(null)
+    void window.pageAuto.listPageTabs().then((next) => {
+      if (cancelled) return
+      setTabs(next)
+      setPageTabId((current) => {
+        const wanted = controlledPageId ?? current
+        return wanted && next.some((tab) => tab.id === wanted) ? wanted : scoped ? null : next[0]?.id ?? null
       })
-      .catch((cause) => {
-        if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause))
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
+    }).catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)))
     return () => { cancelled = true }
+  }, [controlledPageId, scoped])
+
+  const refreshDashboard = useCallback(async (id: number, silent = false) => {
+    try { setDashboard(await window.pageWallFinite.getDashboard({ pageTabId: id })); if (!silent) setError(null) }
+    catch (cause) { if (!silent) setError(cause instanceof Error ? cause.message : String(cause)) }
+  }, [])
+  const refreshLibrary = useCallback(async () => {
+    const library = await window.pageAuto.getContentLibrary({ id: CANONICAL_CONTENT_LIBRARY_SET_ID })
+    setLibraryItems(library?.items ?? [])
+    return library?.items ?? []
   }, [])
 
   useEffect(() => {
-    void refreshJobs()
-    const timer = setInterval(() => void refreshJobs(true), 3_000)
-    return () => clearInterval(timer)
-  }, [refreshJobs])
-
-  useEffect(() => {
-    if (pageTabId === null) {
+    if (!pageTabId) {
       setConfig(null)
-      setAccountId(null)
+      setRestoredPageId(null)
+      setDashboard({ plans: [], jobs: [] })
       return
     }
+    setRestoredPageId(null)
     let cancelled = false
-    setLoading(true)
-    setConfig(null)
-    setAccountId(null)
-    setResult(null)
-    void window.pageAuto.getPageTab({ id: pageTabId })
-      .then((nextConfig) => {
-        if (cancelled) return
-        if (!nextConfig) throw new Error('Page Tab không còn tồn tại.')
-        setConfig(nextConfig)
-        const runnableAccounts = nextConfig.accounts
-          .filter((account) => account.enabled && account.status !== 'disabled')
-          .sort((a, b) => a.sortOrder - b.sortOrder)
-        setAccountId(runnableAccounts[0]?.accountId ?? null)
-        setError(null)
+    void window.pageAuto.getPageTab({ id: pageTabId }).then((next) => {
+      if (cancelled) return
+      setConfig(next)
+      const runnable = (next?.accounts ?? []).filter(isWallAccountSelectable).sort((a, b) => a.sortOrder - b.sortOrder)
+      const runnableIdsForPage = runnable.map((account) => account.accountId)
+      const runnableSet = new Set(runnableIdsForPage)
+      const lastUsed = loadPageWallLastUsedState(pageTabId)
+      setSelectedIds(lastUsed
+        ? lastUsed.selectedAccountIds.filter((accountId) => runnableSet.has(accountId))
+        : runnableIdsForPage)
+      setAccountConcurrency(lastUsed?.accountConcurrency ?? 1)
+      setRunDelaySeconds(lastUsed?.runDelaySeconds ?? 0)
+      setRestoredPageId(pageTabId)
+      setLastResults([])
+    }).catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)))
+    void refreshLibrary().catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)))
+    void refreshDashboard(pageTabId)
+    const timer = window.setInterval(() => void refreshDashboard(pageTabId, true), 3_000)
+    return () => { cancelled = true; window.clearInterval(timer) }
+  }, [pageTabId, refreshDashboard, refreshLibrary])
+
+  const accounts = useMemo(() => [...(config?.accounts ?? [])].sort((a, b) => a.sortOrder - b.sortOrder), [config])
+  const runnableIds = useMemo(() => accounts.filter(isWallAccountSelectable).map((account) => account.accountId), [accounts])
+
+  useEffect(() => {
+    if (!pageTabId || restoredPageId !== pageTabId || config?.id !== pageTabId) return
+    const runnableSet = new Set(runnableIds)
+    savePageWallLastUsedState(pageTabId, {
+      selectedAccountIds: selectedIds.filter((accountId) => runnableSet.has(accountId)),
+      accountConcurrency,
+      runDelaySeconds
+    })
+  }, [pageTabId, restoredPageId, config?.id, runnableIds, selectedIds, accountConcurrency, runDelaySeconds])
+
+  const accountRange = useExcelRowRange(runnableIds)
+  const selectedRunnable = selectedIds.filter((id) => runnableIds.includes(id))
+  const scheduleGroups = useMemo(() => groupSchedulePlans(dashboard.plans), [dashboard.plans])
+  const canRun = Boolean(pageTabId && selectedRunnable.length && canonical && !busy)
+  const runBlockedReason = !selectedRunnable.length ? 'Chưa chọn tài khoản' : !canonical ? 'Chưa chọn bài viết' : null
+
+  const toggleAccount = (accountId: number) => setSelectedIds((current) => current.includes(accountId) ? current.filter((id) => id !== accountId) : [...current, accountId])
+  const chooseFromLibrary = async (target: PickerTarget) => {
+    setError(null)
+    try { await refreshLibrary(); setPickerTarget(target) }
+    catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)) }
+  }
+  const applyPostItem = (target: PickerTarget, item: ContentLibraryItem, variantIndex: number) => {
+    if (target === 'workspace') {
+      const selection = canonicalFromItem(item, variantIndex)
+      if (selection) setCanonical(selection)
+    } else {
+      const ref = postRefFromItem(item, variantIndex)
+      if (ref) setScheduleDraft((current) => {
+        if (!current) return current
+        const existing = current.posts.findIndex((post) => post.postId === ref.postId)
+        return existing >= 0
+          ? { ...current, posts: current.posts.map((post, index) => index === existing ? ref : post) }
+          : { ...current, posts: [...current.posts, ref] }
       })
-      .catch((cause) => {
-        if (!cancelled) {
-          setConfig(null)
-          setAccountId(null)
-          setError(cause instanceof Error ? cause.message : String(cause))
+    }
+    setPickerTarget(null)
+  }
+  const applyPickerSelections = (target: PickerTarget, values: CanonicalPostPickerValue[]) => {
+    if (target === 'workspace') {
+      const value = values[0]
+      if (!value) return
+      const previousIndex = canonical?.postId === value.postId ? canonical.variantIndex : 0
+      const variantIndex = Math.min(Math.max(0, previousIndex), Math.max(0, value.item.variants.length - 1))
+      applyPostItem(target, value.item, variantIndex)
+      return
+    }
+    setScheduleDraft((current) => {
+      if (!current) return current
+      const previous = new Map(current.posts.map((post) => [post.postId, post]))
+      const posts = values.flatMap((value) => {
+        const old = previous.get(value.postId)
+        const variantIndex = Math.min(Math.max(0, old?.variantIndex ?? 0), Math.max(0, value.item.variants.length - 1))
+        const ref = postRefFromItem(value.item, variantIndex)
+        return ref ? [ref] : []
+      })
+      return { ...current, posts }
+    })
+    setPickerTarget(null)
+  }
+  const openPostEditor = (target: PickerTarget, create: boolean) => {
+    const ref = target === 'workspace'
+      ? canonical ? { postId: canonical.postId, variantIndex: canonical.variantIndex } : null
+      : scheduleDraft?.posts.length === 1 ? scheduleDraft.posts[0]! : null
+    const item = !create && ref ? libraryItems.find((candidate) => canonicalPostId(candidate) === ref.postId) ?? null : null
+    setPostEditor({ target, item, variantIndex: ref?.variantIndex ?? 0 })
+  }
+  const handlePostSaved = async (item: ContentLibraryItem, variantIndex: number) => {
+    await refreshLibrary()
+    const target = postEditor?.target ?? 'workspace'
+    applyPostItem(target, item, variantIndex)
+    setPostEditor(null)
+  }
+
+  const runSelected = async () => {
+    if (!canRun || !pageTabId || !canonical) return
+    setBusy(true); setError(null); setLastResults([])
+    try {
+      const response = await window.pageWallFinite.runNow({
+        pageTabId,
+        accountIds: selectedRunnable,
+        accountConcurrency,
+        delayBetweenRunsSec: runDelaySeconds,
+        content: canonical.content,
+        imagePaths: [],
+        canonicalPost: canonical
+      })
+      setLastResults(response.results)
+      const next = await window.pageAuto.getPageTab({ id: pageTabId }); if (next) setConfig(next)
+    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)) }
+    finally { setBusy(false) }
+  }
+
+  const openAddSchedule = () => setScheduleDraft({
+    planIds: [], weekdays: WEEKDAY_OPTIONS.map((day) => day.value), times: ['08:00'],
+    accountIds: [...selectedRunnable], accountConcurrency,
+    posts: canonical ? [{ postId: canonical.postId, postName: canonical.postName, variantIndex: canonical.variantIndex }] : [],
+    postSelectionMode: 'sequential',
+    enabled: true, hasHistory: false
+  })
+  const openEditSchedule = (group: ScheduleGroup) => {
+    const legacySource = group.source
+    if (!group.editable || group.scheduleKind !== 'daily') return
+    const poolSources = group.postPool?.posts ?? (legacySource?.kind === 'canonical' ? [legacySource] : [])
+    if (!poolSources.length) return
+    setScheduleDraft({
+      planIds: group.planIds,
+      weekdays: [...group.weekdays],
+      times: group.minutes.map(minuteToTime),
+      accountIds: group.accountIds,
+      accountConcurrency: group.accountConcurrency,
+      posts: poolSources.map((source) => {
+        const item = libraryItems.find((candidate) => canonicalPostId(candidate) === source.postId)
+        return { postId: source.postId, postName: item?.name ?? `Post #${source.postId}`, variantIndex: source.variantIndex }
+      }),
+      postSelectionMode: group.postPool?.mode ?? 'sequential',
+      enabled: group.status !== 'disabled',
+      hasHistory: group.plans.some((plan) => Boolean(plan.latestOccurrence))
+    })
+  }
+  const saveSchedule = async () => {
+    if (!pageTabId || !scheduleDraft?.posts.length || !scheduleDraft.accountIds.length || !scheduleDraft.weekdays.length) return
+    setBusy(true); setError(null)
+    try {
+      const minuteOfDays = normalizePageWallScheduleMinutes(scheduleDraft.times.map(timeToMinute))
+      const sources = scheduleDraft.posts.map((post): Extract<PageWallPlanPostSource, { kind: 'canonical' }> => ({
+        kind: 'canonical', postId: post.postId, variantIndex: post.variantIndex
+      }))
+      const tasks = buildPageWallFiniteTasks({ accountIds: scheduleDraft.accountIds, taskCount: scheduleDraft.accountIds.length, source: sources[0]! })
+      await window.pageWallFinite.saveSchedule({
+        planIds: scheduleDraft.planIds,
+        input: {
+          pageTabId, scheduleKind: 'daily', localDate: null, weekdays: scheduleDraft.weekdays, minuteOfDays,
+          accountConcurrency: scheduleDraft.accountConcurrency, tasks,
+          postPool: { mode: scheduleDraft.postSelectionMode, posts: sources },
+          enabled: scheduleDraft.enabled
         }
       })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-    return () => { cancelled = true }
-  }, [pageTabId])
-
-  const runnableAccounts = useMemo(
-    () => (config?.accounts ?? [])
-      .filter((account) => account.enabled && account.status !== 'disabled')
-      .sort((a, b) => a.sortOrder - b.sortOrder),
-    [config]
-  )
-  const selectedAccount = runnableAccounts.find((account) => account.accountId === accountId) ?? null
-  const materialReady = !loading
-    && pageTabId !== null
-    && accountId !== null
-    && Boolean(config?.pageUid.trim())
-    && (content.trim().length > 0 || imagePaths.length > 0)
-  const canRun = materialReady && !busy && !scheduling
-  const scheduledTimestamp = scheduleAt ? new Date(scheduleAt).getTime() : Number.NaN
-  const canSchedule = materialReady
-    && !busy
-    && !scheduling
-    && Number.isFinite(scheduledTimestamp)
-    && scheduledTimestamp > Date.now()
-
-  const pickImages = async () => {
+      setScheduleDraft(null)
+      await refreshDashboard(pageTabId)
+    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)) }
+    finally { setBusy(false) }
+  }
+  const setScheduleEnabled = async (group: ScheduleGroup, enabled: boolean) => {
+    if (!pageTabId) return
+    const planIds = group.plans
+      .filter((plan) => enabled ? plan.status === 'disabled' : plan.status === 'active' || plan.status === 'needs_attention')
+      .map((plan) => plan.id)
+    if (!planIds.length) return
+    setBusy(true); setError(null)
     try {
-      const picked = await window.pageAuto.pickPageWallImages()
-      if (picked.length === 0) return
-      setImagePaths(picked)
-      addLog('info', `Đã chọn ${picked.length} ảnh cho bài Tường.`)
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
-    }
+      await window.pageWallFinite.setScheduleEnabled({ pageTabId, planIds, enabled })
+      await refreshDashboard(pageTabId)
+    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)) }
+    finally { setBusy(false) }
+  }
+  const deleteSchedule = async (group: ScheduleGroup) => {
+    if (!pageTabId || !window.confirm(`Xóa lịch ${group.minutes.map(minuteToTime).join(', ')}?`)) return
+    try { await window.pageWallFinite.deleteSchedule({ planIds: group.planIds }); await refreshDashboard(pageTabId) }
+    catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)) }
   }
 
-  const refreshSelectedPage = async () => {
-    if (pageTabId === null) return
-    const next = await window.pageAuto.getPageTab({ id: pageTabId })
-    if (next) setConfig(next)
+  const selectedItem = canonical ? libraryItems.find((item) => canonicalPostId(item) === canonical.postId) ?? null : null
+  const sourceLabel = (source: PageWallPlanPostSource | null): string => {
+    if (!source) return 'Không rõ bài'
+    if (source.kind === 'manual') return 'Bài nhập tay (legacy)'
+    const item = libraryItems.find((candidate) => canonicalPostId(candidate) === source.postId)
+    return `#${source.postId} · ${item?.name ?? 'Bài thư viện'} · ${item?.variants.length || 1} biến thể`
   }
+  const schedulePostLabel = (group: ScheduleGroup): string => group.postPool
+    ? `${group.postPool.posts.length} bài · ${group.postPool.mode === 'random' ? 'Ngẫu nhiên' : 'Lần lượt'}`
+    : sourceLabel(group.source)
 
-  const runNow = async () => {
-    if (!canRun || pageTabId === null || accountId === null) return
-    setBusy(true)
-    setError(null)
-    setResult(null)
-    addLog('info', `Bắt đầu Đăng ngay · Page ${config?.pageUid ?? '—'} · account ${selectedAccount?.uid ?? accountId}.`)
-    try {
-      const next = await window.pageAuto.runPageWallNow({
-        pageTabId,
-        accountId,
-        content,
-        imagePaths
-      })
-      setResult(next)
-      addLog(logTone(next), `${statusLabel(next.status)}${next.code ? ` · ${next.code}` : ''}: ${next.message}`)
-      await refreshSelectedPage().catch(() => undefined)
-    } catch (cause) {
-      const message = cause instanceof Error ? cause.message : String(cause)
-      setError(message)
-      addLog('error', `IPC Đăng ngay lỗi: ${message}`)
-    } finally {
-      setBusy(false)
-    }
-  }
+  if (!config) return <section className="page-wall-workspace page-wall-empty"><strong>{tabs.length ? 'Đang tải Đăng Tường…' : 'Chưa có Page'}</strong></section>
 
-  const schedulePost = async () => {
-    if (!canSchedule || pageTabId === null || accountId === null) return
-    setScheduling(true)
-    setError(null)
-    try {
-      const job = await window.pageAuto.schedulePageWall({
-        pageTabId,
-        accountId,
-        content,
-        imagePaths,
-        scheduledAt: scheduledTimestamp
-      })
-      addLog('success', `Đã hẹn job #${job.id} lúc ${formatDateTime(job.scheduledAt)} · Page ${job.pageUid} · account ${job.accountUid}.`)
-      await refreshJobs(true)
-      setScheduleAt(localDateTimeInput(Math.max(Date.now(), job.scheduledAt) + (10 * 60_000)))
-    } catch (cause) {
-      const message = cause instanceof Error ? cause.message : String(cause)
-      setError(message)
-      addLog('error', `Hẹn đăng lỗi: ${message}`)
-    } finally {
-      setScheduling(false)
-    }
-  }
+  return <section className="page-wall-workspace page-wall-finite" role="tabpanel" aria-label="Đăng Tường Page">
+    {!scoped ? <div className="page-wall-standalone"><select value={pageTabId ?? ''} onChange={(event) => setPageTabId(Number(event.target.value))}>{tabs.map((tab) => <option key={tab.id} value={tab.id}>{tab.name} · {tab.pageUid}</option>)}</select></div> : null}
+    {error ? <div className="page-tab-error page-wall-error">{error}</div> : null}
+    <header className="page-wall-finite-head"><div><p className="eyebrow">Đăng Tường</p><h2>{config.name}</h2><span>Page UID: {config.pageUid}</span></div><div className="page-wall-head-state"><b>{selectedRunnable.length}</b><span>TK đã chọn</span></div></header>
 
-  const cancelJob = async (jobId: number) => {
-    setCancellingJobId(jobId)
-    setError(null)
-    try {
-      const cancelled = await window.pageAuto.cancelPageWallJob({ jobId })
-      addLog('info', `Đã hủy job #${cancelled.id} trước khi chạy.`)
-      await refreshJobs(true)
-    } catch (cause) {
-      const message = cause instanceof Error ? cause.message : String(cause)
-      setError(message)
-      addLog('error', `Hủy job #${jobId} lỗi: ${message}`)
-    } finally {
-      setCancellingJobId(null)
-    }
-  }
-
-  if (loading && tabs.length === 0) {
-    return <section className="page-wall-workspace page-wall-empty"><strong>Đang tải Đăng Tường…</strong></section>
-  }
-
-  if (tabs.length === 0) {
-    return (
-      <section className="page-wall-workspace page-wall-empty">
-        <strong>Chưa có Page Tab</strong>
-        <span>Tạo Page ở tab Nhóm trước; Đăng Tường dùng chung Page UID và danh sách tài khoản đó.</span>
-      </section>
-    )
-  }
-
-  return (
-    <section className="page-business-pane page-wall-workspace" role="tabpanel" aria-label="Đăng Tường Page">
-      <header className="page-wall-head">
-        <div>
-          <p className="eyebrow">Đăng Tường</p>
-          <h2>Đăng Tường Page</h2>
-          <p>Đăng ngay hoặc hẹn giờ bằng cùng production runtime. Login/2FA/checkpoint/Page switch vẫn đi qua Facebook Common.</p>
-        </div>
-        <span className="page-wall-live-badge">Đăng ngay + Hẹn giờ</span>
-      </header>
-
-      {error ? <div className="page-tab-error page-wall-error">{error}</div> : null}
-
-      <div className="page-wall-grid">
-        <section className="page-wall-card page-wall-target-card">
-          <div className="page-wall-card-head"><strong>Page + tài khoản</strong><small>Dùng chung dữ liệu Page Tab</small></div>
-          <label className="page-wall-field">
-            <span>Page</span>
-            <select value={pageTabId ?? ''} disabled={busy || scheduling} onChange={(event) => setPageTabId(Number(event.target.value))}>
-              {tabs.map((tab) => <option key={tab.id} value={tab.id}>{tab.name} · {tab.pageUid}</option>)}
-            </select>
-          </label>
-          <label className="page-wall-field">
-            <span>Tài khoản chạy</span>
-            <select value={accountId ?? ''} disabled={busy || scheduling || loading || runnableAccounts.length === 0} onChange={(event) => setAccountId(Number(event.target.value))}>
-              {runnableAccounts.length === 0 ? <option value="">Không có tài khoản bật</option> : null}
-              {runnableAccounts.map((account) => (
-                <option key={account.accountId} value={account.accountId}>
-                  {account.uid}{account.name ? ` · ${account.name}` : ''} · {account.status}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="page-wall-target-summary">
-            <span>Page UID</span><b>{config?.pageUid ?? (loading ? 'Đang tải…' : '—')}</b>
-            <span>Account</span><b>{selectedAccount?.uid ?? '—'}</b>
-            <span>Trạng thái</span><b className={`wall-account-${selectedAccount?.status ?? 'unknown'}`}>{selectedAccount?.status ?? '—'}</b>
-          </div>
-          {config && runnableAccounts.length === 0 ? <p className="page-wall-inline-warning">Page này chưa có tài khoản khả dụng đang bật. Qua tab Nhóm → Danh sách chạy để cấu hình.</p> : null}
-        </section>
-
-        <section className="page-wall-card page-wall-compose-card">
-          <div className="page-wall-card-head"><strong>Nội dung bài</strong><small>{content.length.toLocaleString('vi-VN')} ký tự</small></div>
-          <textarea
-            className="page-wall-content"
-            value={content}
-            disabled={busy || scheduling}
-            onChange={(event) => setContent(event.target.value)}
-            placeholder="Nhập nội dung cần đăng lên Tường Page…"
-          />
-        </section>
-
-        <section className="page-wall-card page-wall-media-card">
-          <div className="page-wall-card-head"><strong>Ảnh</strong><small>{imagePaths.length} file</small></div>
-          <div className="page-wall-media-actions">
-            <button className="pt-button secondary" type="button" disabled={busy || scheduling} onClick={() => void pickImages()}>Chọn ảnh</button>
-            <button className="pt-button secondary" type="button" disabled={busy || scheduling || imagePaths.length === 0} onClick={() => setImagePaths([])}>Bỏ ảnh</button>
-          </div>
-          <div className="page-wall-media-list">
-            {imagePaths.map((path, index) => (
-              <div key={`${path}-${index}`} title={path}><span>{index + 1}</span><b>{fileName(path)}</b></div>
-            ))}
-            {imagePaths.length === 0 ? <p>Không chọn ảnh thì bài sẽ đăng text-only.</p> : null}
-          </div>
-        </section>
-      </div>
-
-      <div className="page-wall-action-grid">
-        <div className="page-wall-runbar">
-          <div>
-            <strong>Đăng ngay</strong>
-            <span>One-shot bằng 1 account. Không tự retry khi publish chưa xác minh để tránh bài trùng.</span>
-          </div>
-          <button className="pt-button primary page-wall-run-button" type="button" disabled={!canRun} onClick={() => void runNow()}>
-            {busy ? 'Đang chạy…' : loading ? 'Đang tải Page…' : '▶ Đăng ngay'}
-          </button>
-        </div>
-
-        <div className="page-wall-runbar page-wall-schedulebar">
-          <div>
-            <strong>Hẹn đăng</strong>
-            <span>Persist SQLite; Electron Main tự nhận job đến hạn và chạy cùng Page Wall production runtime.</span>
-          </div>
-          <div className="page-wall-schedule-controls">
-            <input
-              type="datetime-local"
-              value={scheduleAt}
-              min={localDateTimeInput(Date.now() + 60_000)}
-              disabled={busy || scheduling}
-              onChange={(event) => setScheduleAt(event.target.value)}
-              aria-label="Ngày giờ hẹn đăng"
-            />
-            <button className="pt-button primary page-wall-run-button" type="button" disabled={!canSchedule} onClick={() => void schedulePost()}>
-              {scheduling ? 'Đang lưu…' : '⏱ Hẹn đăng'}
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div className="page-wall-bottom-grid">
-        <section className="page-wall-card page-wall-result-card">
-          <div className="page-wall-card-head"><strong>Kết quả Đăng ngay gần nhất</strong><small>{result ? statusLabel(result.status) : 'Chưa chạy'}</small></div>
-          {!result ? <p className="page-wall-muted">Kết quả publish, session và evidence sẽ hiện ở đây.</p> : (
-            <div className={`page-wall-result result-${result.status}`}>
-              <div><span>{statusLabel(result.status)}</span>{result.code ? <code>{result.code}</code> : null}</div>
-              <p>{result.message}</p>
-              {result.accountName ? <small>Account: {result.accountName}</small> : null}
-              {result.publishedUrl ? <small>Published: {result.publishedUrl}</small> : null}
-              {result.screenshotPath ? <small>Screenshot: {result.screenshotPath}</small> : null}
-              {result.sessionValidation ? <small>Session: {result.sessionValidation.state} · {result.sessionValidation.phase}</small> : null}
-              {result.code === 'publish_unconfirmed' ? (
-                <strong className="page-wall-no-retry">Kiểm tra Tường Page trước khi bấm đăng lại để tránh bài trùng.</strong>
-              ) : null}
-            </div>
-          )}
-        </section>
-
-        <section className="page-wall-card page-wall-log-card">
-          <div className="page-wall-card-head"><strong>Log thao tác</strong><small>{logs.length}/20</small></div>
-          <div className="page-wall-log">
-            {logs.map((entry) => <div key={entry.id} className={`log-${entry.tone}`}><time>{entry.at}</time><span>{entry.message}</span></div>)}
-            {logs.length === 0 ? <p className="page-wall-muted">Chưa có thao tác.</p> : null}
-          </div>
-        </section>
-      </div>
-
-      <section className="page-wall-card page-wall-jobs-card">
-        <div className="page-wall-card-head">
-          <strong>Danh sách bài đã hẹn</strong>
-          <div className="page-wall-jobs-head-actions">
-            <small>{jobsLoading ? 'Đang tải…' : `${jobs.length} job`}</small>
-            <button className="pt-button secondary" type="button" disabled={jobsLoading} onClick={() => void refreshJobs()}>Làm mới</button>
-          </div>
-        </div>
-        <div className="page-wall-jobs-list">
-          {jobs.map((job) => (
-            <article key={job.id} className={`page-wall-job job-${job.status}`}>
-              <div className="page-wall-job-main">
-                <div className="page-wall-job-title">
-                  <span className={`page-wall-job-status status-${job.status}`}>{jobStatusLabel(job.status)}</span>
-                  <b>#{job.id}</b>
-                  <time>{formatDateTime(job.scheduledAt)}</time>
-                </div>
-                <p>{contentPreview(job)}</p>
-                <div className="page-wall-job-meta">
-                  <span>Page <b>{job.pageTabName}</b> · {job.pageUid}</span>
-                  <span>Account <b>{job.accountUid}</b>{job.accountName ? ` · ${job.accountName}` : ''}</span>
-                  <span>Ảnh <b>{job.imagePaths.length}</b></span>
-                </div>
-              </div>
-              <div className="page-wall-job-result">
-                {job.resultMessage ? <span className="job-result-message">{job.resultMessage}</span> : <span className="page-wall-muted">Chưa có result.</span>}
-                {job.resultCode ? <code>{job.resultCode}</code> : null}
-                {job.publishedUrl ? <small>Published: {job.publishedUrl}</small> : null}
-                {job.screenshotPath ? <small>Screenshot: {job.screenshotPath}</small> : null}
-                {job.tracePath ? <small>Trace: {job.tracePath}</small> : null}
-                {job.sessionValidation ? <small>Session: {job.sessionValidation.state} · {job.sessionValidation.phase}</small> : null}
-                <details>
-                  <summary>Log job ({job.logs.length})</summary>
-                  <div className="page-wall-job-logs">
-                    {job.logs.slice(-5).reverse().map((entry) => (
-                      <div key={`${entry.at}-${entry.message}`}><time>{formatDateTime(entry.at)}</time><span>{entry.message}</span></div>
-                    ))}
-                  </div>
-                </details>
-              </div>
-              <div className="page-wall-job-actions">
-                {job.status === 'pending' ? (
-                  <button className="pt-button secondary" type="button" disabled={cancellingJobId === job.id} onClick={() => void cancelJob(job.id)}>
-                    {cancellingJobId === job.id ? 'Đang hủy…' : 'Hủy job'}
-                  </button>
-                ) : <small>{job.finishedAt ? `Kết thúc ${formatDateTime(job.finishedAt)}` : job.startedAt ? `Bắt đầu ${formatDateTime(job.startedAt)}` : '—'}</small>}
-              </div>
-            </article>
-          ))}
-          {!jobsLoading && jobs.length === 0 ? <p className="page-wall-muted">Chưa có bài hẹn. Chọn ngày/giờ rồi bấm Hẹn đăng.</p> : null}
-        </div>
+    <div className={`page-wall-three-regions mode-${mode}`} data-testid="page-wall-three-regions">
+      <section className="pt-panel page-wall-region accounts" data-testid="page-wall-region-accounts">
+        <div className="page-wall-region-head"><div><p className="eyebrow">1 · TÀI KHOẢN</p><h3>Chọn tài khoản chạy</h3></div><span>{selectedRunnable.length}/{runnableIds.length}</span></div>
+        <div className="page-wall-account-table-wrap"><table className="page-wall-account-table"><thead><tr><th></th><th>#</th><th>UID</th><th>Tên</th><th>Trạng thái</th></tr></thead><tbody>{accounts.map((account, index) => { const runnable = isWallAccountSelectable(account); const selected = selectedIds.includes(account.accountId); const ranged = accountRange.rangeIds.has(account.accountId); return <tr key={account.accountId} data-account-id={account.accountId} className={`${selected ? 'selected ' : ''}${ranged ? 'range-row ' : ''}${!runnable ? 'disabled' : ''}`.trim()} onPointerDown={(event) => { if (runnable && !busy) accountRange.onRowPointerDown(event, account.accountId) }} onPointerEnter={() => { if (runnable && !busy) accountRange.onRowPointerEnter(account.accountId) }} onContextMenu={(event) => { if (!runnable || busy) return; event.preventDefault(); accountRange.ensureContextRow(account.accountId); setAccountMenu({ x: event.clientX, y: event.clientY }) }}><td><input type="checkbox" aria-label={`Chọn ${account.uid}`} disabled={!runnable || busy} checked={selected} onPointerDown={(event) => event.stopPropagation()} onChange={() => toggleAccount(account.accountId)} /></td><td>{index + 1}</td><td><b>{account.uid}</b></td><td>{account.name || '—'}</td><td><span className={`status-${account.status}`}>{account.status}</span></td></tr> })}</tbody></table></div>{accountMenu ? <AccountSelectionMenu x={accountMenu.x} y={accountMenu.y} checkedCount={selectedRunnable.length} rangeCount={accountRange.rangeIds.size} totalCount={runnableIds.length} onCheckRange={() => { setSelectedIds((current) => [...new Set([...current, ...[...accountRange.rangeIds].filter((id) => runnableIds.includes(id))])]); setAccountMenu(null) }} onCheckAll={() => { setSelectedIds(runnableIds); setAccountMenu(null) }} onClearChecked={() => { setSelectedIds([]); setAccountMenu(null) }} onDismiss={() => setAccountMenu(null)} /> : null}
+        <div className="page-wall-account-controls" data-testid="page-wall-account-controls"><div><button type="button" disabled={busy} onClick={() => setSelectedIds(runnableIds)}>Chọn tất cả</button><button type="button" disabled={busy} onClick={() => setSelectedIds([])}>Bỏ chọn</button></div><label><span>TK chạy song song</span><input type="number" min={1} max={20} value={accountConcurrency} disabled={busy} onChange={(event) => setAccountConcurrency(Math.max(1, Math.min(20, Number(event.target.value) || 1)))} /></label></div>
       </section>
 
-      <footer className="page-wall-scope-note">
-        <strong>Lifecycle</strong>
-        <span>Đăng ngay và Hẹn giờ đều là one-shot rõ ràng; Chrome đóng sau kết quả bình thường. Login/checkpoint cần thao tác tay vẫn giữ browser. Group rotation giữ nguyên lifecycle riêng.</span>
-      </footer>
-    </section>
-  )
+      <section className="pt-panel page-wall-region content" data-testid="page-wall-region-content">
+        <div className="page-wall-region-head"><div><p className="eyebrow">2 · BÀI VIẾT</p><h3>Bài đang chọn</h3></div></div>
+        <div className={`page-wall-selected-post ${canonical ? 'ready' : 'empty'}`} data-testid="page-wall-selected-post"><div><small>{canonical ? 'ĐÃ CHỌN' : 'CHƯA CHỌN BÀI'}</small><strong>{canonical ? `#${canonical.postId} · ${canonical.postName}` : 'Chọn một bài trước khi chạy'}</strong><span>{canonical ? `${selectedItem?.variants.length || 1} biến thể · ${canonical.image.folderPath ? `${canonical.image.imagesPerPost} ảnh/lượt` : 'Không ảnh'}` : 'Bài được dùng cho Đăng ngay; lịch sẽ tự snapshot bài riêng.'}</span></div><div className="page-wall-post-actions"><button className="pt-button secondary" type="button" disabled={busy} onClick={() => void chooseFromLibrary('workspace')}>Chọn từ Thư viện</button><button type="button" disabled={busy} onClick={() => openPostEditor('workspace', true)}>Thêm bài</button><button type="button" disabled={busy || !canonical || !selectedItem} onClick={() => openPostEditor('workspace', false)}>Sửa bài</button><button type="button" disabled={busy || !canonical} onClick={() => setCanonical(null)}>Bỏ chọn</button></div></div>
+        {canonical ? <div className="page-wall-post-preview"><p>{canonical.content || 'Bài chỉ có ảnh.'}</p>{canonical.image.folderPath ? <small>Folder ảnh: {canonical.image.folderPath}</small> : <small>Không dùng ảnh.</small>}</div> : <div className="page-wall-post-empty"><b>1.</b><span>Bấm <strong>Chọn từ Thư viện</strong> để dùng bài có sẵn, hoặc <strong>Thêm bài</strong> để tạo bài mới vào thư viện chung.</span></div>}
+      </section>
+
+      <section className="pt-panel page-wall-region control" data-testid="page-wall-region-control">
+        <div className="page-wall-mode-tabs"><button type="button" className={mode === 'now' ? 'active' : ''} onClick={() => setMode('now')}>Đăng ngay</button><button type="button" className={mode === 'schedule' ? 'active' : ''} onClick={() => setMode('schedule')}>Lịch chạy</button></div>
+        {mode === 'now' ? <div className="page-wall-now-panel"><div className="page-wall-now-summary"><strong>Chạy đúng các TK đang tick</strong><span>{selectedRunnable.length} TK · {canonical ? `#${canonical.postId} ${canonical.postName}` : 'chưa chọn bài'} · song song {accountConcurrency} · delay {runDelaySeconds}s</span>{runBlockedReason ? <em>{runBlockedReason}</em> : null}</div><div className="page-wall-now-options"><label><span>Delay giữa lượt đăng</span><div><input aria-label="Delay giữa lượt Đăng ngay" type="number" min={0} max={3600} value={runDelaySeconds} disabled={busy} onChange={(event) => setRunDelaySeconds(Math.max(0, Math.min(3600, Number(event.target.value) || 0)))} /><small>giây</small></div></label><small>Lượt đầu chạy ngay; các lượt sau cách nhau ít nhất số giây này. Chỉ áp dụng Đăng ngay.</small></div><button className="pt-button primary page-wall-run-button" type="button" disabled={!canRun} onClick={() => void runSelected()}>{busy ? 'Đang chạy…' : '▶ Bắt đầu đăng'}</button><div className="page-wall-runtime-results">{lastResults.map((result) => <div key={result.accountId} className={`result-${resultTone(result)}`}><b>ACC#{result.accountId}</b><span>{result.message}</span></div>)}{!lastResults.length ? <p>Chưa có lượt chạy trong phiên UI này.</p> : null}</div></div> : null}
+        {mode === 'schedule' ? <div className="page-wall-schedule-panel"><div className="page-wall-schedule-toolbar"><div><strong>Lịch đã lưu</strong><span>Mỗi lịch tự giữ bộ bài + cách lấy bài + tài khoản + ngày chạy + giờ + concurrency.</span></div><button className="pt-button primary" type="button" disabled={busy} onClick={openAddSchedule}>+ Thêm lịch</button></div><div className="page-wall-plan-list" data-testid="page-wall-plan-list">{scheduleGroups.map((group) => {
+          const runtime = pageWallFiniteScheduleRuntimeState(group.plans, localDateInput())
+          const pausable = group.plans.some((plan) => plan.status === 'active' || plan.status === 'needs_attention')
+          const resumable = !pausable && group.plans.some((plan) => plan.status === 'disabled')
+          const legacyDate = group.scheduleKind === 'specific_date'
+          const canEditPosts = Boolean(group.postPool?.posts.length || group.source?.kind === 'canonical')
+          const editTitle = legacyDate ? 'Lịch ngày cụ thể cũ được giữ nguyên, không chuyển ngầm sang lịch tuần.' : !canEditPosts ? 'Lịch legacy không hỗ trợ sửa bài canonical.' : !group.editable ? 'Lịch đang có lượt chạy; chờ kết thúc rồi sửa.' : 'Sửa lịch'
+          const scheduleLabel = legacyDate ? `Lịch cũ · ${group.localDate}` : pageWallWeekdayLabel(group.weekdays)
+          return <div key={group.key} className={`page-wall-plan-row runtime-${runtime.tone}`}><i></i><div className="page-wall-plan-copy"><strong>{scheduleLabel} · {group.minutes.map(minuteToTime).join(', ')}</strong><span>{schedulePostLabel(group)} · {group.accountIds.length} TK · SS {group.accountConcurrency}</span></div><b>{runtime.label}</b>{pausable || resumable ? <button className={`page-wall-plan-toggle ${resumable ? 'resume' : 'pause'}`} type="button" disabled={busy} onClick={() => void setScheduleEnabled(group, resumable)}>{resumable ? 'Bắt đầu' : 'Tạm dừng'}</button> : <span className="page-wall-plan-toggle-spacer"></span>}<button type="button" disabled={!group.editable || !canEditPosts || busy} title={editTitle} onClick={() => openEditSchedule(group)}>Sửa</button><button type="button" aria-label={`Xóa lịch ${group.planIds.join('-')}`} disabled={busy} onClick={() => void deleteSchedule(group)}>×</button></div>
+        })}{!scheduleGroups.length ? <div className="page-wall-no-plans"><b>Chưa có lịch đăng</b><span>Bấm “+ Thêm lịch” rồi chọn bài, tài khoản, ngày trong tuần và một hoặc nhiều giờ chạy.</span></div> : null}</div></div> : null}
+      </section>
+    </div>
+    <footer className="page-wall-finite-footer"><span><b>Finite Wall:</b> mỗi giờ đã chọn = 1 plan-slot → occurrence → page_wall_jobs</span><span>Mỗi slot chạy tối đa 1 lần trong từng ngày đã chọn.</span></footer>
+
+    {pickerTarget ? <CanonicalPostPicker
+      mode={pickerTarget === 'schedule' ? 'multiple' : 'single'}
+      title={pickerTarget === 'schedule' ? 'Chọn bộ bài cho lịch Đăng Tường' : 'Chọn bài cho Đăng Tường'}
+      initialSelection={pickerTarget === 'schedule' ? (scheduleDraft?.posts ?? []).flatMap((ref) => {
+        const item = libraryItems.find((candidate) => canonicalPostId(candidate) === ref.postId)
+        return item ? [{ postId: ref.postId, sourceSetId: item.contentSetId, sourceSetName: 'Thư viện Bài viết', item }] : []
+      }) : []}
+      getDisabledReason={(item) => item.image.folderPath.trim() && item.image.mode === 'filename_match' ? 'Không hỗ trợ ảnh khớp Group' : null}
+      onClose={() => setPickerTarget(null)}
+      onApply={(values) => applyPickerSelections(pickerTarget, values)}
+    /> : null}
+    {postEditor ? <PostEditorModal item={postEditor.item} variantIndex={postEditor.variantIndex} onClose={() => setPostEditor(null)} onSaved={(item, variantIndex) => void handlePostSaved(item, variantIndex)} /> : null}
+    {scheduleDraft ? <ScheduleModal draft={scheduleDraft} accounts={accounts} libraryItems={libraryItems} busy={busy} onChange={setScheduleDraft} onChoosePost={() => void chooseFromLibrary('schedule')} onAddPost={() => openPostEditor('schedule', true)} onEditPost={() => openPostEditor('schedule', false)} onClose={() => setScheduleDraft(null)} onSave={() => void saveSchedule()} /> : null}
+  </section>
 }

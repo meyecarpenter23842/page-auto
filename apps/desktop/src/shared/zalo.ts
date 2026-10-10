@@ -1,0 +1,441 @@
+import type { BrowserWindowLayoutSettings } from './browserWindowLayout'
+import {
+  IMAGE_MODES,
+  MISSING_IMAGE_POLICIES,
+  POST_SELECTION_MODES,
+  type ImageMode,
+  type MissingImagePolicy,
+  type PageTabImageConfig,
+  type PostSelectionMode
+} from './pageTabs'
+
+export const ZALO_IPC = {
+  list: 'zalo:accounts:list',
+  create: 'zalo:accounts:create',
+  update: 'zalo:accounts:update',
+  delete: 'zalo:accounts:delete',
+  open: 'zalo:accounts:open',
+  login: 'zalo:accounts:login',
+  close: 'zalo:accounts:close',
+  actionExecute: 'zalo:actions:execute',
+  actionPause: 'zalo:actions:pause',
+  actionResume: 'zalo:actions:resume',
+  actionStop: 'zalo:actions:stop',
+  batchStart: 'zalo:batch:start',
+  batchStatus: 'zalo:batch:status',
+  batchPause: 'zalo:batch:pause',
+  batchResume: 'zalo:batch:resume',
+  batchStop: 'zalo:batch:stop',
+  postLibraryGet: 'zalo:posts:get',
+  postLibrarySave: 'zalo:posts:save',
+  settingsGet: 'zalo:settings:get',
+  settingsSave: 'zalo:settings:save'
+} as const
+
+export const ZALO_SESSION_STATUSES = [
+  'unknown',
+  'ready',
+  'login_required',
+  'qr_waiting',
+  'needs_attention',
+  'browser_error',
+  'profile_error'
+] as const
+export type ZaloSessionStatus = (typeof ZALO_SESSION_STATUSES)[number]
+
+export const ZALO_LOGIN_MODES = ['phone_password', 'qr'] as const
+export type ZaloLoginMode = (typeof ZALO_LOGIN_MODES)[number]
+
+export const ZALO_ACTION_TYPES = ['send_message', 'send_attachment', 'add_friend'] as const
+export type ZaloActionType = (typeof ZALO_ACTION_TYPES)[number]
+export type ZaloActionResultStatus = 'success' | 'needs_attention' | 'failed' | 'stopped'
+export type ZaloActionResultCode =
+  | 'success'
+  | 'already_friend'
+  | 'session_not_ready'
+  | 'validation_error'
+  | 'target_not_found'
+  | 'target_unverified'
+  | 'composer_missing'
+  | 'send_control_missing'
+  | 'attachment_control_missing'
+  | 'friend_control_missing'
+  | 'verification_uncertain'
+  | 'stopped'
+  | 'executor_exception'
+
+export interface ZaloAccountRecord {
+  id: number
+  phone: string
+  password: string | null
+  displayName: string | null
+  status: string
+  sessionStatus: ZaloSessionStatus
+  note: string | null
+  lastOpenedAt: number | null
+  lastLoginAt: number | null
+  createdAt: number
+  updatedAt: number
+}
+
+export interface ZaloAccountView {
+  id: number
+  phone: string
+  displayName: string | null
+  status: string
+  sessionStatus: ZaloSessionStatus
+  note: string | null
+  hasPassword: boolean
+  passwordMasked: string
+  lastOpenedAt: number | null
+  lastLoginAt: number | null
+  createdAt: number
+  updatedAt: number
+}
+
+export interface ZaloAccountDraft {
+  phone: string
+  password?: string | null
+  displayName?: string | null
+  status?: string
+  note?: string | null
+}
+
+export interface ZaloAccountUpdatePayload {
+  id: number
+  patch: Partial<ZaloAccountDraft>
+}
+
+export interface ZaloAccountIdPayload { id: number }
+
+export interface ZaloLoginPayload {
+  id: number
+  mode: ZaloLoginMode
+}
+
+export type ZaloActionInput =
+  | { type: 'send_message'; targetPhone: string; content: string }
+  | { type: 'send_attachment'; targetPhone: string; paths: string[] }
+  | { type: 'add_friend'; targetPhone: string; message?: string | null }
+
+export interface ZaloActionRequestPayload {
+  id: number
+  action: ZaloActionInput
+}
+
+export interface ZaloActionControlPayload { id: number }
+
+export interface ZaloActionResult {
+  accountId: number
+  action: ZaloActionType
+  targetPhone: string
+  status: ZaloActionResultStatus
+  code: ZaloActionResultCode
+  message: string
+  verifiedTarget: boolean
+  targetDisplayName: string | null
+  completedAt: number
+  data?: Record<string, unknown>
+}
+
+export type ZaloPostMediaSource = 'canonical' | 'folder' | 'none'
+
+export interface ZaloPostMediaConfig {
+  source: ZaloPostMediaSource
+  folderPath: string
+  mode: ImageMode
+  imagesPerTarget: number
+  missingPolicy: MissingImagePolicy
+}
+
+export interface ZaloPostLibraryItem {
+  bindingId: number
+  postId: number
+  name: string
+  enabled: boolean
+  sortOrder: number
+  variants: string[]
+  canonicalImage: PageTabImageConfig
+  media: ZaloPostMediaConfig
+}
+
+export interface ZaloPostLibrary {
+  mode: PostSelectionMode
+  posts: ZaloPostLibraryItem[]
+}
+
+export interface SaveZaloPostItemInput {
+  postId: number
+  enabled: boolean
+  sortOrder: number
+  media: ZaloPostMediaConfig
+}
+
+export interface SaveZaloPostLibraryInput {
+  mode: PostSelectionMode
+  posts: SaveZaloPostItemInput[]
+}
+
+export type ZaloBatchState = 'running' | 'paused' | 'stopping' | 'completed' | 'stopped' | 'failed'
+export type ZaloBatchTargetState = 'pending' | 'running' | 'success' | 'partial' | 'failed' | 'stopped'
+export type ZaloBatchContentMode = 'sequential' | 'random'
+export type ZaloBatchFailurePolicy = 'continue' | 'stop_run'
+
+export interface ZaloBatchMediaSnapshot {
+  folderPath: string
+  mode: ImageMode
+  imagesPerTarget: number
+  missingPolicy: MissingImagePolicy
+}
+
+export interface ZaloBatchContentItemSnapshot {
+  sourceItemId: number | null
+  name: string
+  variants: string[]
+  media: ZaloBatchMediaSnapshot
+}
+
+export interface ZaloBatchStartPayload {
+  accountIds: number[]
+  targets: string[]
+  actions: {
+    sendMessage: boolean
+    sendAttachment: boolean
+    addFriend: boolean
+  }
+  contentItems: ZaloBatchContentItemSnapshot[]
+  contentMode: ZaloBatchContentMode
+  friendMessage: string | null
+  concurrency: number
+  delayMinMs: number
+  delayMaxMs: number
+  failurePolicy: ZaloBatchFailurePolicy
+}
+
+export interface ZaloBatchRunIdPayload { runId: string }
+
+export interface ZaloBatchTargetProgress {
+  index: number
+  targetPhone: string
+  assignedAccountId: number | null
+  state: ZaloBatchTargetState
+  startedAt: number | null
+  completedAt: number | null
+  results: ZaloActionResult[]
+  message: string
+  postId: number | null
+  postName: string | null
+  variantIndex: number | null
+  contentPreview: string
+  mediaPaths: string[]
+  currentAction: ZaloActionType | null
+}
+
+export interface ZaloBatchRunSnapshot {
+  runId: string
+  state: ZaloBatchState
+  startedAt: number
+  completedAt: number | null
+  accountIds: number[]
+  actions: ZaloActionType[]
+  totalTargets: number
+  completedTargets: number
+  successTargets: number
+  failedTargets: number
+  progress: ZaloBatchTargetProgress[]
+  message: string
+}
+
+export interface ZaloBrowserSettings {
+  executablePath: string | null
+  profileRoot: string | null
+  windowWidth: number
+  windowHeight: number
+  layout: BrowserWindowLayoutSettings
+}
+
+export interface ZaloOpenResult {
+  accountId: number
+  profileDirectory: string | null
+  status: ZaloSessionStatus
+  reused: boolean
+  message: string
+}
+
+export const DEFAULT_ZALO_BROWSER_SETTINGS: Readonly<ZaloBrowserSettings> = {
+  executablePath: null,
+  profileRoot: null,
+  windowWidth: 1280,
+  windowHeight: 800,
+  layout: {
+    enabled: false,
+    tileLayout: 'grid',
+    tileCount: 4,
+    gridColumns: 2,
+    rowCount: 2,
+    minimumCapacity: 1,
+    targetDisplayId: null,
+    tileWidthPx: 500,
+    tileHeightPx: 500,
+    autoFit: false
+  }
+}
+
+export function normalizeZaloPhone(input: string): string {
+  const digits = input.replace(/\D/g, '')
+  if (digits.length < 8 || digits.length > 15) throw new Error('Số điện thoại Zalo phải có 8-15 chữ số.')
+  if (digits.startsWith('84') && digits.length >= 10) return '0' + digits.slice(2)
+  return digits
+}
+
+export function normalizeZaloActionInput(input: ZaloActionInput): ZaloActionInput {
+  const targetPhone = normalizeZaloPhone(input.targetPhone)
+  if (input.type === 'send_message') {
+    const content = input.content.trim()
+    if (!content) throw new Error('Nội dung tin nhắn Zalo không được để trống.')
+    if (content.length > 10_000) throw new Error('Nội dung tin nhắn Zalo quá dài.')
+    return { type: input.type, targetPhone, content }
+  }
+  if (input.type === 'send_attachment') {
+    const paths = input.paths.map((path) => path.trim()).filter(Boolean)
+    if (!paths.length) throw new Error('Phải chọn ít nhất một ảnh/file để gửi Zalo.')
+    if (paths.length > 20) throw new Error('Một action Zalo chỉ nhận tối đa 20 ảnh/file.')
+    return { type: input.type, targetPhone, paths }
+  }
+  const message = input.message?.trim() || null
+  if (message && message.length > 300) throw new Error('Lời nhắn kết bạn Zalo quá dài.')
+  return { type: input.type, targetPhone, message }
+}
+
+function normalizeBatchMedia(input: ZaloBatchMediaSnapshot): ZaloBatchMediaSnapshot {
+  const mode = IMAGE_MODES.includes(input.mode) ? input.mode : 'sequential'
+  const missingPolicy = MISSING_IMAGE_POLICIES.includes(input.missingPolicy) ? input.missingPolicy : 'text_only'
+  const imagesPerTarget = Math.max(1, Math.min(Math.floor(input.imagesPerTarget || 1), 50))
+  return {
+    folderPath: input.folderPath.trim(),
+    mode,
+    imagesPerTarget,
+    missingPolicy
+  }
+}
+
+export function normalizeZaloBatchStartPayload(input: ZaloBatchStartPayload): ZaloBatchStartPayload {
+  const accountIds = [...new Set(input.accountIds.filter((id) => Number.isInteger(id) && id > 0))]
+  if (!accountIds.length) throw new Error('Phải chọn ít nhất một tài khoản Zalo cho batch.')
+
+  const targets = [...new Set(input.targets.map(normalizeZaloPhone))]
+  if (!targets.length) throw new Error('Phải nhập ít nhất một SĐT cho batch.')
+  if (targets.length > 10_000) throw new Error('Một batch Zalo hỗ trợ tối đa 10.000 SĐT.')
+
+  const actions = {
+    sendMessage: Boolean(input.actions.sendMessage),
+    sendAttachment: Boolean(input.actions.sendAttachment),
+    addFriend: Boolean(input.actions.addFriend)
+  }
+  if (!actions.sendMessage && !actions.sendAttachment && !actions.addFriend) {
+    throw new Error('Phải chọn ít nhất một action Zalo cho batch.')
+  }
+
+  const contentItems = input.contentItems
+    .map((item) => ({
+      sourceItemId: Number.isInteger(item.sourceItemId) ? item.sourceItemId : null,
+      name: item.name.trim() || 'Bài Zalo',
+      variants: item.variants.map((variant) => variant.trim()).filter(Boolean),
+      media: normalizeBatchMedia(item.media)
+    }))
+    .filter((item) => item.variants.length > 0 || item.media.folderPath.length > 0)
+
+  if ((actions.sendMessage || actions.sendAttachment) && !contentItems.length) {
+    throw new Error('Batch phải có ít nhất một Bài Zalo đang bật.')
+  }
+  if (actions.sendMessage && !contentItems.some((item) => item.variants.length > 0)) {
+    throw new Error('Gửi tin đang bật nhưng Bài Zalo chưa có nội dung.')
+  }
+  if (actions.sendAttachment && !contentItems.some((item) => item.media.folderPath.length > 0)) {
+    throw new Error('Gửi ảnh/file đang bật nhưng Bài Zalo chưa có media.')
+  }
+
+  const friendMessage = input.friendMessage?.trim() || null
+  if (friendMessage && friendMessage.length > 300) throw new Error('Lời nhắn kết bạn Zalo quá dài.')
+
+  const concurrency = Math.max(1, Math.min(Math.floor(input.concurrency || 1), accountIds.length, 20))
+  const delayMinMs = Math.max(0, Math.min(Math.floor(input.delayMinMs || 0), 3_600_000))
+  const delayMaxMs = Math.max(delayMinMs, Math.min(Math.floor(input.delayMaxMs || delayMinMs), 3_600_000))
+
+  return {
+    accountIds,
+    targets,
+    actions,
+    contentItems,
+    contentMode: input.contentMode === 'random' ? 'random' : 'sequential',
+    friendMessage,
+    concurrency,
+    delayMinMs,
+    delayMaxMs,
+    failurePolicy: input.failurePolicy === 'stop_run' ? 'stop_run' : 'continue'
+  }
+}
+
+export function normalizeZaloPostSelectionMode(mode: PostSelectionMode): PostSelectionMode {
+  return POST_SELECTION_MODES.includes(mode) ? mode : 'sequential'
+}
+
+export function zaloActionResult(
+  accountId: number,
+  action: ZaloActionType,
+  targetPhone: string,
+  status: ZaloActionResultStatus,
+  code: ZaloActionResultCode,
+  message: string,
+  options: {
+    verifiedTarget?: boolean
+    targetDisplayName?: string | null
+    data?: Record<string, unknown>
+  } = {}
+): ZaloActionResult {
+  return {
+    accountId,
+    action,
+    targetPhone,
+    status,
+    code,
+    message,
+    verifiedTarget: options.verifiedTarget ?? false,
+    targetDisplayName: options.targetDisplayName ?? null,
+    completedAt: Date.now(),
+    ...(options.data === undefined ? {} : { data: options.data })
+  }
+}
+
+export function maskZaloPassword(password: string | null | undefined): string {
+  if (!password) return ''
+  return '••••••••'
+}
+
+export function redactZaloSecretText(input: string, secrets: Array<string | null | undefined>): string {
+  let output = input
+  for (const secret of secrets) {
+    if (!secret) continue
+    output = output.split(secret).join('[REDACTED]')
+  }
+  return output
+}
+
+export function cloneDefaultZaloBrowserSettings(): ZaloBrowserSettings {
+  return {
+    ...DEFAULT_ZALO_BROWSER_SETTINGS,
+    layout: { ...DEFAULT_ZALO_BROWSER_SETTINGS.layout }
+  }
+}
+
+export function assertValidZaloBrowserSettings(value: ZaloBrowserSettings): void {
+  if (value.executablePath !== null && typeof value.executablePath !== 'string') throw new Error('Zalo executablePath không hợp lệ.')
+  if (value.profileRoot !== null && typeof value.profileRoot !== 'string') throw new Error('Zalo profileRoot không hợp lệ.')
+  if (!Number.isInteger(value.windowWidth) || value.windowWidth < 640 || value.windowWidth > 7680) throw new Error('Zalo windowWidth phải trong khoảng 640-7680.')
+  if (!Number.isInteger(value.windowHeight) || value.windowHeight < 480 || value.windowHeight > 4320) throw new Error('Zalo windowHeight phải trong khoảng 480-4320.')
+  const layout = value.layout
+  if (!layout || typeof layout !== 'object') throw new Error('Zalo layout không hợp lệ.')
+  if (!['grid', 'horizontal', 'vertical'].includes(layout.tileLayout)) throw new Error('Zalo tileLayout không hợp lệ.')
+  if (!Number.isInteger(layout.tileCount) || layout.tileCount < 1 || layout.tileCount > 64) throw new Error('Zalo tileCount không hợp lệ.')
+  if (!Number.isInteger(layout.gridColumns) || layout.gridColumns < 1 || layout.gridColumns > 8) throw new Error('Zalo gridColumns không hợp lệ.')
+}

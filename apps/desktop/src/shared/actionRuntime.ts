@@ -1,5 +1,7 @@
 import type { ActionActor, ActionConfig, ActionResult } from './actionRegistry'
 
+export const ACTION_VERIFICATION_UNCERTAIN_CODE = 'verification_uncertain' as const
+
 export const ACTION_RUNTIME_ERROR_CODES = [
   'action_not_registered',
   'action_not_implemented',
@@ -14,6 +16,8 @@ export const ACTION_RUNTIME_ERROR_CODES = [
   'navigation_failed',
   'network_timeout',
   'browser_unavailable',
+  'visual_layout_unstable',
+  ACTION_VERIFICATION_UNCERTAIN_CODE,
   'action_stopped',
   'executor_exception'
 ] as const
@@ -39,6 +43,7 @@ export interface ActionRunRequest {
   label: string
   actor: ActionActorContext
   config: unknown
+  runtimeData?: unknown
   retry?: Partial<ActionRetryPolicy>
 }
 

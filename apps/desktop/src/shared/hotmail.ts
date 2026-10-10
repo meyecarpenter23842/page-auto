@@ -1,3 +1,6 @@
+import type { AccountStatus } from './accounts'
+import type { BrowserWindowLayoutSettings } from './browserWindowLayout'
+
 export const HOTMAIL_OAUTH_STATUSES = ['missing', 'pending', 'valid', 'expired', 'error'] as const
 export type HotmailOAuthStatus = (typeof HOTMAIL_OAUTH_STATUSES)[number]
 
@@ -13,6 +16,14 @@ export type HotmailRuntimeStatus = (typeof HOTMAIL_RUNTIME_STATUSES)[number]
 export const EMAIL_PROXY_MODES = ['direct', 'random_ipv4'] as const
 export type EmailProxyMode = (typeof EMAIL_PROXY_MODES)[number]
 
+export const DEFAULT_EMAIL_BROWSER_WINDOW_WIDTH = 1280
+export const DEFAULT_EMAIL_BROWSER_WINDOW_HEIGHT = 800
+export const MIN_EMAIL_BROWSER_WINDOW_WIDTH = 640
+export const MAX_EMAIL_BROWSER_WINDOW_WIDTH = 7680
+export const MIN_EMAIL_BROWSER_WINDOW_HEIGHT = 480
+export const MAX_EMAIL_BROWSER_WINDOW_HEIGHT = 4320
+export const MAX_HOTMAIL_OPEN_CONCURRENCY = 20
+
 export const HOTMAIL_RECOVERY_OPERATIONS = ['add', 'remove', 'replace'] as const
 export type HotmailRecoveryOperation = (typeof HOTMAIL_RECOVERY_OPERATIONS)[number]
 
@@ -23,8 +34,13 @@ export type HotmailNeedsAttentionReason =
   | 'manual_completion_required'
 
 export interface HotmailDashboardRow {
+  /** Stable canonical Account identity used by every Email action. */
   accountId: number
   uid: string
+  accountName: string | null
+  accountCategory: string | null
+  facebookStatus: AccountStatus
+  accountNote: string | null
   email: string | null
   emailPasswordMasked: string | null
   backupEmail: string | null
@@ -46,6 +62,11 @@ export interface HotmailDashboardRow {
 export interface HotmailSettingsView {
   profileRoot: string
   browserExecutable: string
+  /** Logical desktop baseline used by Email Auto Fit/whole-Chrome scaling. */
+  browserWindowWidth: number
+  browserWindowHeight: number
+  /** Email-only Compact/grid config. Never reads or writes Facebook layout settings. */
+  browserWindowLayout: BrowserWindowLayoutSettings
   /** Default public-client ID used only when starting/renewing OAuth. */
   oauthClientId: string
   oauthTenant: string
@@ -58,6 +79,12 @@ export interface HotmailSettingsView {
 export interface SaveHotmailSettingsInput {
   profileRoot: string
   browserExecutable: string
+  /** Omit to preserve the current Email browser logical width. */
+  browserWindowWidth?: number
+  /** Omit to preserve the current Email browser logical height. */
+  browserWindowHeight?: number
+  /** Omit to preserve the current Email-only Compact/grid settings. */
+  browserWindowLayout?: BrowserWindowLayoutSettings
   oauthClientId: string
   oauthTenant: string
   proxyMode: EmailProxyMode
@@ -71,6 +98,10 @@ export interface HotmailAccountPayload {
 
 export interface HotmailBatchPayload {
   accountIds: number[]
+}
+
+export interface HotmailOpenBatchPayload extends HotmailBatchPayload {
+  concurrency: number
 }
 
 export interface HotmailOAuthStartResult {
@@ -109,6 +140,10 @@ export interface HotmailBrowserOpenResult extends HotmailActionResult {
   proxyManagedExternally: boolean
 }
 
+export interface HotmailOpenBatchResult {
+  results: HotmailBrowserOpenResult[]
+}
+
 export interface HotmailRecoveryActionPayload {
   accountIds: number[]
   operation: HotmailRecoveryOperation
@@ -145,11 +180,29 @@ export interface HotmailPasswordBatchResult {
   results: HotmailPasswordActionResult[]
 }
 
+export type HotmailProxyHealthStatus = 'untested' | 'live' | 'die'
+
+export interface HotmailProxyPoolEntry {
+  index: number
+  proxy: string
+  status: HotmailProxyHealthStatus
+  cooldownUntil: number | null
+}
+
+export interface HotmailProxyEntryPayload {
+  index: number
+}
+
+export interface HotmailProxyReplacePayload extends HotmailProxyEntryPayload {
+  proxy: string
+}
+
 export interface HotmailProxyStatus {
   mode: EmailProxyMode
   poolSize: number
   currentProxy: string | null
   activeSessions: number
+  entries: HotmailProxyPoolEntry[]
   message: string
 }
 

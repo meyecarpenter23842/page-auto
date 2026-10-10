@@ -6,6 +6,7 @@ import type {
   PageWallRunNowResult
 } from '../../shared/pageWall'
 import type { PostingJobResult } from '../../shared/posting'
+import { PageWallMaterialResolver } from './pageWallMaterialResolver'
 
 const supportedImageExtensions = new Set(['.jpg', '.jpeg', '.png', '.webp'])
 
@@ -15,6 +16,14 @@ interface PageWallPageTabSource {
 
 interface PageWallPostingExecutor {
   executePageWallPostNow(input: PageWallExecutionInput): Promise<PostingJobResult>
+}
+
+export interface PageWallHashtagSource {
+  get(postId: number): string
+}
+
+const EMPTY_HASHTAG_SOURCE: PageWallHashtagSource = {
+  get: () => ''
 }
 
 export interface PreparedPageWallExecution {
@@ -31,11 +40,12 @@ export type PageWallPreparationResult =
 function failure(
   payload: PageWallRunNowPayload,
   message: string,
-  code: NonNullable<PostingJobResult['code']> = 'unexpected_error'
+  code: NonNullable<PostingJobResult['code']> = 'unexpected_error',
+  accountId = payload.accountId ?? 0
 ): PageWallRunNowResult {
   return {
     pageTabId: payload.pageTabId,
-    accountId: payload.accountId,
+    accountId,
     status: 'failed',
     code,
     message
@@ -43,12 +53,13 @@ function failure(
 }
 
 function publicResult(
-  payload: PageWallRunNowPayload,
+  pageTabId: number,
+  accountId: number,
   result: PostingJobResult
 ): PageWallRunNowResult {
   return {
-    pageTabId: payload.pageTabId,
-    accountId: payload.accountId,
+    pageTabId,
+    accountId,
     status: result.status,
     ...(result.code ? { code: result.code } : {}),
     message: result.message,
@@ -74,50 +85,74 @@ function normalizeImagePaths(paths: string[]): string[] {
 export class PageWallRunNowService {
   constructor(
     private readonly pageTabs: PageWallPageTabSource,
-    private readonly posting: PageWallPostingExecutor
+    private readonly posting: PageWallPostingExecutor,
+    private readonly materialResolver = new PageWallMaterialResolver(),
+    private readonly hashtags: PageWallHashtagSource = EMPTY_HASHTAG_SOURCE
   ) {}
 
-  prepare(payload: PageWallRunNowPayload): PageWallPreparationResult {
+  async prepare(payload: PageWallRunNowPayload): Promise<PageWallPreparationResult> {
     if (!Number.isInteger(payload.pageTabId) || payload.pageTabId <= 0) {
       return { ok: false, result: failure(payload, 'Page Tab không hợp lệ.') }
     }
-    if (!Number.isInteger(payload.accountId) || payload.accountId <= 0) {
+    if (payload.accountId !== undefined && (!Number.isInteger(payload.accountId) || payload.accountId <= 0)) {
       return { ok: false, result: failure(payload, 'Tài khoản chạy Đăng Tường không hợp lệ.', 'no_enabled_account') }
     }
 
     const pageTab = this.pageTabs.get(payload.pageTabId)
     if (!pageTab) return { ok: false, result: failure(payload, 'Page Tab không còn tồn tại.') }
 
-    const accountRef = pageTab.accounts.find((account) => account.accountId === payload.accountId)
-    if (!accountRef || !accountRef.enabled) {
-      return { ok: false, result: failure(payload, 'Tài khoản không thuộc danh sách đang bật của Page Tab.', 'no_enabled_account') }
+    // The Page-level enabled flag belongs to the legacy/rotation configuration.
+    // Page Wall owns an explicit account selection, so an explicitly ticked account
+    // only needs to belong to the canonical Page and not be truly disabled.
+    const legacyRunnableAccounts = pageTab.accounts
+      .filter((account) => account.enabled && account.status !== 'disabled')
+      .sort((left, right) => left.sortOrder - right.sortOrder || left.accountId - right.accountId)
+    const accountRef = payload.accountId === undefined
+      ? legacyRunnableAccounts[0]
+      : pageTab.accounts.find((account) => account.accountId === payload.accountId && account.status !== 'disabled')
+    if (!accountRef) {
+      const message = payload.accountId === undefined
+        ? 'Page chưa có tài khoản canonical đang bật để chạy Đăng Tường.'
+        : 'Tài khoản không thuộc Page canonical hoặc đã bị vô hiệu hóa.'
+      return { ok: false, result: failure(payload, message, 'no_enabled_account') }
     }
 
     const pageUid = pageTab.pageUid.trim()
     if (!pageUid) {
-      return { ok: false, result: failure(payload, 'Page Tab chưa có Page UID hợp lệ.', 'page_navigation_failed') }
+      return { ok: false, result: failure(payload, 'Page Tab chưa có Page UID hợp lệ.', 'page_navigation_failed', accountRef.accountId) }
     }
 
-    const imagePaths = normalizeImagePaths(payload.imagePaths)
-    const unsupported = imagePaths.find((path) => !supportedImageExtensions.has(extname(path).toLowerCase()))
-    if (unsupported) {
-      return {
-        ok: false,
-        result: failure(payload, 'Danh sách ảnh có file không được hỗ trợ. Chỉ dùng JPG, JPEG, PNG hoặc WEBP.', 'media_failed')
+    let content = payload.content
+    let hashtagSource = ''
+    let imagePaths = normalizeImagePaths(payload.imagePaths)
+    if (payload.canonicalPost) {
+      const resolved = await this.materialResolver.resolve(payload.canonicalPost)
+      if (!resolved.ok) return { ok: false, result: failure(payload, resolved.message, resolved.code, accountRef.accountId) }
+      content = resolved.material.content
+      hashtagSource = this.hashtags.get(payload.canonicalPost.postId)
+      imagePaths = resolved.material.imagePaths
+    } else {
+      const unsupported = imagePaths.find((path) => !supportedImageExtensions.has(extname(path).toLowerCase()))
+      if (unsupported) {
+        return {
+          ok: false,
+          result: failure(payload, 'Danh sách ảnh có file không được hỗ trợ. Chỉ dùng JPG, JPEG, PNG hoặc WEBP.', 'media_failed', accountRef.accountId)
+        }
       }
     }
 
-    if (!payload.content.trim() && imagePaths.length === 0) {
-      return { ok: false, result: failure(payload, 'Hãy nhập nội dung hoặc chọn ít nhất một ảnh.', 'no_content') }
+    if (!content.trim() && imagePaths.length === 0) {
+      return { ok: false, result: failure(payload, 'Hãy nhập nội dung hoặc chọn ít nhất một ảnh.', 'no_content', accountRef.accountId) }
     }
 
     return {
       ok: true,
       prepared: {
         input: {
-          accountId: payload.accountId,
+          accountId: accountRef.accountId,
           pageUid,
-          content: payload.content,
+          content,
+          ...(hashtagSource ? { hashtags: hashtagSource } : {}),
           imagePaths
         },
         pageTabName: pageTab.name,
@@ -128,10 +163,10 @@ export class PageWallRunNowService {
   }
 
   async execute(payload: PageWallRunNowPayload): Promise<PageWallRunNowResult> {
-    const preparation = this.prepare(payload)
+    const preparation = await this.prepare(payload)
     if (!preparation.ok) return preparation.result
 
     const result = await this.posting.executePageWallPostNow(preparation.prepared.input)
-    return publicResult(payload, result)
+    return publicResult(payload.pageTabId, preparation.prepared.input.accountId, result)
   }
 }

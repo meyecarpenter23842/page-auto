@@ -1,15 +1,22 @@
+import type { Locator, Page } from 'playwright-core'
 import { describe, expect, it } from 'vitest'
 import { createK4ActionExecutorRegistry, createK433GroupInteractionActionExecutorRegistry } from './index'
 import {
   groupInteractionTargetsSatisfied,
+  groupRestrictionBlocksOperation,
   type GroupInteractionStats,
   type GroupTargets
 } from './groupInteractionAction'
 import {
   classifyGroupRestriction,
+  commentOnGroupArticle,
   configuredGroupWhitelist,
+  directGroupUrlsFromWhitelist,
+  groupArticles,
   groupIdentityAllowed,
-  hasConfiguredGroupReaction
+  hasConfiguredGroupReaction,
+  isAppliedReactionAriaLabel,
+  reactToGroupArticle
 } from './groupInteractionActionSupport'
 
 describe('K4.3.3 group interaction executor', () => {
@@ -50,6 +57,15 @@ describe('K4.3.3 group interaction executor', () => {
     expect(groupIdentityAllowed(null, [])).toBe(true)
   })
 
+  it('turns an explicit Group whitelist into direct Group URLs before scraping joined-group links', () => {
+    expect(directGroupUrlsFromWhitelist(['1527231867322980', 'testslug'], 2)).toEqual([
+      'https://www.facebook.com/groups/1527231867322980/',
+      'https://www.facebook.com/groups/testslug/'
+    ])
+    expect(directGroupUrlsFromWhitelist(['1', '2'], 1)).toEqual(['https://www.facebook.com/groups/1/'])
+    expect(directGroupUrlsFromWhitelist([], 5)).toEqual([])
+  })
+
   it('never treats the reaction enable flag itself as an implicit Like choice', () => {
     expect(hasConfiguredGroupReaction({
       reactionEnabled: true,
@@ -64,11 +80,116 @@ describe('K4.3.3 group interaction executor', () => {
     expect(hasConfiguredGroupReaction({ reactionEnabled: true, reactionLove: true })).toBe(true)
   })
 
+  it('recognizes the live Facebook aria transition only after a reaction is applied', () => {
+    expect(isAppliedReactionAriaLabel('Like')).toBe(false)
+    expect(isAppliedReactionAriaLabel('Thích')).toBe(false)
+    expect(isAppliedReactionAriaLabel('Remove Like')).toBe(true)
+    expect(isAppliedReactionAriaLabel('Remove Love')).toBe(true)
+    expect(isAppliedReactionAriaLabel('Bỏ Thích')).toBe(true)
+    expect(isAppliedReactionAriaLabel(null)).toBe(false)
+  })
+
+  it('scopes Group posts from the live reaction rendering marker instead of relying only on role=article', () => {
+    let selector = ''
+    const locator = {} as Locator
+    const page = {
+      locator: (value: string) => {
+        selector = value
+        return locator
+      }
+    } as unknown as Page
+
+    expect(groupArticles(page)).toBe(locator)
+    expect(selector).toContain('data-ad-rendering-role="like_button"')
+    expect(selector).toContain('count(parent::*')
+    expect(selector).toContain('count(//*[@data-ad-rendering-role="like_button"])=1')
+    expect(selector).toContain('@role="article"')
+  })
+
+  it('uses an unlabeled contenteditable as the post-local comment fallback', async () => {
+    let submitted = false
+    const candidate = {
+      count: async () => 1,
+      nth: () => candidate,
+      isVisible: async () => true,
+      fill: async () => undefined,
+      press: async () => {
+        submitted = true
+      }
+    }
+    const missing = {
+      count: async () => 0,
+      nth: () => missing
+    }
+    const renderedComment = {
+      isVisible: async () => true,
+      evaluate: async () => true
+    }
+    const renderedMatches = {
+      count: async () => submitted ? 1 : 0,
+      nth: () => renderedComment
+    }
+    const article = {
+      locator: (selector: string) => selector === '[contenteditable="true"]' ? candidate : missing,
+      getByText: () => renderedMatches
+    } as unknown as Locator
+
+    expect(await commentOnGroupArticle({} as Page, article, 'hello', '')).toBe(true)
+  })
+
+  it('verifies the post primary live reaction control instead of an applied reaction in a nested comment', async () => {
+    let label = 'Like'
+    let appliedScopeQueried = false
+
+    const live = {
+      first: () => live,
+      count: async () => 1,
+      nth: () => live,
+      isVisible: async () => true,
+      getAttribute: async (name: string) => name === 'aria-label' ? label : null,
+      scrollIntoViewIfNeeded: async () => undefined,
+      click: async () => {
+        label = 'Remove Like'
+      },
+      dispatchEvent: async () => undefined
+    }
+    const missing = {
+      first: () => missing,
+      count: async () => 0,
+      nth: () => missing,
+      isVisible: async () => false
+    }
+    const article = {
+      locator: (selector: string) => {
+        if (selector.startsWith('xpath=self::*')) return missing
+        if (selector === '[role="button"]:has([data-ad-rendering-role="like_button"])') return live
+        if (selector.includes('aria-label^="Remove') || selector.includes('aria-label^="Unlike')
+          || selector.includes('aria-label^="Bỏ') || selector.includes('aria-label^="Gỡ')
+          || selector.includes('aria-label^="Xóa')) {
+          appliedScopeQueried = true
+        }
+        return missing
+      }
+    } as unknown as Locator
+
+    expect(await reactToGroupArticle({} as Page, article, { reactionEnabled: true, reactionLike: true })).toBe(true)
+    expect(appliedScopeQueried).toBe(false)
+  })
+
   it('classifies Facebook restriction messages without bypassing them', () => {
     expect(classifyGroupRestriction('You can\'t comment in this group right now.')).toBe('comment_blocked')
     expect(classifyGroupRestriction('Bạn không thể đăng trong nhóm này.')).toBe('posting_blocked')
     expect(classifyGroupRestriction('Your account is temporarily restricted.')).toBe('temporarily_restricted')
     expect(classifyGroupRestriction('Bài viết bình thường trong nhóm.')).toBeNull()
+  })
+
+  it('does not let a comment/post restriction suppress a valid reaction', () => {
+    expect(groupRestrictionBlocksOperation('comment_blocked', 'reaction')).toBe(false)
+    expect(groupRestrictionBlocksOperation('comment_blocked', 'comment')).toBe(true)
+    expect(groupRestrictionBlocksOperation('posting_blocked', 'reaction')).toBe(false)
+    expect(groupRestrictionBlocksOperation('posting_blocked', 'share_group')).toBe(true)
+    expect(groupRestrictionBlocksOperation('temporarily_restricted', 'reaction')).toBe(true)
+    expect(groupRestrictionBlocksOperation('temporarily_restricted', 'view')).toBe(true)
   })
 
   it('requires every configured interaction target before treating the action as complete', () => {

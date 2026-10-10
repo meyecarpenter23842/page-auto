@@ -2,6 +2,7 @@ import { utilityProcess } from 'electron'
 import { isIP } from 'node:net'
 import { join } from 'node:path'
 import type { HotmailProxyTestResult } from '../../shared/hotmail'
+import { setBrowserLaunchAwareTimeout } from '../browser/browserLaunchBroker'
 import { startEmailProxyAuthBridge } from './emailProxyAuthBridge'
 import type { EmailProxyCandidate } from './emailProxyPool'
 
@@ -37,7 +38,11 @@ export async function testEmailBrowserExecutable(executablePath: string): Promis
       worker.kill()
       resolve(result)
     }
-    const timer = setTimeout(() => finish({ ok: false, message: 'Browser Email persistent validation quá thời gian chờ.' }), 25_000)
+    const timer = setBrowserLaunchAwareTimeout(
+      worker,
+      () => finish({ ok: false, message: 'Browser Email persistent validation quá thời gian chờ.' }),
+      25_000
+    )
     worker.on('message', (message) => {
       if (isBrowserResult(message)) finish({ ok: message.ok, message: message.message })
     })
@@ -70,7 +75,11 @@ export async function testEmailProxy(
         worker.kill()
         resolve(result)
       }
-      const timer = setTimeout(() => finish({ ok: false, proxy: proxy?.display ?? null, publicIp: null, message: 'Proxy test quá thời gian chờ.' }), 30_000)
+      const timer = setBrowserLaunchAwareTimeout(
+        worker,
+        () => finish({ ok: false, proxy: proxy?.display ?? null, publicIp: null, message: 'Proxy test quá thời gian chờ.' }),
+        30_000
+      )
       worker.on('message', (message) => {
         if (!isProxyResult(message)) return
         const publicIp = message.publicIp

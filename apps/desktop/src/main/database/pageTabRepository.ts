@@ -4,11 +4,15 @@ import {
   CONTENT_MODES,
   DEFAULT_PAGE_TAB_IMAGE,
   DEFAULT_PAGE_TAB_ROTATION,
+  GROUP_ORDER_MODES,
   IMAGE_MODES,
+  MAX_PAGE_AVATAR_DATA_URL_LENGTH,
+  MAX_PAGE_TAB_ACCOUNT_CONCURRENCY,
   MISSING_IMAGE_POLICIES,
   type AccountOrderMode,
   type ContentMode,
   type CreatePageTabInput,
+  type GroupOrderMode,
   type ImageMode,
   type MissingImagePolicy,
   type PageTabAccountRef,
@@ -24,13 +28,16 @@ interface PageTabRow {
   id: number
   name: string
   pageUid: string
+  avatarDataUrl: string | null
   status: string
   postsPerAccount: number
   postDelayMinSeconds: number
   postDelayMaxSeconds: number
   accountDelayMinSeconds: number
   accountDelayMaxSeconds: number
+  accountConcurrency: number
   accountOrderMode: string
+  groupOrderMode: string
   createdAt: number
   updatedAt: number
 }
@@ -61,6 +68,18 @@ function positiveInteger(value: number, label: string): number {
   return value
 }
 
+function normalizeAvatarDataUrl(value: string | null | undefined): string | null {
+  if (value === null || value === undefined || value.trim() === '') return null
+  const normalized = value.trim()
+  if (normalized.length > MAX_PAGE_AVATAR_DATA_URL_LENGTH) {
+    throw new Error('Ảnh đại diện Page quá lớn.')
+  }
+  if (!/^data:image\/(?:jpeg|png|webp);base64,[a-z0-9+/=]+$/i.test(normalized)) {
+    throw new Error('Ảnh đại diện Page không hợp lệ.')
+  }
+  return normalized
+}
+
 function normalizeGroupUids(values: string[]): string[] {
   const seen = new Set<string>()
   const result: string[] = []
@@ -85,10 +104,18 @@ function normalizeConfig(input: PageTabSaveInput): PageTabSaveInput {
   const postDelayMaxSeconds = nonNegativeInteger(input.rotation.postDelayMaxSeconds, 'Delay bài tối đa')
   const accountDelayMinSeconds = nonNegativeInteger(input.rotation.accountDelayMinSeconds, 'Delay account tối thiểu')
   const accountDelayMaxSeconds = nonNegativeInteger(input.rotation.accountDelayMaxSeconds, 'Delay account tối đa')
+  const accountConcurrency = positiveInteger(input.rotation.accountConcurrency ?? 1, 'TK song song')
   const accountOrderMode = input.rotation.accountOrderMode ?? 'sequential'
+  const groupOrderMode = input.groupOrderMode ?? 'sequential'
 
+  if (accountConcurrency > MAX_PAGE_TAB_ACCOUNT_CONCURRENCY) {
+    throw new Error(`TK song song tối đa ${MAX_PAGE_TAB_ACCOUNT_CONCURRENCY}.`)
+  }
   if (!ACCOUNT_ORDER_MODES.includes(accountOrderMode)) {
     throw new Error('Chế độ thứ tự tài khoản không hợp lệ.')
+  }
+  if (!GROUP_ORDER_MODES.includes(groupOrderMode)) {
+    throw new Error('Chế độ thứ tự Group không hợp lệ.')
   }
   if (postDelayMinSeconds > postDelayMaxSeconds) {
     throw new Error('Delay bài tối thiểu không được lớn hơn tối đa.')
@@ -162,17 +189,20 @@ function normalizeConfig(input: PageTabSaveInput): PageTabSaveInput {
   return {
     name,
     pageUid,
+    avatarDataUrl: normalizeAvatarDataUrl(input.avatarDataUrl),
     rotation: {
       postsPerAccount,
       postDelayMinSeconds,
       postDelayMaxSeconds,
       accountDelayMinSeconds,
       accountDelayMaxSeconds,
+      accountConcurrency,
       accountOrderMode
     },
     accounts,
     schedules,
     groupUids: normalizeGroupUids(input.groupUids),
+    groupOrderMode,
     contentMode: input.contentMode,
     contents: normalizeContents(input.contents),
     image: {
@@ -189,16 +219,23 @@ function toPageTabRow(row: Record<string, unknown>): PageTabRow {
     id: Number(row.id),
     name: String(row.name),
     pageUid: String(row.pageUid),
+    avatarDataUrl: row.avatarDataUrl === null || row.avatarDataUrl === undefined ? null : String(row.avatarDataUrl),
     status: String(row.status),
     postsPerAccount: Number(row.postsPerAccount),
     postDelayMinSeconds: Number(row.postDelayMinSeconds),
     postDelayMaxSeconds: Number(row.postDelayMaxSeconds),
     accountDelayMinSeconds: Number(row.accountDelayMinSeconds),
     accountDelayMaxSeconds: Number(row.accountDelayMaxSeconds),
+    accountConcurrency: Number(row.accountConcurrency ?? 1),
     accountOrderMode: String(row.accountOrderMode ?? 'sequential'),
+    groupOrderMode: String(row.groupOrderMode ?? 'sequential'),
     createdAt: Number(row.createdAt),
     updatedAt: Number(row.updatedAt)
   }
+}
+
+function normalizedAccountConcurrency(value: number): number {
+  return Number.isInteger(value) && value >= 1 && value <= MAX_PAGE_TAB_ACCOUNT_CONCURRENCY ? value : 1
 }
 
 export class PageTabRepository {
@@ -241,13 +278,16 @@ export class PageTabRepository {
         id,
         name,
         page_uid AS pageUid,
+        avatar_data_url AS avatarDataUrl,
         status,
         posts_per_account AS postsPerAccount,
         post_delay_min_seconds AS postDelayMinSeconds,
         post_delay_max_seconds AS postDelayMaxSeconds,
         account_delay_min_seconds AS accountDelayMinSeconds,
         account_delay_max_seconds AS accountDelayMaxSeconds,
+        account_concurrency AS accountConcurrency,
         account_order_mode AS accountOrderMode,
+        group_order_mode AS groupOrderMode,
         created_at AS createdAt,
         updated_at AS updatedAt
       FROM page_tabs
@@ -332,6 +372,7 @@ export class PageTabRepository {
       id: tab.id,
       name: tab.name,
       pageUid: tab.pageUid,
+      avatarDataUrl: tab.avatarDataUrl,
       status: tab.status as PageTabStatus,
       rotation: {
         postsPerAccount: tab.postsPerAccount,
@@ -339,6 +380,7 @@ export class PageTabRepository {
         postDelayMaxSeconds: tab.postDelayMaxSeconds,
         accountDelayMinSeconds: tab.accountDelayMinSeconds,
         accountDelayMaxSeconds: tab.accountDelayMaxSeconds,
+        accountConcurrency: normalizedAccountConcurrency(tab.accountConcurrency),
         accountOrderMode: ACCOUNT_ORDER_MODES.includes(tab.accountOrderMode as AccountOrderMode)
           ? tab.accountOrderMode as AccountOrderMode
           : 'sequential'
@@ -362,6 +404,9 @@ export class PageTabRepository {
         sortOrder: Number(item.sortOrder)
       })),
       groupUids: groupRows.map((item) => String(item.groupUid)),
+      groupOrderMode: GROUP_ORDER_MODES.includes(tab.groupOrderMode as GroupOrderMode)
+        ? tab.groupOrderMode as GroupOrderMode
+        : 'sequential',
       contentMode: (contentSet ? String(contentSet.mode) : 'sequential') as ContentMode,
       contents: contents.map((item) => String(item.content)),
       image,
@@ -380,9 +425,9 @@ export class PageTabRepository {
         INSERT INTO page_tabs (
           name, page_uid, status, posts_per_account,
           post_delay_min_seconds, post_delay_max_seconds,
-          account_delay_min_seconds, account_delay_max_seconds,
-          account_order_mode, created_at, updated_at
-        ) VALUES (?, ?, 'idle', ?, ?, ?, ?, ?, ?, ?, ?)
+          account_delay_min_seconds, account_delay_max_seconds, account_concurrency,
+          account_order_mode, group_order_mode, created_at, updated_at
+        ) VALUES (?, ?, 'idle', ?, ?, ?, ?, ?, ?, ?, 'sequential', ?, ?)
       `).run(
         name,
         pageUid,
@@ -391,6 +436,7 @@ export class PageTabRepository {
         DEFAULT_PAGE_TAB_ROTATION.postDelayMaxSeconds,
         DEFAULT_PAGE_TAB_ROTATION.accountDelayMinSeconds,
         DEFAULT_PAGE_TAB_ROTATION.accountDelayMaxSeconds,
+        DEFAULT_PAGE_TAB_ROTATION.accountConcurrency ?? 1,
         DEFAULT_PAGE_TAB_ROTATION.accountOrderMode ?? 'sequential',
         now,
         now
@@ -419,11 +465,15 @@ export class PageTabRepository {
   }
 
   update(id: number, input: PageTabSaveInput): PageTabConfig {
-    if (!this.get(id)) {
+    const current = this.get(id)
+    if (!current) {
       throw new Error(`Không tìm thấy Page Tab #${id}.`)
     }
 
-    const config = normalizeConfig(input)
+    const config = normalizeConfig({
+      ...input,
+      avatarDataUrl: input.avatarDataUrl === undefined ? current.avatarDataUrl : input.avatarDataUrl
+    })
     this.validateAccountsExist(config.accounts.map((item) => item.accountId))
     const now = Date.now()
 
@@ -432,23 +482,29 @@ export class PageTabRepository {
         UPDATE page_tabs SET
           name = ?,
           page_uid = ?,
+          avatar_data_url = ?,
           posts_per_account = ?,
           post_delay_min_seconds = ?,
           post_delay_max_seconds = ?,
           account_delay_min_seconds = ?,
           account_delay_max_seconds = ?,
+          account_concurrency = ?,
           account_order_mode = ?,
+          group_order_mode = ?,
           updated_at = ?
         WHERE id = ?
       `).run(
         config.name,
         config.pageUid,
+        config.avatarDataUrl ?? null,
         config.rotation.postsPerAccount,
         config.rotation.postDelayMinSeconds,
         config.rotation.postDelayMaxSeconds,
         config.rotation.accountDelayMinSeconds,
         config.rotation.accountDelayMaxSeconds,
+        config.rotation.accountConcurrency ?? 1,
         config.rotation.accountOrderMode ?? 'sequential',
+        config.groupOrderMode ?? 'sequential',
         now,
         id
       )
@@ -531,6 +587,7 @@ export class PageTabRepository {
     return this.update(copy.id, {
       name: copy.name,
       pageUid: source.pageUid,
+      avatarDataUrl: source.avatarDataUrl ?? null,
       rotation: { ...source.rotation },
       accounts: source.accounts.map((item) => ({
         accountId: item.accountId,
@@ -546,6 +603,7 @@ export class PageTabRepository {
         sortOrder: item.sortOrder
       })),
       groupUids: [...source.groupUids],
+      groupOrderMode: source.groupOrderMode ?? 'sequential',
       contentMode: source.contentMode,
       contents: [...source.contents],
       image: { ...source.image }

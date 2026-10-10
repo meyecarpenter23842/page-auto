@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { BrowserWindowPlacement } from '../../shared/browserWindowLayout'
-import { managedCdpEndpointFromArgs, managedCompactLaunchArgs } from './managedBrowserBridge'
+import {
+  managedCdpEndpointFromArgs,
+  managedCompactLaunchArgs,
+  managedVisualObservationPersistsBaseline
+} from './managedBrowserBridge'
 
 const manualPlacement: BrowserWindowPlacement = {
   displayId: 1,
@@ -56,5 +60,11 @@ describe('managedBrowserBridge', () => {
     expect(args).toContain('--mute-audio')
     expect(args).not.toContain('--window-size=500,313')
     expect(args).not.toContain('--force-device-scale-factor=0.5')
+  })
+
+  it('keeps launch/attach visual observations probe-only and only persists an explicit retile baseline', () => {
+    expect(managedVisualObservationPersistsBaseline('attach')).toBe(false)
+    expect(managedVisualObservationPersistsBaseline('fallback-launch')).toBe(false)
+    expect(managedVisualObservationPersistsBaseline('retile')).toBe(true)
   })
 })

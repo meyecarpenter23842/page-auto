@@ -1,0 +1,87 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { describe, expect, it } from 'vitest'
+import {
+  hasOciIngressRule,
+  parseOciConfig,
+  reconcileOciIngressRules,
+  resolveOciConfigPath,
+  selectOciIpv6PrefixLength
+} from './ociCloudFirewallService'
+
+describe('Proxy Builder OCI cloud firewall', () => {
+  it('parses a selected OCI config profile without exposing key material', () => {
+    const parsed = parseOciConfig([
+      '[DEFAULT]',
+      'user=ocid1.user.oc1..example',
+      'fingerprint=aa:bb:cc',
+      'tenancy=ocid1.tenancy.oc1..example',
+      'region=ap-singapore-1',
+      'key_file=keys/oci_api_key.pem'
+    ].join('\n'), 'DEFAULT', 'C:/Users/test/.oci/config')
+
+    expect(parsed.user).toBe('ocid1.user.oc1..example')
+    expect(parsed.tenancy).toBe('ocid1.tenancy.oc1..example')
+    expect(parsed.region).toBe('ap-singapore-1')
+    expect(parsed.keyFile.replaceAll('\\', '/')).toContain('/.oci/keys/oci_api_key.pem')
+  })
+
+  it('replaces only the Page-Auto rule for the same VNIC and preserves unrelated ingress', () => {
+    const marker = 'page-auto-proxy:ocid1.vnic.oc1..abc'
+    const existing = [
+      { description: 'SSH', protocol: '6', source: '0.0.0.0/0', tcpOptions: { destinationPortRange: { min: 22, max: 22 } } },
+      { description: marker, protocol: '6', source: '0.0.0.0/0', tcpOptions: { destinationPortRange: { min: 3128, max: 3128 } } },
+      { description: 'page-auto-proxy:ocid1.vnic.oc1..other', protocol: '6', source: '0.0.0.0/0', tcpOptions: { destinationPortRange: { min: 5000, max: 5009 } } }
+    ]
+
+    const next = reconcileOciIngressRules(existing, marker, 6000, 6019)
+    expect(next).toHaveLength(3)
+    expect(next).toContainEqual(existing[0])
+    expect(next).toContainEqual(existing[2])
+    expect(next).toContainEqual({
+      description: marker,
+      isStateless: false,
+      protocol: '6',
+      source: '0.0.0.0/0',
+      sourceType: 'CIDR_BLOCK',
+      tcpOptions: { destinationPortRange: { min: 6000, max: 6019 } }
+    })
+  })
+
+  it('verifies the exact managed TCP ingress rule, not just its marker', () => {
+    const marker = 'page-auto-proxy:ocid1.vnic.oc1..abc'
+    const rules = [{
+      description: marker,
+      isStateless: false,
+      protocol: '6',
+      source: '0.0.0.0/0',
+      sourceType: 'CIDR_BLOCK',
+      tcpOptions: { destinationPortRange: { min: 3128, max: 3227 } }
+    }]
+    expect(hasOciIngressRule(rules, marker, 3128, 3227)).toBe(true)
+    expect(hasOciIngressRule(rules, marker, 3128, 3128)).toBe(false)
+  })
+
+  it('sizes OCI flexible IPv6 CIDRs on nibble boundaries for the requested proxy pool', () => {
+    expect(selectOciIpv6PrefixLength(1)).toBe(124)
+    expect(selectOciIpv6PrefixLength(15)).toBe(124)
+    expect(selectOciIpv6PrefixLength(16)).toBe(120)
+    expect(selectOciIpv6PrefixLength(1000)).toBe(116)
+    expect(selectOciIpv6PrefixLength(10_000)).toBe(112)
+  })
+
+  it('uses ~/.oci/config automatically when no file was selected', () => {
+    const home = mkdtempSync(join(tmpdir(), 'page-auto-oci-'))
+    try {
+      const ociDir = join(home, '.oci')
+      mkdirSync(ociDir, { recursive: true })
+      const configPath = join(ociDir, 'config')
+      writeFileSync(configPath, '[DEFAULT]\nregion=ap-singapore-1\n')
+      expect(resolveOciConfigPath(undefined, home)).toBe(configPath)
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
+})

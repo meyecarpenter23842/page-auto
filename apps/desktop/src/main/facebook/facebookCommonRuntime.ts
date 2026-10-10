@@ -1,9 +1,14 @@
 import { chromium, type BrowserContext, type Page } from 'playwright-core'
+import type { AccountStatus } from '../../shared/accounts'
 import {
   type BrowserSettings,
   type NetworkSettings,
   type SessionSettings
 } from '../../shared/appSettings'
+import {
+  accountStatusFromCheckpointKind,
+  accountStatusFromFacebookSessionReason
+} from '../../shared/facebookAccountState'
 import type { PostingCheckpointKind } from '../../shared/posting'
 import { applyBrowserContextSettings, buildBrowserLaunchOptions, waitForBrowserStartupDelay } from '../browser/browserRuntime'
 import { inspectFacebookAccountIdentity } from '../browser/facebookAccountIdentity'
@@ -15,7 +20,10 @@ import {
   type FacebookSessionResult,
   type FacebookSessionTiming
 } from '../browser/facebookSession'
-import { detectFacebookCheckpointKind } from '../browser/posting/facebookCheckpoint'
+import {
+  detectFacebookAccountStatus,
+  detectFacebookCheckpointKind
+} from '../browser/posting/facebookCheckpoint'
 import { classifyPageIdentityUid, PageIdentitySwitcher } from '../browser/posting/pageIdentitySwitcher'
 import { activeFacebookProfileId, detectFacebookAccessBlock } from '../browser/posting/pageState'
 import { effectiveNavigationTimeoutMs, probeFacebookThroughProxy } from '../browser/proxyPreflight'
@@ -49,6 +57,7 @@ export type FacebookCommonSessionState = 'valid' | 'needs_login' | 'verification
 export interface FacebookCommonSessionValidation {
   phase: 'before_run' | 'after_run'
   state: FacebookCommonSessionState
+  accountStatus: AccountStatus
   message: string
   checkpointKind?: PostingCheckpointKind
 }
@@ -110,9 +119,14 @@ export function classifyFacebookBrowserLaunchFailure(message: string): FacebookC
 
 export function beforeRunFacebookSessionFailure(
   session: FacebookSessionResult,
-  checkpointKind?: PostingCheckpointKind
+  checkpointKind?: PostingCheckpointKind,
+  accountStatus?: AccountStatus
 ): FacebookCommonStepResult {
   const verificationRequired = session.reason === 'checkpoint'
+  const canonicalStatus = accountStatus
+    ?? (verificationRequired
+      ? accountStatusFromCheckpointKind(checkpointKind)
+      : accountStatusFromFacebookSessionReason(session.reason))
   return {
     status: 'needs_login',
     code: verificationRequired ? 'verification_required' : 'needs_login',
@@ -120,6 +134,7 @@ export function beforeRunFacebookSessionFailure(
     sessionValidation: {
       phase: 'before_run',
       state: verificationRequired ? 'verification_required' : 'needs_login',
+      accountStatus: canonicalStatus,
       message: session.message,
       ...(verificationRequired && checkpointKind ? { checkpointKind } : {})
     }
@@ -136,7 +151,8 @@ export function beforeRunFacebookEmailSupportFailure(
     message,
     sessionValidation: {
       phase: 'before_run',
-      state: 'needs_login',
+      state: 'verification_required',
+      accountStatus: 'email_code_required',
       message
     }
   }
@@ -145,11 +161,12 @@ export function beforeRunFacebookEmailSupportFailure(
 function beforeRunIdentityFailure(message: string): FacebookCommonStepResult {
   return {
     status: 'needs_login',
-    code: 'needs_login',
+    code: 'verification_required',
     message,
     sessionValidation: {
       phase: 'before_run',
-      state: 'needs_login',
+      state: 'verification_required',
+      accountStatus: 'needs_attention',
       message
     }
   }
@@ -182,17 +199,36 @@ export async function checkFacebookCommonAccess(
 ): Promise<FacebookCommonStepResult> {
   const state = await detectFacebookAccessBlock(page)
   if (state === 'login_required') {
+    const message = `Facebook yêu cầu đăng nhập lại ${messageContext}.`
     return {
       status: 'needs_login',
       code: 'needs_login',
-      message: `Facebook yêu cầu đăng nhập lại ${messageContext}.`
+      message,
+      sessionValidation: {
+        phase: 'after_run',
+        state: 'needs_login',
+        accountStatus: 'needs_login',
+        message
+      }
     }
   }
   if (state === 'verification_required') {
+    const [checkpointKind, accountStatus] = await Promise.all([
+      detectFacebookCheckpointKind(page).catch(() => null),
+      detectFacebookAccountStatus(page).catch(() => 'checkpoint_unknown' as AccountStatus)
+    ])
+    const message = `Facebook yêu cầu checkpoint/xác minh thủ công ${messageContext}.`
     return {
       status: 'needs_login',
       code: 'verification_required',
-      message: `Facebook yêu cầu checkpoint/xác minh thủ công ${messageContext}.`
+      message,
+      sessionValidation: {
+        phase: 'after_run',
+        state: 'verification_required',
+        accountStatus,
+        message,
+        ...(checkpointKind ? { checkpointKind } : {})
+      }
     }
   }
   return { status: 'success', message: 'Facebook access state hợp lệ.' }
@@ -287,6 +323,11 @@ export class FacebookCommonRuntime {
     return kind
   }
 
+  private async checkpointAccountStatus(checkpointKind?: PostingCheckpointKind): Promise<AccountStatus> {
+    return detectFacebookAccountStatus(this.page)
+      .catch(() => accountStatusFromCheckpointKind(checkpointKind))
+  }
+
   private async ensurePageIdentity(): Promise<FacebookCommonStepResult> {
     const activePageUid = await activeFacebookProfileId(this.context).catch(() => null)
     if (classifyPageIdentityUid(this.request.pageUid, activePageUid) === 'match') {
@@ -304,6 +345,30 @@ export class FacebookCommonRuntime {
     if (identity.status !== 'success') {
       const failure = normalizePageIdentityFailure(identity)
       this.request.diagnostic?.(`state=page_identity failed code=${failure.code ?? 'unknown'}`)
+      if (failure.code === 'verification_required') {
+        const checkpointKind = await this.checkpointKind()
+        return {
+          ...failure,
+          sessionValidation: {
+            phase: 'before_run',
+            state: 'verification_required',
+            accountStatus: await this.checkpointAccountStatus(checkpointKind),
+            message: failure.message,
+            ...(checkpointKind ? { checkpointKind } : {})
+          }
+        }
+      }
+      if (failure.code === 'needs_login') {
+        return {
+          ...failure,
+          sessionValidation: {
+            phase: 'before_run',
+            state: 'needs_login',
+            accountStatus: 'needs_login',
+            message: failure.message
+          }
+        }
+      }
       return failure
     }
     this.request.diagnostic?.('state=page_identity switched')
@@ -337,7 +402,10 @@ export class FacebookCommonRuntime {
     const session = bootstrap.session
     if (session.status !== 'valid') {
       const checkpointKind = session.reason === 'checkpoint' ? await this.checkpointKind() : undefined
-      return beforeRunFacebookSessionFailure(session, checkpointKind)
+      const accountStatus = session.reason === 'checkpoint'
+        ? await this.checkpointAccountStatus(checkpointKind)
+        : accountStatusFromFacebookSessionReason(session.reason)
+      return beforeRunFacebookSessionFailure(session, checkpointKind, accountStatus)
     }
     this.sessionValidated = true
     this.sessionCookie = session.cookie
@@ -366,7 +434,12 @@ export class FacebookCommonRuntime {
     if (afterSession.state === 'valid') {
       return {
         messageSuffix: null,
-        sessionValidation: { phase: 'after_run', state: 'valid', message: afterSession.message }
+        sessionValidation: {
+          phase: 'after_run',
+          state: 'valid',
+          accountStatus: 'valid',
+          message: afterSession.message
+        }
       }
     }
 
@@ -396,6 +469,7 @@ export class FacebookCommonRuntime {
             sessionValidation: {
               phase: 'after_run',
               state: 'valid',
+              accountStatus: 'valid',
               message: 'Đã tự phục hồi session sau tác vụ Facebook.'
             }
           }
@@ -405,11 +479,15 @@ export class FacebookCommonRuntime {
       this.sessionValidated = false
       const verificationRequired = recovered.reason === 'checkpoint'
       const checkpointKind = verificationRequired ? await this.checkpointKind() : undefined
+      const accountStatus = verificationRequired
+        ? await this.checkpointAccountStatus(checkpointKind)
+        : accountStatusFromFacebookSessionReason(recovered.reason)
       return {
         messageSuffix: recovered.message,
         sessionValidation: {
           phase: 'after_run',
           state: verificationRequired ? 'verification_required' : 'needs_login',
+          accountStatus,
           message: recovered.message,
           ...(checkpointKind ? { checkpointKind } : {})
         }
@@ -420,11 +498,15 @@ export class FacebookCommonRuntime {
     const checkpointKind = afterSession.state === 'verification_required'
       ? await this.checkpointKind()
       : undefined
+    const accountStatus = afterSession.state === 'verification_required'
+      ? await this.checkpointAccountStatus(checkpointKind)
+      : 'needs_attention'
     return {
       messageSuffix: afterSession.message,
       sessionValidation: {
         phase: 'after_run',
         state: afterSession.state,
+        accountStatus,
         message: afterSession.message,
         ...(checkpointKind ? { checkpointKind } : {})
       }

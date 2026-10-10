@@ -1,5 +1,7 @@
+import type { AccountStatus } from './accounts'
 import type { BrowserSettings, LoggingSettings, NetworkSettings, SessionSettings } from './appSettings'
 import type { BrowserWindowPlacement } from './browserWindowLayout'
+import type { FacebookSessionPolicyState } from './facebookSessionPolicy'
 import type { RunDetails, RunItem } from './runs'
 
 export const POSTING_RESULT_STATUSES = ['success', 'failed', 'needs_login', 'skipped'] as const
@@ -49,6 +51,7 @@ export type PostingCheckpointKind = (typeof POSTING_CHECKPOINT_KINDS)[number]
 export interface PostingSessionValidation {
   phase: PostingSessionPhase
   state: PostingSessionState
+  accountStatus?: AccountStatus
   message: string
   checkpointKind?: PostingCheckpointKind
 }
@@ -97,6 +100,7 @@ export interface PostingJobResult {
   currentUrl?: string
   tracePath?: string
   sessionValidation?: PostingSessionValidation
+  sessionPolicyState?: FacebookSessionPolicyState | null
   accountName?: string
   /** Main-process only. PostingService strips this before returning through IPC/logging. */
   sessionCookie?: string

@@ -38,13 +38,32 @@ export const accountStatusLabels: Record<AccountRecord['status'], string> = {
   unknown: 'Chưa kiểm tra',
   valid: 'Hoạt động',
   needs_login: 'Cần đăng nhập',
-  disabled: 'Đã tắt'
+  login_failed: 'Đăng nhập thất bại',
+  two_factor_required: 'Cần xác thực 2FA',
+  two_factor_failed: 'Xác thực 2FA thất bại',
+  email_code_required: 'Cần mã Email',
+  checkpoint_282: 'Checkpoint 282',
+  checkpoint_956: 'Checkpoint 956',
+  identity_verification_required: 'Xác minh danh tính',
+  security_review_required: 'Kiểm tra bảo mật',
+  locked: 'Tài khoản bị khóa',
+  disabled: 'Tài khoản vô hiệu hóa',
+  checkpoint_unknown: 'Checkpoint chưa xác định',
+  needs_attention: 'Cần xử lý'
+}
+
+export type AccountStatusTone = 'valid' | 'problem' | 'neutral'
+
+export function accountStatusTone(status: AccountRecord['status']): AccountStatusTone {
+  if (status === 'valid') return 'valid'
+  if (status === 'unknown') return 'neutral'
+  return 'problem'
 }
 
 export const columns: GridColumn[] = [
   { id: 'uid', label: 'UID / Tên đăng nhập', defaultVisible: true, width: 160 },
   { id: 'name', label: 'Tên tài khoản', defaultVisible: true, width: 150 },
-  { id: 'status', label: 'Trạng thái', defaultVisible: true, width: 115 },
+  { id: 'status', label: 'Trạng thái', defaultVisible: true, width: 160 },
   { id: 'category', label: 'Nhóm', defaultVisible: true, width: 130 },
   { id: 'cookieStatus', label: 'Trạng thái cookie', defaultVisible: true, width: 130 },
   { id: 'proxy', label: 'Proxy', defaultVisible: true, width: 175 },
@@ -118,6 +137,18 @@ export const MIN_CUSTOM_MAPPING_COLUMNS = DEFAULT_CUSTOM_MAPPING.length
 export const PREVIEW_LIMIT = 12
 export const ACCOUNT_RUNTIME_REFRESH_MS = 1_500
 export const UNGROUPED_CATEGORY_FILTER = '__ungrouped__'
+
+export function normalizeBulkUidFilter(value: string): string[] {
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const line of value.split(/\r?\n/)) {
+    const uid = line.trim()
+    if (!uid || seen.has(uid)) continue
+    seen.add(uid)
+    result.push(uid)
+  }
+  return result
+}
 
 export function formatDate(value: unknown): string {
   if (typeof value !== 'number' || !value) return '—'

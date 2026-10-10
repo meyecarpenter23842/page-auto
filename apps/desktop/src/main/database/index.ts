@@ -4,12 +4,30 @@ import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { appSettings } from './schema'
 import { ACCOUNT_GROUP_SCHEMA_VERSION, applyAccountGroupMigration } from './accountGroupMigration'
+import { applyActionWorkspaceCompatibilityMigration } from './actionWorkspaceCompatibilityMigration'
+import { ACTION_WORKSPACE_SCHEMA_VERSION, applyActionWorkspaceMigration } from './actionWorkspaceMigration'
+import { ACTION_WORKSPACE_PRESET_SCHEMA_VERSION, applyActionWorkspacePresetMigration } from './actionWorkspacePresetMigration'
 import { CANONICAL_POST_SCHEMA_VERSION, applyCanonicalPostMigration } from './canonicalPostMigration'
 import { CONTENT_LIBRARY_SCHEMA_VERSION, applyContentLibraryMigration } from './contentLibraryMigration'
+import { COPY_POST_SCHEMA_VERSION, applyCopyPostMigration } from './copyPostMigration'
 import { HOTMAIL_SCHEMA_VERSION, applyHotmailMigration } from './hotmailMigration'
 import { latestSchemaVersion, migrations } from './migrations'
+import { PAGE_AVATAR_SCHEMA_VERSION, applyPageAvatarMigration } from './pageAvatarMigration'
+import { PAGE_BUSINESS_BINDING_SCHEMA_VERSION, applyPageBusinessBindingMigration } from './pageBusinessBindingMigration'
+import { applyPageJoinGroupOwnershipRepair } from './pageJoinGroupOwnershipMigration'
+import { PAGE_SCENARIO_SCHEDULE_SCHEMA_VERSION, applyPageScenarioScheduleMigration } from './pageScenarioScheduleMigration'
+import { PAGE_WALL_FINITE_PLAN_SCHEMA_VERSION, applyPageWallFinitePlanMigration } from './pageWallFinitePlanMigration'
+import { PAGE_WALL_POST_POOL_SCHEMA_VERSION, applyPageWallPostPoolMigration } from './pageWallPostPoolMigration'
+import { CANONICAL_POST_HASHTAG_SCHEMA_VERSION, applyCanonicalPostHashtagMigration } from './canonicalPostHashtagMigration'
 import { PAGE_WALL_SCHEMA_VERSION, applyPageWallMigration } from './pageWallMigration'
+import { PAGE_WALL_RECURRING_SCHEMA_VERSION, applyPageWallRecurringMigration } from './pageWallRecurringMigration'
+import { PAGE_WALL_WEEKLY_SCHEDULE_SCHEMA_VERSION, applyPageWallWeeklyScheduleMigration } from './pageWallWeeklyScheduleMigration'
+import { PROXY_CENTER_SCHEMA_VERSION, PROXY_CENTER_USAGE_SCHEMA_VERSION, applyProxyCenterMigration } from './proxyCenterMigration'
 import { SCENARIO_SCHEMA_VERSION, applyScenarioMigration } from './scenarioMigration'
+import { SCANNER_SCHEMA_VERSION, applyScannerMigration } from './scannerMigration'
+import { STORY_SCHEMA_VERSION, applyStoryMigration } from './storyMigration'
+import { ZALO_SCHEMA_VERSION, applyZaloMigration } from './zaloMigration'
+import { ZALO_POST_BINDING_SCHEMA_VERSION, applyZaloPostBindingMigration } from './zaloPostBindingMigration'
 
 export interface DatabaseRuntime {
   client: Database.Database
@@ -47,10 +65,7 @@ export function initializeDatabase(databaseFile: string): DatabaseRuntime {
     )
 
     for (const migration of migrations) {
-      if (appliedVersions.has(migration.version)) {
-        continue
-      }
-
+      if (appliedVersions.has(migration.version)) continue
       client.exec(migration.sql)
       insertMigration.run(migration.version, migration.name, Date.now())
     }
@@ -63,6 +78,24 @@ export function initializeDatabase(databaseFile: string): DatabaseRuntime {
   applyAccountGroupMigration(client)
   applyContentLibraryMigration(client)
   applyCanonicalPostMigration(client)
+  applyCopyPostMigration(client)
+  applyStoryMigration(client)
+  applyActionWorkspaceMigration(client)
+  applyActionWorkspacePresetMigration(client)
+  applyPageBusinessBindingMigration(client)
+  applyActionWorkspaceCompatibilityMigration(client)
+  applyPageJoinGroupOwnershipRepair(client)
+  applyPageWallRecurringMigration(client)
+  applyPageWallFinitePlanMigration(client)
+  applyPageScenarioScheduleMigration(client)
+  applyPageAvatarMigration(client)
+  applyScannerMigration(client)
+  applyPageWallWeeklyScheduleMigration(client)
+  applyPageWallPostPoolMigration(client)
+  applyCanonicalPostHashtagMigration(client)
+  applyProxyCenterMigration(client)
+  applyZaloMigration(client)
+  applyZaloPostBindingMigration(client)
 
   const schemaVersion = Math.max(
     latestSchemaVersion,
@@ -71,27 +104,34 @@ export function initializeDatabase(databaseFile: string): DatabaseRuntime {
     SCENARIO_SCHEMA_VERSION,
     ACCOUNT_GROUP_SCHEMA_VERSION,
     CONTENT_LIBRARY_SCHEMA_VERSION,
-    CANONICAL_POST_SCHEMA_VERSION
+    CANONICAL_POST_SCHEMA_VERSION,
+    COPY_POST_SCHEMA_VERSION,
+    STORY_SCHEMA_VERSION,
+    ACTION_WORKSPACE_SCHEMA_VERSION,
+    ACTION_WORKSPACE_PRESET_SCHEMA_VERSION,
+    PAGE_BUSINESS_BINDING_SCHEMA_VERSION,
+    PAGE_WALL_RECURRING_SCHEMA_VERSION,
+    PAGE_WALL_FINITE_PLAN_SCHEMA_VERSION,
+    PAGE_SCENARIO_SCHEDULE_SCHEMA_VERSION,
+    PAGE_AVATAR_SCHEMA_VERSION,
+    SCANNER_SCHEMA_VERSION,
+    PAGE_WALL_WEEKLY_SCHEDULE_SCHEMA_VERSION,
+    PAGE_WALL_POST_POOL_SCHEMA_VERSION,
+    CANONICAL_POST_HASHTAG_SCHEMA_VERSION,
+    PROXY_CENTER_SCHEMA_VERSION,
+    PROXY_CENTER_USAGE_SCHEMA_VERSION,
+    ZALO_SCHEMA_VERSION,
+    ZALO_POST_BINDING_SCHEMA_VERSION
   )
   const orm = drizzle(client)
   orm
     .insert(appSettings)
-    .values({
-      key: 'schema_version',
-      value: String(schemaVersion),
-      updatedAt: Date.now()
-    })
+    .values({ key: 'schema_version', value: String(schemaVersion), updatedAt: Date.now() })
     .onConflictDoUpdate({
       target: appSettings.key,
-      set: {
-        value: String(schemaVersion),
-        updatedAt: Date.now()
-      }
+      set: { value: String(schemaVersion), updatedAt: Date.now() }
     })
     .run()
 
-  return {
-    client,
-    close: () => client.close()
-  }
+  return { client, close: () => client.close() }
 }

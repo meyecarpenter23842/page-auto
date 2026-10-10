@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain } from 'electron'
+import { app, dialog, ipcMain } from 'electron'
 import type Database from 'better-sqlite3'
 import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { dirname, extname, join } from 'node:path'
@@ -16,7 +16,7 @@ import type {
   AccountListFilters,
   SaveImportPresetInput
 } from '../shared/accounts'
-import { assertValidAppSettings, type AppSettingsPatch } from '../shared/appSettings'
+import { assertValidAppSettings, mergeAppSettings, type AppSettingsPatch } from '../shared/appSettings'
 import type { BrowserTestRequest } from '../shared/browserSettings'
 import type { BrowserRetileResult, BrowserWindowLayoutSettings } from '../shared/browserWindowLayout'
 import type { BrowserDisplaySlotRuntimeExtension } from '../shared/browserSlotDiagnostics'
@@ -27,13 +27,16 @@ import type { FacebookCheckpoint282RunPayload } from '../shared/facebookCheckpoi
 import type { CreatePageTabInput, PageTabIdPayload, UpdatePageTabPayload } from '../shared/pageTabs'
 import type { PageWallRunNowPayload } from '../shared/pageWall'
 import type { PageWallJobIdPayload, PageWallSchedulePayload } from '../shared/pageWallJobs'
+import type { PageWallRecurringPagePayload, SavePageWallRecurringPlanInput } from '../shared/pageWallRecurring'
 import type { ExecuteSinglePostingJobPayload } from '../shared/posting'
+import type { PwaBridgeSnapshot } from '../shared/pwaBridge'
 import type { RotationPageTabPayload } from '../shared/rotation'
 import type { CreateRunPayload, RunIdPayload } from '../shared/runs'
 import { AccountBrowserDockManager } from './browser/accountBrowserDockManager'
 import { BrowserEngineService } from './browser/browserEngineService'
 import { BrowserProfileManager } from './browser/browserProfileManager'
 import { BrowserWindowLayoutManager } from './browser/browserWindowLayoutManager'
+import { persistedCheckLiveAccountStatus } from './browser/checkLiveStatusPersistence'
 import { resolveFacebookProfileDirectory } from './browser/facebookProfileResolver'
 import { AccountRepository } from './database/accountRepository'
 import { AppSettingsRepository } from './database/appSettingsRepository'
@@ -42,6 +45,7 @@ import { CaptchaSettingsRepository } from './database/captchaSettingsRepository'
 import { ExecutionLogRepository } from './database/executionLogRepository'
 import { PageTabRepository } from './database/pageTabRepository'
 import { PageWallJobRepository } from './database/pageWallJobRepository'
+import { PageWallRecurringRepository } from './database/pageWallRecurringRepository'
 import { RunRepository } from './database/runRepository'
 import { AccountExecutionCoordinator } from './services/accountExecutionCoordinator'
 import { Checkpoint282RunLifecycle } from './services/checkpoint282RunLifecycle'
@@ -49,19 +53,27 @@ import { Checkpoint282RuntimeController } from './services/checkpoint282RuntimeC
 import { ConfigBackupService } from './services/configBackupService'
 import { LogMaintenanceService } from './services/logMaintenanceService'
 import { PageTabWorkerManager } from './services/pageTabWorkerManager'
+import { PageWallRecurringService } from './services/pageWallRecurringService'
 import { PageWallRunNowService } from './services/pageWallRunNowService'
 import { PageWallSchedulerService } from './services/pageWallSchedulerService'
 import { PostingService } from './services/postingService'
+import { PwaBridgeService } from './services/pwaBridgeService'
+import { PwaRemoteCommandClient } from './services/pwaRemoteCommandClient'
+import { PwaRemoteControlService } from './services/pwaRemoteControlService'
 import { ResilientPostingService } from './services/resilientPostingService'
 import { RotationService, type RotationPostingExecutor } from './services/rotationService'
 import { RuntimeRecoveryService } from './services/runtimeRecovery'
+import { applyWindowsStartupSetting } from './services/windowsStartupSetting'
 
 interface RegisterIpcOptions {
   database: Database.Database
   dataDirectory: string
 }
 
-export interface IpcRuntime { dispose: () => void }
+export interface IpcRuntime {
+  dispose: () => void
+  getPwaBridgeSnapshot: () => PwaBridgeSnapshot
+}
 
 const supportedImageExtensions = new Set(['.jpg', '.jpeg', '.png', '.webp'])
 const MAX_BACKUP_FILE_BYTES = 20 * 1024 * 1024
@@ -69,10 +81,22 @@ const MAX_BACKUP_FILE_BYTES = 20 * 1024 * 1024
 export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
   const accounts = new AccountRepository(options.database)
   const appSettings = new AppSettingsRepository(options.database)
+  const syncWindowsStartup = (enabled: boolean) => applyWindowsStartupSetting(enabled, {
+    platform: process.platform,
+    isPackaged: app.isPackaged,
+    executablePath: process.execPath,
+    setLoginItemSettings: (settings) => app.setLoginItemSettings(settings)
+  })
+  try {
+    syncWindowsStartup(appSettings.get().advanced.startWithWindows ?? false)
+  } catch (error) {
+    console.warn('Windows startup sync failed', error instanceof Error ? error.message : String(error))
+  }
   const browserWindowLayoutSettings = new BrowserWindowLayoutRepository(options.database)
   const captchaSettings = new CaptchaSettingsRepository(options.database)
   const pageTabs = new PageTabRepository(options.database)
   const pageWallJobs = new PageWallJobRepository(options.database)
+  const pageWallRecurringPlans = new PageWallRecurringRepository(options.database, pageWallJobs)
   const runs = new RunRepository(options.database)
   const executionLogs = new ExecutionLogRepository(options.database)
   const recovery = new RuntimeRecoveryService(options.database, executionLogs)
@@ -94,7 +118,7 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
       : null
     accounts.update(session.accountId, {
       name: profileName ?? current.name,
-      status: session.status === 'valid' || session.status === 'needs_login' ? session.status : current.status,
+      status: persistedCheckLiveAccountStatus(current.status, session),
       cookie: session.status === 'valid' && session.cookie ? session.cookie : current.cookie,
       cookieStatus: session.cookieStatus,
       lastCookieCheck: session.lastCookieCheck,
@@ -104,9 +128,7 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
 
   const browserDock = new AccountBrowserDockManager(() => {
     const display = browserWindowLayout.listDisplays()[0] as (ReturnType<BrowserWindowLayoutManager['listDisplays']>[number] & BrowserDisplaySlotRuntimeExtension) | undefined
-    const accountIds = display?.slotRuntime.assignments
-      .filter((assignment) => assignment.owners.includes('profile'))
-      .map((assignment) => assignment.accountId) ?? []
+    const accountIds = display?.slotRuntime.assignments.map((assignment) => assignment.accountId) ?? []
     const browserSettings = appSettings.get().browser
     return accountIds.flatMap((accountId) => {
       const account = accounts.getById(accountId)
@@ -133,13 +155,7 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
     browserWindowLayout,
     () => browserWindowLayoutSettings.get()
   )
-  const posting = new ResilientPostingService(
-    corePosting,
-    options.database,
-    executionLogs,
-    () => appSettings.get().runtime,
-    () => appSettings.get().logging
-  )
+  const posting = new ResilientPostingService(corePosting, options.database, executionLogs, () => appSettings.get().runtime, () => appSettings.get().logging)
   const accountExecution = new AccountExecutionCoordinator()
   const checkpoint282Runtime = new Checkpoint282RuntimeController(accountExecution, checkpoint282RunLifecycle, browserProfiles)
   const executePageWallPostNow = (input: Parameters<PostingService['executePageWallPostNow']>[0]) => accountExecution.run(
@@ -147,12 +163,15 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
     () => corePosting.executePageWallPostNow(input)
   )
   const pageWallRunNowService = new PageWallRunNowService(pageTabs, { executePageWallPostNow })
-  const pageWallScheduler = new PageWallSchedulerService(
-    pageWallJobs,
+  const pageWallScheduler = new PageWallSchedulerService(pageWallJobs, pageWallRunNowService, { executePageWallPostNow }, () => appSettings.get().runtime.maxActivePageTabs)
+  const pageWallRecurring = new PageWallRecurringService(
+    pageWallRecurringPlans,
     pageWallRunNowService,
-    { executePageWallPostNow },
-    () => appSettings.get().runtime.maxActivePageTabs
+    () => pageWallScheduler.tick()
   )
+
+  // Direct single-post IPC retains coordinator wrapping. Page Tab rotation owns the
+  // lease at the rolling-pool layer, so its executor must stay raw to avoid double-locking.
   const coordinatedPosting: RotationPostingExecutor = {
     executeSingle: (payload) => {
       const accountId = payload.accountId
@@ -161,25 +180,40 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
     },
     releaseAccount: (accountId) => accountExecution.run(accountId, () => corePosting.releaseAccount(accountId))
   }
+  const rotationPosting: RotationPostingExecutor = {
+    executeSingle: (payload) => posting.executeSingle(payload),
+    releaseAccount: (accountId) => corePosting.releaseAccount(accountId)
+  }
   const rotation = new PageTabWorkerManager(
     () => new RotationService(
       runs,
-      coordinatedPosting,
+      rotationPosting,
       undefined,
       () => appSettings.get().session,
       () => appSettings.get().network,
-      (pageTabId) => pageTabs.get(pageTabId)?.schedules ?? null
+      (pageTabId) => pageTabs.get(pageTabId)?.schedules ?? null,
+      (pageTabId) => pageTabs.get(pageTabId)?.rotation.accountConcurrency ?? 1,
+      accountExecution
     ),
     () => appSettings.get().runtime.maxActivePageTabs
   )
+  const pwaBridge = new PwaBridgeService(pageTabs, rotation, executionLogs)
+  const pwaRemoteControl = new PwaRemoteControlService(rotation, (pageTabId) => pageTabs.get(pageTabId) !== null)
+  const pwaRemoteCommands = new PwaRemoteCommandClient({
+    dataDirectory: options.dataDirectory,
+    executeCommand: (command) => pwaRemoteControl.execute(command),
+    getSnapshot: () => pwaBridge.getSnapshot(),
+    ...(process.env.PAGE_AUTO_PWA_RELAY_URL ? { relayBaseUrl: process.env.PAGE_AUTO_PWA_RELAY_URL } : {})
+  })
+  if (process.env.PAGE_AUTO_SMOKE_TEST !== '1' && process.env.PAGE_AUTO_PWA_RELAY_DISABLED !== '1') pwaRemoteCommands.start()
 
-  ipcMain.handle(IPC_CHANNELS.appInfo, (): AppInfo => ({
-    name: app.getName(),
-    version: app.getVersion(),
-    isPackaged: app.isPackaged,
-    dataDirectory: options.dataDirectory
-  }))
+  const enabledPageTabIds = pageTabs.list().flatMap((tab) => {
+    const latest = runs.getLatestForPageTab(tab.id)
+    return latest && (latest.run.status === 'created' || latest.run.status === 'running') ? [tab.id] : []
+  })
+  rotation.rehydrate(enabledPageTabIds)
 
+  ipcMain.handle(IPC_CHANNELS.appInfo, (): AppInfo => ({ name: app.getName(), version: app.getVersion(), isPackaged: app.isPackaged, dataDirectory: options.dataDirectory }))
   ipcMain.handle(IPC_CHANNELS.accountsList, (_event, filters?: AccountListFilters) => accounts.list(filters))
   ipcMain.handle(IPC_CHANNELS.accountsCreate, (_event, input: AccountDraft) => accounts.create(input))
   ipcMain.handle(IPC_CHANNELS.accountsUpdate, (_event, payload: AccountUpdatePayload) => accounts.update(payload.id, payload.patch))
@@ -190,24 +224,14 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
   ipcMain.handle(IPC_CHANNELS.accountPresetsDelete, (_event, id: number) => accounts.deleteImportPreset(id))
   ipcMain.handle(IPC_CHANNELS.accountColumnLayoutGet, () => accounts.getColumnLayout('accounts'))
   ipcMain.handle(IPC_CHANNELS.accountColumnLayoutSave, (_event, payload: AccountColumnLayoutPayload) => { accounts.saveColumnLayout('accounts', payload.layout) })
-  ipcMain.handle(IPC_CHANNELS.accountOpenProfile, async (event, payload: AccountOpenProfilePayload) => {
+  ipcMain.handle(IPC_CHANNELS.accountOpenProfile, async (_event, payload: AccountOpenProfilePayload) => {
     const account = accounts.getById(payload.accountId)
     if (!account) return { status: 'error', message: 'Account không tồn tại.' }
     const checkLive = payload.checkLive === true
-
-    if (checkLive) {
-      profileNameRefreshRequests.set(account.id, (profileNameRefreshRequests.get(account.id) ?? 0) + 1)
-    }
-
+    if (checkLive) profileNameRefreshRequests.set(account.id, (profileNameRefreshRequests.get(account.id) ?? 0) + 1)
     try {
-      const opening = browserProfiles.open(account)
-      if (!checkLive) void browserDock.open(BrowserWindow.fromWebContents(event.sender))
-      const result = await opening
-      if (checkLive) {
-        if (result.status === 'started') await browserProfiles.closeAccount(account.id)
-      } else if (result.status !== 'error') {
-        await browserDock.sync()
-      }
+      const result = await browserProfiles.open(account)
+      if (checkLive && result.status === 'started') await browserProfiles.closeAccount(account.id)
       return result
     } finally {
       if (checkLive) {
@@ -243,15 +267,10 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
     try {
       const entries = await readdir(normalized, { withFileTypes: true })
       return { exists: true, fileCount: entries.filter((entry) => entry.isFile() && supportedImageExtensions.has(extname(entry.name).toLowerCase())).length }
-    } catch {
-      return { exists: false, fileCount: 0 }
-    }
+    } catch { return { exists: false, fileCount: 0 } }
   })
   ipcMain.handle(IPC_CHANNELS.pageTabsPickTextFile, async () => {
-    const result = await dialog.showOpenDialog({
-      title: 'Import text / CSV', properties: ['openFile'],
-      filters: [{ name: 'Text / CSV', extensions: ['txt', 'csv'] }, { name: 'All files', extensions: ['*'] }]
-    })
+    const result = await dialog.showOpenDialog({ title: 'Import text / CSV', properties: ['openFile'], filters: [{ name: 'Text / CSV', extensions: ['txt', 'csv'] }, { name: 'All files', extensions: ['*'] }] })
     const filePath = result.canceled ? undefined : result.filePaths[0]
     if (!filePath) return null
     const fileStat = await stat(filePath)
@@ -259,16 +278,16 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
     return { path: filePath, content: await readFile(filePath, 'utf8') }
   })
   ipcMain.handle(IPC_CHANNELS.pageWallPickImages, async () => {
-    const result = await dialog.showOpenDialog({
-      title: 'Chọn ảnh Đăng Tường', properties: ['openFile', 'multiSelections'],
-      filters: [{ name: 'Ảnh', extensions: ['jpg', 'jpeg', 'png', 'webp'] }]
-    })
+    const result = await dialog.showOpenDialog({ title: 'Chọn ảnh Đăng Tường', properties: ['openFile', 'multiSelections'], filters: [{ name: 'Ảnh', extensions: ['jpg', 'jpeg', 'png', 'webp'] }] })
     return result.canceled ? [] : result.filePaths
   })
   ipcMain.handle(IPC_CHANNELS.pageWallRunNow, (_event, payload: PageWallRunNowPayload) => pageWallRunNowService.execute(payload))
   ipcMain.handle(IPC_CHANNELS.pageWallSchedule, (_event, payload: PageWallSchedulePayload) => pageWallScheduler.create(payload))
   ipcMain.handle(IPC_CHANNELS.pageWallJobsList, () => pageWallScheduler.list())
   ipcMain.handle(IPC_CHANNELS.pageWallJobCancel, (_event, payload: PageWallJobIdPayload) => pageWallScheduler.cancel(payload))
+  ipcMain.handle(IPC_CHANNELS.pageWallRecurringGet, (_event, payload: PageWallRecurringPagePayload) => pageWallRecurring.get(payload))
+  ipcMain.handle(IPC_CHANNELS.pageWallRecurringSave, (_event, payload: SavePageWallRecurringPlanInput) => pageWallRecurring.save(payload))
+  ipcMain.handle(IPC_CHANNELS.pageWallRecurringClear, (_event, payload: PageWallRecurringPagePayload) => pageWallRecurring.clear(payload))
 
   ipcMain.handle(IPC_CHANNELS.runsLatestForPageTab, (_event, payload: CreateRunPayload) => runs.getLatestForPageTab(payload.pageTabId))
   ipcMain.handle(IPC_CHANNELS.runsCreate, (_event, payload: CreateRunPayload) => runs.createForPageTab(payload.pageTabId))
@@ -288,14 +307,36 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
 
   ipcMain.handle(IPC_CHANNELS.appSettingsGet, () => appSettings.get())
   ipcMain.handle(IPC_CHANNELS.appSettingsUpdate, async (_event, input: AppSettingsPatch) => {
-    const next = appSettings.update(input)
-    if (input.logging) await logMaintenance.cleanup(next.logging).catch(() => undefined)
-    return next
+    const current = appSettings.get()
+    const startupChanged = input.advanced?.startWithWindows !== undefined
+    const nextStartup = startupChanged ? Boolean(input.advanced?.startWithWindows) : (current.advanced.startWithWindows ?? false)
+    if (startupChanged) {
+      const candidate = mergeAppSettings(current, input)
+      assertValidAppSettings(candidate)
+      syncWindowsStartup(nextStartup)
+    }
+    try {
+      const next = appSettings.update(input)
+      if (input.logging) await logMaintenance.cleanup(next.logging).catch(() => undefined)
+      return next
+    } catch (error) {
+      if (startupChanged) {
+        try { syncWindowsStartup(current.advanced.startWithWindows ?? false) } catch { /* keep original persistence error */ }
+      }
+      throw error
+    }
   })
   ipcMain.handle(IPC_CHANNELS.appSettingsReset, async () => {
-    const next = appSettings.reset()
-    await logMaintenance.cleanup(next.logging).catch(() => undefined)
-    return next
+    const currentStartup = appSettings.get().advanced.startWithWindows ?? false
+    syncWindowsStartup(false)
+    try {
+      const next = appSettings.reset()
+      await logMaintenance.cleanup(next.logging).catch(() => undefined)
+      return next
+    } catch (error) {
+      try { syncWindowsStartup(currentStartup) } catch { /* keep original persistence error */ }
+      throw error
+    }
   })
 
   ipcMain.handle(IPC_CHANNELS.browserDetect, () => browserEngine.detectChrome())
@@ -308,11 +349,7 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
   })
   ipcMain.handle(IPC_CHANNELS.browserPickProfileRoot, async () => {
     const savedRoot = appSettings.get().browser.externalProfileRoot?.trim()
-    const result = await dialog.showOpenDialog({
-      title: 'Chọn Facebook Profile Root — mỗi account nằm trong Root\\UID',
-      properties: ['openDirectory'],
-      ...(savedRoot ? { defaultPath: savedRoot } : {})
-    })
+    const result = await dialog.showOpenDialog({ title: 'Chọn Facebook Profile Root — mỗi account nằm trong Root\\UID', properties: ['openDirectory'], ...(savedRoot ? { defaultPath: savedRoot } : {}) })
     return result.canceled ? null : (result.filePaths[0] ?? null)
   })
   ipcMain.handle(IPC_CHANNELS.browserTest, (_event, input: BrowserTestRequest) => {
@@ -364,7 +401,10 @@ export function registerIpcHandlers(options: RegisterIpcOptions): IpcRuntime {
   })
 
   return {
+    getPwaBridgeSnapshot: () => pwaBridge.getSnapshot(),
     dispose: () => {
+      pwaRemoteCommands.dispose()
+      pageWallRecurring.dispose()
       pageWallScheduler.dispose()
       rotation.dispose()
       stopBrowserDockAccountClosed()

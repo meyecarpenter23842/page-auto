@@ -17,7 +17,15 @@ describe('classifyFacebookAccessText', () => {
     expect(classifyFacebookAccessText('Tài khoản của bạn đã bị vô hiệu hóa')).toBe('verification_required')
   })
 
-  it('does not block ordinary Facebook content text', () => {
+  it('keeps explicit identity/account verification prompts as authentication blocks', () => {
+    expect(classifyFacebookAccessText('Xác minh danh tính của bạn để tiếp tục')).toBe('verification_required')
+    expect(classifyFacebookAccessText('Bạn cần xác minh tài khoản của bạn')).toBe('verification_required')
+    expect(classifyFacebookAccessText('Confirm your identity to continue')).toBe('verification_required')
+  })
+
+  it('does not treat generic Page verification/admin copy as a checkpoint', () => {
+    expect(classifyFacebookAccessText('Trạng thái xác minh Trang và Meta Verified')).toBeNull()
+    expect(classifyFacebookAccessText('Xem thông tin xác minh doanh nghiệp')).toBeNull()
     expect(classifyFacebookAccessText('Friends · Reels · Groups')).toBeNull()
   })
 })

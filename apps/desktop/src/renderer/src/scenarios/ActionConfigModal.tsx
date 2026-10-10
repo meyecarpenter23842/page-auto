@@ -12,8 +12,10 @@ import {
 } from '../../../shared/actionOverrides'
 import { normalizeK452PostConfig } from '../../../shared/k452PostActionOverrides'
 import type { ScenarioActionPostInput } from '../../../shared/scenarios'
+import { CopyPostConfigForm } from './CopyPostConfigForm'
 import { PostActionConfigForm } from './PostActionConfigForm'
 import { ScenarioPostLibraryField } from './ScenarioPostLibraryField'
+import { StoryActionConfigForm } from './StoryActionConfigForm'
 import './k41ActionConfig.css'
 
 applyActionOverrides()
@@ -329,6 +331,8 @@ export function ActionConfigModal({ value, onClose, onSave }: ActionConfigModalP
   const runtimeReady = definition?.runtimeStatus === 'ready'
   const isPostAction = value.actionType === 'post'
   const isGroupPostAction = value.actionType === 'group_post'
+  const isCopyPostAction = value.actionType === 'copy_post'
+  const isPostStoryAction = value.actionType === 'post_story'
 
   const sections = visibleSections.length ? (
     <div className="k41-action-sections">
@@ -382,6 +386,20 @@ export function ActionConfigModal({ value, onClose, onSave }: ActionConfigModalP
               <span>Chọn Đăng tường, Đăng nhóm hoặc cả hai. Tất cả đều chạy bằng tài khoản của Kịch Bản.</span>
             </div>
           </div>
+        ) : isCopyPostAction ? (
+          <div className="action-config-summary post-action-summary">
+            <div>
+              <strong>Copy bài viết</strong>
+              <span>Quét bằng token → duyệt/sửa danh sách → tải media về ổ đĩa → lưu vào Thư viện bài viết chung.</span>
+            </div>
+          </div>
+        ) : isPostStoryAction ? (
+          <div className="action-config-summary post-action-summary">
+            <div>
+              <strong>Đăng Story</strong>
+              <span>Tạo từng Story riêng → text/spintax hoặc ảnh/video → sắp thứ tự → chạy qua Common Facebook Runtime.</span>
+            </div>
+          </div>
         ) : (
           <div className="action-config-summary">
             <div><strong>{definition?.label ?? value.label}</strong><code>{value.actionType}</code></div>
@@ -401,6 +419,10 @@ export function ActionConfigModal({ value, onClose, onSave }: ActionConfigModalP
 
           {isPostAction ? (
             <PostActionConfigForm config={config} posts={posts} onChange={setField} onPostsChange={setPosts} />
+          ) : isCopyPostAction ? (
+            <CopyPostConfigForm config={config} onChange={setField} />
+          ) : isPostStoryAction ? (
+            <StoryActionConfigForm config={config} onChange={setField} />
           ) : isGroupPostAction ? (
             <>
               <section className="k41-action-section" data-section="Bài viết">
@@ -420,7 +442,13 @@ export function ActionConfigModal({ value, onClose, onSave }: ActionConfigModalP
         </div>
 
         <div className="scenario-modal-actions">
-          <span className="scenario-toolbar-note">Bài gốc nằm trong Thư viện chung; action chỉ lưu binding + config.</span>
+          <span className="scenario-toolbar-note">{
+            isCopyPostAction
+              ? 'Bài quét chỉ vào Thư viện khi bấm “Lưu bài đã chọn” trong danh sách.'
+              : isPostStoryAction
+                ? 'Story nằm trong kho Story dùng chung; action chỉ giữ ID + timing. File/folder media nguồn không bị xóa.'
+                : 'Bài gốc nằm trong Thư viện chung; action chỉ lưu binding + config.'
+          }</span>
           <button className="scenario-button" type="button" onClick={onClose}>Hủy</button>
           <button className="scenario-button primary" type="button" disabled={!label.trim() || !valid} onClick={submit}>{value.id === null ? 'Thêm hành động' : 'Lưu thay đổi'}</button>
         </div>

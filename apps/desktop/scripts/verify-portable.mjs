@@ -27,11 +27,6 @@ if (zipFiles.length !== 1) {
   throw new Error(`Expected exactly one PageAuto Windows ZIP artifact, found: ${zipFiles.join(', ') || 'none'}`)
 }
 
-const forbiddenInstaller = rootFiles.find((name) => /setup|installer|nsis/i.test(name) && /\.exe$/i.test(name))
-if (forbiddenInstaller) {
-  throw new Error(`Unexpected installer artifact in MVP portable build: ${forbiddenInstaller}`)
-}
-
 console.log(JSON.stringify({
   ok: true,
   executable,

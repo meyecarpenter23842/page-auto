@@ -1,6 +1,7 @@
-import { dialog, ipcMain, shell } from 'electron'
+import { dialog, ipcMain } from 'electron'
 import type Database from 'better-sqlite3'
 import { IPC_CHANNELS } from '../ipc/channels'
+import { DEFAULT_APP_SETTINGS } from '../shared/appSettings'
 import { EMAIL_CODE_DB_RETENTION_MS, type EmailCodeProvider } from '../shared/emailCode'
 import type { HotmailComboActionPayload } from '../shared/emailCombo'
 import type {
@@ -8,19 +9,27 @@ import type {
   HotmailAccountPayload,
   HotmailBatchPayload,
   HotmailBatchResult,
+  HotmailOpenBatchPayload,
   HotmailPasswordActionPayload,
+  HotmailProxyEntryPayload,
+  HotmailProxyReplacePayload,
   HotmailRecoveryActionPayload
 } from '../shared/hotmail'
 import { BrowserEngineService } from './browser/browserEngineService'
 import { AccountRepository } from './database/accountRepository'
 import { HotmailRepository } from './database/hotmailRepository'
 import { createCanonicalEmailCodeRuntime } from './email/canonicalEmailCodeProvider'
+import { syncEmailBrowserWindowEnvironment } from './email/emailBrowserLifecycle'
 import { emailBrowserExecutableCandidates } from './email/emailBrowserExecutable'
 import { EmailCommonRuntime } from './email/emailCommonRuntime'
+import { EmailBrowserWindowLayoutRuntime } from './email/emailBrowserWindowLayout'
+import { runHotmailOpenBatch } from './email/emailOpenBatch'
 import { HotmailComboService } from './email/hotmailComboService'
 import { testEmailBrowserExecutable } from './email/emailProxyTester'
 import { ElectronEmailSecretCipher } from './email/emailSecretStore'
 import { HotmailService } from './email/hotmailService'
+import { createMicrosoftMailboxRuntime } from './email/microsoftMailboxRuntime'
+import { MicrosoftOAuthProfileService } from './email/microsoftOAuthProfileService'
 import { clearEmailCodeProvider, setEmailCodeProvider } from './services/emailCodeProviderRegistry'
 
 export interface HotmailIpcRuntime {
@@ -55,6 +64,11 @@ async function getManualCodes(provider: EmailCodeProvider, payload: HotmailBatch
 export function registerHotmailIpcHandlers(database: Database.Database): HotmailIpcRuntime {
   const accounts = new AccountRepository(database)
   const repository = new HotmailRepository(database)
+  const initialBrowserSettings = repository.getProfileSettings()
+  syncEmailBrowserWindowEnvironment({
+    width: initialBrowserSettings.browserWindowWidth,
+    height: initialBrowserSettings.browserWindowHeight
+  })
   const browserEngine = new BrowserEngineService()
   const validatedExecutables = new Set<string>()
   let pendingRecoveryPayload: HotmailRecoveryActionPayload | null = null
@@ -94,7 +108,25 @@ export function registerHotmailIpcHandlers(database: Database.Database): Hotmail
   }
 
   const cipher = new ElectronEmailSecretCipher()
-  const runtime = new EmailCommonRuntime(() => repository.getProxySettings())
+  const microsoftMailboxRuntime = createMicrosoftMailboxRuntime(accounts, repository, cipher)
+  const emailWindowLayout = new EmailBrowserWindowLayoutRuntime(
+    () => repository.getProfileSettings().browserWindowLayout,
+    () => {
+      const settings = repository.getProfileSettings()
+      return {
+        ...DEFAULT_APP_SETTINGS.browser,
+        executablePath: settings.browserExecutable.trim() || null,
+        mode: 'visible',
+        windowWidth: settings.browserWindowWidth,
+        windowHeight: settings.browserWindowHeight
+      }
+    }
+  )
+  const runtime = new EmailCommonRuntime(
+    () => repository.getProxySettings(),
+    microsoftMailboxRuntime.handleWorkerRequest,
+    emailWindowLayout
+  )
   const service = new HotmailService(
     accounts,
     repository,
@@ -102,9 +134,23 @@ export function registerHotmailIpcHandlers(database: Database.Database): Hotmail
     resolveBrowserExecutable,
     runtime
   )
+  const oauthProfileService = new MicrosoftOAuthProfileService(
+    accounts,
+    repository,
+    cipher,
+    resolveBrowserExecutable,
+    runtime,
+    microsoftMailboxRuntime.handleWorkerRequest
+  )
   const comboService = new HotmailComboService(accounts, repository, resolveBrowserExecutable, runtime)
   const codeRuntime = createCanonicalEmailCodeRuntime(accounts, repository, cipher)
   setEmailCodeProvider(codeRuntime.provider)
+
+  const assertOAuthIdle = (accountIds: number[]): void => {
+    if (oauthProfileService.hasAnyActive(accountIds)) {
+      throw new Error('Account Email đang chạy Microsoft OAuth; hoàn tất OAuth trước khi mở thao tác browser Email khác.')
+    }
+  }
 
   const listDashboard = async () => {
     let rows = await service.listDashboard()
@@ -122,7 +168,24 @@ export function registerHotmailIpcHandlers(database: Database.Database): Hotmail
 
   ipcMain.handle(IPC_CHANNELS.hotmailDashboardList, () => listDashboard())
   ipcMain.handle(IPC_CHANNELS.hotmailSettingsGet, () => service.getSettings())
-  ipcMain.handle(IPC_CHANNELS.hotmailSettingsSave, (_event, input: SaveHotmailSettingsInput) => service.saveSettings(input))
+  ipcMain.handle(IPC_CHANNELS.hotmailSettingsSave, async (_event, input: SaveHotmailSettingsInput) => {
+    const previous = service.getSettings()
+    const saved = await service.saveSettings(input)
+    syncEmailBrowserWindowEnvironment({
+      width: saved.browserWindowWidth,
+      height: saved.browserWindowHeight
+    })
+    const browserBaselineChanged = previous.browserWindowWidth !== saved.browserWindowWidth
+      || previous.browserWindowHeight !== saved.browserWindowHeight
+    const compactLayoutChanged = JSON.stringify(previous.browserWindowLayout) !== JSON.stringify(saved.browserWindowLayout)
+    if (browserBaselineChanged) {
+      runtime.closeAll()
+      oauthProfileService.dispose()
+    } else if (compactLayoutChanged) {
+      await runtime.retileWindows()
+    }
+    return saved
+  })
   ipcMain.handle(IPC_CHANNELS.hotmailPickProfileRoot, async () => {
     const savedRoot = repository.getProfileSettings().profileRoot
     const result = await dialog.showOpenDialog({
@@ -140,16 +203,29 @@ export function registerHotmailIpcHandlers(database: Database.Database): Hotmail
     })
     return result.canceled ? null : (result.filePaths[0] ?? null)
   })
-  ipcMain.handle(IPC_CHANNELS.hotmailOAuthStart, async (_event, payload: HotmailAccountPayload) => {
-    const result = await service.startOAuth(payload.accountId)
-    if (result.verificationUri) void shell.openExternal(result.verificationUri).catch(() => undefined)
-    return result
+  ipcMain.handle(IPC_CHANNELS.hotmailOAuthStart, (_event, payload: HotmailAccountPayload) => {
+    return oauthProfileService.startOAuth(payload.accountId)
   })
   ipcMain.handle(IPC_CHANNELS.hotmailCodesGet, (_event, payload: HotmailBatchPayload) => getManualCodes(codeRuntime.provider, payload))
   ipcMain.handle(IPC_CHANNELS.hotmailCheck, (_event, payload: HotmailBatchPayload) => service.checkMail(payload))
-  ipcMain.handle(IPC_CHANNELS.hotmailOpen, (_event, payload: HotmailAccountPayload) => service.openMail(payload.accountId))
+  ipcMain.handle(IPC_CHANNELS.hotmailOpen, (_event, payload: HotmailAccountPayload) => {
+    assertOAuthIdle([payload.accountId])
+    return service.openMail(payload.accountId)
+  })
+  ipcMain.handle(IPC_CHANNELS.hotmailOpenBatch, async (_event, payload: HotmailOpenBatchPayload) => {
+    const accountIds = uniqueAccountIds(payload)
+    assertOAuthIdle(accountIds)
+    const results = await runHotmailOpenBatch(
+      accountIds,
+      payload.concurrency,
+      (accountId) => service.openMail(accountId)
+    )
+    return { results }
+  })
+  ipcMain.handle(IPC_CHANNELS.hotmailRetile, () => runtime.retileWindows())
 
   ipcMain.handle(IPC_CHANNELS.hotmailRecoveryAction, async (_event, payload: HotmailRecoveryActionPayload) => {
+    assertOAuthIdle(payload.accountIds)
     if (payload.confirmCompleted) {
       if (!pendingRecoveryPayload) {
         throw new Error('Không có flow Mail khôi phục nào đang chờ xác nhận. Hãy mở lại flow trước.')
@@ -192,6 +268,7 @@ export function registerHotmailIpcHandlers(database: Database.Database): Hotmail
   })
 
   ipcMain.handle(IPC_CHANNELS.hotmailPasswordAction, async (_event, payload: HotmailPasswordActionPayload) => {
+    assertOAuthIdle(payload.accountIds)
     if (payload.confirmCompleted) {
       const confirmedPassword = pendingPasswordPayload?.newPassword
       if (!confirmedPassword || !pendingPasswordPayload) {
@@ -232,6 +309,7 @@ export function registerHotmailIpcHandlers(database: Database.Database): Hotmail
   })
 
   ipcMain.handle(IPC_CHANNELS.hotmailComboAction, async (_event, payload: HotmailComboActionPayload) => {
+    assertOAuthIdle(payload.accountIds)
     if (pendingRecoveryPayload || pendingPasswordPayload) {
       throw new Error('Đang có một flow bảo mật Email đơn lẻ chờ xác nhận. Hoàn tất flow đó trước khi chạy Combo Email.')
     }
@@ -241,15 +319,20 @@ export function registerHotmailIpcHandlers(database: Database.Database): Hotmail
   ipcMain.handle(IPC_CHANNELS.hotmailProxyStatus, () => service.getProxyStatus())
   ipcMain.handle(IPC_CHANNELS.hotmailProxyRotate, () => service.rotateProxy())
   ipcMain.handle(IPC_CHANNELS.hotmailProxyTest, () => service.testProxy())
+  ipcMain.handle(IPC_CHANNELS.hotmailProxyTestEntry, (_event, payload: HotmailProxyEntryPayload) => service.testProxyAt(payload.index))
+  ipcMain.handle(IPC_CHANNELS.hotmailProxyRemoveEntry, (_event, payload: HotmailProxyEntryPayload) => service.removeProxyAt(payload.index))
+  ipcMain.handle(IPC_CHANNELS.hotmailProxyReplaceEntry, (_event, payload: HotmailProxyReplacePayload) => service.replaceProxyAt(payload.index, payload.proxy))
 
   return {
     dispose: () => {
       pendingRecoveryPayload = null
       pendingPasswordPayload = null
+      oauthProfileService.dispose()
       comboService.dispose()
       clearEmailCodeProvider(codeRuntime.provider)
       codeRuntime.dispose()
       service.dispose()
+      microsoftMailboxRuntime.dispose()
       browserEngine.closeAll()
     }
   }

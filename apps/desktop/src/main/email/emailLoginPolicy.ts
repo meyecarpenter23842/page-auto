@@ -3,6 +3,7 @@ import type { HotmailActionStatus, HotmailNeedsAttentionReason } from '../../sha
 export type MicrosoftLoginSurface =
   | 'authenticated'
   | 'stay_signed_in'
+  | 'passkey_prompt'
   | 'outlook_landing'
   | 'outlook_transition'
   | 'login_transition'
@@ -12,6 +13,9 @@ export type MicrosoftLoginSurface =
   | 'password_method_choice'
   | 'password'
   | 'password_change'
+  | 'recovery_method_choice'
+  | 'recovery_email_confirmation'
+  | 'recovery_code'
   | 'credential_error'
   | 'identity_review'
   | 'security_review'
@@ -45,6 +49,16 @@ export interface MicrosoftLoginSnapshot {
 
 export type EmailAuthResumeKind = 'recovery-result' | 'password-result'
 
+/**
+ * A live Email profile can already be halfway through Microsoft auth when a new
+ * action starts. Every Microsoft-owned non-authenticated state must be inspected
+ * before fresh navigation. Unknown/manual surfaces are resumed only so the
+ * worker can fail closed without destroying the page the operator is seeing.
+ */
+export function shouldResumeMicrosoftAuthSurface(surface: MicrosoftLoginSurface): boolean {
+  return surface !== 'authenticated'
+}
+
 export function microsoftAccountPickerEntryMatchesCanonicalEmail(entryText: string, canonicalEmail: string): boolean {
   const email = canonicalEmail.trim().toLowerCase()
   if (!email) return false
@@ -77,8 +91,37 @@ export function classifyMicrosoftRoute(value: string): MicrosoftRoute {
   }
 }
 
+function microsoftAccountPath(value: string): string | null {
+  try {
+    const url = new URL(value)
+    return url.hostname.toLowerCase() === 'account.live.com' ? url.pathname.toLowerCase() : null
+  } catch {
+    return null
+  }
+}
+
+function isAuditedMicrosoftPasskeyCreatePath(value: string): boolean {
+  try {
+    const url = new URL(value)
+    return url.hostname.toLowerCase() === 'login.microsoft.com'
+      && /^\/consumers\/fido\/create(?:\/|$)/.test(url.pathname.toLowerCase())
+  } catch {
+    return false
+  }
+}
+
+function isIdentityConfirmPath(path: string | null): boolean {
+  return path !== null && /^\/identity\/confirm(?:\/|$)/.test(path)
+}
+
+function isKnownSafeAuthenticatedAccountPath(path: string | null): boolean {
+  return path !== null && /^\/proofs\/manage\/additional(?:\/|$)/.test(path)
+}
+
 export function classifyMicrosoftLoginSurface(snapshot: MicrosoftLoginSnapshot): MicrosoftLoginSurface {
   const route = classifyMicrosoftRoute(snapshot.url)
+  const accountPath = microsoftAccountPath(snapshot.url)
+  const passkeyCreatePath = isAuditedMicrosoftPasskeyCreatePath(snapshot.url)
   const url = snapshot.url.toLowerCase()
   const text = snapshot.text.toLowerCase()
   const usernameInputCount = snapshot.usernameInputCount ?? snapshot.emailInputCount
@@ -88,8 +131,13 @@ export function classifyMicrosoftLoginSurface(snapshot: MicrosoftLoginSnapshot):
   const sendCodeControlCount = snapshot.sendCodeControlCount ?? 0
   const usePasswordControlCount = snapshot.usePasswordControlCount ?? 0
 
-  if (/verify your identity|confirm your identity|identity verification|xác minh danh tính/.test(text)) {
-    return 'identity_review'
+  // Live 2026-09-11: Microsoft consumer auth renders the passkey setup prompt as
+  // normal DOM at login.microsoft.com/consumers/fido/create with a visible Cancel
+  // button. Keep the exact audited route + copy as authority; an arbitrary page
+  // mentioning passkeys must never gain an automatic Cancel action.
+  if (passkeyCreatePath) {
+    if (/setting up your passkey/.test(text) && /\bcancel\b/.test(text)) return 'passkey_prompt'
+    return 'login_transition'
   }
 
   if (/enter a valid email address|enter a valid email|valid email address, phone number, or skype/i.test(text)) {
@@ -106,23 +154,66 @@ export function classifyMicrosoftLoginSurface(snapshot: MicrosoftLoginSnapshot):
     return 'password_change'
   }
 
-  // An actual code/OTP input is always a security challenge. Do not auto-bypass it.
+  const hasMaskedRecoveryEmail = /[a-z0-9.!#$%&'*+/=?^_`{|}~-]{2,}\*+@[a-z0-9.-]+\.[a-z]{2,}/i.test(text)
+  const identityChallengeCopy = /verify your identity|confirm your identity|identity verification|xác minh danh tính/.test(text)
+  const helpProtectRecovery = /help us protect your account/.test(text)
+  const completeHiddenPart = /complete\s+the\s+hidden\s+part/.test(text)
+  const recoveryEmailProofCopy = /verify your email|we(?:'|’)ll send a code|we will send a code|send(?:\s+a)?\s+code(?:\s+to)?|already received a code|email\s+[a-z0-9.!#$%&'*+/=?^_`{|}~-]{2,}\*+@|xác minh email|gửi mã/.test(text)
+  const fullEmailConfirmationCopy = /verify\s+your\s+email/.test(text)
+    && /to\s+verify\s+(?:that\s+)?this\s+is\s+your\s+email(?:\s+address)?\s*[,.:;-]?\s*enter\s+it\s+here/.test(text)
+  const recoveryCodeHeading = /enter\s+(?:your\s+)?(?:security\s+)?code/.test(text)
+  const recoveryCodeEmailEvidence = /matches\s+the\s+email\s+address\s+on\s+your\s+account|we(?:'|’)ll\s+send\s+you\s+a\s+code|we\s+will\s+send\s+you\s+a\s+code|we\s+sent[^.\n]*code[^.\n]*email|sent[^.\n]*to\s+your\s+email|email\s+address/.test(text)
+  const auditedRecoveryCode = recoveryCodeHeading && recoveryCodeEmailEvidence
+  const hasRecoveryProofEvidence = proofEmailInputCount > 0 || sendCodeControlCount > 0 || recoveryEmailProofCopy
+
+  // A code page is already past method selection. Keep it in the recovery-code
+  // branch even when Microsoft also renders a "Use your password" fallback link.
+  if (auditedRecoveryCode) return 'recovery_code'
+
+  // On the pre-code Verify-email surface, password is the canonical credential
+  // path whenever Microsoft explicitly offers it. This prevents a fresh login
+  // from needlessly starting recovery-mail verification before PassEmail is tried.
+  if (usePasswordControlCount > 0 && hasRecoveryProofEvidence) {
+    return 'password_method_choice'
+  }
+
+  // Some Microsoft consumer/OAuth variants ask for the *full* recovery email,
+  // while the older account.live variant asks only for the hidden local part.
+  // Both are safe only with a masked recovery hint plus a structured proof field.
+  if (hasMaskedRecoveryEmail && proofEmailInputCount > 0 && sendCodeControlCount > 0 && fullEmailConfirmationCopy) {
+    return 'recovery_email_confirmation'
+  }
+
+  // The observed Microsoft consumer-account flow first shows a masked recovery
+  // method, then reveals a local-part input while rendering @domain separately.
+  // Keep these as separate re-entrant states so the worker re-reads the page after
+  // every click instead of assuming a linear sequence.
+  if (helpProtectRecovery && hasMaskedRecoveryEmail) {
+    if (completeHiddenPart && (proofEmailInputCount > 0 || sendCodeControlCount > 0)) {
+      return 'recovery_email_confirmation'
+    }
+    return 'recovery_method_choice'
+  }
+
+  // Live identity-verification variants can present several methods on one page.
+  // Promote only a masked Email proof into the recovery resolver; the resolver
+  // still has to match that mask against canonical BackupEmail before clicking.
+  if (identityChallengeCopy && hasMaskedRecoveryEmail && recoveryEmailProofCopy && snapshot.passwordInputCount === 0) {
+    return 'recovery_method_choice'
+  }
+
+  if (identityChallengeCopy) {
+    return 'identity_review'
+  }
+
+  // Any other actual code/OTP input remains a security challenge. Authenticator,
+  // phone/SMS and unknown challenge variants are intentionally not automated.
   if (verificationCodeInputCount > 0) return 'security_review'
 
   // Structured credential fields take priority over nearby fallback/security links.
   // Microsoft can render “Send a code to …” next to the normal password form.
   if (snapshot.passwordInputCount > 0) return 'password'
   if (usernameInputCount > 0) return 'username'
-
-  const recoveryEmailProofCopy = /verify your email|we(?:'|’)ll send a code|we will send a code|send code|already received a code|xác minh email|gửi mã/.test(text)
-
-  // The live consumer OAuth flow can ask for recovery proof while offering “Use your password”.
-  // The recovery input is not guaranteed to stay input[type=email], so the method-choice decision
-  // uses the structured password control plus any independent proof evidence instead of one tag shape.
-  const hasRecoveryProofEvidence = proofEmailInputCount > 0 || sendCodeControlCount > 0 || recoveryEmailProofCopy
-  if (usePasswordControlCount > 0 && hasRecoveryProofEvidence) {
-    return 'password_method_choice'
-  }
 
   const structuredSecurityProof = proofEmailInputCount > 0 && sendCodeControlCount > 0
   const knownSecurityCopy = /enter.*code|security code|verification code|two[- ]step|two[- ]factor|approve.*sign.?in|authenticator|help us protect|xác minh bảo mật|mã bảo mật|trình xác thực|phê duyệt.*đăng nhập/.test(text)
@@ -149,7 +240,17 @@ export function classifyMicrosoftLoginSurface(snapshot: MicrosoftLoginSnapshot):
   if (/signin/.test(url) || /sign in|đăng nhập|enter your email|email, phone, or skype/.test(text)) {
     return 'manual_login'
   }
-  if (route === 'account_live') return 'authenticated'
+
+  // account.live.com is not authentication evidence by itself. In particular,
+  // /identity/confirm can initially render as a blank/loading shell and later
+  // hydrate into an identity/recovery/security challenge. Keep that shell
+  // non-terminal so Auth V2 waits boundedly and detects again.
+  if (route === 'account_live') {
+    if (isIdentityConfirmPath(accountPath)) return 'login_transition'
+    if (isKnownSafeAuthenticatedAccountPath(accountPath)) return 'authenticated'
+    return 'manual_login'
+  }
+
   return 'manual_login'
 }
 

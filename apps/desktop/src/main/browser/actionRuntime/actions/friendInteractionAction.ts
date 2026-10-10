@@ -8,6 +8,46 @@ export const FRIEND_INTERACTION_SELECTORS = {
   article: ['div[role="article"]']
 } as const
 
+export interface FriendInteractionCounts {
+  liked: number
+  commented: number
+  avatarLiked: number
+}
+
+export interface FriendInteractionTargets {
+  likes: number
+  comments: number
+  avatarLikes: number
+}
+
+export function friendInteractionResult(
+  counts: FriendInteractionCounts,
+  targets: FriendInteractionTargets,
+  stopped = false
+): ActionResult {
+  const data = { ...counts }
+  if (stopped) {
+    return { status: 'stopped', code: 'action_stopped', message: 'Tương tác bạn bè đã dừng.', data }
+  }
+  const requested = targets.likes + targets.comments + targets.avatarLikes
+  const completed = counts.liked + counts.commented + counts.avatarLiked
+  if (requested <= 0) {
+    return { status: 'skipped', code: 'friend_interaction_no_requested_action', message: 'Không có thao tác bạn bè nào được cấu hình.', data }
+  }
+  if (completed <= 0) {
+    return { status: 'skipped', code: 'friend_interaction_no_verified_action', message: 'Không xác nhận được reaction/comment/avatar phù hợp để tương tác.', data }
+  }
+  if (completed < requested) {
+    return {
+      status: 'failed',
+      code: 'friend_interaction_incomplete',
+      message: `Tương tác bạn bè chưa đủ mục tiêu: ${completed}/${requested} thao tác.`,
+      data
+    }
+  }
+  return { status: 'success', code: 'friend_interaction_completed', message: 'Tương tác bạn bè hoàn tất.', data }
+}
+
 export class FriendInteractionActionExecutor implements ActionExecutor {
   readonly actionType = 'friend_interaction'
   constructor(private readonly dependencies: FriendActionDependencies) {}
@@ -68,7 +108,10 @@ export class FriendInteractionActionExecutor implements ActionExecutor {
       }
     }
 
-    if (context.control.isStopped()) return { status: 'stopped', code: 'action_stopped', message: 'Tương tác bạn bè đã dừng.', data: { liked, commented, avatarLiked } }
-    return { status: 'success', code: 'friend_interaction_completed', message: 'Tương tác bạn bè hoàn tất.', data: { liked, commented, avatarLiked } }
+    return friendInteractionResult(
+      { liked, commented, avatarLiked },
+      { likes: likeTarget, comments: commentTarget, avatarLikes: avatarTarget },
+      context.control.isStopped()
+    )
   }
 }

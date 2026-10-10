@@ -3,8 +3,7 @@ import {
   useEffect,
   useMemo,
   useState,
-  type MouseEvent as ReactMouseEvent,
-  type PointerEvent as ReactPointerEvent
+  type MouseEvent as ReactMouseEvent
 } from 'react'
 import {
   ACCOUNT_STATUSES,
@@ -15,11 +14,15 @@ import {
   type ImportPreset
 } from '../../../shared/accounts'
 import type { AccountGroupOverview } from '../../../shared/accountGroups'
+import { DEFAULT_CHANGE_INFO_WORKSPACE_DRAFT, serializeChangeInfoWorkspaceDraft } from '../../../shared/changeInfoWorkspace'
 import { openAccountProfilesBatch } from './accountProfileBatch'
 import { AccountColumnManager as ColumnManager } from './AccountColumnManager'
 import { AccountEditor } from './AccountEditor'
 import { AccountGroupManagerDialog, AccountGroupPicker } from './AccountGroupDialogs'
 import { AccountImportDialog as ImportDialog } from './AccountImportDialog'
+import { AccountSelectionMenu } from './AccountSelectionMenu'
+import { useExcelRowRange } from './accountTableSelection'
+import { useGridPreference, isGridString } from './gridViewPreferences'
 import {
   ACCOUNT_RUNTIME_REFRESH_MS,
   EMPTY_GROUP_OVERVIEW,
@@ -29,33 +32,95 @@ import {
   defaultLayout,
   formatCellValue,
   maskSecret,
+  normalizeBulkUidFilter,
   normalizeLayout,
   type ColumnId,
   type ContextMenuState,
   type GridColumn
 } from './accountManagerModel'
+import { checkLiveSummaryBucket } from './checkLiveSummary'
 import { Checkpoint282Dialog } from './Checkpoint282Dialog'
 import { Checkpoint956Dialog } from './Checkpoint956Dialog'
 import './accounts.css'
 import './accountEnhancements.css'
 
-export function AccountManager() {
+interface AccountManagerProps {
+  onOpenChangeInfoWorkspace?: (workspaceId: number) => void
+}
+
+function BulkUidFilterDialog({
+  initialUids,
+  onApply,
+  onClose
+}: {
+  initialUids: readonly string[]
+  onApply: (uids: string[]) => void
+  onClose: () => void
+}) {
+  const [value, setValue] = useState(initialUids.join('\n'))
+  const normalized = useMemo(() => normalizeBulkUidFilter(value), [value])
+  const hasActiveFilter = initialUids.length > 0
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+      <section className="modal bulk-uid-filter-modal" role="dialog" aria-modal="true" aria-label="Lọc UID hàng loạt" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="modal-header">
+          <div>
+            <h2>Lọc UID hàng loạt</h2>
+            <p>Mỗi dòng 1 UID. Không cần dấu phân cách.</p>
+          </div>
+          <button className="icon-button" type="button" aria-label="Đóng" onClick={onClose}>×</button>
+        </div>
+        <textarea
+          className="bulk-uid-filter-textarea"
+          value={value}
+          autoFocus
+          spellCheck={false}
+          placeholder={'100001234567890\n100009876543210\n100005555555555'}
+          onChange={(event) => setValue(event.target.value)}
+        />
+        <div className="bulk-uid-filter-summary">
+          <span>{normalized.length} UID</span>
+          <small>Dòng trống và UID trùng được tự bỏ.</small>
+        </div>
+        <div className="modal-actions bulk-uid-filter-actions">
+          <button className="button secondary" type="button" disabled={!hasActiveFilter} onClick={() => onApply([])}>Xóa lọc</button>
+          <span />
+          <button className="button secondary" type="button" onClick={onClose}>Hủy</button>
+          <button className="button primary" type="button" disabled={normalized.length === 0} onClick={() => onApply(normalized)}>Áp dụng ({normalized.length})</button>
+        </div>
+      </section>
+    </div>
+  )
+}
+
+export function AccountManager({ onOpenChangeInfoWorkspace }: AccountManagerProps = {}) {
   const [accounts, setAccounts] = useState<AccountRecord[]>([])
   const [loading, setLoading] = useState(true)
-  const [search, setSearch] = useState('')
-  const [statusFilter, setStatusFilter] = useState<'all' | AccountRecord['status']>('all')
-  const [categoryFilter, setCategoryFilter] = useState('')
+  const [search, setSearch] = useGridPreference('page-auto:grid:accounts:search', '', isGridString)
+  const [bulkUidFilter, setBulkUidFilter] = useState<string[]>([])
+  const [bulkUidFilterOpen, setBulkUidFilterOpen] = useState(false)
+  const [statusFilter, setStatusFilter] = useGridPreference<'all' | AccountRecord['status']>(
+    'page-auto:grid:accounts:status', 'all',
+    (value): value is 'all' | AccountRecord['status'] => value === 'all' || ACCOUNT_STATUSES.includes(value as AccountRecord['status'])
+  )
+  const [categoryFilter, setCategoryFilter] = useGridPreference('page-auto:grid:accounts:category', '', isGridString)
   const [groupOverview, setGroupOverview] = useState<AccountGroupOverview>(EMPTY_GROUP_OVERVIEW)
   const [groupManagerOpen, setGroupManagerOpen] = useState(false)
   const [groupPickerOpen, setGroupPickerOpen] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
-  const [paintValue, setPaintValue] = useState<boolean | null>(null)
   const [layout, setLayout] = useState<AccountColumnLayout>(defaultLayout)
   const [columnManagerOpen, setColumnManagerOpen] = useState(false)
   const [editorAccount, setEditorAccount] = useState<AccountRecord | null | undefined>(undefined)
   const [importOperation, setImportOperation] = useState<AccountImportOperation | null>(null)
   const [presets, setPresets] = useState<ImportPreset[]>([])
-  const [sort, setSort] = useState<{ id: ColumnId; direction: 'asc' | 'desc' }>({ id: 'id', direction: 'desc' })
+  const [sort, setSort] = useGridPreference<{ id: ColumnId; direction: 'asc' | 'desc' }>(
+    'page-auto:grid:accounts:sort', { id: 'id', direction: 'desc' },
+    (value): value is { id: ColumnId; direction: 'asc' | 'desc' } => Boolean(
+      value && typeof value === 'object' && 'id' in value && 'direction' in value
+      && columnById.has(value.id as ColumnId) && (value.direction === 'asc' || value.direction === 'desc')
+    )
+  )
   const [revealedSecrets, setRevealedSecrets] = useState<Set<string>>(new Set())
   const [notice, setNotice] = useState<string | null>(null)
   const [openingProfiles, setOpeningProfiles] = useState(false)
@@ -75,12 +140,16 @@ export function AccountManager() {
       const visible = categoryFilter === UNGROUPED_CATEGORY_FILTER
         ? next.filter((account) => !account.category?.trim())
         : next
-      setAccounts(visible)
-      setSelectedIds((current) => new Set([...current].filter((id) => visible.some((account) => account.id === id))))
+      const uidFilter = bulkUidFilter.length > 0 ? new Set(bulkUidFilter) : null
+      const filtered = uidFilter
+        ? visible.filter((account) => uidFilter.has(account.uid.trim()))
+        : visible
+      setAccounts(filtered)
+      setSelectedIds((current) => new Set([...current].filter((id) => filtered.some((account) => account.id === id))))
     } finally {
       if (!background) setLoading(false)
     }
-  }, [search, statusFilter, categoryFilter])
+  }, [search, statusFilter, categoryFilter, bulkUidFilter])
 
   const loadGroups = useCallback(async () => {
     const next = await window.pageAuto.getAccountGroupOverview()
@@ -119,18 +188,6 @@ export function AccountManager() {
     if (!categoryFilter || categoryFilter === UNGROUPED_CATEGORY_FILTER) return
     if (!groupOverview.groups.some((group) => group.name === categoryFilter)) setCategoryFilter('')
   }, [categoryFilter, groupOverview.groups])
-
-  useEffect(() => {
-    const stopPaint = () => setPaintValue(null)
-    window.addEventListener('pointerup', stopPaint)
-    window.addEventListener('pointercancel', stopPaint)
-    window.addEventListener('blur', stopPaint)
-    return () => {
-      window.removeEventListener('pointerup', stopPaint)
-      window.removeEventListener('pointercancel', stopPaint)
-      window.removeEventListener('blur', stopPaint)
-    }
-  }, [])
 
   useEffect(() => {
     if (!contextMenu) return
@@ -173,6 +230,7 @@ export function AccountManager() {
       : String(a).localeCompare(String(b), 'vi', { numeric: true, sensitivity: 'base' })
     return sort.direction === 'asc' ? result : -result
   }), [accounts, sort])
+  const excelRange = useExcelRowRange(sortedAccounts.map((account) => account.id), selectedIds, setSelectedIds)
 
   const selected = accounts.filter((account) => selectedIds.has(account.id))
   const selectedGroupName = useMemo(() => {
@@ -186,6 +244,7 @@ export function AccountManager() {
     : { id, direction: 'asc' })
 
   const setAccountSelected = (accountId: number, value: boolean) => {
+    excelRange.clearRange()
     setSelectedIds((current) => {
       const next = new Set(current)
       if (value) next.add(accountId)
@@ -194,26 +253,19 @@ export function AccountManager() {
     })
   }
 
-  const beginPaint = (event: ReactPointerEvent<HTMLElement>, accountId: number) => {
-    if (event.button !== 0 || event.detail > 1) return
-    event.preventDefault()
-    const value = !selectedIds.has(accountId)
-    setAccountSelected(accountId, value)
-    setPaintValue(value)
-    setContextMenu(null)
-  }
-
-  const paintRow = (accountId: number) => {
-    if (paintValue === null) return
-    setAccountSelected(accountId, paintValue)
-  }
-
   const selectAllFiltered = () => {
+    excelRange.clearRange()
     setSelectedIds(new Set(sortedAccounts.map((account) => account.id)))
     setContextMenu(null)
   }
 
+  const selectRange = () => {
+    setSelectedIds((current) => new Set([...current, ...excelRange.rangeIds]))
+    setContextMenu(null)
+  }
+
   const clearSelection = () => {
+    excelRange.clearRange()
     setSelectedIds(new Set())
     setContextMenu(null)
   }
@@ -251,6 +303,28 @@ export function AccountManager() {
       ? `Đã bỏ nhóm cho ${count} tài khoản.`
       : `Đã chuyển ${count} tài khoản vào nhóm “${groupName ?? ''}”.`)
     await refreshAccountsAndGroups()
+  }
+
+  const openChangeInfo = async () => {
+    if (selected.length === 0) return
+    setContextMenu(null)
+    try {
+      const existing = await window.pageAuto.listActionWorkspaces()
+      const used = new Set(existing.filter((item) => item.type === 'change_info').map((item) => item.label))
+      let index = 1
+      while (used.has(index === 1 ? 'Sửa thông tin' : `Sửa thông tin ${index}`)) index += 1
+      const label = index === 1 ? 'Sửa thông tin' : `Sửa thông tin ${index}`
+      const created = await window.pageAuto.createActionWorkspace({
+        type: 'change_info',
+        label,
+        configJson: serializeChangeInfoWorkspaceDraft(DEFAULT_CHANGE_INFO_WORKSPACE_DRAFT),
+        accounts: selected.map((account) => ({ accountId: account.id, enabled: true }))
+      })
+      setNotice(`Đã tạo ${created.label} cho ${selected.length} tài khoản.`)
+      onOpenChangeInfoWorkspace?.(created.id)
+    } catch (error) {
+      setNotice(`Không mở được Sửa thông tin: ${error instanceof Error ? error.message : String(error)}`)
+    }
   }
 
   const openProfile = async (openManagerAfter = false) => {
@@ -305,14 +379,15 @@ export function AccountManager() {
           }
         }
       }))
-      const live = outcomes.filter((item) => item.status !== 'error' && item.sessionStatus === 'valid')
-      const needsAttention = outcomes.filter((item) => item.status !== 'error' && item.sessionStatus === 'needs_login')
+      const live = outcomes.filter((item) => item.status !== 'error' && checkLiveSummaryBucket(item.sessionStatus) === 'live')
+      const needsAttention = outcomes.filter((item) => item.status !== 'error' && checkLiveSummaryBucket(item.sessionStatus) === 'problem')
       const failed = outcomes.filter((item) => item.status === 'error')
-      const unknown = outcomes.filter((item) => item.status !== 'error' && item.sessionStatus !== 'valid' && item.sessionStatus !== 'needs_login')
-      const firstIssue = outcomes.find((item) => item.status === 'error' || item.sessionStatus !== 'valid')
+      const unknown = outcomes.filter((item) => item.status !== 'error' && checkLiveSummaryBucket(item.sessionStatus) === 'unknown')
+      const firstIssue = outcomes.find((item) => item.status === 'error' || checkLiveSummaryBucket(item.sessionStatus) !== 'live')
+      const firstIssueLabel = firstIssue?.sessionStatus ? accountStatusLabels[firstIssue.sessionStatus] : null
       setNotice(
-        `Check Live ${outcomes.length} tài khoản: hoạt động ${live.length}, cần đăng nhập/xử lý ${needsAttention.length}, chưa xác định ${unknown.length}, lỗi ${failed.length}.`
-        + (firstIssue ? ` · ${firstIssue.uid}: ${firstIssue.message ?? 'chưa xác định trạng thái'}` : '')
+        `Check Live ${outcomes.length} tài khoản: hoạt động ${live.length}, cần xử lý ${needsAttention.length}, chưa xác định ${unknown.length}, lỗi ${failed.length}.`
+        + (firstIssue ? ` · ${firstIssue.uid}: ${firstIssueLabel ? `${firstIssueLabel} · ` : ''}${firstIssue.message ?? 'chưa xác định trạng thái'}` : '')
       )
       await loadAccounts()
     } finally {
@@ -323,7 +398,10 @@ export function AccountManager() {
   const onImportComplete = async (result: AccountImportResult, operation: AccountImportOperation) => {
     setImportOperation(null)
     const action = operation === 'insert' ? 'Nhập' : 'Cập nhật'
-    setNotice(`${action} dữ liệu: thêm ${result.imported}, cập nhật ${result.updated}, bỏ qua ${result.skipped}${result.errors.length ? `, lỗi ${result.errors.length}` : ''}.`)
+    const errorLines = result.errors.slice(0, 8).map(({ line }) => line).filter((line) => Number.isInteger(line) && line > 0)
+    // Do not repeat backend error content, which might include imported credentials.
+    const lineSummary = errorLines.length ? ` · Dòng lỗi: ${errorLines.join(', ')}${result.errors.length > errorLines.length ? ', …' : ''}` : ''
+    setNotice(`${action} dữ liệu: thêm ${result.imported}, cập nhật ${result.updated}, bỏ qua ${result.skipped}${result.errors.length ? `, lỗi ${result.errors.length}` : ''}.${lineSummary}`)
     await refreshAccountsAndGroups()
   }
 
@@ -351,48 +429,69 @@ export function AccountManager() {
   const openContextMenu = (account: AccountRecord, event: ReactMouseEvent<HTMLTableRowElement>) => {
     event.preventDefault()
     event.stopPropagation()
-    setPaintValue(null)
-    setSelectedIds((current) => current.has(account.id) ? current : new Set([account.id]))
-    const menuWidth = 220
-    const menuHeight = 390
-    setContextMenu({
-      x: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
-      y: Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8))
-    })
+    excelRange.ensureContextRow(account.id)
+    setContextMenu({ x: event.clientX, y: event.clientY })
+  }
+
+  const openBulkUidFilter = () => {
+    setContextMenu(null)
+    setBulkUidFilterOpen(true)
+  }
+
+  const applyBulkUidFilter = (uids: string[]) => {
+    setBulkUidFilter(uids)
+    setBulkUidFilterOpen(false)
   }
 
   return (
     <section className="account-manager">
       <div className="account-grid-panel">
-        <div className="account-toolbar">
+        <div className="account-toolbar account-toolbar-primary" role="toolbar" aria-label="Quản lý tài khoản">
           <div className="toolbar-group">
             <button className="button primary" type="button" onClick={() => setEditorAccount(null)}>+ Thêm tài khoản</button>
             <button className="button secondary" type="button" onClick={() => setImportOperation('insert')}>Nhập tài khoản</button>
             <button className="button secondary" type="button" onClick={() => setImportOperation('update')}>Cập nhật tài khoản</button>
-            <button className="button secondary" type="button" disabled={selected.length !== 1} onClick={() => setEditorAccount(selected[0] ?? null)}>Sửa</button>
-            <button className="button danger" type="button" disabled={selectedIds.size === 0} onClick={() => void deleteSelected()}>Xóa</button>
+            <button className="button secondary" type="button" onClick={() => setGroupManagerOpen(true)}>Quản lý nhóm ({groupOverview.groups.length})</button>
           </div>
           <div className="toolbar-group">
-            <button className="button secondary" type="button" disabled={selectedIds.size === 0 || openingProfiles || checkingLive} onClick={() => void openProfile(true)}>Cửa sổ Chrome</button>
-            <button className="button secondary" type="button" disabled={selectedIds.size === 0 || openingProfiles || checkingLive} onClick={() => void checkLiveSelected()}>{checkingLive ? 'Đang Check Live…' : 'Check Live'}</button>
-            <button className="button secondary" type="button" onClick={() => setGroupManagerOpen(true)}>Quản lý nhóm ({groupOverview.groups.length})</button>
-            <button className="button secondary" type="button" disabled={selectedIds.size === 0} onClick={openGroupPicker}>Gán nhóm</button>
             <div className="column-settings-anchor">
-              <button className="button secondary" type="button" onClick={() => setColumnManagerOpen((value) => !value)}>Cột</button>
+              <button className="button secondary" type="button" aria-expanded={columnManagerOpen} aria-haspopup="dialog" onClick={() => setColumnManagerOpen((value) => !value)}>Cột ({visibleColumns.length})</button>
               {columnManagerOpen ? <ColumnManager layout={layout} onChange={persistLayout} onClose={() => setColumnManagerOpen(false)} /> : null}
             </div>
+          </div>
+        </div>
+        <div className="account-toolbar account-toolbar-bulk" role="toolbar" aria-label="Thao tác với tài khoản đã chọn">
+          <div className="account-selection-summary" role="status" aria-live="polite"><strong>{selectedIds.size}</strong> tài khoản đang chọn <span>· {sortedAccounts.length} trong bộ lọc</span></div>
+          <div className="toolbar-group">
+            <button className="button secondary" type="button" disabled={!sortedAccounts.length} onClick={selectAllFiltered}>Chọn đang lọc</button>
+            <button className="button secondary" type="button" disabled={!selectedIds.size} onClick={clearSelection}>Bỏ chọn</button>
+            <span className="account-toolbar-divider" aria-hidden="true" />
+            <button className="button secondary" type="button" disabled={selected.length !== 1} onClick={() => setEditorAccount(selected[0] ?? null)}>Sửa</button>
+            <button className="button secondary" type="button" disabled={!selectedIds.size} onClick={() => void openChangeInfo()}>Sửa thông tin</button>
+            <button className="button secondary" type="button" disabled={!selectedIds.size} onClick={openGroupPicker}>Gán nhóm</button>
+            <button className="button secondary" type="button" disabled={!selectedIds.size} onClick={() => void copySelectedUids()}>Copy UID</button>
+            <button className="button secondary" type="button" disabled={!selectedIds.size || openingProfiles || checkingLive} onClick={() => void openProfile(true)}>Cửa sổ Chrome</button>
+            <button className="button secondary" type="button" disabled={!selectedIds.size || openingProfiles || checkingLive} onClick={() => void checkLiveSelected()}>{checkingLive ? 'Đang Check Live…' : 'Check Live'}</button>
+            <button className="button danger" type="button" disabled={!selectedIds.size} onClick={() => void deleteSelected()}>Xóa ({selectedIds.size})</button>
           </div>
         </div>
 
         <div className="filter-row">
           <input className="search-input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Tìm UID, tên đăng nhập, tên, email, ghi chú…" />
+          <button
+            className={`button secondary bulk-uid-filter-button${bulkUidFilter.length ? ' active' : ''}`}
+            type="button"
+            title="Lọc UID hàng loạt"
+            aria-label="Lọc UID hàng loạt"
+            onClick={openBulkUidFilter}
+          >UID{bulkUidFilter.length ? ` · ${bulkUidFilter.length}` : ''}</button>
           <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}><option value="all">Tất cả trạng thái</option>{ACCOUNT_STATUSES.map((status) => <option key={status} value={status}>{accountStatusLabels[status]}</option>)}</select>
           <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
             <option value="">Tất cả nhóm ({groupOverview.groups.length})</option>
             <option value={UNGROUPED_CATEGORY_FILTER}>Chưa gán nhóm ({groupOverview.ungroupedCount})</option>
             {groupOverview.groups.map((group) => <option key={group.id} value={group.name}>{group.name} ({group.accountCount})</option>)}
           </select>
-          <span className="grid-state">{loading ? 'Đang tải…' : `${sortedAccounts.length}/${groupOverview.totalAccounts} tài khoản · ${groupOverview.groups.length} nhóm · đã chọn ${selectedIds.size}`}</span>
+          <span className="grid-state">{loading ? 'Đang tải…' : `${sortedAccounts.length}/${groupOverview.totalAccounts} đang hiển thị${bulkUidFilter.length ? ` · lọc UID ${bulkUidFilter.length}` : ''}`}</span>
         </div>
 
         {notice ? <div className="notice-bar"><span>{notice}</span><button type="button" onClick={() => setNotice(null)}>×</button></div> : null}
@@ -400,37 +499,35 @@ export function AccountManager() {
         <div className="data-grid-wrap">
           <table className="account-grid">
             <thead><tr>
-              <th className="select-column"><input type="checkbox" aria-label="Chọn tất cả" checked={sortedAccounts.length > 0 && sortedAccounts.every((account) => selectedIds.has(account.id))} onChange={(e) => setSelectedIds(e.target.checked ? new Set(sortedAccounts.map((account) => account.id)) : new Set())} /></th>
+              <th className="select-column"><input type="checkbox" aria-label="Chọn tất cả" checked={sortedAccounts.length > 0 && sortedAccounts.every((account) => selectedIds.has(account.id))} onChange={(e) => { excelRange.clearRange(); setSelectedIds(e.target.checked ? new Set(sortedAccounts.map((account) => account.id)) : new Set()) }} /></th>
               {visibleColumns.map((column) => <th key={column.id} style={{ width: layout.widths[column.id], minWidth: layout.widths[column.id] }}><button type="button" onClick={() => toggleSort(column.id)}>{column.label}<span>{sort.id === column.id ? (sort.direction === 'asc' ? ' ↑' : ' ↓') : ''}</span></button></th>)}
             </tr></thead>
             <tbody>
-              {sortedAccounts.map((account) => (
-                <tr
-                  key={account.id}
-                  className={selectedIds.has(account.id) ? 'selected-row' : ''}
-                  onPointerDown={(event) => {
-                    const target = event.target as HTMLElement
-                    if (target.closest('input,button,select,a')) return
-                    beginPaint(event, account.id)
-                  }}
-                  onPointerEnter={() => paintRow(account.id)}
-                  onContextMenu={(event) => openContextMenu(account, event)}
-                  onDoubleClick={() => { setPaintValue(null); setEditorAccount(account) }}
-                >
-                  <td className="select-column">
-                    <input
-                      type="checkbox"
-                      checked={selectedIds.has(account.id)}
-                      onChange={() => undefined}
-                      onPointerDown={(event) => {
-                        event.stopPropagation()
-                        beginPaint(event, account.id)
-                      }}
-                    />
-                        </td>
-                  {visibleColumns.map((column) => <td key={column.id} style={{ width: layout.widths[column.id], maxWidth: layout.widths[column.id] }}>{renderCell(account, column)}</td>)}
-                </tr>
-              ))}
+              {sortedAccounts.map((account) => {
+                const checked = selectedIds.has(account.id)
+                const ranged = excelRange.rangeIds.has(account.id)
+                return (
+                  <tr
+                    key={account.id}
+                    data-excel-row-id={account.id}
+                    className={`${checked ? 'checked-row ' : ''}${ranged ? 'range-row' : ''}`.trim()}
+                    onPointerDown={(event) => excelRange.onRowPointerDown(event, account.id)}
+                    onPointerEnter={() => excelRange.onRowPointerEnter(account.id)}
+                    onContextMenu={(event) => openContextMenu(account, event)}
+                    onDoubleClick={() => setEditorAccount(account)}
+                  >
+                    <td className="select-column">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(event) => setAccountSelected(account.id, event.target.checked)}
+                        onPointerDown={(event) => event.stopPropagation()}
+                      />
+                    </td>
+                    {visibleColumns.map((column) => <td key={column.id} style={{ width: layout.widths[column.id], maxWidth: layout.widths[column.id] }}>{renderCell(account, column)}</td>)}
+                  </tr>
+                )
+              })}
               {!loading && sortedAccounts.length === 0 ? <tr><td className="empty-grid" colSpan={visibleColumns.length + 1}>Chưa có tài khoản phù hợp bộ lọc. Hãy nhập hoặc thêm tài khoản để bắt đầu.</td></tr> : null}
             </tbody>
           </table>
@@ -438,9 +535,18 @@ export function AccountManager() {
       </div>
 
       {contextMenu ? (
-        <div className="account-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onPointerDown={(event) => event.stopPropagation()}>
-          <div className="context-menu-meta">Đã chọn {selected.length} tài khoản</div>
+        <AccountSelectionMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          checkedCount={selectedIds.size}
+          rangeCount={excelRange.rangeIds.size}
+          totalCount={sortedAccounts.length}
+          onCheckRange={selectRange}
+          onCheckAll={selectAllFiltered}
+          onClearChecked={clearSelection}
+        >
           <button type="button" disabled={selected.length !== 1} onClick={() => { setEditorAccount(selected[0] ?? null); setContextMenu(null) }}>Sửa tài khoản</button>
+          <button type="button" disabled={selectedIds.size === 0} onClick={() => void openChangeInfo()}>Sửa thông tin…</button>
           <button type="button" disabled={selectedIds.size === 0 || openingProfiles || checkingLive} onClick={() => void openProfile()}>{openingProfiles ? 'Đang mở…' : selected.length > 1 ? `Mở ${selected.length} Chrome` : 'Mở Chrome'}</button>
           <button type="button" disabled={selectedIds.size === 0} onClick={() => {
             const targets = sortedAccounts.filter((account) => selectedIds.has(account.id))
@@ -455,14 +561,19 @@ export function AccountManager() {
           <button type="button" disabled={selectedIds.size === 0 || openingProfiles || checkingLive} onClick={() => void checkLiveSelected()}>{checkingLive ? 'Đang Check Live…' : 'Check Live'}</button>
           <button type="button" disabled={selectedIds.size === 0} onClick={openGroupPicker}>Gán / chuyển / bỏ nhóm…</button>
           <button type="button" disabled={selectedIds.size === 0} onClick={() => void copySelectedUids()}>Sao chép UID</button>
-          <div className="context-menu-separator" />
-          <button type="button" disabled={sortedAccounts.length === 0} onClick={selectAllFiltered}>Chọn tất cả đang lọc</button>
-          <button type="button" disabled={selectedIds.size === 0} onClick={clearSelection}>Bỏ chọn tất cả</button>
+          <button type="button" onClick={openBulkUidFilter}>Lọc UID hàng loạt…</button>
           <div className="context-menu-separator" />
           <button className="context-danger" type="button" disabled={selectedIds.size === 0} onClick={() => void deleteSelected()}>Xóa tài khoản</button>
-        </div>
+        </AccountSelectionMenu>
       ) : null}
 
+      {bulkUidFilterOpen ? (
+        <BulkUidFilterDialog
+          initialUids={bulkUidFilter}
+          onApply={applyBulkUidFilter}
+          onClose={() => setBulkUidFilterOpen(false)}
+        />
+      ) : null}
       {groupPickerOpen ? (
         <AccountGroupPicker
           overview={groupOverview}
@@ -476,7 +587,16 @@ export function AccountManager() {
       {checkpoint282Accounts ? <Checkpoint282Dialog accounts={checkpoint282Accounts} onClose={() => setCheckpoint282Accounts(null)} /> : null}
       {checkpoint956Accounts ? <Checkpoint956Dialog accounts={checkpoint956Accounts} onClose={() => setCheckpoint956Accounts(null)} /> : null}
       {editorAccount !== undefined ? <AccountEditor account={editorAccount} onClose={() => setEditorAccount(undefined)} onSaved={async () => { setEditorAccount(undefined); setNotice('Đã lưu tài khoản.'); await refreshAccountsAndGroups() }} /> : null}
-      {importOperation ? <ImportDialog operation={importOperation} presets={presets} onClose={() => setImportOperation(null)} onImported={(result, operation) => void onImportComplete(result, operation)} onPresetSaved={(preset) => setPresets((current) => [...current.filter((item) => item.id !== preset.id), preset].sort((a, b) => a.name.localeCompare(b.name)))} /> : null}
+      {importOperation ? (
+        <ImportDialog
+          operation={importOperation}
+          presets={presets}
+          {...(categoryFilter && categoryFilter !== UNGROUPED_CATEGORY_FILTER ? { initialGroupName: categoryFilter } : {})}
+          onClose={() => setImportOperation(null)}
+          onImported={(result, operation) => void onImportComplete(result, operation)}
+          onPresetSaved={(preset) => setPresets((current) => [...current.filter((item) => item.id !== preset.id), preset].sort((a, b) => a.name.localeCompare(b.name)))}
+        />
+      ) : null}
     </section>
   )
 }

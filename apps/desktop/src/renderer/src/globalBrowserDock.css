@@ -1,0 +1,16 @@
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.global-browser-dock-button {
+  white-space: nowrap;
+}
+
+/* Account Manager used to expose an account-selection-only dock button.
+   The app-level button above is now the single Cửa sổ Chrome entry point. */
+.account-manager .account-toolbar > .toolbar-group:nth-child(2) > .button:first-child {
+  display: none;
+}

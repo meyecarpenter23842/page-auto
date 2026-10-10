@@ -10,15 +10,19 @@ import type {
   ScenarioRunnerStartPayload
 } from '../../shared/scenarioRunnerRuntime'
 import type { ScenarioActionRecord, ScenarioDetails } from '../../shared/scenarios'
-import { resolveFacebookProfileDirectory } from '../browser/facebookProfileResolver'
+import { parseStoryIds, type StoryRuntimeData } from '../../shared/story'
 import { BrowserWindowLayoutManager } from '../browser/browserWindowLayoutManager'
-import { resolveAccountProxyState } from '../browser/proxyConfig'
 import { ScenarioActionWorkerManager } from '../browser/scenarioActionWorkerManager'
 import { AccountRepository } from '../database/accountRepository'
 import { BrowserWindowLayoutRepository } from '../database/browserWindowLayoutRepository'
+import { PageTabRepository } from '../database/pageTabRepository'
 import { ScenarioRepository } from '../database/scenarioRepository'
+import { StoryRepository } from '../database/storyRepository'
+import { scenarioActionJobForCommonSessionPolicy } from '../facebook/facebookSessionPolicy'
 import { AccountExecutionCoordinator } from './accountExecutionCoordinator'
 import { redactExecutionText } from './executionLogSanitizer'
+import { runRollingAccountPool } from './rollingAccountPool'
+import { resolveScenarioRunnerExecutionContext, scenarioRunnerActor } from './scenarioRunnerExecutionContext'
 
 interface ActiveScenarioRun {
   snapshot: ScenarioRunnerSnapshot
@@ -26,6 +30,7 @@ interface ActiveScenarioRun {
   runningKeys: Map<number, string>
   completedAccounts: number
   accountPauseUntil: number
+  storyRuntimeByActionId: Map<number, StoryRuntimeData>
 }
 
 function uniqueIds(values: readonly number[]): number[] {
@@ -82,6 +87,8 @@ function isNeedsAttention(result: ScenarioActionWorkerResult): boolean {
 export class ScenarioRunnerService {
   private readonly accounts: AccountRepository
   private readonly scenarios: ScenarioRepository
+  private readonly stories: StoryRepository
+  private readonly pageTabs: PageTabRepository
   private readonly browserWindowLayout = new BrowserWindowLayoutManager()
   private readonly browserWindowLayoutSettings: BrowserWindowLayoutRepository
   private active: ActiveScenarioRun | null = null
@@ -96,6 +103,8 @@ export class ScenarioRunnerService {
   ) {
     this.accounts = new AccountRepository(database)
     this.scenarios = new ScenarioRepository(database)
+    this.stories = new StoryRepository(database)
+    this.pageTabs = new PageTabRepository(database)
     this.browserWindowLayoutSettings = new BrowserWindowLayoutRepository(database)
   }
 
@@ -123,12 +132,28 @@ export class ScenarioRunnerService {
     if (accounts.length !== accountIds.length) throw new Error('Một số tài khoản đã chọn không còn tồn tại.')
     if (!accounts.length) throw new Error('Không tìm thấy tài khoản hợp lệ.')
 
+    const requestedContext = payload.executionContext ?? { kind: 'profile' as const }
+    const pageTab = requestedContext.kind === 'page' ? this.pageTabs.get(requestedContext.pageTabId) : null
+    const executionContext = resolveScenarioRunnerExecutionContext(
+      requestedContext,
+      pageTab
+        ? {
+            pageTabId: pageTab.id,
+            pageUid: pageTab.pageUid,
+            enabledAccountIds: pageTab.accounts.filter((item) => item.enabled).map((item) => item.accountId)
+          }
+        : null,
+      accountIds
+    )
+    const resolvedPayload: ScenarioRunnerStartPayload = { ...payload, executionContext }
+
     const runId = `scenario-${Date.now()}-${Math.floor(Math.random() * 10000)}`
     const snapshot: ScenarioRunnerSnapshot = {
       runId,
       state: 'running',
       startedAt: Date.now(),
       finishedAt: null,
+      executionContext,
       accountRuntimes: accountIds.map((accountId): ScenarioRunnerAccountRuntime => ({
         accountId,
         state: 'queued',
@@ -143,16 +168,26 @@ export class ScenarioRunnerService {
       logs: [],
       message: null
     }
+    const storyRuntimeByActionId = new Map<number, StoryRuntimeData>()
+    for (const scenario of scenarios) {
+      for (const action of scenario.actions) {
+        if (action.actionType !== 'post_story') continue
+        storyRuntimeByActionId.set(action.id, this.storyRuntimeData(this.parseConfig(action)))
+      }
+    }
+
     const active: ActiveScenarioRun = {
       snapshot,
       stopRequested: false,
       runningKeys: new Map(),
       completedAccounts: 0,
-      accountPauseUntil: 0
+      accountPauseUntil: 0,
+      storyRuntimeByActionId
     }
     this.active = active
-    this.log(active, 'info', `Bắt đầu phiên ${runId}: ${accounts.length} tài khoản, ${scenarios.length} kịch bản.`)
-    void this.execute(active, accounts, scenarios, payload).catch((error) => {
+    const actorLabel = executionContext.kind === 'page' ? `Page ${executionContext.pageUid}` : 'Profile'
+    this.log(active, 'info', `Bắt đầu phiên ${runId}: ${accounts.length} tài khoản, ${scenarios.length} kịch bản · actor ${actorLabel}.`)
+    void this.execute(active, accounts, scenarios, resolvedPayload).catch((error) => {
       if (this.active !== active) return
       active.snapshot.state = 'failed'
       active.snapshot.finishedAt = Date.now()
@@ -204,27 +239,23 @@ export class ScenarioRunnerService {
       return false
     })
     const parallel = Math.max(1, Math.min(payload.settings.parallelAccounts, runnable.length || 1))
-    let cursor = 0
 
-    const nextAccount = async (): Promise<AccountRecord | null> => {
-      while (!active.stopRequested) {
-        const waitMs = active.accountPauseUntil - Date.now()
-        if (waitMs > 0) {
-          await this.sleep(active, waitMs)
-          continue
+    await runRollingAccountPool({
+      items: runnable,
+      concurrency: parallel,
+      tryAcquire: (account) => this.accountExecution.tryAcquireLease(account.id),
+      waitUntilRunnable: async () => {
+        while (!active.stopRequested) {
+          const waitMs = active.accountPauseUntil - Date.now()
+          if (waitMs <= 0) return true
+          if (!await this.sleep(active, waitMs)) return false
         }
-        const account = runnable[cursor]
-        cursor += 1
-        return account ?? null
-      }
-      return null
-    }
-
-    const workerLoop = async (): Promise<void> => {
-      let account = await nextAccount()
-      while (account && !active.stopRequested) {
-        const finishedAccount = account
-        await this.accountExecution.run(finishedAccount.id, () => this.runAccount(active, finishedAccount, scenarios, payload))
+        return false
+      },
+      shouldStop: () => active.stopRequested,
+      run: async (account) => {
+        if (active.stopRequested) return
+        await this.runAccount(active, account, scenarios, payload)
         active.completedAccounts += 1
         if (
           !active.stopRequested
@@ -239,25 +270,20 @@ export class ScenarioRunnerService {
           )
           this.log(active, 'info', `Tạm dừng ${payload.settings.pauseAfterAccountsMinutes} phút sau ${active.completedAccounts} tài khoản.`)
         }
-
-        if (active.stopRequested) return
-        const reservedNext = await nextAccount()
-        if (!reservedNext) return
-
+      },
+      afterRelease: async (finishedAccount, context) => {
+        if (active.stopRequested || context.remainingItems < 1) return
         const switchDelayMs = randomDelayMs(
           payload.settings.accountSwitchDelayMinSeconds,
           payload.settings.accountSwitchDelayMaxSeconds
         )
-        if (switchDelayMs > 0) {
-          const displaySeconds = Math.max(1, Math.round(switchDelayMs / 1000))
-          this.log(active, 'info', `Đã đóng account ${finishedAccount.uid}; chờ ${displaySeconds} giây trước khi mở tài khoản tiếp theo.`, finishedAccount.id)
-          if (!await this.sleep(active, switchDelayMs)) return
-        }
-        account = reservedNext
+        if (switchDelayMs <= 0) return
+        const displaySeconds = Math.max(1, Math.round(switchDelayMs / 1000))
+        this.log(active, 'info', `Đã đóng account ${finishedAccount.uid}; chờ ${displaySeconds} giây trước khi mở tài khoản tiếp theo.`, finishedAccount.id)
+        await this.sleep(active, switchDelayMs)
       }
-    }
+    })
 
-    await Promise.all(Array.from({ length: parallel }, () => workerLoop()))
     if (this.active !== active) return
     active.snapshot.finishedAt = Date.now()
     if (active.stopRequested) {
@@ -340,14 +366,15 @@ export class ScenarioRunnerService {
             runtime.currentActionLabel = action.label
             const runKey = `${active.snapshot.runId}:a${account.id}:s${scenario.id}:r${repeatIndex}:x${action.id}:n${attempted}`
             active.runningKeys.set(account.id, runKey)
-
+            const parsedConfig = this.parseConfig(action)
             const request: ActionRunRequest = {
               runKey,
               scenarioActionId: action.id,
               actionType: action.actionType,
               label: action.label,
-              actor: { kind: 'profile', accountId: account.id, accountUid: account.uid },
-              config: this.parseConfig(action),
+              actor: scenarioRunnerActor(payload.executionContext ?? { kind: 'profile' }, account),
+              config: parsedConfig,
+              ...(action.actionType === 'post_story' ? { runtimeData: active.storyRuntimeByActionId.get(action.id) ?? { stories: [] } } : {}),
               retry: { maxAttempts: 1, delayMs: 0, retryableCodes: [] }
             }
             const job = this.buildWorkerJob(account, request)
@@ -436,50 +463,33 @@ export class ScenarioRunnerService {
 
   private buildWorkerJob(account: AccountRecord, request: ActionRunRequest): ScenarioActionWorkerJob {
     const settings = this.getSettings()
-    const profileDirectory = resolveFacebookProfileDirectory(this.dataDirectory, account, settings.browser).profileDirectory
-    const proxyResolution = resolveAccountProxyState(account)
-    if (proxyResolution.status === 'invalid') throw new Error(proxyResolution.message)
-    const proxy = proxyResolution.status === 'valid' ? proxyResolution.proxy : undefined
-
     this.browserWindowLayout.claim(account.id, 'scenario')
     const browserPlacement = this.browserWindowLayout.placementFor(
       account.id,
       this.browserWindowLayoutSettings.get(),
       settings.browser
     )
-
-    return {
-      accountId: account.id,
-      profileDirectory,
-      browser: { ...settings.browser },
-      session: { ...settings.session },
-      network: { ...settings.network },
-      sessionAccount: {
-        id: account.id,
-        uid: account.uid,
-        username: account.username,
-        password: account.password,
-        cookie: account.cookie,
-        twoFactorSecret: account.twoFactorSecret,
-        name: account.name
-      },
-      request,
-      ...(browserPlacement ? { browserPlacement } : {}),
-      ...(account.userAgent ? { userAgent: account.userAgent } : {}),
-      ...(proxy ? { proxy } : {})
-    }
+    return scenarioActionJobForCommonSessionPolicy(account, request, settings, browserPlacement)
   }
 
   private parseConfig(action: ScenarioActionRecord): unknown {
     try { return JSON.parse(action.configJson) as unknown } catch { return {} }
   }
 
+  private storyRuntimeData(config: unknown): StoryRuntimeData {
+    const storyIds = config && typeof config === 'object'
+      ? parseStoryIds((config as Record<string, unknown>).storyIds)
+      : []
+    return { stories: this.stories.getByIds(storyIds) }
+  }
+
   private syncAccountSession(account: AccountRecord, result: ScenarioActionWorkerResult): void {
     const now = Date.now()
+    const nextName = result.accountName?.trim() || account.name
     if (result.sessionState === 'valid') {
       this.accounts.update(account.id, {
         status: 'valid',
-        name: result.accountName?.trim() || account.name,
+        name: nextName,
         cookie: result.sessionCookie?.trim() || account.cookie,
         cookieStatus: 'valid',
         lastCookieCheck: now,
@@ -489,11 +499,16 @@ export class ScenarioRunnerService {
     }
     if (result.sessionState === 'needs_login' || result.sessionState === 'verification_required') {
       this.accounts.update(account.id, {
-        status: 'needs_login',
+        status: result.accountStatus
+          ?? (result.sessionState === 'verification_required' ? 'checkpoint_unknown' : 'needs_login'),
+        name: nextName,
         cookieStatus: 'needs_login',
-        lastCookieCheck: now
+        lastCookieCheck: now,
+        lastUsedAt: now
       })
+      return
     }
+    if (nextName !== account.name) this.accounts.update(account.id, { name: nextName, lastUsedAt: now })
   }
 
   private accountRuntime(active: ActiveScenarioRun, accountId: number): ScenarioRunnerAccountRuntime {

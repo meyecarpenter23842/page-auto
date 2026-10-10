@@ -184,20 +184,22 @@ describe('RotationService persisted window status', () => {
     const store = new WindowStore()
     store.details = makeRun(2)
     let now = new Date(2026, 7, 24, 11, 59, 59)
-    let resolvePaused!: () => void
-    const paused = new Promise<void>((resolve) => { resolvePaused = resolve })
-    store.onPause = resolvePaused
+    let resolveWaiting!: () => void
+    const waiting = new Promise<void>((resolve) => { resolveWaiting = resolve })
 
     const service = new RotationService(store, posting(store, () => {
       now = new Date(2026, 7, 24, 12, 0, 1)
     }), {
       now: () => now,
       random: () => 0,
-      sleep: async () => never()
+      sleep: async () => {
+        if (now.getHours() === 12) resolveWaiting()
+        return never()
+      }
     })
 
     service.start({ pageTabId: 10 })
-    await paused
+    await waiting
 
     const closed = service.status({ pageTabId: 10 }).windowStates?.[0]
     expect(closed?.status).toBe('closed_time_remaining_accounts')

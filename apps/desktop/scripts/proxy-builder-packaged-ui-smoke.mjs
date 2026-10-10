@@ -1,0 +1,244 @@
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { createServer } from 'node:net'
+import { tmpdir } from 'node:os'
+import { dirname, resolve } from 'node:path'
+import { _electron as electron } from 'playwright-core'
+
+const appDirectory = resolve(import.meta.dirname, '..')
+const executablePath = resolve(appDirectory, '../../dist/win-unpacked/PageAuto.exe')
+const dataDirectory = mkdtempSync(resolve(tmpdir(), 'page-auto-proxy-builder-packaged-'))
+const screenshotPath = resolve(appDirectory, '../../dist/proxy-builder-packaged-ui-smoke.png')
+mkdirSync(dirname(screenshotPath), { recursive: true })
+
+let electronApp
+let server
+const proxySockets = new Set()
+let smokeEvidence = null
+
+// Teardown must not hold a Windows runner forever after UI assertions pass.
+async function withinDeadline(promise, label, milliseconds) {
+  let timer
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(label + ' exceeded ' + milliseconds + 'ms')), milliseconds)
+      })
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+async function closeSmokeElectron() {
+  if (!electronApp) return
+  const child = electronApp.process()
+  console.log('[Proxy smoke cleanup] Closing dedicated test Electron')
+  try {
+    await withinDeadline(electronApp.close(), 'Playwright Electron close', 12_000)
+    console.log('[Proxy smoke cleanup] Electron closed')
+  } catch (error) {
+    console.warn('[Proxy smoke cleanup] Graceful close stalled; terminating test-only process:', error)
+    if (child?.pid && process.platform === 'win32') {
+      try {
+        execFileSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { timeout: 8_000, stdio: 'ignore' })
+        return
+      } catch (killError) {
+        console.warn('[Proxy smoke cleanup] taskkill fallback:', killError)
+      }
+    }
+    if (child && child.exitCode === null && !child.kill('SIGKILL')) {
+      throw new Error('Could not terminate test-only Electron process')
+    }
+  }
+}
+
+async function closeSmokeProxy() {
+  if (!server) return
+  console.log('[Proxy smoke cleanup] Closing mock proxy and', proxySockets.size, 'tracked TCP sockets')
+  await withinDeadline(new Promise((resolve, reject) => {
+    // Stop accepting first, then terminate idle client connections. A bare
+    // net.Server.close() will wait until every remaining connection ends.
+    server.close((error) => error ? reject(error) : resolve())
+    for (const socket of proxySockets) socket.destroy()
+  }), 'Mock proxy server close', 5_000)
+  console.log('[Proxy smoke cleanup] Mock proxy closed')
+}
+
+function invariant(condition, message) {
+  if (!condition) throw new Error(message)
+}
+
+async function listenAuthRejectProxy() {
+  server = createServer((socket) => {
+    proxySockets.add(socket)
+    socket.once('close', () => proxySockets.delete(socket))
+    socket.once('data', () => {
+      socket.end('HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="smoke"\r\nConnection: close\r\n\r\n')
+    })
+  })
+  await new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', resolve)
+  })
+  const address = server.address()
+  if (!address || typeof address === 'string') throw new Error('Smoke proxy did not bind a TCP port.')
+  return address.port
+}
+
+try {
+  invariant(existsSync(executablePath), `Packaged executable not found: ${executablePath}`)
+  const proxyPort = await listenAuthRejectProxy()
+
+  electronApp = await electron.launch({
+    executablePath,
+    env: {
+      ...process.env,
+      PAGE_AUTO_DATA_DIR: dataDirectory,
+      PAGE_AUTO_PWA_RELAY_DISABLED: '1'
+    }
+  })
+
+  const page = await electronApp.firstWindow()
+  await page.locator('.app-shell').waitFor({ state: 'visible', timeout: 30_000 })
+
+  const menuButton = page.getByRole('button', { name: 'Proxy Center', exact: true })
+  await menuButton.waitFor({ state: 'visible' })
+  await menuButton.click()
+
+  const root = page.locator('[data-testid="proxy-builder-workspace"]')
+  await root.waitFor({ state: 'visible', timeout: 15_000 })
+  await root.getByRole('tab', { name: 'Tạo Proxy', exact: true }).waitFor({ state: 'visible' })
+
+  await root.getByRole('tab', { name: 'Kho Proxy', exact: true }).click()
+  const createFolderButton = root.getByRole('button', { name: '+ Tạo', exact: true })
+  await createFolderButton.click()
+  const folderInput = root.getByLabel('Tên thư mục proxy')
+  await folderInput.waitFor({ state: 'visible' })
+  await folderInput.fill('Smoke Folder')
+  await root.getByRole('button', { name: 'Lưu', exact: true }).click()
+  await root.locator('.proxy-center-folders').getByText('Smoke Folder', { exact: true }).waitFor({ state: 'visible' })
+
+  await root.getByRole('button', { name: '+ Nhập Proxy vào kho', exact: true }).click()
+  const inventoryInput = root.getByLabel('Nhập proxy vào kho')
+  await inventoryInput.fill(`127.0.0.1:${proxyPort}:smoke1:secret1\n127.0.0.1:${proxyPort}:smoke2:secret2`)
+  await root.getByRole('button', { name: 'Nhập vào kho (2)', exact: true }).click()
+  const inventoryRows = root.locator('.proxy-center-table tbody tr')
+  await inventoryRows.nth(1).waitFor({ state: 'visible' })
+  invariant(await inventoryInput.count() === 0, 'Form nhập Proxy chưa thu gọn sau khi lưu.')
+
+  const selectAllInventory = root.getByLabel('Chọn tất cả proxy đang lọc')
+  await selectAllInventory.click()
+  await root.getByText(/Đang chọn 2 · phủ 0 · hiển thị 2\/2/).waitFor({ state: 'visible' })
+  invariant(await root.isVisible(), 'Kho Proxy bị crash sau khi tích chọn tất cả.')
+
+  const firstCell = inventoryRows.nth(0).locator('td').nth(1)
+  const secondCell = inventoryRows.nth(1).locator('td').nth(1)
+  const firstBox = await firstCell.boundingBox()
+  const secondBox = await secondCell.boundingBox()
+  invariant(firstBox && secondBox, 'Không đo được row để test phủ khối Kho Proxy.')
+  await page.mouse.move(firstBox.x + 10, firstBox.y + firstBox.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(secondBox.x + 10, secondBox.y + secondBox.height / 2)
+  await page.mouse.up()
+  invariant(
+    await root.locator('.proxy-center-table tbody tr.range-row').count() === 2,
+    'Kho Proxy không phủ khối được bằng kéo chuột như Account Manager.'
+  )
+
+  invariant(await root.locator('.proxy-center-table tbody input[type="checkbox"]:checked').count() === 2, 'Kéo phủ chưa đồng bộ 2 checkbox nhận lệnh.')
+  await firstCell.click({ button: 'right' })
+  await page.getByRole('button', { name: 'Đánh dấu đã dùng (2)', exact: true }).click()
+  const usedBadges = root.locator('.proxy-center-usage-badge.used').filter({ hasText: 'ĐÃ DÙNG' })
+  await usedBadges.nth(1).waitFor({ state: 'visible', timeout: 10_000 })
+  invariant(
+    await usedBadges.count() === 2,
+    'Đánh dấu ĐÃ DÙNG cho các dòng đã chọn không cập nhật đủ proxy.'
+  )
+
+  await firstCell.click({ button: 'right' })
+  await page.getByRole('button', { name: 'Đánh dấu chưa dùng (2)', exact: true }).click()
+  const unusedBadges = root.locator('.proxy-center-usage-badge.unused').filter({ hasText: 'CHƯA DÙNG' })
+  await unusedBadges.nth(1).waitFor({ state: 'visible', timeout: 10_000 })
+  invariant(
+    await unusedBadges.count() === 2,
+    'Đánh dấu CHƯA DÙNG cho các dòng đã chọn không cập nhật đủ proxy.'
+  )
+
+  await firstCell.click({ button: 'right' })
+  await page.getByRole('button', { name: 'Copy Proxy (2)', exact: true }).click()
+  const copiedRange = await electronApp.evaluate(({ clipboard }) => clipboard.readText())
+  invariant(
+    copiedRange.split(/\r?\n/).sort().join('\n') === [
+      `127.0.0.1:${proxyPort}:smoke1:secret1`,
+      `127.0.0.1:${proxyPort}:smoke2:secret2`
+    ].sort().join('\n'),
+    'Copy Proxy sau khi kéo phủ không đưa đầy đủ proxy credentials vào clipboard.'
+  )
+
+  // Re-select via checkboxes; the same bulk action must receive the same targets.
+  await selectAllInventory.click()
+  await inventoryRows.nth(0).locator('td').first().locator('input[type="checkbox"]').check()
+  await inventoryRows.nth(1).locator('td').first().locator('input[type="checkbox"]').check()
+  await root.getByText(/Đang chọn 2 · phủ 0 · hiển thị 2\/2/).waitFor({ state: 'visible' })
+  await firstCell.click({ button: 'right' })
+  await page.getByRole('button', { name: 'Copy Proxy (2)', exact: true }).click()
+  const copiedChecked = await electronApp.evaluate(({ clipboard }) => clipboard.readText())
+  invariant(
+    copiedChecked.split(/\r?\n/).sort().join('\n') === copiedRange.split(/\r?\n/).sort().join('\n'),
+    'Copy Proxy sau khi tích checkbox không khớp tập proxy đã chọn.'
+  )
+
+  // A real pointer drag must scroll the *inventory viewport* and select new rows.
+  await root.getByRole('button', { name: '+ Nhập Proxy vào kho', exact: true }).click()
+  const manyProxies = Array.from({ length: 90 }, (_, index) => '127.0.0.1:' + (41000 + index) + ':drag' + index + ':secret' + index)
+  await root.getByLabel('Nhập proxy vào kho').fill(manyProxies.join('\n'))
+  await root.getByRole('button', { name: 'Nhập vào kho (90)', exact: true }).click()
+  await inventoryRows.nth(89).waitFor({ state: 'attached' })
+  await root.getByRole('button', { name: 'Bỏ chọn', exact: true }).click()
+  const scrollHost = root.locator('.proxy-center-table').locator('..')
+  await scrollHost.evaluate((node) => { node.scrollTop = 0 })
+  const viewport = await scrollHost.boundingBox()
+  const sourceBox = await inventoryRows.first().locator('td').nth(1).boundingBox()
+  invariant(viewport && sourceBox, 'Không đo được vùng cuộn để test kéo phủ.')
+  const initialScroll = await scrollHost.evaluate((node) => node.scrollTop)
+  await page.mouse.move(sourceBox.x + 10, sourceBox.y + sourceBox.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(viewport.x + 65, viewport.y + viewport.height - 8, { steps: 8 })
+  await page.waitForTimeout(1050)
+  await page.mouse.up()
+  const scrolled = await scrollHost.evaluate((node) => node.scrollTop)
+  const selectedByDrag = await root.locator('.proxy-center-table tbody input[type="checkbox"]:checked').count()
+  const scrollGeometry = await scrollHost.evaluate((node) => ({ clientWidth: node.clientWidth, clientHeight: node.clientHeight, offsetWidth: node.offsetWidth, offsetHeight: node.offsetHeight }))
+  invariant(scrolled > initialScroll + 70 && selectedByDrag > 10, 'Kéo phủ không tự cuộn/chọn thêm dòng: scroll=' + scrolled + ', selected=' + selectedByDrag + ', viewport=' + JSON.stringify(scrollGeometry))
+
+  await root.getByRole('tab', { name: 'Proxy Checker', exact: true }).click()
+
+  const textarea = root.getByLabel('Danh sách proxy')
+  await textarea.fill(`127.0.0.1:${proxyPort}`)
+  const testButton = root.getByRole('button', { name: 'Test tất cả', exact: true })
+  invariant(!(await testButton.isDisabled()), 'Packaged Proxy Checker Test tất cả vẫn bị disabled sau khi nhập proxy.')
+  await testButton.click()
+
+  const deadBadge = root.locator('.proxy-builder-live-badge.dead').filter({ hasText: 'DEAD' })
+  await deadBadge.waitFor({ state: 'visible', timeout: 15_000 })
+  const text = await root.innerText()
+  invariant(text.includes('407'), 'Packaged checker không trả typed 407 error từ request thật qua proxy smoke.')
+  invariant(text.includes('0 LIVE') && text.includes('1 DEAD'), 'Packaged checker summary không phản ánh LIVE/DEAD đúng.')
+
+  await page.screenshot({ path: screenshotPath, fullPage: true })
+  smokeEvidence = { menuVisible: true, checkerIpcLive: true, deterministicDead: true, screenshotPath }
+} finally {
+  try {
+    await closeSmokeElectron()
+  } finally {
+    try {
+      await closeSmokeProxy()
+    } finally {
+      rmSync(dataDirectory, { recursive: true, force: true })
+    }
+  }
+}
+// Report PASS only after teardown has settled.
+console.log('Proxy Center packaged UI smoke passed:', smokeEvidence)

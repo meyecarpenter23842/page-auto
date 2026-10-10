@@ -24,8 +24,23 @@ win:
   executableName: PageAuto
   icon: resources/app-icon.png
   target:
-    - target: zip
+    - target: nsis
       arch:
         - x64
+
+nsis:
+  include: resources/installer.nsh
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  perMachine: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: PageAuto
+  artifactName: PageAuto-Setup-${version}.${ext}
+
+publish:
+  provider: generic
+  url: https://pub-4e0416c66f7b4c7e9542bb6296775673.r2.dev
+  channel: latest
 
 artifactName: PageAuto-${version}-win-${arch}.${ext}

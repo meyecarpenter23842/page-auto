@@ -22,6 +22,7 @@ export const SCENARIO_ACTION_CATEGORIES = [
   'groups',
   'marketplace',
   'publishing',
+  'profile',
   'other'
 ] as const
 
@@ -133,5 +134,6 @@ export const scenarioCategoryLabels: Record<ScenarioActionCategory, string> = {
   groups: 'Nhóm',
   marketplace: 'Marketplace',
   publishing: 'Đăng bài',
+  profile: 'Hồ sơ',
   other: 'Khác'
 }

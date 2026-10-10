@@ -10,6 +10,8 @@ export const FACEBOOK_COMMON_CHALLENGE_TYPES = [
   'login_reauth',
   'identity_verification_required',
   'security_review_required',
+  'account_locked',
+  'account_disabled',
   'unsupported_checkpoint',
   'checkpoint_cleared'
 ] as const

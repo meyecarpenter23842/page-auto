@@ -71,7 +71,8 @@ export class RuntimeRecoveryService {
       for (const item of interruptedItems) {
         this.client.prepare(`
           UPDATE run_items
-          SET status = 'failed', last_error = ?, finished_at = ?, updated_at = ?
+          SET status = 'failed', claimed_by_account_id = NULL,
+              last_error = ?, finished_at = ?, updated_at = ?
           WHERE id = ? AND status = 'processing'
         `).run(RECOVERY_MESSAGE, now, now, item.itemId)
 
@@ -110,7 +111,6 @@ export class RuntimeRecoveryService {
         ORDER BY id
       `).all() as RunningRunRow[]
 
-      let pausedRuns = 0
       for (const run of runningRuns) {
         const remaining = this.client.prepare(`
           SELECT COUNT(*) AS count
@@ -135,25 +135,18 @@ export class RuntimeRecoveryService {
           continue
         }
 
-        this.client.prepare(`
-          UPDATE runs
-          SET status = 'paused', paused_at = ?, updated_at = ?
-          WHERE id = ? AND status = 'running'
-        `).run(now, now, run.runId)
         if (run.pageTabId !== null) {
-          this.client.prepare(`
-            UPDATE page_tabs SET status = 'paused', updated_at = ? WHERE id = ?
-          `).run(now, run.pageTabId)
+          this.client.prepare(`UPDATE page_tabs SET status = 'running', updated_at = ? WHERE id = ?`)
+            .run(now, run.pageTabId)
         }
-        this.addRunEvent(run.runId, 'run_recovered_paused', {
+        this.addRunEvent(run.runId, 'run_recovered_running', {
           reason: 'app_restart',
           reviewItems: interruptedItems.filter((item) => item.runId === run.runId).length
         }, now)
-        pausedRuns += 1
       }
 
       this.requeueLatestSafePrepublishFailures(now)
-      return { pausedRuns, reviewItems: interruptedItems.length }
+      return { pausedRuns: 0, reviewItems: interruptedItems.length }
     })
 
     return recover()
@@ -270,7 +263,8 @@ export class RuntimeRecoveryService {
   ): void {
     this.client.prepare(`
       UPDATE run_items
-      SET status = 'pending', last_error = NULL, started_at = NULL, finished_at = NULL, updated_at = ?
+      SET status = 'pending', claimed_by_account_id = NULL, last_error = NULL,
+          started_at = NULL, finished_at = NULL, updated_at = ?
       WHERE id = ? AND status = 'failed'
     `).run(now, row.itemId)
 

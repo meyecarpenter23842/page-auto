@@ -247,14 +247,20 @@ export class CanonicalPostRepository {
     const postId = positiveId(id, 'Post ID')
     if (!this.get(postId)) return false
 
+    const hasZaloBindings = Boolean(this.client.prepare(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'zalo_post_bindings'"
+    ).get())
     const usages = this.client.prepare(`
       SELECT
         (SELECT COUNT(*) FROM post_collection_bindings WHERE post_id = ?) +
         (SELECT COUNT(*) FROM page_tab_post_bindings WHERE post_id = ?) +
         (SELECT COUNT(*) FROM scenario_action_post_bindings WHERE post_id = ?) AS count
     `).get(postId, postId, postId) as { count: number }
+    const zaloUsage = hasZaloBindings
+      ? Number((this.client.prepare('SELECT COUNT(*) AS count FROM zalo_post_bindings WHERE post_id = ?').get(postId) as { count: number }).count)
+      : 0
 
-    if (Number(usages.count) > 0) {
+    if (Number(usages.count) + zaloUsage > 0) {
       throw new Error(`Bài viết #${postId} đang được sử dụng; hãy bỏ liên kết trước khi xóa vĩnh viễn.`)
     }
     return this.client.prepare('DELETE FROM posts WHERE id = ?').run(postId).changes === 1

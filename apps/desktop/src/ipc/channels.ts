@@ -36,10 +36,14 @@ import type {
   HotmailBrowserOpenResult,
   HotmailDashboardRow,
   HotmailOAuthStartResult,
+  HotmailOpenBatchPayload,
+  HotmailOpenBatchResult,
   HotmailPasswordActionPayload,
   HotmailPasswordBatchResult,
   HotmailProxyStatus,
   HotmailProxyTestResult,
+  HotmailProxyEntryPayload,
+  HotmailProxyReplacePayload,
   HotmailRecoveryActionPayload,
   HotmailRecoveryBatchResult,
   HotmailSettingsView,
@@ -59,6 +63,11 @@ import type {
 } from '../shared/pageTabs'
 import type { PageWallRunNowPayload, PageWallRunNowResult } from '../shared/pageWall'
 import type { PageWallJobIdPayload, PageWallJobRecord, PageWallSchedulePayload } from '../shared/pageWallJobs'
+import type {
+  PageWallRecurringPagePayload,
+  PageWallRecurringPlanRecord,
+  SavePageWallRecurringPlanInput
+} from '../shared/pageWallRecurring'
 import type { ExecuteSinglePostingJobPayload, ExecuteSinglePostingJobResult } from '../shared/posting'
 import type { RotationPageTabPayload, RotationRuntimeSnapshot } from '../shared/rotation'
 import type { CreateRunPayload, RunDetails, RunIdPayload } from '../shared/runs'
@@ -87,12 +96,17 @@ export const IPC_CHANNELS = {
   hotmailCodesGet: 'hotmail:codes:get',
   hotmailCheck: 'hotmail:check',
   hotmailOpen: 'hotmail:open',
+  hotmailOpenBatch: 'hotmail:open-batch',
+  hotmailRetile: 'hotmail:browser-retile',
   hotmailRecoveryAction: 'hotmail:recovery:action',
   hotmailPasswordAction: 'hotmail:password:action',
   hotmailComboAction: 'hotmail:combo:action',
   hotmailProxyStatus: 'hotmail:proxy:status',
   hotmailProxyRotate: 'hotmail:proxy:rotate',
   hotmailProxyTest: 'hotmail:proxy:test',
+  hotmailProxyTestEntry: 'hotmail:proxy:test-entry',
+  hotmailProxyRemoveEntry: 'hotmail:proxy:remove-entry',
+  hotmailProxyReplaceEntry: 'hotmail:proxy:replace-entry',
   pageTabsList: 'page-tabs:list',
   pageTabsGet: 'page-tabs:get',
   pageTabsCreate: 'page-tabs:create',
@@ -109,6 +123,9 @@ export const IPC_CHANNELS = {
   pageWallSchedule: 'page-wall:schedule',
   pageWallJobsList: 'page-wall:jobs:list',
   pageWallJobCancel: 'page-wall:jobs:cancel',
+  pageWallRecurringGet: 'page-wall:recurring:get',
+  pageWallRecurringSave: 'page-wall:recurring:save',
+  pageWallRecurringClear: 'page-wall:recurring:clear',
   runsLatestForPageTab: 'runs:latest-for-page-tab',
   runsCreate: 'runs:create',
   runsPause: 'runs:pause',
@@ -177,12 +194,17 @@ export interface PageAutoIpcContract {
   getHotmailCodes: (payload: HotmailBatchPayload) => Promise<HotmailBatchResult>
   checkHotmail: (payload: HotmailBatchPayload) => Promise<HotmailBatchResult>
   openHotmail: (payload: HotmailAccountPayload) => Promise<HotmailBrowserOpenResult>
+  openHotmailBatch: (payload: HotmailOpenBatchPayload) => Promise<HotmailOpenBatchResult>
+  retileHotmailWindows: () => Promise<BrowserRetileResult>
   updateHotmailRecovery: (payload: HotmailRecoveryActionPayload) => Promise<HotmailRecoveryBatchResult>
   updateHotmailPassword: (payload: HotmailPasswordActionPayload) => Promise<HotmailPasswordBatchResult>
   runHotmailCombo: (payload: HotmailComboActionPayload) => Promise<HotmailComboBatchResult>
   getHotmailProxyStatus: () => Promise<HotmailProxyStatus>
   rotateHotmailProxy: () => Promise<HotmailProxyStatus>
   testHotmailProxy: () => Promise<HotmailProxyTestResult>
+  testHotmailProxyEntry: (payload: HotmailProxyEntryPayload) => Promise<HotmailProxyTestResult>
+  removeHotmailProxyEntry: (payload: HotmailProxyEntryPayload) => Promise<HotmailProxyStatus>
+  replaceHotmailProxyEntry: (payload: HotmailProxyReplacePayload) => Promise<HotmailProxyStatus>
   listPageTabs: () => Promise<PageTabSummary[]>
   getPageTab: (payload: PageTabIdPayload) => Promise<PageTabConfig | null>
   createPageTab: (input: CreatePageTabInput) => Promise<PageTabConfig>
@@ -199,6 +221,9 @@ export interface PageAutoIpcContract {
   schedulePageWall: (payload: PageWallSchedulePayload) => Promise<PageWallJobRecord>
   listPageWallJobs: () => Promise<PageWallJobRecord[]>
   cancelPageWallJob: (payload: PageWallJobIdPayload) => Promise<PageWallJobRecord>
+  getPageWallRecurringPlan: (payload: PageWallRecurringPagePayload) => Promise<PageWallRecurringPlanRecord | null>
+  savePageWallRecurringPlan: (payload: SavePageWallRecurringPlanInput) => Promise<PageWallRecurringPlanRecord>
+  clearPageWallRecurringPlan: (payload: PageWallRecurringPagePayload) => Promise<boolean>
   getLatestRunForPageTab: (payload: CreateRunPayload) => Promise<RunDetails | null>
   createRun: (payload: CreateRunPayload) => Promise<RunDetails>
   pauseRun: (payload: RunIdPayload) => Promise<RunDetails>

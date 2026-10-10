@@ -69,6 +69,7 @@ export type ActionConfigValidation =
 
 const BOTH_ACTORS = ['profile', 'page'] as const
 const PROFILE_ONLY = ['profile'] as const
+const PAGE_ONLY = ['page'] as const
 const EMPTY_SCHEMA: ActionConfigSchema = { version: 1, fields: [] }
 const VIEW_SCHEMA: ActionConfigSchema = {
   version: 1,
@@ -94,6 +95,10 @@ const VIEW_LINK_SCHEMA: ActionConfigSchema = {
   version: 1,
   fields: [{ key: 'url', label: 'Đường dẫn', kind: 'text', required: true, maxLength: 2000, placeholder: 'https://...' }]
 }
+const PROFILE_BIO_SCHEMA: ActionConfigSchema = {
+  version: 1,
+  fields: [{ key: 'bio', label: 'Tiểu sử', kind: 'text', required: true, placeholder: 'Nhập tiểu sử...' }]
+}
 
 function action(
   id: string,
@@ -105,6 +110,7 @@ function action(
     configSchema?: ActionConfigSchema
     requiresNavigation?: boolean
     supportsMedia?: boolean
+    runtimeStatus?: ActionRuntimeStatus
   } = {}
 ): ActionDefinition {
   return {
@@ -112,7 +118,7 @@ function action(
     category,
     label,
     description,
-    runtimeStatus: 'placeholder',
+    runtimeStatus: options.runtimeStatus ?? 'placeholder',
     capabilities: {
       actors: options.actors ?? BOTH_ACTORS,
       requiresNavigation: options.requiresNavigation ?? true,
@@ -138,6 +144,10 @@ export const ACTION_REGISTRY: readonly ActionDefinition[] = [
   action('facebook_search', 'interaction', 'Tìm kiếm', 'Tìm kiếm nội dung theo từ khóa.', { configSchema: SEARCH_SCHEMA }),
   action('like_comment_seeding', 'interaction', 'Like Comment Seeding', 'Tương tác like/comment theo cấu hình seeding.'),
   action('keyword_interaction', 'interaction', 'Tương tác theo từ khóa', 'Tìm và tương tác theo từ khóa.', { configSchema: SEARCH_SCHEMA }),
+  action('react_comment', 'interaction', 'Thả cảm xúc comment', 'Thả Like/cảm xúc vào comment phù hợp.'),
+  action('reply_comment', 'interaction', 'Trả lời comment', 'Trả lời một comment phù hợp.', { supportsMedia: true }),
+  action('comment_tag', 'interaction', 'Comment tag', 'Đăng comment có tag/mention target phù hợp.'),
+  action('target_uid_interaction', 'interaction', 'Tương tác theo UID', 'Tương tác theo danh sách UID/URL cụ thể.', { supportsMedia: true }),
 
   action('friend_interaction', 'friends', 'Tương tác bạn bè', 'Tương tác với danh sách bạn bè.', { actors: PROFILE_ONLY }),
   action('poke_friend', 'friends', 'Chọc bạn bè', 'Chọc bạn bè.', { actors: PROFILE_ONLY }),
@@ -164,6 +174,12 @@ export const ACTION_REGISTRY: readonly ActionDefinition[] = [
   action('copy_tiktok_douyin', 'publishing', 'Copy bài từ Tiktok/Douyin', 'Lấy nội dung từ Tiktok/Douyin để chuẩn bị đăng.', { supportsMedia: true }),
   action('copy_shopee', 'publishing', 'Copy bài từ Shopee', 'Lấy nội dung từ Shopee để chuẩn bị đăng.', { supportsMedia: true }),
 
+  action('profile.bio', 'profile', 'Đổi tiểu sử', 'Cập nhật Bio của Profile và chỉ báo thành công sau khi đọc lại đúng giá trị.', {
+    actors: PROFILE_ONLY,
+    configSchema: PROFILE_BIO_SCHEMA,
+    runtimeStatus: 'ready'
+  }),
+
   action('send_message', 'other', 'Gửi tin nhắn', 'Gửi tin nhắn Facebook.'),
   action('delete_post_comment', 'other', 'Xóa bài viết & comment', 'Xóa bài viết hoặc bình luận theo cấu hình.'),
   action('backup_photo', 'other', 'Backup photo', 'Sao lưu ảnh theo cấu hình.', { supportsMedia: true }),
@@ -171,7 +187,8 @@ export const ACTION_REGISTRY: readonly ActionDefinition[] = [
   action('view_link', 'other', 'View Link', 'Mở và xem một đường dẫn.', { configSchema: VIEW_LINK_SCHEMA }),
   action('block_uid', 'other', 'Block Uid', 'Chặn UID theo cấu hình.'),
   action('spam_appeal', 'other', 'Kháng spam', 'Mở luồng kháng spam khi phù hợp.'),
-  action('xlike_cross_interaction', 'other', 'XLike - Tương tác chéo', 'Tương tác chéo theo cấu hình XLike.')
+  action('xlike_cross_interaction', 'other', 'XLike - Tương tác chéo', 'Tương tác chéo theo cấu hình XLike.'),
+  action('switch_page', 'other', 'Switch Page', 'Chuyển sang Page UID của actor bằng Facebook Common Runtime.', { actors: PAGE_ONLY, requiresNavigation: false })
 ] as const
 
 const ACTION_BY_ID = new Map(ACTION_REGISTRY.map((definition) => [definition.id, definition] as const))

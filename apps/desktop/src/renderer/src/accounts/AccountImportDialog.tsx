@@ -9,27 +9,36 @@ import {
   type ImportPreset
 } from '../../../shared/accounts'
 import type { AccountGroupRecord } from '../../../shared/accountGroups'
+import { formatImportPreviewCell } from './accountImportPreview'
 import {
-  DEFAULT_CUSTOM_MAPPING,
   MIN_CUSTOM_MAPPING_COLUMNS,
   PREVIEW_LIMIT,
   importFieldLabels,
   normalizeCustomMapping,
   type PreviewRow
 } from './accountManagerModel'
+import {
+  loadAccountImportLastUsedState,
+  saveAccountImportLastUsedState
+} from './accountImportLastUsedState'
+
+import { confirmWorkspaceNavigation, useUnsavedWorkspaceChanges } from '../workspaceNavigation'
 
 export interface ImportDialogProps {
   operation: AccountImportOperation
   presets: ImportPreset[]
+  initialGroupName?: string
   onClose: () => void
   onImported: (result: AccountImportResult, operation: AccountImportOperation) => void
   onPresetSaved: (preset: ImportPreset) => void
 }
 
-export function ImportDialog({ operation, presets, onClose, onImported, onPresetSaved }: ImportDialogProps) {
+export function ImportDialog({ operation, presets, initialGroupName, onClose, onImported, onPresetSaved }: ImportDialogProps) {
   const [rawText, setRawText] = useState('')
-  const [delimiter, setDelimiter] = useState('|')
-  const [mapping, setMapping] = useState<AccountImportMapping>(() => [...DEFAULT_CUSTOM_MAPPING])
+  useUnsavedWorkspaceChanges(rawText.trim().length > 0, 'Nhập tài khoản')
+  const closeImport = () => { if (!rawText.trim() || confirmWorkspaceNavigation()) onClose() }
+  const [delimiter, setDelimiter] = useState(() => loadAccountImportLastUsedState(operation).delimiter)
+  const [mapping, setMapping] = useState<AccountImportMapping>(() => loadAccountImportLastUsedState(operation).mapping)
   const [groups, setGroups] = useState<AccountGroupRecord[]>([])
   const [selectedGroupId, setSelectedGroupId] = useState('')
   const [presetName, setPresetName] = useState('')
@@ -49,11 +58,20 @@ export function ImportDialog({ operation, presets, onClose, onImported, onPreset
   }, [maxDataColumns])
 
   useEffect(() => {
+    saveAccountImportLastUsedState(operation, { delimiter, mapping })
+  }, [operation, delimiter, mapping])
+
+  useEffect(() => {
     if (operation !== 'insert') return
     let active = true
     void window.pageAuto.getAccountGroupOverview()
       .then((overview) => {
-        if (active) setGroups(overview.groups)
+        if (!active) return
+        setGroups(overview.groups)
+        if (initialGroupName) {
+          const initialGroup = overview.groups.find((group) => group.name === initialGroupName)
+          setSelectedGroupId(initialGroup ? String(initialGroup.id) : '')
+        }
       })
       .catch(() => {
         if (active) setGroups([])
@@ -61,7 +79,7 @@ export function ImportDialog({ operation, presets, onClose, onImported, onPreset
     return () => {
       active = false
     }
-  }, [operation])
+  }, [operation, initialGroupName])
 
   const applyPreset = (nextDelimiter: string, nextMapping: AccountImportMapping) => {
     setDelimiter(nextDelimiter)
@@ -124,20 +142,21 @@ export function ImportDialog({ operation, presets, onClose, onImported, onPreset
   }
 
   return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+    <div className="modal-backdrop" role="presentation" onMouseDown={closeImport}>
       <div className="modal import-modal account-import-v2" onMouseDown={(event) => event.stopPropagation()}>
         <div className="modal-header">
           <div>
             <p className="eyebrow">Quản lý tài khoản</p>
             <h2>{operation === 'insert' ? 'Nhập tài khoản' : 'Cập nhật tài khoản theo UID'}</h2>
           </div>
-          <button className="icon-button" type="button" onClick={onClose}>×</button>
+          <button className="icon-button" type="button" onClick={closeImport}>×</button>
         </div>
 
         <div className="import-operation-note">
           {operation === 'insert'
-            ? 'UID đã tồn tại sẽ được bỏ qua. Dấu phân cách giữ nguyên vị trí cột trống.'
-            : 'UID là khóa tìm tài khoản. Bỏ qua = giữ dữ liệu cũ; ô có cột nhưng để trống = xóa dữ liệu cũ; cột không tồn tại trong dòng = giữ nguyên.'}
+            ? 'UID đã tồn tại sẽ không tạo trùng. Nếu chọn Nhóm, tài khoản mới và UID đã có đều được gán/chuyển vào Nhóm đó.'
+            : 'Cập nhật theo UID: Bỏ qua = giữ nguyên; trường đã chọn có ô trống = xóa giá trị; trường không có cột trong dòng = giữ nguyên.'}
+          <span className="import-privacy-note"> Mật khẩu, Cookie, 2FA và proxy chứa mật khẩu được che trong bảng xem trước; dữ liệu dán vẫn được gửi nguyên văn khi xác nhận.</span>
         </div>
 
         <div className="import-toolbar-row">
@@ -204,8 +223,8 @@ export function ImportDialog({ operation, presets, onClose, onImported, onPreset
                         const exists = index < row.values.length
                         const value = exists ? (row.values[index] ?? '').trim() : ''
                         return (
-                          <td key={index} className={!exists ? 'preview-cell-missing' : value === '' ? 'preview-cell-empty' : ''} title={value || undefined}>
-                            {!exists ? '[Không có cột]' : value === '' ? '[Trống]' : value}
+                          <td key={index} className={!exists ? 'preview-cell-missing' : value === '' ? 'preview-cell-empty' : ''} title={formatImportPreviewCell(mapping[index] ?? 'ignore', value, exists)}>
+                            {formatImportPreviewCell(mapping[index] ?? 'ignore', value, exists)}
                           </td>
                         )
                       })}
@@ -226,7 +245,7 @@ export function ImportDialog({ operation, presets, onClose, onImported, onPreset
 
         {error ? <div className="inline-error">{error}</div> : null}
         <div className="modal-actions">
-          <button className="button secondary" type="button" onClick={onClose}>Hủy</button>
+          <button className="button secondary" type="button" onClick={closeImport}>Hủy</button>
           <button className="button primary" type="button" disabled={saving || !rawText.trim()} onClick={() => void importNow()}>
             {saving ? 'Đang xử lý…' : operation === 'insert' ? 'Nhập tài khoản' : 'Cập nhật tài khoản'}
           </button>

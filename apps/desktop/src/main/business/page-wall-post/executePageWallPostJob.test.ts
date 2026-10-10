@@ -132,6 +132,7 @@ describe('executePageWallPostJob', () => {
       sessionValidation: {
         phase: 'before_run',
         state: 'verification_required',
+        accountStatus: 'checkpoint_unknown',
         message: 'checkpoint'
       }
     })

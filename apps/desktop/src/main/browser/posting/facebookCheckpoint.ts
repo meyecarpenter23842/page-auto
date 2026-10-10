@@ -1,4 +1,6 @@
 import type { Page } from 'playwright-core'
+import type { AccountStatus } from '../../../shared/accounts'
+import { accountStatusFromFacebookChallenge } from '../../../shared/facebookAccountState'
 import type { FacebookCommonChallengeType } from '../../../shared/facebookCheckpoint'
 import type { PostingCheckpointKind } from '../../../shared/posting'
 
@@ -96,7 +98,8 @@ export function classifyFacebookCommonChallengeSignals(
   const url = signals.url.toLowerCase()
   const text = signals.bodyText
 
-  if (restrictionKind) return { type: 'security_review_required', checkpointKind: restrictionKind }
+  if (restrictionKind === 'disabled') return { type: 'account_disabled', checkpointKind: restrictionKind }
+  if (restrictionKind === '956_purple_lock') return { type: 'account_locked', checkpointKind: restrictionKind }
 
   if (signals.codeInputVisible && EMAIL_PROMPT.test(text)) {
     return { type: 'email_code_challenge', ...(checkpointKind ? { checkpointKind } : {}) }
@@ -140,6 +143,11 @@ export async function inspectFacebookCommonChallenge(page: Page): Promise<Facebo
     passwordInputVisible,
     loginControlVisible
   })
+}
+
+export async function detectFacebookAccountStatus(page: Page): Promise<AccountStatus> {
+  const classification = await inspectFacebookCommonChallenge(page)
+  return accountStatusFromFacebookChallenge(classification.type, classification.checkpointKind)
 }
 
 async function inspectCheckpointKind(page: Page): Promise<PostingCheckpointKind | null> {

@@ -4,17 +4,43 @@ import { join } from 'node:path'
 import { chromium, type Browser, type BrowserContext, type Locator, type Page } from 'playwright-core'
 import type { HotmailNeedsAttentionReason, HotmailRecoveryOperation } from '../../shared/hotmail'
 import { friendlyEmailBrowserError, isEmailProfileInUseError } from './emailBrowserLifecycle'
+import { emailBrowserLaunchPolicy } from './emailSecurityBrowserLaunchPolicy'
+import { emailCredentialValueMatches, traceEmailCredential } from './emailCredentialBinding'
 import {
   classifyMicrosoftLoginSurface,
   microsoftAccountPickerEntryMatchesCanonicalEmail,
+  shouldResumeMicrosoftAuthSurface,
   type MicrosoftLoginSnapshot
 } from './emailLoginPolicy'
+import { EmailPageRegistry } from './emailPageRegistry'
 import {
   adoptNewestMicrosoftFlowPage,
   closeMicrosoftOwnedOpenerChain,
   microsoftRouteLogLabel,
   waitForMicrosoftOwnedPage
 } from './emailMicrosoftPageOwnership'
+import { isMicrosoftRecoverySurface } from './microsoftRecoveryChallenge'
+import { runMicrosoftAuthV2WorkerController } from './microsoftAuthV2WorkerController'
+import {
+  isMicrosoftFidoCreateUrl,
+  isMicrosoftPasswordChangeUrl,
+  isMicrosoftSignInManagementUrl
+} from './microsoftAccountSecurityNavigation'
+import {
+  findExistingMicrosoftSecurityAuthPage,
+  isMicrosoftAccountHubUrl,
+  isMicrosoftSecurityAuthResumeUrl,
+  openMicrosoftAccountHome
+} from './microsoftSecurityActionEntry'
+import {
+  navigateToChangePasswordFromSecurity,
+  navigateToManageHowISignIn
+} from './microsoftSecurityNavigator'
+import {
+  microsoftRecoveryMailboxEvidence,
+  runAddMicrosoftRecoveryEmail,
+  runRemoveMicrosoftRecoveryEmail
+} from './microsoftRecoveryEmailAction'
 
 interface ProxyConfig {
   server: string
@@ -29,6 +55,7 @@ interface BrowserCommandBase {
   proxy?: ProxyConfig
   loginEmail?: string
   loginPassword?: string
+  backupEmail?: string
 }
 
 interface OpenCommand extends BrowserCommandBase {
@@ -38,6 +65,7 @@ interface OpenCommand extends BrowserCommandBase {
 interface RecoveryCommand extends BrowserCommandBase {
   type: 'recovery-action'
   operation: HotmailRecoveryOperation
+  recoveryEmail?: string
   confirmCompleted: boolean
 }
 
@@ -109,6 +137,8 @@ function parseCommand(event: unknown): WorkerCommand | null {
   if (typeof candidate.accountId !== 'number' || typeof candidate.profileDirectory !== 'string') return null
   if (candidate.loginEmail !== undefined && typeof candidate.loginEmail !== 'string') return null
   if (candidate.loginPassword !== undefined && typeof candidate.loginPassword !== 'string') return null
+  if (candidate.backupEmail !== undefined && typeof candidate.backupEmail !== 'string') return null
+  if ('recoveryEmail' in candidate && candidate.recoveryEmail !== undefined && typeof candidate.recoveryEmail !== 'string') return null
   if (candidate.type === 'open-mail') return candidate as OpenCommand
   if (candidate.type === 'recovery-action' && (candidate.operation === 'add' || candidate.operation === 'remove' || candidate.operation === 'replace')) {
     return candidate as RecoveryCommand
@@ -182,7 +212,7 @@ function isExpectedMicrosoftNavigationInterruption(error: unknown, currentUrl: s
 }
 
 async function openOutlook(context: BrowserContext): Promise<Page> {
-  const page = context.pages()[0] ?? await context.newPage()
+  const page = await new EmailPageRegistry(context).resolveOrCreate('outlook_mail')
   try {
     await page.goto('https://outlook.live.com/mail/0/', {
       waitUntil: 'domcontentloaded',
@@ -196,12 +226,19 @@ async function openOutlook(context: BrowserContext): Promise<Page> {
   return page
 }
 
-async function launchProfile(command: BrowserCommandBase): Promise<BrowserContext> {
+async function launchProfile(command: WorkerCommand): Promise<BrowserContext> {
   if (!command.executablePath?.trim()) throw new Error('Browser executable not found')
+  const launchPolicy = emailBrowserLaunchPolicy(command.type)
+  if (command.type !== 'open-mail') {
+    console.info(
+      `[PAGE-AUTO email security] launch-contract=${launchPolicy.ignoreDefaultArgs.join(',') || 'default'} action=${command.type}`
+    )
+  }
   return await chromium.launchPersistentContext(command.profileDirectory, {
     headless: false,
     viewport: null,
     executablePath: command.executablePath,
+    ...(launchPolicy.ignoreDefaultArgs.length > 0 ? { ignoreDefaultArgs: launchPolicy.ignoreDefaultArgs } : {}),
     ...(command.proxy ? { proxy: command.proxy } : {})
   })
 }
@@ -251,6 +288,22 @@ async function readMicrosoftLoginSnapshot(page: Page): Promise<MicrosoftLoginSna
   } catch {
     return null
   }
+}
+
+async function findResumableMicrosoftAuthPage(context: BrowserContext): Promise<Page | null> {
+  const pages = [...context.pages()].reverse()
+  for (const candidate of pages) {
+    if (candidate.isClosed() || !isMicrosoftOwnedNavigationUrl(candidate.url())) continue
+    const snapshot = await readMicrosoftLoginSnapshot(candidate)
+    if (!snapshot) continue
+    const surface = classifyMicrosoftLoginSurface(snapshot)
+    if (!shouldResumeMicrosoftAuthSurface(surface)) continue
+    console.info(
+      `[PAGE-AUTO email auth] resume-existing route=${microsoftRouteLogLabel(snapshot.url)} state=${surface} pages=${context.pages().length}`
+    )
+    return candidate
+  }
+  return null
 }
 
 async function waitForMicrosoftStep(page: Page): Promise<void> {
@@ -446,193 +499,21 @@ async function autoLoginMicrosoft(
   command: BrowserCommandBase,
   allowPasswordChangeSurface = false
 ): Promise<MicrosoftLoginAttempt> {
-  const pagesAtFlowStart = new Set(page.context().pages())
-  let attempted = false
-  let unreadableSteps = 0
-  let usernameSubmitAttempts = 0
-  for (let step = 0; step < 16; step += 1) {
-    const previousPage = page
-    const previousRoute = microsoftRouteLogLabel(previousPage.url())
-    page = await adoptNewestMicrosoftFlowPage(page, pagesAtFlowStart)
-    if (page !== previousPage) {
-      console.info(
-        `[PAGE-AUTO email auth] adopt-page ${previousRoute} -> ${microsoftRouteLogLabel(page.url())}; pages=${page.context().pages().length}`
-      )
-    }
+  const result = await runMicrosoftAuthV2WorkerController(page, command, {
+    allowPasswordChangeSurface
+  })
 
-    const snapshot = await readMicrosoftLoginSnapshot(page)
-    if (!snapshot) {
-      unreadableSteps += 1
-      if (unreadableSteps < 3) {
-        await waitForMicrosoftStep(page)
-        continue
-      }
-      await closeMicrosoftOwnedOpenerChain(page)
-      return loginNeedsAttention(
-        'security_review',
-        attempted,
-        'Không đọc được trạng thái đăng nhập Microsoft sau nhiều lần chờ; PAGE-AUTO dừng an toàn và giữ nguyên profile Email.'
-      )
+  if (result.status === 'authenticated' || result.status === 'target_ready') {
+    return {
+      status: 'authenticated',
+      attempted: result.attempted
     }
-    unreadableSteps = 0
-
-    const surface = classifyMicrosoftLoginSurface(snapshot)
-    console.info(
-      `[PAGE-AUTO email auth] step=${step} route=${microsoftRouteLogLabel(snapshot.url)} state=${surface} pages=${page.context().pages().length}`
-    )
-
-    if (surface === 'authenticated') {
-      await closeMicrosoftOwnedOpenerChain(page)
-      return { status: 'authenticated', attempted }
-    }
-    if (surface === 'password_change') {
-      if (allowPasswordChangeSurface) return { status: 'authenticated', attempted }
-      await closeMicrosoftOwnedOpenerChain(page)
-      return loginNeedsAttention(
-        'needs_login',
-        attempted,
-        'Microsoft yêu cầu đổi Password trước khi tiếp tục. PAGE-AUTO không tự xử lý bước đổi Password ngoài action Password được chọn.'
-      )
-    }
-    if (surface === 'identity_review') {
-      await closeMicrosoftOwnedOpenerChain(page)
-      return loginNeedsAttention('identity_review', attempted)
-    }
-    if (surface === 'security_review') {
-      await closeMicrosoftOwnedOpenerChain(page)
-      return loginNeedsAttention('security_review', attempted)
-    }
-    if (surface === 'credential_error') {
-      await closeMicrosoftOwnedOpenerChain(page)
-      return loginNeedsAttention(
-        'needs_login',
-        attempted,
-        'Microsoft không chấp nhận Email/PassEmail canonical hiện tại. PAGE-AUTO không thử credential khác và giữ phiên để xử lý thủ công.'
-      )
-    }
-
-    if (surface === 'outlook_landing') {
-      const nextPage = await continueFromOutlookLanding(page)
-      if (!nextPage) {
-        await waitForMicrosoftStep(page)
-        continue
-      }
-      page = nextPage
-      attempted = true
-      continue
-    }
-
-    if (surface === 'outlook_transition' || surface === 'login_transition') {
-      await waitForMicrosoftStep(page)
-      continue
-    }
-
-    if (surface === 'oauth_authorize' || surface === 'account_picker') {
-      if (!await continueFromMicrosoftOAuthAuthorize(page, command.loginEmail?.trim() ?? '')) {
-        await waitForMicrosoftStep(page)
-        continue
-      }
-      attempted = true
-      continue
-    }
-
-    if (surface === 'password_method_choice') {
-      if (!await clickUseYourPassword(page)) {
-        await waitForMicrosoftStep(page)
-        continue
-      }
-      attempted = true
-      continue
-    }
-
-    if (surface === 'stay_signed_in') {
-      if (!await clickStaySignedIn(page)) {
-        await waitForMicrosoftStep(page)
-        continue
-      }
-      attempted = true
-      continue
-    }
-
-    const loginEmail = command.loginEmail?.trim() ?? ''
-    const loginPassword = command.loginPassword ?? ''
-    if (!loginEmail || !loginPassword) {
-      await closeMicrosoftOwnedOpenerChain(page)
-      return loginNeedsAttention(
-        'needs_login',
-        attempted,
-        'Account thiếu Email hoặc PassEmail canonical để auto login Microsoft. PAGE-AUTO giữ profile mở để đăng nhập thủ công.'
-      )
-    }
-
-    if (surface === 'username') {
-      if (usernameSubmitAttempts >= 2) {
-        await closeMicrosoftOwnedOpenerChain(page)
-        return loginNeedsAttention(
-          'needs_login',
-          attempted,
-          'Microsoft vẫn từ chối Email canonical sau khi PAGE-AUTO đã xác nhận field chứa đúng giá trị và thử lại có giới hạn. PAGE-AUTO giữ phiên để kiểm tra dữ liệu Email.'
-        )
-      }
-      const username = await firstVisible([
-        page.locator('input[name="loginfmt"]:visible').first(),
-        page.locator('input[autocomplete="username"]:visible').first()
-      ])
-      if (!username) {
-        await waitForMicrosoftStep(page)
-        continue
-      }
-      await username.fill(loginEmail)
-      const filledEmail = (await username.inputValue().catch(() => '')).trim()
-      if (filledEmail !== loginEmail) {
-        await closeMicrosoftOwnedOpenerChain(page)
-        return loginNeedsAttention(
-          'needs_login',
-          attempted,
-          'PAGE-AUTO không xác nhận được field Microsoft đã nhận đúng Email canonical nên không bấm Next.'
-        )
-      }
-      usernameSubmitAttempts += 1
-      if (!await clickMicrosoftLoginSubmit(page)) {
-        await waitForMicrosoftStep(page)
-        continue
-      }
-      attempted = true
-      continue
-    }
-
-    if (surface === 'password') {
-      const password = await firstVisible([
-        page.locator('input[name="passwd"][type="password"]:visible').first(),
-        page.locator('input[type="password"]:visible').first(),
-        page.getByLabel(/password|mật khẩu/i).first()
-      ])
-      if (!password) {
-        await waitForMicrosoftStep(page)
-        continue
-      }
-      await password.fill(loginPassword)
-      if (!await clickMicrosoftLoginSubmit(page)) {
-        await waitForMicrosoftStep(page)
-        continue
-      }
-      attempted = true
-      continue
-    }
-
-    await closeMicrosoftOwnedOpenerChain(page)
-    return loginNeedsAttention(
-      'needs_login',
-      attempted,
-      'Microsoft đang dùng một bước đăng nhập khác flow Email + PassEmail được hỗ trợ. PAGE-AUTO dừng để xử lý thủ công.'
-    )
   }
 
-  await closeMicrosoftOwnedOpenerChain(page)
   return loginNeedsAttention(
-    'needs_login',
-    attempted,
-    'Auto login Microsoft chưa đi tới trạng thái xác nhận an toàn sau các bước được hỗ trợ. PAGE-AUTO không tiếp tục tự động.'
+    result.reason ?? 'needs_login',
+    result.attempted,
+    result.message
   )
 }
 
@@ -641,17 +522,63 @@ async function prepareAuthenticatedPage(
   command: BrowserCommandBase,
   openTarget: (context: BrowserContext) => Promise<Page>,
   allowPasswordChangeSurface = false,
-  reopenTargetAfterLogin = true
+  reopenTargetAfterLogin = true,
+  resumeMode: 'all' | 'security_action' = 'all'
 ): Promise<PreparedMicrosoftPage> {
+  let autoLoginAttempted = false
+
+  // A persisted Email profile can be left halfway through Microsoft auth/recovery.
+  // Resume that exact live state before any fresh target navigation; otherwise a
+  // goto would destroy the proof/code surface and force the flow back to step one.
+  const resumablePage = resumeMode === 'security_action'
+    ? findExistingMicrosoftSecurityAuthPage(context)
+    : await findResumableMicrosoftAuthPage(context)
+  if (resumablePage) {
+    await resumablePage.bringToFront().catch(() => undefined)
+    const resumed = await autoLoginMicrosoft(resumablePage, command, allowPasswordChangeSurface)
+    autoLoginAttempted = autoLoginAttempted || resumed.attempted
+    if (resumed.status === 'needs_attention') {
+      return { status: 'needs_attention', reason: resumed.reason!, message: resumed.message! }
+    }
+  }
+
   let page = await openTarget(context)
+
+  // Security actions use account.microsoft.com itself as the session gate.
+  // If the profile can remain on the account hub, the Microsoft session is alive;
+  // do not launch a second Outlook/OAuth login flow.
+  if (resumeMode === 'security_action' && isMicrosoftAccountHubUrl(page.url())) {
+    return { status: 'ready', page, autoLoginAttempted }
+  }
+
+  if (resumeMode === 'security_action' && !isMicrosoftSecurityAuthResumeUrl(page.url())) {
+    return {
+      status: 'needs_attention',
+      reason: 'needs_login',
+      message: 'Microsoft Account không giữ được session hub và cũng không chuyển sang flow login đã hỗ trợ.'
+    }
+  }
+
   let login = await autoLoginMicrosoft(page, command, allowPasswordChangeSurface)
+  autoLoginAttempted = autoLoginAttempted || login.attempted
   if (login.status === 'needs_attention') {
     return { status: 'needs_attention', reason: login.reason!, message: login.message! }
   }
 
-  let autoLoginAttempted = login.attempted
-  if (login.attempted && reopenTargetAfterLogin) {
+  if (reopenTargetAfterLogin) {
     page = await openTarget(context)
+    if (resumeMode === 'security_action' && isMicrosoftAccountHubUrl(page.url())) {
+      return { status: 'ready', page, autoLoginAttempted }
+    }
+
+    if (resumeMode === 'security_action' && !isMicrosoftSecurityAuthResumeUrl(page.url())) {
+      return {
+        status: 'needs_attention',
+        reason: 'needs_login',
+        message: 'Đã login Microsoft nhưng không quay lại được account.microsoft.com.'
+      }
+    }
+
     login = await autoLoginMicrosoft(page, command, allowPasswordChangeSurface)
     autoLoginAttempted = autoLoginAttempted || login.attempted
     if (login.status === 'needs_attention') {
@@ -667,7 +594,7 @@ async function detectAttention(page: Page): Promise<HotmailNeedsAttentionReason 
   if (!snapshot) return 'security_review'
   const surface = classifyMicrosoftLoginSurface(snapshot)
   if (surface === 'identity_review') return 'identity_review'
-  if (surface === 'security_review') return 'security_review'
+  if (surface === 'security_review' || isMicrosoftRecoverySurface(surface)) return 'security_review'
   if (surface === 'username' || surface === 'password_method_choice' || surface === 'password' || surface === 'password_change' || surface === 'credential_error' || surface === 'manual_login' || surface === 'stay_signed_in' || surface === 'outlook_landing' || surface === 'outlook_transition' || surface === 'login_transition' || surface === 'oauth_authorize' || surface === 'account_picker') {
     return 'needs_login'
   }
@@ -680,22 +607,16 @@ function recoveryInstruction(operation: HotmailRecoveryOperation): string {
   return 'thay Email khôi phục'
 }
 
-async function openRecoverySecurityPage(context: BrowserContext): Promise<Page> {
-  const page = context.pages()[0] ?? await context.newPage()
-  await page.goto('https://account.live.com/proofs/manage/additional', {
-    waitUntil: 'domcontentloaded',
-    timeout: 30_000
-  })
-  await page.bringToFront().catch(() => undefined)
-  return page
+function isRecoverySecurityTarget(page: Page): boolean {
+  return isMicrosoftSignInManagementUrl(page.url())
 }
 
 async function runRecoveryAction(context: BrowserContext, command: RecoveryCommand, proxyManagedExternally: boolean): Promise<RecoveryResult> {
   let page: Page
   if (command.confirmCompleted) {
-    page = context.pages()[0] ?? await context.newPage()
+    page = await new EmailPageRegistry(context).resolveMicrosoftActionPage(isRecoverySecurityTarget)
   } else {
-    const prepared = await prepareAuthenticatedPage(context, command, openRecoverySecurityPage)
+    const prepared = await prepareAuthenticatedPage(context, command, openMicrosoftAccountHome, false, true, 'security_action')
     if (prepared.status === 'needs_attention') {
       return {
         type: 'recovery-result',
@@ -708,6 +629,64 @@ async function runRecoveryAction(context: BrowserContext, command: RecoveryComma
       }
     }
     page = prepared.page
+
+    for (let attempt = 0; attempt < 3 && !isRecoverySecurityTarget(page); attempt += 1) {
+      const navigated = await navigateToManageHowISignIn(page)
+      if (isRecoverySecurityTarget(page)) break
+
+      if (isMicrosoftFidoCreateUrl(page.url())) {
+        return {
+          type: 'recovery-result',
+          accountId: command.accountId,
+          operation: command.operation,
+          status: 'needs_attention',
+          needsAttentionReason: 'manual_completion_required',
+          proxyManagedExternally,
+          message: 'Microsoft mở flow Passkey/FIDO thay vì Email Security; PAGE-AUTO dừng action.'
+        }
+      }
+
+      if (isMicrosoftSecurityAuthResumeUrl(page.url())) {
+        const login = await autoLoginMicrosoft(page, command)
+        if (login.status === 'needs_attention') {
+          return {
+            type: 'recovery-result',
+            accountId: command.accountId,
+            operation: command.operation,
+            status: 'needs_attention',
+            needsAttentionReason: login.reason!,
+            proxyManagedExternally,
+            message: login.message!
+          }
+        }
+        page = await openMicrosoftAccountHome(context)
+        continue
+      }
+
+      if (!navigated) {
+        return {
+          type: 'recovery-result',
+          accountId: command.accountId,
+          operation: command.operation,
+          status: 'needs_attention',
+          needsAttentionReason: 'manual_completion_required',
+          proxyManagedExternally,
+          message: 'Không tìm thấy đường Account → Security → Manage how I sign in trên Microsoft Account.'
+        }
+      }
+    }
+
+    if (!isRecoverySecurityTarget(page)) {
+      return {
+        type: 'recovery-result',
+        accountId: command.accountId,
+        operation: command.operation,
+        status: 'needs_attention',
+        needsAttentionReason: 'manual_completion_required',
+        proxyManagedExternally,
+        message: 'Đã xác thực Microsoft nhưng chưa vào được Manage how I sign in; PAGE-AUTO không mở route action sâu để đoán.'
+      }
+    }
   }
   await page.bringToFront().catch(() => undefined)
 
@@ -724,6 +703,50 @@ async function runRecoveryAction(context: BrowserContext, command: RecoveryComma
     }
   }
 
+  if (!command.confirmCompleted && command.operation === 'remove') {
+    const result = await runRemoveMicrosoftRecoveryEmail(page, command)
+    return result.status === 'success'
+      ? {
+          type: 'recovery-result',
+          accountId: command.accountId,
+          operation: command.operation,
+          status: 'success',
+          proxyManagedExternally,
+          message: result.message
+        }
+      : {
+          type: 'recovery-result',
+          accountId: command.accountId,
+          operation: command.operation,
+          status: 'needs_attention',
+          needsAttentionReason: 'manual_completion_required',
+          proxyManagedExternally,
+          message: result.message
+        }
+  }
+
+  if (!command.confirmCompleted && command.operation === 'add' && command.recoveryEmail) {
+    const result = await runAddMicrosoftRecoveryEmail(page, command)
+    return result.status === 'success'
+      ? {
+          type: 'recovery-result',
+          accountId: command.accountId,
+          operation: command.operation,
+          status: 'success',
+          proxyManagedExternally,
+          message: result.message
+        }
+      : {
+          type: 'recovery-result',
+          accountId: command.accountId,
+          operation: command.operation,
+          status: 'needs_attention',
+          needsAttentionReason: 'manual_completion_required',
+          proxyManagedExternally,
+          message: result.message
+        }
+  }
+
   if (!command.confirmCompleted) {
     return {
       type: 'recovery-result',
@@ -733,6 +756,31 @@ async function runRecoveryAction(context: BrowserContext, command: RecoveryComma
       needsAttentionReason: 'manual_completion_required',
       proxyManagedExternally,
       message: `${manualReasonMessage('manual_completion_required')} Nghiệp vụ: ${recoveryInstruction(command.operation)}.`
+    }
+  }
+
+  if (command.operation === 'add' && command.recoveryEmail) {
+    const targetMailbox = command.recoveryEmail.trim().toLowerCase()
+    const body = await page.locator('body').innerText({ timeout: 5_000 }).catch(() => '')
+    if (!targetMailbox || !microsoftRecoveryMailboxEvidence(body, targetMailbox, command.backupEmail)) {
+      return {
+        type: 'recovery-result',
+        accountId: command.accountId,
+        operation: command.operation,
+        status: 'needs_attention',
+        needsAttentionReason: 'manual_completion_required',
+        proxyManagedExternally,
+        message: 'Chưa xác minh được Mail KP mới xuất hiện trong Microsoft Security; BackupEmail chưa được cập nhật.'
+      }
+    }
+
+    return {
+      type: 'recovery-result',
+      accountId: command.accountId,
+      operation: command.operation,
+      status: 'success',
+      proxyManagedExternally,
+      message: 'Đã xác minh Mail KP mới tồn tại trong Microsoft Security.'
     }
   }
 
@@ -853,14 +901,8 @@ async function fillPasswordForm(page: Page, command: PasswordCommand): Promise<'
   return 'submitted'
 }
 
-async function openPasswordPage(context: BrowserContext): Promise<Page> {
-  const page = context.pages()[0] ?? await context.newPage()
-  await page.goto('https://account.live.com/password/Change', {
-    waitUntil: 'domcontentloaded',
-    timeout: 30_000
-  })
-  await page.bringToFront().catch(() => undefined)
-  return page
+function isPasswordActionTarget(page: Page): boolean {
+  return isMicrosoftPasswordChangeUrl(page.url())
 }
 
 function passwordNeedsAttention(command: PasswordCommand, reason: HotmailNeedsAttentionReason, proxyManagedExternally: boolean, message?: string): PasswordResult {
@@ -877,13 +919,54 @@ function passwordNeedsAttention(command: PasswordCommand, reason: HotmailNeedsAt
 async function runPasswordAction(context: BrowserContext, command: PasswordCommand, proxyManagedExternally: boolean): Promise<PasswordResult> {
   let page: Page
   if (command.confirmCompleted) {
-    page = context.pages()[0] ?? await context.newPage()
+    page = await new EmailPageRegistry(context).resolveMicrosoftActionPage(isPasswordActionTarget)
   } else {
-    const prepared = await prepareAuthenticatedPage(context, command, openPasswordPage, true)
+    const prepared = await prepareAuthenticatedPage(context, command, openMicrosoftAccountHome, true, true, 'security_action')
     if (prepared.status === 'needs_attention') {
       return passwordNeedsAttention(command, prepared.reason, proxyManagedExternally, prepared.message)
     }
     page = prepared.page
+
+    for (let attempt = 0; attempt < 3 && !isPasswordActionTarget(page); attempt += 1) {
+      const navigated = await navigateToChangePasswordFromSecurity(page)
+      if (isPasswordActionTarget(page)) break
+
+      if (isMicrosoftFidoCreateUrl(page.url())) {
+        return passwordNeedsAttention(
+          command,
+          'manual_completion_required',
+          proxyManagedExternally,
+          'Microsoft mở flow Passkey/FIDO thay vì Password; PAGE-AUTO dừng action.'
+        )
+      }
+
+      if (isMicrosoftSecurityAuthResumeUrl(page.url())) {
+        const login = await autoLoginMicrosoft(page, command, true)
+        if (login.status === 'needs_attention') {
+          return passwordNeedsAttention(command, login.reason!, proxyManagedExternally, login.message!)
+        }
+        page = await openMicrosoftAccountHome(context)
+        continue
+      }
+
+      if (!navigated) {
+        return passwordNeedsAttention(
+          command,
+          'manual_completion_required',
+          proxyManagedExternally,
+          'Không tìm thấy đường Account → Security → Change password trên Microsoft Account.'
+        )
+      }
+    }
+
+    if (!isPasswordActionTarget(page)) {
+      return passwordNeedsAttention(
+        command,
+        'manual_completion_required',
+        proxyManagedExternally,
+        'Đã xác thực Microsoft nhưng chưa vào được Change password; PAGE-AUTO không mở route action sâu để đoán.'
+      )
+    }
   }
   await page.bringToFront().catch(() => undefined)
 
@@ -967,7 +1050,7 @@ async function run(): Promise<void> {
   let attachedExternally = false
   let closing = false
 
-  const resolveContext = async (command: BrowserCommandBase): Promise<{ context: BrowserContext; proxyManagedExternally: boolean } | OpenResult> => {
+  const resolveContext = async (command: WorkerCommand): Promise<{ context: BrowserContext; proxyManagedExternally: boolean } | OpenResult> => {
     if (launchedContext) return { context: launchedContext, proxyManagedExternally: false }
     if (attachedBrowser) {
       const context = attachedBrowser.contexts()[0]

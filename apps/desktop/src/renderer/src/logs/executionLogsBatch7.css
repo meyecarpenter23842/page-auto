@@ -1,0 +1,46 @@
+/* Batch 7: shared control tokens are scoped to Settings and Logs only until screenshot baselines are approved. */
+.execution-logs-shell { --pa-ui-line:#dfe6ef; --pa-ui-surface:#fff; --pa-ui-muted:#667085; --pa-ui-text:#1d2939; --pa-ui-focus:#175cd3; min-height:0; display:flex; flex-direction:column; gap:9px; }
+.execution-logs-toolbar { flex:0 0 auto; padding:10px; border-color:var(--pa-ui-line); border-radius:8px; gap:7px; }
+.execution-logs-toolbar :is(input,select,button) { font:inherit; font-size:11px; min-height:32px; border-radius:5px; }
+.execution-logs-toolbar input[type="datetime-local"] { min-width:175px; }
+.execution-logs-toolbar .log-action-filter { min-width:145px; flex:1 1 145px; }
+.execution-logs-toolbar button:focus-visible, .execution-logs-shell :is(input,select,button):focus-visible { outline:2px solid var(--pa-ui-focus); outline-offset:2px; }
+.execution-logs-shell .execution-log-table-wrap { flex:1 1 auto; min-height:150px; max-height:none; border-radius:7px; border-color:var(--pa-ui-line); }
+.execution-log-table th { padding:8px; background:#edf2f8; }
+.execution-log-table td { padding:7px 8px; }
+.execution-log-table tr:hover td { background:#f8fbff; }
+.execution-log-summary { padding:8px 10px; border-color:var(--pa-ui-line); font-size:11px; }
+.execution-log-summary .log-summary-total { font-variant-numeric:tabular-nums; }
+.execution-log-empty { padding:20px!important; }
+.execution-log-detail-button { min-height:28px; border:1px solid #c7dcff; border-radius:5px; background:#f4f8ff; padding:4px 7px; font-size:11px; color:#1849a9; cursor:pointer; }
+.execution-log-detail-button:hover { background:#e8f2ff; }
+.execution-log-filter-tip { font-size:10px; color:var(--pa-ui-muted); }
+.execution-log-modal-backdrop { position:fixed; inset:0; z-index:1000; display:grid; place-items:center; padding:24px; background:rgba(12,22,40,.48); }
+.execution-log-modal { width:min(820px,96vw); max-height:90vh; display:flex; flex-direction:column; gap:12px; overflow:auto; padding:16px; background:var(--pa-ui-surface); color:var(--pa-ui-text); border:1px solid var(--pa-ui-line); border-radius:9px; box-shadow:0 18px 56px rgba(0,0,0,.18); }
+.execution-log-modal-head { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+.execution-log-modal-head h2 { font-size:17px; margin:0; }
+.execution-log-modal-head small { display:block; font-size:11px; color:var(--pa-ui-muted); margin-top:3px; }
+.execution-log-modal-head button, .execution-log-modal-actions button { min-height:32px; border:1px solid var(--pa-ui-line); border-radius:5px; padding:6px 10px; background:var(--pa-ui-surface); color:inherit; cursor:pointer; }
+.execution-log-modal dl { display:grid; grid-template-columns:130px minmax(0,1fr); gap:6px 10px; margin:0; }
+.execution-log-modal dt { font-size:11px; color:var(--pa-ui-muted); }
+.execution-log-modal dd { margin:0; overflow-wrap:anywhere; font-size:11px; }
+.execution-log-modal pre { max-height:220px; overflow:auto; margin:0; padding:10px; font-size:11px; white-space:pre-wrap; overflow-wrap:anywhere; background:#f6f8fc; border:1px solid var(--pa-ui-line); border-radius:6px; }
+.execution-log-modal-actions { display:flex; justify-content:flex-end; flex-wrap:wrap; gap:8px; }
+.execution-log-modal-empty { font-size:11px; color:var(--pa-ui-muted); }
+html[data-theme='dark'] .execution-logs-shell { --pa-ui-line:var(--pa-dark-border,#444); --pa-ui-surface:var(--pa-dark-surface,#222); --pa-ui-muted:var(--pa-dark-muted,#a1a1aa); --pa-ui-text:var(--pa-dark-text,#ececec); }
+html[data-theme='dark'] .execution-logs-shell :is(.execution-logs-toolbar,.execution-log-table-wrap,.execution-log-summary,.execution-log-modal) { background:var(--pa-ui-surface); color:var(--pa-ui-text); border-color:var(--pa-ui-line); }
+html[data-theme='dark'] .execution-logs-shell .execution-log-table th { background:var(--pa-dark-surface-2,#303030); color:var(--pa-ui-text); }
+html[data-theme='dark'] .execution-logs-shell .execution-log-table tr:hover td, html[data-theme='dark'] .execution-log-modal pre { background:var(--pa-dark-surface-2,#303030); }
+html[data-theme='dark'] .execution-logs-shell :is(input,select,button) { background:var(--pa-dark-surface-2,#292929); color:var(--pa-ui-text); border-color:var(--pa-ui-line); }
+@media (max-width:760px) { .execution-log-modal dl { grid-template-columns:1fr; gap:3px; } .execution-log-modal { padding:10px; } }
+
+.execution-logs-shell .log-time-filter { display:flex; align-items:center; gap:5px; color:var(--pa-ui-muted); font-size:11px; }
+.execution-logs-shell .execution-log-filter-tip { font-size:10px; color:var(--pa-ui-muted); }
+
+/* R4c: Logs detail remains keyboard contained and bounded within short viewports. */
+.execution-log-modal-backdrop { padding: clamp(8px, 2vh, 24px); }
+.execution-log-modal { max-height: calc(100vh - 24px); min-height: 0; overscroll-behavior: contain; }
+.execution-log-modal-head { position: sticky; top: 0; z-index: 1; background: var(--pa-ui-surface); }
+.execution-log-modal :is(button, input, select):focus-visible { outline: 2px solid var(--pa-ui-focus); outline-offset: 2px; }
+.execution-logs-shell .execution-log-table-wrap { overscroll-behavior: contain; scrollbar-gutter: stable; }
+.execution-log-table td { max-width: 320px; overflow-wrap: anywhere; }

@@ -42,6 +42,7 @@ describe('EmailProxyPool', () => {
     if (!first) throw new Error('missing proxy test fixture')
     pool.recordFailure(first)
     expect(pool.cooldownCount()).toBe(1)
+    expect(pool.status().entries[0]).toMatchObject({ proxy: 'http://1.2.3.4:8000', status: 'die' })
     expect(JSON.stringify(pool.status())).not.toContain('secret')
     expect(pool.peek()?.display).toBe('http://5.6.7.8:9000')
 
@@ -49,5 +50,8 @@ describe('EmailProxyPool', () => {
     expect(pool.peek()?.display).toBe('http://1.2.3.4:8000')
     pool.recordSuccess(first)
     expect(pool.cooldownCount()).toBe(0)
+    expect(pool.status().entries[0]).toMatchObject({ proxy: 'http://1.2.3.4:8000', status: 'live', cooldownUntil: null })
+    expect(pool.candidateAt(1)?.display).toBe('http://5.6.7.8:9000')
+    expect(pool.candidateAt(99)).toBeNull()
   })
 })

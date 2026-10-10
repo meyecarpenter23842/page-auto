@@ -16,6 +16,12 @@ export type PostSelectionMode = (typeof POST_SELECTION_MODES)[number]
 export const ACCOUNT_ORDER_MODES = ['sequential', 'random'] as const
 export type AccountOrderMode = (typeof ACCOUNT_ORDER_MODES)[number]
 
+export const GROUP_ORDER_MODES = ['sequential', 'random'] as const
+export type GroupOrderMode = (typeof GROUP_ORDER_MODES)[number]
+
+export const MAX_PAGE_TAB_ACCOUNT_CONCURRENCY = 20
+export const MAX_PAGE_AVATAR_DATA_URL_LENGTH = 220_000
+
 export function parsePostVariantText(value: string): string[] {
   const variants: string[] = []
   let buffer = ''
@@ -59,6 +65,8 @@ export interface PageTabRotationConfig {
   postDelayMaxSeconds: number
   accountDelayMinSeconds: number
   accountDelayMaxSeconds: number
+  /** Legacy snapshots/configs created before Batch 4 default to 1. */
+  accountConcurrency?: number
   /** Backward compatible for snapshots/configs created before account-order support. */
   accountOrderMode?: AccountOrderMode
 }
@@ -156,10 +164,14 @@ export interface SavePageTabPostLibraryInput {
 export interface PageTabSaveInput {
   name: string
   pageUid: string
+  /** Compact Page avatar. `undefined` preserves the current avatar on partial-compatible callers. */
+  avatarDataUrl?: string | null | undefined
   rotation: PageTabRotationConfig
   accounts: PageTabAccountInput[]
   schedules: PageTabScheduleInput[]
   groupUids: string[]
+  /** Backward compatible for configs created before Group-order support. */
+  groupOrderMode?: GroupOrderMode
   /** Legacy compatibility. New UI/runtime uses PageTabPostLibrary. */
   contentMode: ContentMode
   /** Legacy compatibility. New UI/runtime uses PageTabPostLibrary. */
@@ -215,6 +227,7 @@ export const DEFAULT_PAGE_TAB_ROTATION: PageTabRotationConfig = {
   postDelayMaxSeconds: 300,
   accountDelayMinSeconds: 600,
   accountDelayMaxSeconds: 900,
+  accountConcurrency: 1,
   accountOrderMode: 'sequential'
 }
 

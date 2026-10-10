@@ -94,6 +94,16 @@ async function collectPostKeys(root: Page | Locator): Promise<Set<string>> {
   return keys
 }
 
+async function collectPostHrefs(root: Page | Locator): Promise<(string | null)[]> {
+  const links = root.locator(FACEBOOK_POST_LINK_SELECTOR)
+  const count = Math.min(await links.count(), 400)
+  const hrefs: (string | null)[] = []
+  for (let index = 0; index < count; index += 1) {
+    hrefs.push(await links.nth(index).getAttribute('href').catch(() => null))
+  }
+  return hrefs
+}
+
 async function hasExactNonInteractiveText(article: Locator, content: string): Promise<boolean> {
   const normalized = normalizeText(content)
   if (!normalized) return false
@@ -128,6 +138,37 @@ export function isNewFacebookPostHref(rawHref: string | null | undefined, baseli
   if (!baseline.captured) return false
   const key = facebookPostKey(rawHref)
   return Boolean(key && !baseline.postKeys.has(key))
+}
+
+/**
+ * Conservative fallback for Facebook surfaces where the post text wrapper changed:
+ * accept key-only verification only when the reloaded target wall exposes exactly one
+ * unique post key that was not present in the pre-publish baseline.
+ */
+export function singleNewFacebookPostFromHrefs(
+  rawHrefs: readonly (string | null | undefined)[],
+  baseline: PublishBaseline
+): NewPublishedPost | null {
+  if (!baseline.captured) return null
+
+  const candidates = new Map<string, NewPublishedPost>()
+  for (const rawHref of rawHrefs) {
+    if (!rawHref || !isNewFacebookPostHref(rawHref, baseline)) continue
+    const postKey = facebookPostKey(rawHref)
+    const publishedUrl = absoluteFacebookPostUrl(rawHref)
+    if (!postKey || !publishedUrl || candidates.has(postKey)) continue
+    candidates.set(postKey, { postKey, publishedUrl })
+  }
+
+  return candidates.size === 1 ? [...candidates.values()][0] ?? null : null
+}
+
+export async function findSingleNewPublishedPost(
+  page: Page,
+  baseline: PublishBaseline
+): Promise<NewPublishedPost | null> {
+  if (!baseline.captured) return null
+  return singleNewFacebookPostFromHrefs(await collectPostHrefs(page), baseline)
 }
 
 export async function findNewPublishedPost(

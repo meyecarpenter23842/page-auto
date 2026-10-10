@@ -1,6 +1,12 @@
-.page-business-group-pane .pt-identity-panel,
-.page-business-group-pane .pt-business-panel {
+.page-business-group-pane .pt-identity-panel {
   display: none !important;
+}
+
+.page-business-group-pane .pt-business-panel {
+  display: block !important;
+  grid-row: 2;
+  min-height: 0;
+  overflow: auto;
 }
 
 .page-business-group-pane .page-tab-two-column {
@@ -8,11 +14,17 @@
 }
 
 .page-business-group-pane .page-tab-left-pane {
-  grid-template-rows: minmax(210px, 1fr) auto !important;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  overflow: auto;
 }
 
 .page-business-group-pane .page-tab-right-pane {
-  grid-template-rows: minmax(0, 7fr) minmax(0, 3fr) !important;
+  grid-template-rows: auto minmax(150px, 1fr) auto !important;
+  align-content: start;
+  overflow: auto;
 }
 
 .page-business-group-pane .pt-right-summary {
@@ -20,16 +32,15 @@
 }
 
 .page-business-group-pane .pt-compact-config-launchers {
-  position: absolute;
-  z-index: 4;
-  left: calc(50% + 5px);
-  right: 0;
-  top: calc(70% + 4px);
+  position: static;
+  grid-row: 1;
+  z-index: auto;
+  min-width: 0;
   min-height: 0;
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 6px 8px;
+  gap: 12px;
+  padding: 10px;
 }
 
 .pt-compact-config-title {
@@ -78,7 +89,9 @@
   white-space: nowrap;
 }
 
-.pt-compact-config-actions > button:hover {
+.pt-compact-config-actions > button:disabled { opacity: .48; cursor: not-allowed; }
+
+.pt-compact-config-actions > button:not(:disabled):hover {
   color: #175cd3;
   border-color: #8fb3f1;
   background: #f0f6ff;
@@ -119,10 +132,11 @@
 }
 
 .page-business-group-pane .pt-live-preview {
-  grid-row: 1;
-  min-height: 0;
-  height: 100%;
-  align-content: stretch;
+  grid-row: 3;
+  min-height: 120px;
+  max-height: 210px;
+  height: auto;
+  align-content: start;
   grid-template-rows: auto auto minmax(0, 1fr) !important;
 }
 
@@ -359,4 +373,148 @@
   .page-business-group-pane .pt-rotation-grid {
     grid-template-columns: repeat(3, minmax(76px, max-content)) !important;
   }
+}
+
+/* Batch 8: group controls belong to grid flow, never a percent-positioned overlay. */
+.page-business-group-pane .pt-account-panel-tall {
+  flex: 0 1 auto;
+  max-height: min(51vh, 450px);
+  min-height: 155px;
+}
+.page-business-group-pane .pt-account-panel-tall .pt-account-grid-wrap {
+  flex: 0 1 auto;
+  min-height: 70px;
+  max-height: min(40vh, 350px);
+  overflow: auto;
+}
+.page-business-group-pane .pt-rotation-panel { flex: 0 0 auto; }
+.page-business-group-pane .pt-compact-config-actions > button {
+  min-width: 92px;
+  min-height: 36px;
+  height: auto;
+  padding: 7px 10px;
+  font-size: 12px;
+}
+.page-business-group-pane .pt-compact-config-title > span,
+.page-business-group-pane .pt-panel-heading h3 { font-size: 12px; }
+.page-business-group-pane .pt-compact-config-title > small { font-size: 10px; }
+.page-business-group-pane .pt-business-row strong,
+.page-business-group-pane .pt-business-row > button { font-size: 11px; }
+.page-business-group-pane .pt-live-preview > .pt-live-preview-empty {
+  grid-row: 2;
+  align-self: start;
+}
+.page-business-group-pane .pt-live-preview > p {
+  grid-row: 3;
+  min-height: 0;
+  height: auto;
+  max-height: 125px !important;
+}
+.page-business-group-pane .pt-account-panel h3 { font-size: 12px; }
+.page-business-group-pane .pt-account-heading-actions .pt-button,
+.page-business-group-pane .page-tab-header-actions .pt-button,
+.page-business-group-pane .page-tab-runtime-actions .pt-button::after { font-size: 11px; }
+.page-business-group-pane .page-tab-runtime-actions .pt-button { min-height: 32px; }
+.page-business-group-pane .pt-rotation-grid label > span { font-size: 10px; }
+.page-business-group-pane .pt-rotation-grid input[type='number'] { min-height: 30px; font-size: 12px; }
+@media (max-width: 1180px) {
+  .page-business-group-pane .page-tab-two-column {
+    overflow: auto;
+  }
+  .page-business-group-pane .pt-compact-config-launchers {
+    flex-wrap: wrap;
+  }
+  .page-business-group-pane .page-tab-right-pane {
+    min-height: 380px;
+  }
+}
+
+html[data-theme='dark'] .page-business-group-pane .pt-compact-config-launchers {
+  background: #232b35;
+  border-color: #444f5d;
+}
+html[data-theme='dark'] .page-business-group-pane .pt-compact-config-title > span,
+html[data-theme='dark'] .page-business-group-pane .pt-compact-config-actions > button {
+  color: #e5e7eb;
+}
+html[data-theme='dark'] .page-business-group-pane .pt-compact-config-actions > button {
+  background: #303945;
+  border-color: #485566;
+}
+
+/* Issue #521 R3: viewport-safe density; scope all changes to the Group business pane. */
+.page-business-group-pane .page-tab-two-column {
+  min-height: 0;
+  align-items: start;
+}
+.page-business-group-pane .page-tab-left-pane,
+.page-business-group-pane .page-tab-right-pane {
+  min-width: 0;
+  min-height: 0;
+}
+.page-business-group-pane .pt-account-panel-tall {
+  min-height: 0;
+  max-height: min(52vh, 480px);
+}
+.page-business-group-pane .pt-account-panel-tall .pt-account-grid-wrap {
+  min-height: 0;
+  max-height: min(38vh, 360px);
+  overscroll-behavior: contain;
+}
+.page-business-group-pane .pt-account-grid th,
+.page-business-group-pane .pt-account-grid td {
+  font-size: 11px;
+}
+.page-business-group-pane .pt-live-preview.runtime-idle,
+.page-business-group-pane .pt-live-preview.runtime-completed,
+.page-business-group-pane .pt-live-preview.runtime-stopped {
+  min-height: 0;
+  max-height: 116px;
+  align-content: start;
+}
+.page-business-group-pane .pt-live-preview.runtime-running,
+.page-business-group-pane .pt-live-preview.runtime-starting,
+.page-business-group-pane .pt-live-preview.runtime-paused {
+  min-height: 140px;
+  max-height: min(38vh, 340px);
+  overflow: auto;
+}
+.page-business-group-pane .pt-live-runtime-state,
+.page-business-group-pane .pt-live-preview-empty,
+.page-business-group-pane .pt-live-preview > p { font-size: 11px; }
+.page-business-group-pane .page-tab-header-actions,
+.page-business-group-pane .page-tab-runtime-actions {
+  min-width: 0;
+  flex-wrap: wrap;
+  row-gap: 5px;
+}
+.page-business-group-pane .page-tab-header-actions > .pt-button,
+.page-business-group-pane .page-tab-runtime-actions .pt-button {
+  min-height: 32px;
+}
+.page-business-group-pane .pt-status-badge,
+.page-business-group-pane .pt-dirty-badge,
+.page-business-group-pane .pt-saved-badge,
+.page-business-group-pane .page-tab-runtime-state {
+  font-size: 10px !important;
+}
+.page-business-group-pane .page-tab-editor-header p:not(.eyebrow) {
+  font-size: 11px !important;
+}
+.page-business-group-pane .pt-compact-config-launchers {
+  flex-wrap: wrap;
+  align-items: center;
+  row-gap: 8px;
+}
+.page-business-group-pane .pt-compact-config-actions {
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.page-business-group-pane :is(button, input, select):focus-visible {
+  outline: 2px solid #175cd3;
+  outline-offset: 2px;
+}
+@media (max-width: 1180px) {
+  .page-business-group-pane .page-tab-right-pane { min-height: 0; }
+  .page-business-group-pane .page-tab-two-column { overflow: auto; }
 }

@@ -38,6 +38,7 @@ import {
   type ResolvedPostBinding
 } from '../database/canonicalPostRepository'
 import { ContentLibraryRepository } from '../database/contentLibraryRepository'
+import { CanonicalPostHashtagRepository } from '../database/canonicalPostHashtagRepository'
 import { LegacyCanonicalPostBridge } from '../database/legacyCanonicalPostBridge'
 import { PageTabPostRepository } from '../database/pageTabPostRepository'
 import { PageTabRepository } from '../database/pageTabRepository'
@@ -262,7 +263,8 @@ function validateV2(parsed: Record<string, unknown>): ConfigBackupPayload {
   const postKeys = new Set<string>()
   for (const post of parsed.posts) {
     if (!isRecord(post) || typeof post.key !== 'string' || !post.key.trim() || postKeys.has(post.key)
-      || typeof post.name !== 'string' || !Array.isArray(post.variants) || !post.variants.every((item) => typeof item === 'string') || !isImage(post.image)) {
+      || typeof post.name !== 'string' || !Array.isArray(post.variants) || !post.variants.every((item) => typeof item === 'string')
+      || (post.hashtags !== undefined && typeof post.hashtags !== 'string') || !isImage(post.image)) {
       throw new Error('Bài viết canonical trong backup v2 không hợp lệ.')
     }
     postKeys.add(post.key)
@@ -399,26 +401,47 @@ class ExportPostRegistry {
   private readonly indexByKey = new Map<string, number>()
   private ordinal = 0
 
-  constructor(records: readonly CanonicalPostRecord[]) {
+  constructor(records: readonly CanonicalPostRecord[], hashtagByPostId: ReadonlyMap<number, string>) {
     for (const record of records) {
       const key = this.nextKey()
+      const hashtags = hashtagByPostId.get(record.id)?.trim() ?? ''
       this.keyByPostId.set(record.id, key)
       this.indexByKey.set(key, this.posts.length)
-      this.posts.push({ key, name: record.name, variants: [...record.variants], image: { ...record.image } })
+      this.posts.push({
+        key,
+        name: record.name,
+        variants: [...record.variants],
+        ...(hashtags ? { hashtags } : {}),
+        image: { ...record.image }
+      })
     }
   }
 
   addDraft(draft: Omit<ConfigBackupCanonicalPost, 'key'>): string {
     const key = this.nextKey()
     this.indexByKey.set(key, this.posts.length)
-    this.posts.push({ key, name: draft.name, variants: [...draft.variants], image: { ...draft.image } })
+    this.posts.push({
+      key,
+      name: draft.name,
+      variants: [...draft.variants],
+      ...(draft.hashtags?.trim() ? { hashtags: draft.hashtags.trim() } : {}),
+      image: { ...draft.image }
+    })
     return key
   }
 
   replace(key: string, draft: Omit<ConfigBackupCanonicalPost, 'key'>): void {
     const index = this.indexByKey.get(key)
     if (index === undefined) return
-    this.posts[index] = { key, name: draft.name, variants: [...draft.variants], image: { ...draft.image } }
+    const current = this.posts[index]
+    const hashtags = draft.hashtags === undefined ? current?.hashtags : draft.hashtags.trim()
+    this.posts[index] = {
+      key,
+      name: draft.name,
+      variants: [...draft.variants],
+      ...(hashtags ? { hashtags } : {}),
+      image: { ...draft.image }
+    }
   }
 
   requireKey(postId: number): string {
@@ -438,6 +461,7 @@ export class ConfigBackupService {
   private readonly legacyPosts: PageTabPostRepository
   private readonly pageBindings: PageTabPostBindingRepository
   private readonly canonicalPosts: CanonicalPostRepository
+  private readonly postHashtags: CanonicalPostHashtagRepository
   private readonly contentLibrary: ContentLibraryRepository
   private readonly scenarios: ScenarioRepository
   private readonly scenarioBindings: ScenarioActionPostBindingRepository
@@ -449,6 +473,7 @@ export class ConfigBackupService {
     this.legacyPosts = new PageTabPostRepository(client)
     this.pageBindings = new PageTabPostBindingRepository(client)
     this.canonicalPosts = new CanonicalPostRepository(client)
+    this.postHashtags = new CanonicalPostHashtagRepository(client)
     this.contentLibrary = new ContentLibraryRepository(client)
     this.scenarios = new ScenarioRepository(client)
     this.scenarioBindings = new ScenarioActionPostBindingRepository(client)
@@ -459,7 +484,11 @@ export class ConfigBackupService {
     this.legacyBridge.reconcileAllPages()
     this.legacyBridge.syncAllGlobalSets()
 
-    const registry = new ExportPostRegistry(this.canonicalPosts.list().sort((a, b) => a.id - b.id))
+    const canonicalRecords = this.canonicalPosts.list().sort((a, b) => a.id - b.id)
+    const registry = new ExportPostRegistry(
+      canonicalRecords,
+      this.postHashtags.getMany(canonicalRecords.map((post) => post.id))
+    )
     const legacySetCollections = new Map<number, { key: string; bindings: ConfigBackupPostCollection['bindings'] }>()
     const mappedCollectionIds = new Set<number>()
     const postCollections: ConfigBackupPostCollection[] = []
@@ -665,6 +694,7 @@ export class ConfigBackupService {
       for (const post of payload.posts) {
         if (restoredPostIds.has(post.key)) throw new Error(`Portable post key bị trùng: ${post.key}.`)
         const created = this.canonicalPosts.create({ name: post.name, variants: post.variants, image: post.image })
+        if (post.hashtags !== undefined) this.postHashtags.set(created.id, post.hashtags)
         restoredPostIds.set(post.key, created.id)
       }
       const postId = (key: string): number => {

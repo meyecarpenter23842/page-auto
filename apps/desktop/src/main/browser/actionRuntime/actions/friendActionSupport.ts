@@ -10,6 +10,8 @@ import {
   selectedReactions,
   sleepWithControl,
   splitLines,
+  visibleSubmittedTextCount,
+  waitForSubmittedTextIncrease,
   type BaseViewActionDependencies
 } from './actionSupport'
 
@@ -67,14 +69,18 @@ export async function reactAtVisibleLike(page: Page, config: ActionConfig): Prom
 }
 
 export async function commentAtVisibleBox(page: Page, text: string, imagePath = ''): Promise<boolean> {
+  const value = text.trim()
+  if (!value) return false
   const box = await firstVisible(page, COMMENT_BOX_SELECTORS)
   if (!box) return false
+  const baseline = await visibleSubmittedTextCount(page, value)
   if (imagePath.trim()) {
     const input = page.locator('input[type="file"][accept*="image" i]').first()
     await input.setInputFiles(imagePath.trim()).catch(() => undefined)
   }
-  if (!await box.fill(text, { timeout: 5000 }).then(() => true).catch(() => false)) return false
-  return box.press('Enter', { timeout: 5000 }).then(() => true).catch(() => false)
+  if (!await box.fill(value, { timeout: 5000 }).then(() => true).catch(() => false)) return false
+  if (!await box.press('Enter', { timeout: 5000 }).then(() => true).catch(() => false)) return false
+  return waitForSubmittedTextIncrease(page, page, value, baseline)
 }
 
 export async function paced(context: ActionExecutorContext, config: ActionConfig, completed: number): Promise<boolean> {

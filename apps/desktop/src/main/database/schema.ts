@@ -62,6 +62,7 @@ export const pageTabs = sqliteTable('page_tabs', {
   postDelayMaxSeconds: integer('post_delay_max_seconds').notNull().default(300),
   accountDelayMinSeconds: integer('account_delay_min_seconds').notNull().default(600),
   accountDelayMaxSeconds: integer('account_delay_max_seconds').notNull().default(900),
+  accountConcurrency: integer('account_concurrency').notNull().default(1),
   postSelectionMode: text('post_selection_mode').notNull().default('sequential'),
   createdAt: integer('created_at').notNull(),
   updatedAt: integer('updated_at').notNull()
@@ -213,6 +214,27 @@ export const scenarioActionPostBindings = sqliteTable('scenario_action_post_bind
   updatedAt: integer('updated_at').notNull()
 })
 
+export const zaloAutomationConfig = sqliteTable('zalo_automation_config', {
+  id: integer('id').primaryKey(),
+  postSelectionMode: text('post_selection_mode').notNull().default('sequential'),
+  updatedAt: integer('updated_at').notNull()
+})
+
+export const zaloPostBindings = sqliteTable('zalo_post_bindings', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  configId: integer('config_id').notNull().default(1),
+  postId: integer('post_id').notNull(),
+  enabled: integer('enabled').notNull().default(1),
+  sortOrder: integer('sort_order').notNull(),
+  nameOverride: text('name_override'),
+  variantsOverrideJson: text('variants_override_json'),
+  imageFolderPathOverride: text('image_folder_path_override'),
+  imageModeOverride: text('image_mode_override'),
+  imagesPerPostOverride: integer('images_per_post_override'),
+  missingPolicyOverride: text('missing_policy_override'),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull()
+})
 export const postLegacySources = sqliteTable('post_legacy_sources', {
   sourceKind: text('source_kind').notNull(),
   sourceId: integer('source_id').notNull(),
@@ -245,6 +267,7 @@ export const runItems = sqliteTable('run_items', {
   groupUid: text('group_uid').notNull(),
   sortOrder: integer('sort_order').notNull(),
   status: text('status').notNull().default('pending'),
+  claimedByAccountId: integer('claimed_by_account_id'),
   attemptCount: integer('attempt_count').notNull().default(0),
   lastError: text('last_error'),
   startedAt: integer('started_at'),

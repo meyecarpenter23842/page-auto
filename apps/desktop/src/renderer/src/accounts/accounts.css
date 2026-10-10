@@ -122,6 +122,19 @@
   padding: 4px 7px;
 }
 
+.bulk-uid-filter-button {
+  flex: 0 0 auto;
+  min-width: 44px;
+  min-height: 24px;
+  padding: 2px 7px;
+}
+
+.bulk-uid-filter-button.active {
+  color: #175cd3;
+  background: #eff6ff;
+  border-color: #8fb4ee;
+}
+
 .filter-row select {
   padding: 4px 24px 4px 7px;
 }
@@ -401,6 +414,69 @@
   border-radius: 5px;
 }
 
+.bulk-uid-filter-modal {
+  width: min(520px, calc(100vw - 28px));
+  padding: 12px;
+}
+
+.bulk-uid-filter-modal .modal-header {
+  margin-bottom: 6px;
+}
+
+.bulk-uid-filter-modal .modal-header > div {
+  min-width: 0;
+}
+
+.bulk-uid-filter-modal .modal-header h2 {
+  font-size: 15px;
+}
+
+.bulk-uid-filter-modal .modal-header p {
+  margin: 2px 0 0;
+  color: #667085;
+  font-size: 10.5px;
+}
+
+.bulk-uid-filter-textarea {
+  width: 100%;
+  min-height: 280px;
+  max-height: 58vh;
+  resize: vertical;
+  padding: 7px 8px;
+  color: #182033;
+  background: #ffffff;
+  border: 1px solid #c7d0db;
+  border-radius: 3px;
+  outline: none;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.bulk-uid-filter-textarea:focus {
+  border-color: #6f9ee8;
+  box-shadow: 0 0 0 1px rgba(23, 92, 211, 0.08);
+}
+
+.bulk-uid-filter-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 24px;
+  color: #344054;
+  font-size: 10.5px;
+}
+
+.bulk-uid-filter-summary small {
+  color: #667085;
+}
+
+.bulk-uid-filter-actions {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+}
+
 .modal-header {
   display: flex;
   align-items: center;
@@ -635,3 +711,46 @@
     grid-column: span 1;
   }
 }
+
+
+html[data-theme='dark'] .bulk-uid-filter-button.active {
+  color: var(--pa-dark-text);
+  background: var(--pa-dark-surface-3);
+  border-color: var(--pa-dark-border-strong);
+}
+
+html[data-theme='dark'] .bulk-uid-filter-modal .modal-header p,
+html[data-theme='dark'] .bulk-uid-filter-summary small {
+  color: var(--pa-dark-muted);
+}
+
+html[data-theme='dark'] .bulk-uid-filter-summary {
+  color: var(--pa-dark-text-soft);
+}
+
+html[data-theme='dark'] .bulk-uid-filter-textarea {
+  color: var(--pa-dark-text);
+  background: var(--pa-dark-surface-2);
+  border-color: var(--pa-dark-border-strong);
+}
+
+/* Account/Email batch 3: dense, separate primary and selected-target commands. */
+.account-toolbar-primary { background:#f8fafc; }
+.account-toolbar-bulk { justify-content:flex-start; gap:8px; background:#fff; }
+.account-toolbar-bulk .toolbar-group { flex:1 1 auto; }
+.account-selection-summary { display:inline-flex; align-items:center; gap:5px; color:#475467; font-size:10.5px; white-space:nowrap; }
+.account-selection-summary strong { color:#175cd3; font-size:13px; font-variant-numeric:tabular-nums; }
+.account-selection-summary span { color:#667085; }
+.account-toolbar-divider { height:19px; width:1px; background:#d5dde7; margin:0 2px; }
+.column-search { display:block; width:100%; min-height:29px; margin:3px 0 7px; padding:5px 8px; color:#344054; background:#fff; border:1px solid #cbd5e1; border-radius:4px; }
+.column-search:focus-visible { outline:2px solid #175cd3; outline-offset:1px; }
+.column-search-empty { padding:12px; color:#667085; font-size:11px; }
+.column-row label span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.column-popover-footer { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:7px; }
+.column-popover-footer span { color:#667085; font-size:9.5px; }
+.column-popover { max-width:calc(100vw - 28px); }
+.import-privacy-note { display:block; margin-top:4px; font-weight:600; color:#667085; }
+@media (max-width:1100px) { .account-toolbar-bulk .toolbar-group { overflow-x:auto; flex-wrap:nowrap; padding-bottom:2px; } .account-toolbar-bulk .toolbar-group > button { flex:0 0 auto; } }
+html[data-theme='dark'] .account-toolbar-primary, html[data-theme='dark'] .account-toolbar-bulk { background:var(--pa-dark-surface-2); border-color:var(--pa-dark-border); }
+html[data-theme='dark'] .account-selection-summary, html[data-theme='dark'] .column-popover-footer span, html[data-theme='dark'] .import-privacy-note { color:var(--pa-dark-text-soft); }
+html[data-theme='dark'] .column-search { color:var(--pa-dark-text); background:var(--pa-dark-surface-2); border-color:var(--pa-dark-border-strong); }
