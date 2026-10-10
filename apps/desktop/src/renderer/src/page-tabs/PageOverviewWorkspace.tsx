@@ -4,6 +4,7 @@ import type { RotationRuntimeSnapshot, RotationRuntimeStatus } from '../../../sh
 import { indexRotationRuntimes, rotationRuntimeLabel } from './pageRuntimePresentation'
 import { nextSavedWindow, savedWindowCount } from './pageScheduleOverview'
 import { EVERY_DAY_SCHEDULE } from './scheduleEditor'
+import { readOverviewSelectedPageId, saveOverviewSelectedPageId } from './pageOverviewSelection'
 import './pageOverview.css'
 
 type FilterMode = 'all' | 'active' | 'waiting' | 'error' | 'idle'
@@ -27,7 +28,8 @@ export function PageOverviewWorkspace({ onOpenGroup }: PageOverviewProps) {
   const [posts, setPosts] = useState<Record<number, number>>({})
   const [runtimeById, setRuntimeById] = useState<Record<number, RotationRuntimeSnapshot>>({})
   const [search, setSearch] = useState('')
-  const [selectedPageId, setSelectedPageId] = useState<number | null>(null)
+  const [selectedPageId, setSelectedPageId] = useState<number | null>(readOverviewSelectedPageId)
+  const [compactDetailOpen, setCompactDetailOpen] = useState(false)
   const [filter, setFilter] = useState<FilterMode>('all')
   const [sort, setSort] = useState<SortMode>('name')
   const [busy, setBusy] = useState<Set<number>>(() => new Set())
@@ -116,7 +118,13 @@ export function PageOverviewWorkspace({ onOpenGroup }: PageOverviewProps) {
   const waitingCount = pages.filter((page) => runtimeById[page.id]?.status === 'waiting_window').length
   const errorCount = pages.filter((page) => runtimeById[page.id]?.status === 'error').length
 
+  // A deleted/filtered-out stored ID falls back to a visible Page, without mutating Main state.
   const selectedPage = filtered.find((page) => page.id === selectedPageId) ?? filtered[0]
+  const selectPage = (pageId: number) => {
+    setSelectedPageId(pageId)
+    saveOverviewSelectedPageId(pageId)
+    if (window.innerWidth <= 900) setCompactDetailOpen(true)
+  }
   const selectedConfig = selectedPage ? configs[selectedPage.id] : null
   const selectedRuntime = selectedPage ? runtimeById[selectedPage.id] : null
   const selectedStatus = selectedRuntime?.status ?? 'idle'
@@ -143,9 +151,10 @@ export function PageOverviewWorkspace({ onOpenGroup }: PageOverviewProps) {
       <label><span>Trạng thái</span><select value={filter} onChange={(event) => setFilter(event.target.value as FilterMode)}><option value="all">Tất cả</option><option value="active">Hoạt động</option><option value="waiting">Chờ lịch</option><option value="error">Lỗi</option><option value="idle">Chưa chạy / kết thúc</option></select></label>
       <label><span>Sắp xếp</span><select value={sort} onChange={(event) => setSort(event.target.value as SortMode)}><option value="name">Tên Page</option><option value="next">Khung lịch gần nhất</option><option value="status">Trạng thái</option><option value="updated">Cập nhật gần nhất</option></select></label>
       <span className="page-overview-match">{filtered.length}/{pages.length} Page</span>
+      <button type="button" className="page-overview-detail-toggle" aria-expanded={compactDetailOpen} onClick={() => setCompactDetailOpen((current) => !current)}>{compactDetailOpen ? "← Danh sách Page" : "Chi tiết Page →"}</button>
     </div>
     {error ? <div role="alert" className="page-tab-error">{error}</div> : null}
-    <div className="page-overview-main">
+    <div className={compactDetailOpen ? "page-overview-main detail-mode" : "page-overview-main"}>
       <div className="page-overview-table-wrap">
         <table className="page-overview-table">
           <thead><tr><th>Page</th><th>Trạng thái</th><th>Lịch chạy</th><th>TK</th><th>Group</th><th>Bài</th><th>Khung kế tiếp</th></tr></thead>
@@ -158,7 +167,7 @@ export function PageOverviewWorkspace({ onOpenGroup }: PageOverviewProps) {
             const windows = config ? savedWindowCount(config.schedules) : page.scheduleCount
             const stateLabel = runtime ? rotationRuntimeLabel(status) : page.status === 'scheduled' ? 'Đã lên lịch' : page.status === 'error' ? 'Lỗi' : rotationRuntimeLabel(status)
             return <tr key={page.id} className={selectedPage?.id === page.id ? 'selected' : undefined}>
-              <td><button type="button" className="page-overview-page-select" aria-current={selectedPage?.id === page.id ? 'true' : undefined} onClick={() => setSelectedPageId(page.id)}><strong title={page.name}>{page.name}</strong><small title={page.pageUid}>UID {page.pageUid}</small></button></td>
+              <td><button type="button" className="page-overview-page-select" aria-current={selectedPage?.id === page.id ? 'true' : undefined} onClick={() => selectPage(page.id)}><strong title={page.name}>{page.name}</strong><small title={page.pageUid}>UID {page.pageUid}</small></button></td>
               <td><span className={'page-overview-state state-' + (runtime?.status ?? page.status)}>{stateLabel}</span></td>
               <td>{windows} khung bật</td><td>{page.accountCount}</td><td>{page.groupCount}</td><td>{posts[page.id] ?? '—'}</td>
               <td title="Khung giờ cấu hình, không bảo đảm thời điểm chạy">{formatWindow(next)}</td>
@@ -195,7 +204,7 @@ export function PageOverviewWorkspace({ onOpenGroup }: PageOverviewProps) {
             <div className="page-overview-section-head"><h4>Điều khiển Đăng Nhóm</h4><span>{rotationRuntimeLabel(selectedStatus)}</span></div>
             {selectedRuntime?.message ? <p className="page-overview-muted" title={selectedRuntime.message}>{selectedRuntime.message}</p> : null}
             <div className="page-overview-actions">
-              <button type="button" className="primary" onClick={() => onOpenGroup(selectedPage.id)}>Mở cấu hình Nhóm</button>
+              <button type="button" className="primary" onClick={() => { saveOverviewSelectedPageId(selectedPage.id); onOpenGroup(selectedPage.id) }}>Mở cấu hình Nhóm</button>
               <button type="button" disabled={busy.has(selectedPage.id) || !canStart(selectedStatus)} onClick={() => void performAction(selectedPage.id, window.pageAuto.startPageTabRotation)}>Start</button>
               <button type="button" disabled={busy.has(selectedPage.id) || !canPause(selectedStatus)} onClick={() => void performAction(selectedPage.id, window.pageAuto.pausePageTabRotation)}>Pause</button>
               <button type="button" disabled={busy.has(selectedPage.id) || !canResume(selectedStatus)} onClick={() => void performAction(selectedPage.id, window.pageAuto.resumePageTabRotation)}>Resume</button>
