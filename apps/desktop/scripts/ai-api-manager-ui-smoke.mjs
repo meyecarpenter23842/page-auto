@@ -42,9 +42,14 @@ try {
   }))
   assert(legacyMethods.catalog === 'undefined' && legacyMethods.importJson === 'undefined',
     'Removed Google Agent Builder preload API must not be exposed')
+  // Electron's initial fixture window can be 1084x655. Set the QA viewport
+  // before judging the modal size, and assert proportional screen utilization.
+  await page.setViewportSize({width:1280,height:800})
   const geometry = await modal.boundingBox()
-  assert(geometry && geometry.width >= 1130 && geometry.height >= 730,
-    'AI manager should use the available desktop area instead of 900x610: ' + JSON.stringify(geometry))
+  const viewport = await page.evaluate(() => ({width:window.innerWidth,height:window.innerHeight}))
+  assert(geometry && geometry.width >= viewport.width * 0.9
+    && geometry.height >= viewport.height * 0.9,
+    'AI manager must occupy at least 90% of the available viewport: ' + JSON.stringify({geometry, viewport}))
   assert(await modal.getByRole('button',{name:/Tải danh sách Model/}).isDisabled(),
     'Do not call model API without a key')
   await modal.getByLabel('Tên kết nối').fill('API fixture')
