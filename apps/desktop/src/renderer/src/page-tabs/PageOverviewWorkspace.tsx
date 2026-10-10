@@ -3,6 +3,7 @@ import type { PageTabConfig, PageTabSummary } from '../../../shared/pageTabs'
 import type { RotationRuntimeSnapshot, RotationRuntimeStatus } from '../../../shared/rotation'
 import { indexRotationRuntimes, rotationRuntimeLabel } from './pageRuntimePresentation'
 import { nextSavedWindow, savedWindowCount } from './pageScheduleOverview'
+import { EVERY_DAY_SCHEDULE } from './scheduleEditor'
 import './pageOverview.css'
 
 type FilterMode = 'all' | 'active' | 'waiting' | 'error' | 'idle'
@@ -26,6 +27,7 @@ export function PageOverviewWorkspace({ onOpenGroup }: PageOverviewProps) {
   const [posts, setPosts] = useState<Record<number, number>>({})
   const [runtimeById, setRuntimeById] = useState<Record<number, RotationRuntimeSnapshot>>({})
   const [search, setSearch] = useState('')
+  const [selectedPageId, setSelectedPageId] = useState<number | null>(null)
   const [filter, setFilter] = useState<FilterMode>('all')
   const [sort, setSort] = useState<SortMode>('name')
   const [busy, setBusy] = useState<Set<number>>(() => new Set())
@@ -114,15 +116,28 @@ export function PageOverviewWorkspace({ onOpenGroup }: PageOverviewProps) {
   const waitingCount = pages.filter((page) => runtimeById[page.id]?.status === 'waiting_window').length
   const errorCount = pages.filter((page) => runtimeById[page.id]?.status === 'error').length
 
+  const selectedPage = filtered.find((page) => page.id === selectedPageId) ?? filtered[0]
+  const selectedConfig = selectedPage ? configs[selectedPage.id] : null
+  const selectedRuntime = selectedPage ? runtimeById[selectedPage.id] : null
+  const selectedStatus = selectedRuntime?.status ?? 'idle'
+  const nextSelected = selectedConfig ? nextSavedWindow(selectedConfig.schedules, now) : null
+  const selectedSchedules = (selectedConfig?.schedules ?? [])
+    .filter((schedule) => schedule.enabled)
+    .sort((a, b) => a.dayOfWeek - b.dayOfWeek || a.startMinute - b.startMinute)
+  const weekdays = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7']
+  const clock = (minutes: number) => String(Math.floor(minutes / 60)).padStart(2, '0') + ':' + String(minutes % 60).padStart(2, '0')
+
   return <section className="page-business-pane page-overview" role="tabpanel" aria-label="Tổng quan Page">
     <header className="page-overview-head">
-      <div><p className="eyebrow">Điều phối Page</p><h2>Tổng quan Page & lịch</h2><p>Trạng thái từ Main; khung giờ lấy từ cấu hình đã lưu trên máy.</p></div>
-      <div className="page-overview-stats">
-        <span><strong>{pages.length}</strong> Page</span><span><strong>{activeCount}</strong> hoạt động</span>
-        <span><strong>{waitingCount}</strong> chờ lịch</span><span><strong>{errorCount}</strong> lỗi</span>
-        <button type="button" onClick={() => { void refreshPages(); void refreshRuntime() }}>Làm mới</button>
-      </div>
+      <div><p className="eyebrow">PAGE TABS / ĐIỀU PHỐI</p><h2>Quản lý Page & lịch chạy</h2><p>Chọn một Page để xem lịch, trạng thái và điều khiển. Dữ liệu lấy từ Main và cấu hình đã lưu.</p></div>
+      <button type="button" className="page-overview-refresh" onClick={() => { void refreshPages(); void refreshRuntime() }}>Làm mới</button>
     </header>
+    <div className="page-overview-stats" aria-label="Tình trạng các Page">
+      <div><span>Tổng Page</span><strong>{pages.length}</strong><small>Đã thiết lập</small></div>
+      <div><span>Hoạt động</span><strong>{activeCount}</strong><small>Đang chạy / chờ / tạm dừng</small></div>
+      <div><span>Chờ lịch</span><strong>{waitingCount}</strong><small>Runtime chờ khung giờ</small></div>
+      <div><span>Cần kiểm tra</span><strong>{errorCount}</strong><small>Runtime báo lỗi</small></div>
+    </div>
     <div className="page-overview-filters">
       <label><span>Tìm Page/UID</span><input type="search" value={search} placeholder="Tên hoặc Page UID" onChange={(event) => setSearch(event.target.value)} /></label>
       <label><span>Trạng thái</span><select value={filter} onChange={(event) => setFilter(event.target.value as FilterMode)}><option value="all">Tất cả</option><option value="active">Hoạt động</option><option value="waiting">Chờ lịch</option><option value="error">Lỗi</option><option value="idle">Chưa chạy / kết thúc</option></select></label>
@@ -130,35 +145,66 @@ export function PageOverviewWorkspace({ onOpenGroup }: PageOverviewProps) {
       <span className="page-overview-match">{filtered.length}/{pages.length} Page</span>
     </div>
     {error ? <div role="alert" className="page-tab-error">{error}</div> : null}
-    <div className="page-overview-table-wrap"><table className="page-overview-table">
-      <thead><tr><th>Page</th><th>Runtime Nhóm</th><th>Lịch đã lưu</th><th>Khung kế tiếp</th><th>TK</th><th>Group</th><th>Bài bật</th><th>Còn lại</th><th>Điều khiển / cấu hình</th></tr></thead>
-      <tbody>
-      {filtered.map((page) => {
-        const runtime = runtimeById[page.id]
-        const status = runtime?.status ?? 'idle'
-        const config = configs[page.id]
-        const next = config ? nextSavedWindow(config.schedules, now) : null
-        const windows = config ? savedWindowCount(config.schedules) : page.scheduleCount
-        const isBusy = busy.has(page.id)
-        const stateLabel = runtime ? rotationRuntimeLabel(status) : page.status === 'scheduled' ? 'Đã lên lịch' : page.status === 'error' ? 'Lỗi' : rotationRuntimeLabel(status)
-        return <tr key={page.id}>
-          <td><strong title={page.name}>{page.name}</strong><small title={page.pageUid}>UID {page.pageUid}</small></td>
-          <td><span className={'page-overview-state state-' + (runtime?.status ?? page.status)}>{stateLabel}</span><small title={runtime?.message ?? undefined}>{runtime?.message ?? '—'}</small></td>
-          <td>{windows} khung bật</td><td title="Khung giờ lưu, không phải thời điểm được bảo đảm chạy">{formatWindow(next)}</td>
-          <td>{page.accountCount}</td><td>{page.groupCount}</td><td>{posts[page.id] ?? '—'}</td><td>{runtime?.run?.metrics.remaining ?? '—'}</td>
-          <td><div className="page-overview-actions">
-            <button type="button" onClick={() => onOpenGroup(page.id)}>Mở Nhóm</button>
-            <button type="button" disabled={isBusy || !canStart(status)} onClick={() => void performAction(page.id, window.pageAuto.startPageTabRotation)}>Start</button>
-            <button type="button" disabled={isBusy || !canPause(status)} onClick={() => void performAction(page.id, window.pageAuto.pausePageTabRotation)}>Pause</button>
-            <button type="button" disabled={isBusy || !canResume(status)} onClick={() => void performAction(page.id, window.pageAuto.resumePageTabRotation)}>Resume</button>
-            <button type="button" disabled={isBusy || !canStop(status)} onClick={() => void performAction(page.id, window.pageAuto.stopPageTabRotation)}>Stop</button>
-          </div></td>
-        </tr>
-      })}
-      {loading && pages.length === 0 ? <tr><td colSpan={9} className="page-overview-empty">Đang tải Page…</td></tr> : null}
-      {!loading && filtered.length === 0 ? <tr><td colSpan={9} className="page-overview-empty">{pages.length ? 'Không có Page phù hợp bộ lọc.' : 'Chưa có Page. Dùng Quản lý Page để tạo mới.'}</td></tr> : null}
-      </tbody>
-    </table></div>
-    <footer className="page-overview-foot">Lịch và số bài lấy từ dữ liệu đã lưu; việc chuyển tab không điều khiển scheduler. Log chi tiết nằm trong từng nghiệp vụ.</footer>
+    <div className="page-overview-main">
+      <div className="page-overview-table-wrap">
+        <table className="page-overview-table">
+          <thead><tr><th>Page</th><th>Trạng thái</th><th>Lịch chạy</th><th>TK</th><th>Group</th><th>Bài</th><th>Khung kế tiếp</th></tr></thead>
+          <tbody>
+          {filtered.map((page) => {
+            const runtime = runtimeById[page.id]
+            const status = runtime?.status ?? 'idle'
+            const config = configs[page.id]
+            const next = config ? nextSavedWindow(config.schedules, now) : null
+            const windows = config ? savedWindowCount(config.schedules) : page.scheduleCount
+            const stateLabel = runtime ? rotationRuntimeLabel(status) : page.status === 'scheduled' ? 'Đã lên lịch' : page.status === 'error' ? 'Lỗi' : rotationRuntimeLabel(status)
+            return <tr key={page.id} className={selectedPage?.id === page.id ? 'selected' : undefined}>
+              <td><button type="button" className="page-overview-page-select" aria-current={selectedPage?.id === page.id ? 'true' : undefined} onClick={() => setSelectedPageId(page.id)}><strong title={page.name}>{page.name}</strong><small title={page.pageUid}>UID {page.pageUid}</small></button></td>
+              <td><span className={'page-overview-state state-' + (runtime?.status ?? page.status)}>{stateLabel}</span></td>
+              <td>{windows} khung bật</td><td>{page.accountCount}</td><td>{page.groupCount}</td><td>{posts[page.id] ?? '—'}</td>
+              <td title="Khung giờ cấu hình, không bảo đảm thời điểm chạy">{formatWindow(next)}</td>
+            </tr>
+          })}
+          {loading && pages.length === 0 ? <tr><td colSpan={7} className="page-overview-empty">Đang tải Page…</td></tr> : null}
+          {!loading && filtered.length === 0 ? <tr><td colSpan={7} className="page-overview-empty">{pages.length ? 'Không có Page phù hợp bộ lọc.' : 'Chưa có Page. Dùng Quản lý Page để tạo mới.'}</td></tr> : null}
+          </tbody>
+        </table>
+      </div>
+      <aside className="page-overview-detail" aria-label="Chi tiết Page đang chọn">
+        {selectedPage ? <>
+          <div className="page-overview-detail-head">
+            <div><span className="eyebrow">PAGE ĐANG CHỌN</span><h3>{selectedPage.name}</h3><small>UID: {selectedPage.pageUid}</small></div>
+            <span className={'page-overview-state state-' + (selectedRuntime?.status ?? selectedPage.status)}>{selectedRuntime ? rotationRuntimeLabel(selectedStatus) : selectedPage.status === 'scheduled' ? 'Đã lên lịch' : selectedPage.status === 'error' ? 'Lỗi' : rotationRuntimeLabel(selectedStatus)}</span>
+          </div>
+          <section className="page-overview-detail-section">
+            <div className="page-overview-section-head"><h4>Lịch chạy đã lưu</h4><span>{selectedConfig ? savedWindowCount(selectedConfig.schedules) : selectedPage.scheduleCount} khung bật</span></div>
+            {selectedSchedules.length ? <div className="page-overview-schedule-list">
+              {selectedSchedules.slice(0, 5).map((schedule) => <div key={schedule.id}><b>{schedule.dayOfWeek === EVERY_DAY_SCHEDULE ? 'Mỗi ngày' : weekdays[schedule.dayOfWeek] ?? '—'}</b><span>{clock(schedule.startMinute)}–{clock(schedule.endMinute)}</span></div>)}
+              {selectedSchedules.length > 5 ? <small>Và {selectedSchedules.length - 5} khung khác; mở Nhóm để chỉnh lịch.</small> : null}
+            </div> : <p className="page-overview-muted">Chưa có khung chạy được bật.</p>}
+            <div className="page-overview-next"><span>Khung kế tiếp (theo lịch đã lưu)</span><strong>{formatWindow(nextSelected)}</strong></div>
+          </section>
+          <section className="page-overview-detail-section">
+            <div className="page-overview-section-head"><h4>Cấu hình Page</h4><span>Đã lưu</span></div>
+            <div className="page-overview-detail-metrics">
+              <div><strong>{selectedPage.accountCount}</strong><span>Tài khoản</span></div>
+              <div><strong>{selectedPage.groupCount}</strong><span>Group</span></div>
+              <div><strong>{posts[selectedPage.id] ?? '—'}</strong><span>Bài bật</span></div>
+            </div>
+          </section>
+          <section className="page-overview-detail-section">
+            <div className="page-overview-section-head"><h4>Điều khiển Đăng Nhóm</h4><span>{rotationRuntimeLabel(selectedStatus)}</span></div>
+            {selectedRuntime?.message ? <p className="page-overview-muted" title={selectedRuntime.message}>{selectedRuntime.message}</p> : null}
+            <div className="page-overview-actions">
+              <button type="button" className="primary" onClick={() => onOpenGroup(selectedPage.id)}>Mở cấu hình Nhóm</button>
+              <button type="button" disabled={busy.has(selectedPage.id) || !canStart(selectedStatus)} onClick={() => void performAction(selectedPage.id, window.pageAuto.startPageTabRotation)}>Start</button>
+              <button type="button" disabled={busy.has(selectedPage.id) || !canPause(selectedStatus)} onClick={() => void performAction(selectedPage.id, window.pageAuto.pausePageTabRotation)}>Pause</button>
+              <button type="button" disabled={busy.has(selectedPage.id) || !canResume(selectedStatus)} onClick={() => void performAction(selectedPage.id, window.pageAuto.resumePageTabRotation)}>Resume</button>
+              <button type="button" className="danger" disabled={busy.has(selectedPage.id) || !canStop(selectedStatus)} onClick={() => void performAction(selectedPage.id, window.pageAuto.stopPageTabRotation)}>Stop</button>
+            </div>
+          </section>
+        </> : <p className="page-overview-muted">Chọn Page trong bảng để xem chi tiết.</p>}
+      </aside>
+    </div>
+    <footer className="page-overview-foot">Lịch hiển thị là lịch đã lưu; chuyển Page hoặc nghiệp vụ không Start/Stop scheduler. Đăng Tường và các nghiệp vụ khác vẫn ở các tab riêng.</footer>
   </section>
 }
