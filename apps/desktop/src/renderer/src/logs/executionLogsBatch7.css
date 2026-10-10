@@ -36,3 +36,11 @@ html[data-theme='dark'] .execution-logs-shell :is(input,select,button) { backgro
 
 .execution-logs-shell .log-time-filter { display:flex; align-items:center; gap:5px; color:var(--pa-ui-muted); font-size:11px; }
 .execution-logs-shell .execution-log-filter-tip { font-size:10px; color:var(--pa-ui-muted); }
+
+/* R4c: Logs detail remains keyboard contained and bounded within short viewports. */
+.execution-log-modal-backdrop { padding: clamp(8px, 2vh, 24px); }
+.execution-log-modal { max-height: calc(100vh - 24px); min-height: 0; overscroll-behavior: contain; }
+.execution-log-modal-head { position: sticky; top: 0; z-index: 1; background: var(--pa-ui-surface); }
+.execution-log-modal :is(button, input, select):focus-visible { outline: 2px solid var(--pa-ui-focus); outline-offset: 2px; }
+.execution-logs-shell .execution-log-table-wrap { overscroll-behavior: contain; scrollbar-gutter: stable; }
+.execution-log-table td { max-width: 320px; overflow-wrap: anywhere; }

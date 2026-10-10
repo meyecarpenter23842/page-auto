@@ -15,3 +15,15 @@
 @media (max-width: 900px) { .settings-shell { grid-template-columns:178px minmax(0,1fr); } .settings-menu { padding:10px 6px; } .settings-menu-item { min-height:36px; font-size:11px; } }
 html[data-theme="dark"] .settings-menu-search input { background:var(--pa-dark-surface-2, #222); color:var(--pa-dark-text, #e4e4e7); border-color:var(--pa-dark-border, #444); }
 html[data-theme="dark"] .settings-menu-group h3, html[data-theme="dark"] .settings-menu-advanced > summary, html[data-theme="dark"] .settings-save-mode { color:var(--pa-dark-muted, #a1a1aa); }
+
+/* R4c: the nested menu owns scrolling; keep 11 sections legible at Windows text scales. */
+.settings-shell, .settings-menu, .settings-detail, .settings-detail-head > div { min-width: 0; }
+.settings-menu-scroll { overscroll-behavior: contain; scrollbar-gutter: stable; }
+.settings-menu-item { min-height: 38px; overflow-wrap: anywhere; }
+.settings-menu-group h3, .settings-menu-advanced > summary { font-size: 11px; letter-spacing: .05em; }
+.settings-menu-search { font-size: 12px; }
+.settings-menu-search input { font-size: 12px; }
+.settings-detail-head h2 { overflow-wrap: anywhere; }
+.settings-menu :is(button, input, summary):focus-visible { outline: 2px solid #175cd3; outline-offset: 2px; }
+@media (max-width: 900px) { .settings-shell { grid-template-columns: minmax(150px, 178px) minmax(0, 1fr); } }
+html[data-theme='dark'] .settings-menu-item:focus-visible { outline-color: #8fc0ff; }
