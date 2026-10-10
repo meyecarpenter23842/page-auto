@@ -18,6 +18,7 @@ import {
 } from './contentLibraryEditor'
 import { confirmWorkspaceNavigation, useUnsavedWorkspaceChanges } from '../workspaceNavigation'
 import './contentLibrary.css'
+import './contentLibraryBatch6.css'
 import './contentLibraryCategories.css'
 
 interface ItemEditorDraft {
@@ -106,6 +107,10 @@ export function ContentLibraryWorkspace() {
   const [error, setError] = useState<string | null>(null)
   const sourceLoadSequence = useRef(0)
   const variantTextareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const categoryPanelRef = useRef<HTMLElement | null>(null)
+  const itemPanelRef = useRef<HTMLElement | null>(null)
+  const editorPanelRef = useRef<HTMLElement | null>(null)
+  const imageSettingsRef = useRef<HTMLElement | null>(null)
 
   const load = useCallback(async (preferredSetId?: number | null, preferredItemId?: number | null) => {
     const requestId = ++sourceLoadSequence.current
@@ -185,6 +190,8 @@ export function ContentLibraryWorkspace() {
   }, [details, itemSearch])
 
   const categorySets = useMemo(() => sets.filter((item) => item.id !== CANONICAL_CONTENT_LIBRARY_SET_ID), [sets])
+  const visibleItemIds = useMemo(() => filteredItems.map((item) => item.id), [filteredItems])
+  const allVisibleSelected = visibleItemIds.length > 0 && visibleItemIds.every((id) => checkedItemIds.includes(id))
   const originalEditorItem = editor?.id == null ? null : details?.items.find((item) => item.id === editor.id)
   const editorDirty = Boolean(editor && (
     editor.id === null
@@ -233,6 +240,20 @@ export function ContentLibraryWorkspace() {
     setActiveVariantIndex(0)
     setPreview(null)
     setError(null)
+  }
+
+  const toggleVisibleItems = () => {
+    setCheckedItemIds((current) => allVisibleSelected
+      ? current.filter((id) => !visibleItemIds.includes(id))
+      : [...new Set([...current, ...visibleItemIds])])
+  }
+
+  const goToLibraryStep = (step: 'categories' | 'posts' | 'variants' | 'media') => {
+    const target = step === 'categories' ? categoryPanelRef.current
+      : step === 'posts' ? itemPanelRef.current
+      : step === 'media' ? imageSettingsRef.current : editorPanelRef.current
+    target?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' })
+    if (step === 'variants') variantTextareaRef.current?.focus()
   }
 
   const toggleCheckedItem = (itemId: number, checked: boolean) => {
@@ -524,8 +545,18 @@ export function ContentLibraryWorkspace() {
         </div>
       ) : null}
 
+      <nav className="content-library-steps" aria-label="Quy trình biên tập bài viết">
+        <button type="button" onClick={() => goToLibraryStep('categories')}><b>01</b> Danh mục <span>{sets.length}</span></button>
+        <span aria-hidden="true">›</span>
+        <button type="button" onClick={() => goToLibraryStep('posts')}><b>02</b> Bài viết <span>{details?.itemCount ?? 0}</span></button>
+        <span aria-hidden="true">›</span>
+        <button type="button" disabled={!editor} onClick={() => goToLibraryStep('variants')}><b>03</b> Biến thể <span>{editor?.variants.length ?? 0}</span></button>
+        <span aria-hidden="true">›</span>
+        <button type="button" disabled={!editor} onClick={() => goToLibraryStep('media')}><b>04</b> Nội dung / Ảnh</button>
+        <strong className={editorDirty ? 'unsaved' : ''} role="status">{editorDirty ? '● Chưa lưu thay đổi' : '✓ Đã lưu'}</strong>
+      </nav>
       <div className="content-library-shell">
-        <aside className="content-library-panel content-library-sources">
+        <aside ref={categoryPanelRef} className="content-library-panel content-library-sources">
           <div className="content-library-heading">
             <div><p className="eyebrow">THƯ VIỆN</p><h2>Danh mục</h2></div>
             <span>{sets.length}</span>
@@ -563,7 +594,7 @@ export function ContentLibraryWorkspace() {
           ) : null}
         </aside>
 
-        <section className="content-library-panel content-library-items">
+        <section ref={itemPanelRef} className="content-library-panel content-library-items">
           <div className="content-library-heading">
             <div><p className="eyebrow">BÀI VIẾT</p><h2>{details?.name ?? 'Chưa chọn danh mục'}</h2></div>
             {details ? <span>{details.itemCount}</span> : null}
@@ -578,7 +609,7 @@ export function ContentLibraryWorkspace() {
           <div className="content-library-table-wrap">
             <table className="content-library-table content-library-category-table">
               <thead>
-                <tr><th aria-label="Chọn"></th><th>STT</th><th>Tên bài</th><th>Loại</th><th>Biến thể</th><th>Trạng thái</th></tr>
+                <tr><th><input type="checkbox" aria-label="Chọn tất cả bài đang lọc" checked={allVisibleSelected} disabled={busy || !visibleItemIds.length} onChange={toggleVisibleItems} /></th><th>STT</th><th>Tên bài</th><th>Loại</th><th>Biến thể</th><th>Trạng thái</th></tr>
               </thead>
               <tbody>
                 {filteredItems.map((item) => (
@@ -611,6 +642,7 @@ export function ContentLibraryWorkspace() {
           <div className="content-library-row-actions content-library-category-actions">
             <div className="content-library-category-move">
               <span>{moveCandidateIds.length > 0 ? `${moveCandidateIds.length} bài` : 'Chọn bài'}</span>
+              <button type="button" disabled={busy || checkedItemIds.length === 0} onClick={() => setCheckedItemIds([])}>Bỏ chọn</button>
               <select
                 aria-label="Danh mục đích"
                 value={moveTarget}
@@ -633,7 +665,7 @@ export function ContentLibraryWorkspace() {
           </div>
         </section>
 
-        <section className="content-library-panel content-library-editor">
+        <section ref={editorPanelRef} className="content-library-panel content-library-editor">
           <div className="content-library-heading content-library-editor-heading">
             <div><p className="eyebrow">BIÊN TẬP BÀI</p><h2>{editor?.id === null ? 'Bài mới' : editor?.name ?? 'Chọn bài'}</h2></div>
             {editor ? <span>{editor.variants.length} biến thể</span> : null}
@@ -755,7 +787,7 @@ export function ContentLibraryWorkspace() {
                   </p>
                 </div>
 
-                <aside className="content-library-settings">
+                <aside ref={imageSettingsRef} className="content-library-settings">
                   <section className="content-library-settings-card">
                     <div className="content-library-settings-title">
                       <strong>Ảnh</strong>

@@ -5,6 +5,8 @@ import {
 } from '../content-library/CanonicalPostPicker'
 import { normalizeZaloPhone, type ZaloAccountView, type ZaloActionType, type ZaloBatchRunSnapshot, type ZaloBatchStartPayload, type ZaloPostLibrary, type ZaloPostLibraryItem, type ZaloPostMediaConfig } from '../../../shared/zalo'
 import './zaloBatchPanel.css'
+import { filterZaloAccounts, toggleVisibleZaloAccounts } from './zaloAccountFilters'
+import { useUnsavedWorkspaceChanges } from '../workspaceNavigation'
 
 type ConfigModal = 'targets' | 'actions' | null
 
@@ -110,6 +112,9 @@ export function ZaloBatchPanel({ accounts, onAccountsChanged }: ZaloBatchPanelPr
   const [delayMaxSeconds, setDelayMaxSeconds] = useState(8)
   const [run, setRun] = useState<ZaloBatchRunSnapshot | null>(null)
   const [notice, setNotice] = useState('')
+  const [accountQuery, setAccountQuery] = useState('')
+  const [accountFilter, setAccountFilter] = useState('all')
+  const [previewVariantIndex, setPreviewVariantIndex] = useState(0)
   const [configModal, setConfigModal] = useState<ConfigModal>(null)
 
   useEffect(() => {
@@ -146,6 +151,11 @@ export function ZaloBatchPanel({ accounts, onAccountsChanged }: ZaloBatchPanelPr
   const running = Boolean(run && !terminal(run.state))
   const targets = useMemo(() => targetAnalysis(targetsText), [targetsText])
   const selectedAccounts = useMemo(() => accounts.filter((account) => selectedAccountIds.includes(account.id)), [accounts, selectedAccountIds])
+  const visibleAccounts = useMemo(() => filterZaloAccounts(accounts, accountQuery, accountFilter), [accounts, accountQuery, accountFilter])
+  const visibleAccountIds = visibleAccounts.map((account) => account.id)
+  const allVisibleSelected = visibleAccountIds.length > 0 && visibleAccountIds.every((id) => selectedAccountIds.includes(id))
+  const postDraftDirty = Boolean(postDraft && JSON.stringify(postDraft) !== JSON.stringify(postLibrary))
+  useUnsavedWorkspaceChanges(postModalOpen && postDraftDirty, 'Zalo / Bài viết')
   const runnableAccounts = selectedAccounts
   const enabledPosts = useMemo(() => postLibrary.posts.filter((post) => post.enabled), [postLibrary])
   const variantCount = enabledPosts.reduce((sum, post) => sum + post.variants.length, 0)
@@ -156,6 +166,17 @@ export function ZaloBatchPanel({ accounts, onAccountsChanged }: ZaloBatchPanelPr
   const currentAccount = currentProgress?.assignedAccountId == null
     ? null
     : accounts.find((account) => account.id === currentProgress.assignedAccountId) ?? null
+
+  const toggleVisibleAccounts = () => {
+    if (running) return
+    setSelectedAccountIds((current) => toggleVisibleZaloAccounts(current, visibleAccountIds, allVisibleSelected))
+  }
+
+  const closePosts = () => {
+    if (postDraftDirty && !window.confirm('Bài Zalo có thay đổi chưa lưu. Bỏ thay đổi và đóng?')) return
+    setCanonicalOpen(false)
+    setPostModalOpen(false)
+  }
 
   const toggleAccount = (id: number) => {
     if (running) return
@@ -172,6 +193,7 @@ export function ZaloBatchPanel({ accounts, onAccountsChanged }: ZaloBatchPanelPr
     if (running) return
     setPostDraft({ mode: postLibrary.mode, posts: postLibrary.posts.map(copyPost) })
     setEditingPostId(postLibrary.posts[0]?.postId ?? null)
+    setPreviewVariantIndex(0)
     setPostModalOpen(true)
   }
 
@@ -339,6 +361,7 @@ export function ZaloBatchPanel({ accounts, onAccountsChanged }: ZaloBatchPanelPr
   }
 
   const editingPost = postDraft?.posts.find((post) => post.postId === editingPostId) ?? null
+  const activePreviewVariant = editingPost?.variants[Math.min(previewVariantIndex, Math.max(0, editingPost.variants.length - 1))] ?? ''
   const boundPostIds = new Set(postDraft?.posts.map((post) => post.postId) ?? [])
 
   return (
@@ -363,11 +386,19 @@ export function ZaloBatchPanel({ accounts, onAccountsChanged }: ZaloBatchPanelPr
       <div className="zalo-automation-grid">
         <section className="zalo-batch-card zalo-account-run-card">
           <div className="zalo-batch-card-heading"><div><span>Tài khoản chạy</span><strong>Danh sách tài khoản</strong></div><small>{selectedAccounts.length} đã chọn · kiểm tra live khi Start</small></div>
+          <div className="zalo-batch-account-filterbar">
+            <input type="search" aria-label="Tìm tài khoản Zalo chạy" placeholder="Tìm SĐT / tên…" value={accountQuery} disabled={running} onChange={(event) => setAccountQuery(event.target.value)} />
+            <select aria-label="Lọc trạng thái tài khoản Zalo" value={accountFilter} disabled={running} onChange={(event) => setAccountFilter(event.target.value)}>
+              <option value="all">Tất cả session</option><option value="ready">Sẵn sàng</option><option value="attention">Cần xử lý</option>
+            </select>
+            <button type="button" disabled={running || !visibleAccountIds.length} onClick={toggleVisibleAccounts}>{allVisibleSelected ? 'Bỏ chọn đang lọc' : 'Chọn đang lọc'}</button>
+            <small>{visibleAccounts.length}/{accounts.length} TK</small>
+          </div>
           <div className="table-wrap zalo-batch-account-table-wrap">
             <table className="data-table zalo-batch-account-table">
               <thead><tr><th>Bật</th><th>SĐT</th><th>Tên</th><th>Session</th><th>Hoạt động</th></tr></thead>
               <tbody>
-                {accounts.map((account) => (
+                {visibleAccounts.map((account) => (
                   <tr key={account.id} className={account.sessionStatus !== 'ready' ? 'zalo-account-not-ready' : ''}>
                     <td><input type="checkbox" checked={selectedAccountIds.includes(account.id)} disabled={running} onChange={() => toggleAccount(account.id)} /></td>
                     <td><strong>{account.phone}</strong></td>
@@ -376,7 +407,7 @@ export function ZaloBatchPanel({ accounts, onAccountsChanged }: ZaloBatchPanelPr
                     <td>{accountActivity(account.id)}</td>
                   </tr>
                 ))}
-                {!accounts.length ? <tr><td colSpan={5}>Chưa có tài khoản Zalo.</td></tr> : null}
+                {!visibleAccounts.length ? <tr><td colSpan={5}>{accounts.length ? 'Không có tài khoản phù hợp.' : 'Chưa có tài khoản Zalo.'}</td></tr> : null}
               </tbody>
             </table>
           </div>
@@ -436,7 +467,7 @@ export function ZaloBatchPanel({ accounts, onAccountsChanged }: ZaloBatchPanelPr
 
       {configModal ? (
         <div className="zalo-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setConfigModal(null) }}>
-          <section className="zalo-config-modal" role="dialog" aria-modal="true">
+          <section className="zalo-config-modal" role="dialog" aria-modal="true" aria-label={configModal === 'targets' ? 'Nhập SĐT Zalo' : 'Cấu hình action Zalo'} onKeyDown={(event) => { if (event.key === 'Escape') { event.stopPropagation(); setConfigModal(null) } }}>
             <header className="zalo-modal-header"><div><span>Cấu hình</span><strong>{configModal === 'targets' ? 'Nhập SĐT' : 'Action'}</strong></div><button className="button secondary" type="button" onClick={() => setConfigModal(null)}>Đóng</button></header>
             {configModal === 'targets' ? <div className="zalo-modal-body">
               <textarea className="zalo-target-editor" value={targetsText} onChange={(event) => setTargetsText(event.target.value)} placeholder={'0912345678\n0987654321\n...'} />
@@ -458,8 +489,8 @@ export function ZaloBatchPanel({ accounts, onAccountsChanged }: ZaloBatchPanelPr
 
       {postModalOpen && postDraft ? (
         <div className="zalo-modal-backdrop" role="presentation">
-          <section className="zalo-post-library-modal" role="dialog" aria-modal="true">
-            <header className="zalo-modal-header"><div><span>Consumer binding</span><strong>Bài Zalo đang dùng</strong></div><button className="button secondary" type="button" onClick={() => setPostModalOpen(false)}>Đóng</button></header>
+          <section className="zalo-post-library-modal" role="dialog" aria-modal="true" aria-label="Bài Zalo đang dùng" onKeyDown={(event) => { if (event.key === 'Escape' && !canonicalOpen) { event.stopPropagation(); closePosts() } }}>
+            <header className="zalo-modal-header"><div><span>Consumer binding</span><strong>Bài Zalo đang dùng</strong></div><button className="button secondary" type="button" onClick={closePosts}>Đóng</button></header>
             <div className="zalo-post-toolbar"><button className="button primary" type="button" onClick={() => setCanonicalOpen(true)}>+ Chọn từ Thư viện bài viết</button><div className="zalo-post-mode"><button type="button" className={postDraft.mode === 'sequential' ? 'active' : ''} onClick={() => setPostDraft({ ...postDraft, mode: 'sequential' })}>Tuần tự</button><button type="button" className={postDraft.mode === 'random' ? 'active' : ''} onClick={() => setPostDraft({ ...postDraft, mode: 'random' })}>Random</button></div></div>
             <div className="zalo-post-layout">
               <div className="zalo-post-list">
@@ -473,7 +504,10 @@ export function ZaloBatchPanel({ accounts, onAccountsChanged }: ZaloBatchPanelPr
               <aside className="zalo-post-editor">
                 {editingPost ? <>
                   <div className="zalo-post-editor-head"><strong>{editingPost.name}</strong><span>{editingPost.variants.length} biến thể</span></div>
-                  <div className="zalo-post-preview"><span>Preview</span><p>{editingPost.variants[0] ? truncate(editingPost.variants[0], 180) : 'Bài không có nội dung chữ.'}</p></div>
+                  <div className="zalo-post-preview"><span>Preview canonical · không sửa nội dung gốc</span>
+                    <select aria-label="Chọn biến thể xem trước" value={Math.min(previewVariantIndex, Math.max(0, editingPost.variants.length - 1))} onChange={(event) => setPreviewVariantIndex(Number(event.target.value))}>
+                      {editingPost.variants.map((_variant, index) => <option key={index} value={index}>Biến thể {index + 1}</option>)}
+                    </select><p>{activePreviewVariant ? truncate(activePreviewVariant, 450) : 'Bài không có nội dung chữ.'}</p></div>
                   <label className="zalo-post-field">Media<select value={editingPost.media.source} onChange={(event) => setMediaSource(editingPost, event.target.value as ZaloPostMediaConfig['source'])}><option value="canonical">Theo bài gốc</option><option value="folder">Folder riêng</option><option value="none">Không media</option></select></label>
                   {editingPost.media.source === 'canonical' ? <div className="zalo-media-summary"><strong>{editingPost.canonicalImage.folderPath || 'Bài gốc không có folder'}</strong><span>{editingPost.canonicalImage.imagesPerPost} file/target · {editingPost.canonicalImage.mode}</span></div> : null}
                   {editingPost.media.source === 'folder' ? <>
@@ -485,7 +519,7 @@ export function ZaloBatchPanel({ accounts, onAccountsChanged }: ZaloBatchPanelPr
                 </> : <div className="zalo-post-empty">Chọn một bài để xem media.</div>}
               </aside>
             </div>
-            <footer className="zalo-post-footer"><span>Gỡ ở đây không xóa bài canonical.</span><button className="button primary" type="button" onClick={() => void savePosts()}>Lưu Bài Zalo</button></footer>
+            <footer className="zalo-post-footer"><span role="status">{postDraftDirty ? '● Chưa lưu thay đổi · ' : '✓ Đã đồng bộ · '}Gỡ ở đây không xóa bài canonical.</span><button className="button primary" type="button" onClick={() => void savePosts()}>Lưu Bài Zalo</button></footer>
           </section>
 
           {canonicalOpen ? (

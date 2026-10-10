@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AccountRecord } from '../../../shared/accounts'
 import type { ActionWorkspaceAccountInput, ActionWorkspaceRecord } from '../../../shared/actionWorkspaces'
 import type { InteractionWorkspaceRunSnapshot } from '../../../shared/interactionWorkspaceRunner'
@@ -70,6 +70,12 @@ export function InteractionWorkspace({ workspace, availableAccounts, onWorkspace
   const [runSnapshot, setRunSnapshot] = useState<InteractionWorkspaceRunSnapshot | null>(null)
   const [runError, setRunError] = useState<string | null>(null)
   const [runBusy, setRunBusy] = useState(false)
+  const accountCardRef = useRef<HTMLElement | null>(null)
+  const targetCardRef = useRef<HTMLElement | null>(null)
+  const actionCardRef = useRef<HTMLElement | null>(null)
+  const orchestrationCardRef = useRef<HTMLElement | null>(null)
+  const runtimeCardRef = useRef<HTMLElement | null>(null)
+  const focusStep = (ref: { current: HTMLElement | null }) => ref.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' })
 
   const plan = useMemo(() => buildInteractionWorkspacePlan(draft), [draft])
   const targetOption = INTERACTION_TARGET_OPTIONS.find((option) => option.id === draft.targetMode)
@@ -218,9 +224,16 @@ export function InteractionWorkspace({ workspace, availableAccounts, onWorkspace
       {saveError ? <div className="interaction-save-error">{saveError}</div> : null}
       {runError ? <div className="interaction-save-error interaction-run-error">{runError}</div> : null}
 
+      <nav className="interaction-workflow-guide" aria-label="Các bước cấu hình tương tác">
+        <button type="button" onClick={() => focusStep(accountCardRef)}><b>01</b> Tài khoản <span>{enabledAccountCount} bật</span></button>
+        <button type="button" onClick={() => focusStep(targetCardRef)}><b>02</b> Đối tượng</button>
+        <button type="button" onClick={() => focusStep(actionCardRef)}><b>03</b> Hành động <span>{plan.modules.length}</span></button>
+        <button type="button" onClick={() => focusStep(orchestrationCardRef)}><b>04</b> Cấu hình nâng cao</button>
+        <button type="button" onClick={() => focusStep(runtimeCardRef)}><b>05</b> Chạy / Log</button>
+      </nav>
       <div className="interaction-layout">
         <div className="interaction-main-column">
-          <section className="interaction-card interaction-account-card">
+          <section ref={accountCardRef} className="interaction-card interaction-account-card">
             <div className="interaction-card-head"><div><span>01</span><h3>Tài khoản chạy</h3></div><small>{enabledAccountCount}/{accountBindings.length} account đang bật · thứ tự được snapshot khi Start.</small></div>
             <div className="interaction-account-toolbar">
               <button type="button" className="interaction-add-account-button" onClick={() => setShowAccountPicker(true)}>+ Thêm tài khoản</button>
@@ -243,7 +256,7 @@ export function InteractionWorkspace({ workspace, availableAccounts, onWorkspace
             </div>
           </section>
 
-          <section className="interaction-card">
+          <section ref={targetCardRef} className="interaction-card">
             <div className="interaction-card-head"><div><span>02</span><h3>Đối tượng tương tác</h3></div><small>{targetOption?.hint}</small></div>
             <div className="interaction-page-actor-row">
               <label className="interaction-page-actor-check"><input type="checkbox" checked={draft.actor === 'page'} onChange={(event) => { setDraft((current) => ({ ...current, actor: event.target.checked ? 'page' : 'profile' })); markDirty() }} /><span>Chạy bằng Page</span></label>
@@ -274,7 +287,7 @@ export function InteractionWorkspace({ workspace, availableAccounts, onWorkspace
             ) : null}
           </section>
 
-          <section className="interaction-card">
+          <section ref={actionCardRef} className="interaction-card">
             <div className="interaction-card-head"><div><span>03</span><h3>Hành động</h3></div><small>Tích nhiều mục để compose trong cùng workspace.</small></div>
             <div className="interaction-action-grid">
               {INTERACTION_ACTION_OPTIONS.map((option) => (
@@ -317,7 +330,9 @@ export function InteractionWorkspace({ workspace, availableAccounts, onWorkspace
             </section>
           ) : null}
 
-          <section className="interaction-card">
+          <details className="interaction-advanced-details" open>
+            <summary>Thiết lập nâng cao · Delay, song song, Repeat</summary>
+            <section ref={orchestrationCardRef} className="interaction-card">
             <div className="interaction-card-head"><div><span>05</span><h3>Điều phối</h3></div><small>Pool cuốn chiếu: slot nào xong sẽ nhận account kế tiếp ngay, không đợi cả nhóm.</small></div>
             <div className="interaction-orchestration-grid">
               <label className="interaction-field"><span>Limit target / lượt</span><input type="number" min={1} value={draft.targetLimit} onChange={(event) => { setDraft((current) => ({ ...current, targetLimit: Number(event.target.value) })); markDirty() }} /></label>
@@ -327,10 +342,11 @@ export function InteractionWorkspace({ workspace, availableAccounts, onWorkspace
               <label className="interaction-concurrency-field"><span>TK song song</span><input type="number" min={1} max={MAX_INTERACTION_ACCOUNT_CONCURRENCY} value={draft.accountConcurrency} onChange={(event) => { setDraft((current) => ({ ...current, accountConcurrency: Number(event.target.value) })); markDirty() }} /><small>1–{MAX_INTERACTION_ACCOUNT_CONCURRENCY}</small></label>
               <label className="interaction-toggle interaction-repeat-inline"><input type="checkbox" checked={draft.repeat} onChange={(event) => { setDraft((current) => ({ ...current, repeat: event.target.checked })); markDirty() }} /><span><strong>Repeat</strong><small>Lặp workflow cho account hiện tại đến khi Stop.</small></span></label>
             </div>
-          </section>
+            </section>
+          </details>
         </div>
 
-        <aside className="interaction-plan-card">
+        <aside ref={runtimeCardRef} className="interaction-plan-card">
           <div className="interaction-plan-head"><div><p className="interaction-kicker">COMPOSITION</p><h3>Kế hoạch module</h3></div><span>{plan.modules.filter((module) => module.runtimeStatus === 'ready').length}/{plan.modules.length} ready</span></div>
           <p className="interaction-plan-copy">Start dùng config/account đã lưu để tạo snapshot. Mỗi module vẫn chạy qua Action Registry + worker/Common Runtime dùng chung.</p>
           <div className="interaction-module-list">

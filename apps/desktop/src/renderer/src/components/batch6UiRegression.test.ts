@@ -1,0 +1,37 @@
+import { readFileSync } from 'node:fs'
+import { describe, expect, it } from 'vitest'
+const source = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8')
+const library = source('../content-library/ContentLibraryWorkspace.tsx')
+const picker = source('../content-library/CanonicalPostPicker.tsx')
+const interaction = source('../actions/InteractionWorkspace.tsx')
+const runner = source('../scenarios/ScenarioRunnerDashboard.tsx')
+const zalo = source('../zalo/ZaloBatchPanel.tsx')
+const zaloAccounts = source('../zalo/ZaloWorkspace.tsx')
+describe('Issue #510 Batch 6 UI-only ownership regressions', () => {
+  it('navigates categories/posts/variants/media and keeps edits in canonical storage', () => {
+    expect(library).toContain('goToLibraryStep')
+    expect(library).toContain('toggleVisibleItems')
+    expect(library).toContain('useUnsavedWorkspaceChanges(editorDirty')
+    expect(library).toContain('window.pageAuto.updateContentLibraryItem')
+    expect(picker).toContain('mode === \'multiple\'')
+    expect(picker).toContain('onApply([...selected.values()]')
+  })
+  it('navigates the Action workspace and Scenario runner without replacing the registry or executor', () => {
+    expect(interaction).toContain('interaction-workflow-guide')
+    expect(interaction).toContain('interaction-advanced-details')
+    expect(interaction).toContain('buildInteractionWorkspacePlan(draft)')
+    expect(interaction).toContain('getInteractionWorkspaceRunnerStatus')
+    expect(runner).toContain('scenario-runner-workflow-guide')
+    expect(runner).toContain('startRuntime()')
+    expect(runner).toContain('onOpenManager')
+  })
+  it('keeps Zalo canonical binding and Chrome ownership unchanged', () => {
+    expect(zaloAccounts).toContain('filterZaloAccounts(accounts, accountSearch, accountStatus)')
+    expect(zaloAccounts).toContain('window.pageAutoZalo.openAccount(id)')
+    expect(zalo).toContain('useUnsavedWorkspaceChanges(postModalOpen && postDraftDirty')
+    expect(zalo).toContain('window.pageAutoZalo.savePostLibrary')
+    expect(zalo).toContain('toggleVisibleZaloAccounts')
+    expect(zalo).toContain('disabledPostIds={[...boundPostIds]}')
+    expect(zalo).not.toContain('createContentLibraryItem')
+  })
+})

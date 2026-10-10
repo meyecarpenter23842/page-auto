@@ -1,0 +1,14 @@
+/* Batch 6: a clear editing path without moving or copying canonical records. */
+.content-library-steps { display: flex; align-items: center; gap: 7px; padding: 8px 10px; flex-wrap: wrap; border: 1px solid var(--cl-border); border-radius: 9px; background: var(--cl-surface); }
+.content-library-steps > span { color: var(--cl-faint); font-size: 13px; }
+.content-library-steps button { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 5px 9px; cursor: pointer; border: 1px solid var(--cl-border); border-radius: 6px; color: var(--cl-text-soft); background: var(--cl-surface-2); font-size: 11px; font-weight: 650; }
+.content-library-steps button b { color: var(--cl-accent); font-size: 10px; }
+.content-library-steps button span { color: var(--cl-muted); font-size: 10px; }
+.content-library-steps button:disabled { opacity: .5; cursor: not-allowed; }
+.content-library-steps button:not(:disabled):hover { border-color: var(--cl-accent-border); background: var(--cl-accent-soft); }
+.content-library-steps button:focus-visible { outline: 2px solid var(--cl-accent); outline-offset: 2px; }
+.content-library-steps > strong { margin-left: auto; font-size: 10px; color: var(--cl-success); }
+.content-library-steps > strong.unsaved { color: var(--cl-danger); }
+.content-library-category-table th:first-child input { width: 14px; height: 14px; margin: 0; cursor: pointer; accent-color: var(--cl-accent); }
+.content-library-source-actions button:focus-visible, .content-library-category-actions button:focus-visible { outline: 2px solid var(--cl-accent); outline-offset: 1px; }
+@media (max-width: 1250px) { .content-library-steps { gap: 5px; } .content-library-steps > strong { flex: 1 0 auto; text-align: right; } }
