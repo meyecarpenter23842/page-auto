@@ -109,3 +109,15 @@
 
 @media (max-width: 1280px) { .zalo-automation-grid { grid-template-columns: 1fr; } .zalo-config-toolbar { grid-template-columns: 1fr 1fr; } .zalo-action-strip { grid-column: 1 / -1; } }
 @media (max-width: 900px) { .zalo-batch-commandbar { align-items: stretch; flex-direction: column; } .zalo-run-actions-top { flex-wrap: wrap; } .zalo-batch-options, .zalo-action-grid, .zalo-runtime-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .zalo-config-toolbar { grid-template-columns: 1fr; } .zalo-action-strip { grid-column: auto; flex-wrap: wrap; } .zalo-post-layout { grid-template-columns: 1fr; } .zalo-post-list { border-right: 0; border-bottom: 1px solid var(--zalo-border-soft); } }
+
+/* Batch 6: search/filter controls apply only to the displayed account rows. */
+.zalo-batch-account-filterbar { display:flex; flex-wrap:wrap; gap:6px; align-items:center; padding:8px 0; }
+.zalo-batch-account-filterbar input { min-width:160px; flex:1 1 180px; }
+.zalo-batch-account-filterbar select { min-width:130px; }
+.zalo-batch-account-filterbar input, .zalo-batch-account-filterbar select, .zalo-batch-account-filterbar button, .zalo-post-preview select { min-height:30px; border:1px solid var(--zalo-border-soft, #cbd5e1); border-radius:5px; background:var(--zalo-surface, #fff); color:inherit; padding:4px 8px; font-size:11px; }
+.zalo-batch-account-filterbar button { cursor:pointer; }
+.zalo-batch-account-filterbar button:disabled { opacity:.5; cursor:not-allowed; }
+.zalo-batch-account-filterbar small { white-space:nowrap; color:var(--zalo-muted, #667085); }
+.zalo-post-preview select { width:100%; margin:7px 0; }
+.zalo-post-preview p { white-space:pre-wrap; overflow-wrap:anywhere; max-height:240px; overflow:auto; }
+.zalo-batch-account-filterbar :focus-visible, .zalo-post-preview select:focus-visible { outline:2px solid #2563eb; outline-offset:1px; }

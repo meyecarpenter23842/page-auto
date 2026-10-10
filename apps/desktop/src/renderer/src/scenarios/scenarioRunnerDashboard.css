@@ -1059,3 +1059,15 @@ body:has(.scenario-manager-mode) .version-badge {
     transition-duration: .01ms;
   }
 }
+
+/* Batch 6: a visible three-step runner path, without touching execution state. */
+.scenario-runner-page { display: flex; flex-direction: column; gap: 8px; }
+.scenario-runner-grid { flex: 1 1 0; height: auto; min-height: 0; }
+.scenario-runner-workflow-guide { display:flex; align-items:center; flex-wrap:wrap; gap:6px; padding:8px 10px; background:var(--runner-surface); border:1px solid var(--runner-border); border-radius:8px; }
+.scenario-runner-workflow-guide button { display:inline-flex; align-items:center; gap:7px; min-height:30px; padding:5px 10px; color:var(--runner-text-secondary); background:var(--runner-surface-muted); border:1px solid var(--runner-border); border-radius:5px; cursor:pointer; font-size:11px; font-weight:650; }
+.scenario-runner-workflow-guide button b { color:var(--runner-blue); }
+.scenario-runner-workflow-guide button span { color:var(--runner-muted); font-size:10px; }
+.scenario-runner-workflow-guide button:hover { background:var(--runner-blue-soft); }
+.scenario-runner-workflow-guide button:focus-visible { outline:2px solid var(--runner-blue); outline-offset:2px; }
+.scenario-runner-workflow-guide small { flex:1 1 auto; text-align:right; color:var(--runner-muted); font-size:10px; }
+@media(max-width:1250px) { .scenario-runner-workflow-guide small { width:100%; text-align:left; } }

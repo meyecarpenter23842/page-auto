@@ -92,6 +92,11 @@ export function CanonicalPostPicker({
     [activeSetId, sets]
   )
   const selectedPostIds = useMemo(() => new Set(selected.keys()), [selected])
+  useEffect(() => {
+    const onEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onEscape)
+    return () => window.removeEventListener('keydown', onEscape)
+  }, [onClose])
 
   useEffect(() => {
     let cancelled = false
@@ -179,6 +184,8 @@ export function CanonicalPostPicker({
       return next
     })
   }
+
+  const clearSelected = () => setSelected(new Map())
 
   const toggleItem = (item: ContentLibraryItem) => {
     const postId = canonicalPostId(item)
@@ -277,9 +284,12 @@ export function CanonicalPostPicker({
                 placeholder="Tìm tên hoặc nội dung trong thư mục…"
               />
               {mode === 'multiple' ? (
-                <button type="button" disabled={detailLoading || !visibleItems.length} onClick={selectVisiblePosts}>
-                  Chọn kết quả ({visibleItems.length})
-                </button>
+                <>
+                  <button type="button" disabled={detailLoading || !visibleItems.length} onClick={selectVisiblePosts}>
+                    Chọn kết quả ({visibleItems.length})
+                  </button>
+                  <button type="button" disabled={!selected.size} onClick={clearSelected}>Bỏ chọn ({selected.size})</button>
+                </>
               ) : null}
             </div>
 

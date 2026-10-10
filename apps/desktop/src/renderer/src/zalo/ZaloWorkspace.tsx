@@ -6,6 +6,7 @@ import {
   type ZaloLoginMode
 } from '../../../shared/zalo'
 import { ZaloBatchPanel } from './ZaloBatchPanel'
+import { filterZaloAccounts } from './zaloAccountFilters'
 import './zaloWorkspace.css'
 
 type BusyState = { id: number; label: string } | null
@@ -33,6 +34,8 @@ export function ZaloWorkspace() {
   const [settings, setSettings] = useState<ZaloBrowserSettings | null>(null)
   const [busy, setBusy] = useState<BusyState>(null)
   const [notice, setNotice] = useState('')
+  const [accountSearch, setAccountSearch] = useState('')
+  const [accountStatus, setAccountStatus] = useState('all')
 
   const loadAccounts = useCallback(async () => {
     setAccounts(await window.pageAutoZalo.listAccounts())
@@ -52,6 +55,7 @@ export function ZaloWorkspace() {
   }, [load])
 
   const readyCount = useMemo(() => accounts.filter((account) => account.sessionStatus === 'ready').length, [accounts])
+  const visibleAccounts = useMemo(() => filterZaloAccounts(accounts, accountSearch, accountStatus), [accounts, accountSearch, accountStatus])
 
   const create = async () => {
     if (!draft.phone.trim()) return
@@ -151,11 +155,19 @@ export function ZaloWorkspace() {
         <div className="zalo-account-workspace">
           <section className="panel zalo-account-admin">
             <div className="zalo-section-heading"><div><span>Tài khoản</span><strong>Quản lý profile và session</strong></div><small>{readyCount}/{accounts.length} sẵn sàng</small></div>
+            <div className="zalo-account-filterbar">
+              <label><span>Tìm tài khoản</span><input type="search" value={accountSearch} onChange={(event) => setAccountSearch(event.target.value)} placeholder="SĐT, tên hoặc ghi chú…" /></label>
+              <label><span>Session</span><select value={accountStatus} onChange={(event) => setAccountStatus(event.target.value)}>
+                <option value="all">Tất cả trạng thái</option><option value="ready">Sẵn sàng</option>
+                <option value="attention">Cần xử lý</option><option value="login_required">Cần đăng nhập</option>
+                <option value="qr_waiting">Chờ quét QR</option><option value="unknown">Chưa kiểm tra</option>
+              </select></label><small>{visibleAccounts.length}/{accounts.length} tài khoản</small>
+            </div>
             <div className="table-wrap zalo-account-table-wrap">
               <table className="data-table zalo-account-table">
                 <thead><tr><th>Số điện thoại</th><th>Tên</th><th>Session</th><th>Ghi chú</th><th>Thao tác</th></tr></thead>
                 <tbody>
-                  {accounts.map((account) => {
+                  {visibleAccounts.map((account) => {
                     const accountBusy = busy?.id === account.id
                     return (
                       <tr key={account.id}>
@@ -175,7 +187,7 @@ export function ZaloWorkspace() {
                       </tr>
                     )
                   })}
-                  {accounts.length === 0 ? <tr><td colSpan={5}>Chưa có tài khoản Zalo.</td></tr> : null}
+                  {visibleAccounts.length === 0 ? <tr><td colSpan={5}>{accounts.length ? 'Không có tài khoản phù hợp bộ lọc.' : 'Chưa có tài khoản Zalo.'}</td></tr> : null}
                 </tbody>
               </table>
             </div>

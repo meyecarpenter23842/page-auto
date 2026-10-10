@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { AccountRecord, AccountStatus } from '../../../shared/accounts'
 import type {
   ScenarioRunnerAccountRuntime,
@@ -122,6 +122,10 @@ export function ScenarioRunnerDashboard({ onOpenManager }: ScenarioRunnerDashboa
   const [runtimeSnapshot, setRuntimeSnapshot] = useState<ScenarioRunnerSnapshot | null>(null)
   const [runtimeError, setRuntimeError] = useState<string | null>(null)
   const [clearedLogId, setClearedLogId] = useState(0)
+  const accountsPaneRef = useRef<HTMLElement | null>(null)
+  const settingsPaneRef = useRef<HTMLElement | null>(null)
+  const runtimePaneRef = useRef<HTMLElement | null>(null)
+  const jumpToPane = (target: HTMLElement | null) => target?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' })
 
   useEffect(() => {
     let active = true
@@ -295,8 +299,14 @@ export function ScenarioRunnerDashboard({ onOpenManager }: ScenarioRunnerDashboa
     <section className="scenario-runner-page" aria-label="Chạy Kịch Bản">
       {loadError ? <div className="scenario-runner-error">Không tải được dữ liệu: {loadError}</div> : null}
 
+      <nav className="scenario-runner-workflow-guide" aria-label="Quy trình chạy kịch bản">
+        <button type="button" onClick={() => jumpToPane(accountsPaneRef.current)}><b>01</b> Chọn tài khoản <span>{enabledRunAccounts.length} bật</span></button>
+        <button type="button" onClick={() => jumpToPane(settingsPaneRef.current)}><b>02</b> Kịch bản & cấu hình <span>{selectedScenarios.length} chọn</span></button>
+        <button type="button" onClick={() => jumpToPane(runtimePaneRef.current)}><b>03</b> Chạy & nhật ký <span>{runtimeSnapshot?.state ?? 'chưa chạy'}</span></button>
+        <small>Lựa chọn được lưu riêng trên máy; runtime chạy qua Action Registry hiện có.</small>
+      </nav>
       <div className="scenario-runner-grid">
-        <section className="scenario-runner-panel runner-accounts-panel">
+        <section ref={accountsPaneRef} className="scenario-runner-panel runner-accounts-panel">
           <div className="scenario-runner-panel-head">
             <div><p>TÀI KHOẢN CHẠY</p><h2>Danh sách tài khoản</h2></div>
             <span>{selectedAccounts.length}</span>
@@ -337,7 +347,7 @@ export function ScenarioRunnerDashboard({ onOpenManager }: ScenarioRunnerDashboa
           </div>
         </section>
 
-        <section className="scenario-runner-panel runner-settings-panel">
+        <section ref={settingsPaneRef} className="scenario-runner-panel runner-settings-panel">
           <div className="scenario-runner-panel-head">
             <div><p>THIẾT LẬP CHẠY</p><h2>Kịch bản & nhịp chạy</h2></div>
             <button className="scenario-runner-link-button" type="button" disabled={runtimeActive} onClick={onOpenManager}>Quản lý</button>
@@ -404,7 +414,7 @@ export function ScenarioRunnerDashboard({ onOpenManager }: ScenarioRunnerDashboa
           </div>
         </section>
 
-        <section className="scenario-runner-panel runner-log-panel">
+        <section ref={runtimePaneRef} className="scenario-runner-panel runner-log-panel">
           <div className="scenario-runner-panel-head">
             <div><p>KHU VỰC CHẠY / LOG</p><h2>Runtime</h2></div>
             <button className="scenario-runner-button" type="button" disabled={!visibleRuntimeLogs.length && !runtimeError} onClick={() => { setClearedLogId(runtimeSnapshot?.logs.at(-1)?.id ?? 0); setRuntimeError(null) }}>Xóa log</button>
