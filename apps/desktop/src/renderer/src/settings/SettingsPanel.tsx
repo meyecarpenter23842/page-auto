@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { AppInfo } from '../../../ipc/channels'
 import { AdvancedSettingsSection } from './AdvancedSettingsSection'
 import { AppearanceSettingsSection } from './AppearanceSettingsSection'
@@ -13,26 +13,28 @@ import { SessionSettingsPanel } from './SessionSettingsPanel'
 import { UpdateSettingsSection } from './UpdateSettingsSection'
 import './settings.css'
 import './settingsScrollFix.css'
+import './settingsNavigation.css'
+import { settingsSections, settingsGroups, restoreSettingsSection, SETTINGS_SECTION_KEY, type SettingsSection } from './settingsNavigation'
 
 interface SettingsPanelProps { appInfo: AppInfo | null }
-type SettingsSection = 'appearance' | 'update' | 'browser' | 'slots' | 'session' | 'network' | 'runtime' | 'logs' | 'captcha' | 'advanced' | 'health'
-
-const sections: Array<{ id: SettingsSection; label: string; mark: string }> = [
-  { id: 'appearance', label: 'Giao diện', mark: 'UI' },
-  { id: 'update', label: 'Cập nhật', mark: 'UP' },
-  { id: 'browser', label: 'Trình duyệt', mark: 'BR' },
-  { id: 'slots', label: 'Chrome Slots', mark: 'SL' },
-  { id: 'session', label: 'Đăng nhập', mark: 'SS' },
-  { id: 'network', label: 'Proxy & Mạng', mark: 'NW' },
-  { id: 'runtime', label: 'Vận hành', mark: 'RT' },
-  { id: 'logs', label: 'Nhật ký', mark: 'LG' },
-  { id: 'captcha', label: 'CAPTCHA', mark: 'CP' },
-  { id: 'advanced', label: 'Nâng cao', mark: 'AD' },
-  { id: 'health', label: 'Kiểm tra hệ thống', mark: 'OK' }
-]
 
 export function SettingsPanel({ appInfo }: SettingsPanelProps) {
-  const [activeSection, setActiveSection] = useState<SettingsSection>('browser')
+  const [activeSection, setActiveSection] = useState<SettingsSection>(() => {
+    try { return restoreSettingsSection(window.localStorage.getItem(SETTINGS_SECTION_KEY)) }
+    catch { return 'browser' }
+  })
+  const [search, setSearch] = useState('')
+  const [advancedOpen, setAdvancedOpen] = useState(activeSection === 'advanced')
+  const visibleSections = useMemo(() => {
+    const query = search.trim().toLocaleLowerCase('vi')
+    return query ? settingsSections.filter((section) =>
+      (section.label + ' ' + section.keywords).toLocaleLowerCase('vi').includes(query)) : settingsSections
+  }, [search])
+  const activate = (section: SettingsSection) => {
+    setActiveSection(section)
+    if (section === 'advanced') setAdvancedOpen(true)
+    try { window.localStorage.setItem(SETTINGS_SECTION_KEY, section) } catch { /* UI selection persistence is optional. */ }
+  }
 
   let panel = <BrowserSettingsSection appInfo={appInfo} />
   if (activeSection === 'appearance') panel = <AppearanceSettingsSection />
@@ -46,7 +48,7 @@ export function SettingsPanel({ appInfo }: SettingsPanelProps) {
   else if (activeSection === 'advanced') panel = <AdvancedSettingsSection appInfo={appInfo} />
   else if (activeSection === 'health') panel = <HealthSettingsSection appInfo={appInfo} />
 
-  const active = sections.find((section) => section.id === activeSection)
+  const active = settingsSections.find((section) => section.id === activeSection)
   const heading = activeSection === 'appearance'
     ? 'Chế độ sáng & tối'
     : activeSection === 'update'
@@ -75,10 +77,35 @@ export function SettingsPanel({ appInfo }: SettingsPanelProps) {
   return <div className="settings-shell">
     <aside className="settings-menu" aria-label="Nhóm cài đặt">
       <div className="settings-menu-title">CÀI ĐẶT</div>
-      {sections.map((section) => <button type="button" key={section.id} className={activeSection === section.id ? 'settings-menu-item active' : 'settings-menu-item'} onClick={() => setActiveSection(section.id)}><span>{section.mark}</span>{section.label}</button>)}
+      <label className="settings-menu-search">
+        <span>Tìm trong 11 mục</span>
+        <input type="search" aria-label="Tìm mục cài đặt" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Tên mục hoặc chức năng…" />
+      </label>
+      <div className="settings-menu-scroll">
+        {settingsGroups.map((group) => {
+          const items = visibleSections.filter((section) => section.group === group.id)
+          if (!items.length) return null
+          const links = items.map((section) =>
+            <button
+              type="button" key={section.id}
+              aria-current={activeSection === section.id ? 'page' : undefined}
+              className={activeSection === section.id ? 'settings-menu-item active' : 'settings-menu-item'}
+              onClick={() => activate(section.id)}
+            ><span>{section.mark}</span>{section.label}</button>
+          )
+          return group.id === 'advanced'
+            ? <details className="settings-menu-advanced" key={group.id}
+                open={advancedOpen || Boolean(search.trim())}
+                onToggle={(event) => { if (!search.trim()) setAdvancedOpen(event.currentTarget.open) }}>
+                <summary>{group.label}</summary>{links}
+              </details>
+            : <div className="settings-menu-group" key={group.id}><h3>{group.label}</h3>{links}</div>
+        })}
+        {!visibleSections.length ? <p className="settings-menu-empty">Không tìm thấy mục cài đặt phù hợp.</p> : null}
+      </div>
     </aside>
     <section className="settings-detail">
-      <div className="settings-detail-head"><div><p>{active?.label}</p><h2>{heading}</h2></div><span className="settings-version">{appInfo ? `v${appInfo.version}` : '...'}</span></div>
+      <div className="settings-detail-head"><div><p>{active?.label}</p><h2>{heading}</h2><small className="settings-save-mode" data-mode={active?.saveMode ?? 'manual'}>{active?.saveLabel ?? 'Lưu tại mục đang mở'}</small></div><span className="settings-version">{appInfo ? `v${appInfo.version}` : '...'}</span></div>
       <div className="settings-detail-body">{panel}</div>
       <div className="settings-footer"><span /><span className="footer-note">{footer}</span></div>
     </section>
