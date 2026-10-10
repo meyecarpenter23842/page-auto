@@ -158,7 +158,7 @@ export class AiApiConnectionService {
       response = await this.fetchImpl(url,{
         method,redirect:'error',
         headers:{...requestHeaders(provider,apiKey),'Content-Type':'application/json'},
-        body: body ? JSON.stringify(body):undefined,
+        ...(body ? { body: JSON.stringify(body) } : {}),
         signal: AbortSignal.timeout(method === 'GET' ? 20000 : 90000)
       })
     } catch { throw new Error('Không kết nối được API HTTPS. Kiểm tra URL, mạng và chứng chỉ TLS.') }
