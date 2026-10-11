@@ -40,6 +40,12 @@ describe('Facebook checkpoint classifier', () => {
     expect(facebookCheckpointKindFromUrl('https://www.facebook.com/two_step_verification/two_factor/')).toBeNull()
   })
 
+  it('recognizes the Facebook disabled checkpoint route even before page text renders', () => {
+    expect(facebookCheckpointKindFromUrl('https://www.facebook.com/checkpoint/disabled/?next&lsrc=cf')).toBe('disabled')
+    expect(facebookCheckpointKindFromUrl('https://m.facebook.com/checkpoint/DISABLED/')).toBe('disabled')
+    expect(facebookCheckpointKindFromUrl('https://www.facebook.com/checkpoint/disabled-other/')).toBe('unknown')
+  })
+
   it('accepts explicit checkpoint labels from DOM text but not bare numbers', () => {
     expect(facebookCheckpointKindFromText('Checkpoint 282')).toBe('282')
     expect(facebookCheckpointKindFromText('CP: 956')).toBe('956')
@@ -54,6 +60,19 @@ describe('Facebook checkpoint classifier', () => {
   it('classifies disabled accounts before generic checkpoint fallback', () => {
     expect(facebookRestrictionKindFromText('Your account has been disabled', 'unknown')).toBe('disabled')
     expect(facebookRestrictionKindFromText('Tài khoản của bạn đã bị vô hiệu hóa', null)).toBe('disabled')
+  })
+
+  it('recognizes disabled from URL if the page text is empty or Facebook displays other controls', async () => {
+    const url = 'https://www.facebook.com/checkpoint/disabled/?next&lsrc=cf'
+    expect(classifyFacebookCommonChallengeSignals({
+      url,
+      bodyText: '',
+      codeInputVisible: false,
+      passwordInputVisible: false,
+      loginControlVisible: true
+    })).toEqual({ type: 'account_disabled', checkpointKind: 'disabled' })
+    await expect(detectFacebookAccountStatus(pageAt(url, ''))).resolves.toBe('disabled')
+    await expect(detectFacebookCheckpointKind(pageAt(url, ''), 0)).resolves.toBe('disabled')
   })
 
   it('adds a stable Vietnamese classification to runtime messages', () => {
