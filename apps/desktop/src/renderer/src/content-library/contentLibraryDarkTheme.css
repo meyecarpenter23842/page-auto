@@ -139,3 +139,9 @@ html[data-theme='dark'] .ai-draft-error {
   background: #351515 !important;
   border-color: #6a2828 !important;
 }
+
+/* R6 AI editing polish: new compact controls stay legible in dark mode. */
+html[data-theme='dark'] .ai-draft-media-config>summary strong{color:var(--pa-dark-text)!important}
+html[data-theme='dark'] .ai-draft-media-config>summary small{color:var(--pa-dark-muted)!important}
+html[data-theme='dark'] .ai-draft-media-config>summary>span{background:var(--pa-dark-surface-3)!important;color:var(--pa-dark-text-soft)!important}
+html[data-theme='dark'] .ai-draft-media-config>summary:after{color:var(--pa-dark-muted)}

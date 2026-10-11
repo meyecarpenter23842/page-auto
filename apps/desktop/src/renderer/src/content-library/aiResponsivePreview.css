@@ -13,7 +13,7 @@
 }
 
 .workspace-content-library .ai-content-layout {
-  grid-template-columns: minmax(340px, 380px) minmax(0, 1fr);
+  grid-template-columns: minmax(320px, min(var(--ai-compose-width, 400px), 43%)) 12px minmax(0, 1fr);
 }
 
 /* Result rail always stays visible, including Random/single-result batches.
@@ -85,7 +85,7 @@
 
 @media (min-width: 1500px) {
   .workspace-content-library .ai-content-layout {
-    grid-template-columns: 370px minmax(0, 1fr);
+    grid-template-columns: minmax(320px, min(var(--ai-compose-width, 400px), 43%)) 12px minmax(0, 1fr);
   }
 
   .workspace-content-library .ai-results-workspace {
@@ -95,6 +95,6 @@
 
 @media (max-width: 1120px) {
   .workspace-content-library .ai-content-layout {
-    grid-template-columns: 330px minmax(0, 1fr);
+    grid-template-columns: minmax(300px, min(var(--ai-compose-width, 400px), 43%)) 12px minmax(0, 1fr);
   }
 }
