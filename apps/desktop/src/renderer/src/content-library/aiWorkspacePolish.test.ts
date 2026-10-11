@@ -43,6 +43,8 @@ describe('AI composer Windows workspace ergonomics', () => {
     expect(workspace).not.toContain('ai-image-option disabled')
     expect(results).toContain('<details className="ai-draft-media-config"')
     expect(results).toContain('<details className="ai-agent-output-bridge"')
+    expect(results.indexOf('className="ai-agent-output-bridge"')).toBeLessThan(results.indexOf('ai-preview-canvas ai-results-canvas'))
+    expect(resultsCss).toContain('.ai-preview-actions .ai-agent-output-bridge[open] .ai-agent-output-body')
     expect(resultsCss).toContain('grid-template-rows:auto auto minmax(190px,1fr) auto auto')
     expect(polish).toContain('.ai-field input,.ai-field select,.ai-field textarea{font-size:13px}')
     expect(responsive).toContain('var(--ai-compose-width, 400px)')
