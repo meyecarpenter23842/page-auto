@@ -117,6 +117,7 @@ jobs:
           name: PageAuto-ai-api-manager-${{ github.sha }}
           path: |
             dist/ai-api-manager-smoke.png
+            dist/ai-api-manager-dark.png
             dist/ai-post-editor-*.png
           if-no-files-found: error
           retention-days: 7

@@ -5,6 +5,7 @@ import {
   type GenerateAiImagesInput, type SaveAiImagesInput, validateAiImageDataUrl, validateAiImageInput
 } from '../../shared/aiImages'
 import type { AiApiProvider } from '../../shared/aiApiConnections'
+import { canGenerateImageOnConnection, isNvidiaNimBase, nvidiaHostedImageEndpoint } from '../../shared/aiImageModels'
 
 type Credentials = { provider: AiApiProvider; baseUrl: string; apiKey: string }
 const MAX_RESPONSE_BYTES = 24 * 1024 * 1024
@@ -52,6 +53,26 @@ async function limitedResponse(response: Response): Promise<Record<string, unkno
   } catch { throw new Error('API ảnh trả JSON không hợp lệ.') }
 }
 
+/** NVIDIA image NIM artifacts are base64 blobs, not OpenAI b64_json responses. */
+export function outputFromNvidiaArtifact(json: Record<string, unknown>): AiImageOutput {
+  const artifact = Array.isArray(json.artifacts) ? json.artifacts[0] as Record<string, unknown> | undefined : undefined
+  const b64 = typeof artifact?.base64 === 'string' ? artifact.base64 : null
+  if (!b64) throw new Error('NVIDIA không trả ảnh trong artifacts[0].base64. Kiểm tra quyền model và hạn mức API.')
+  const raw = b64.startsWith('data:') ? b64.slice(b64.indexOf(',') + 1) : b64
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(raw) || raw.length > Math.ceil(MAX_IMAGE_OUTPUT_BYTES * 4 / 3) + 100) {
+    throw new Error('NVIDIA trả dữ liệu ảnh không hợp lệ hoặc quá lớn.')
+  }
+  const bytes = Buffer.from(raw, 'base64')
+  const mime = bytes.length >= 8 && bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]))
+    ? 'image/png' : bytes.length >= 3 && bytes[0]===255 && bytes[1]===216 && bytes[2]===255
+      ? 'image/jpeg' : bytes.length >= 12 && bytes.toString('ascii',0,4)==='RIFF' && bytes.toString('ascii',8,12)==='WEBP'
+        ? 'image/webp' : null
+  if (!mime || bytes.length > MAX_IMAGE_OUTPUT_BYTES) throw new Error('NVIDIA không trả ảnh PNG, JPG hoặc WEBP hợp lệ.')
+  const dataUrl = 'data:'+mime+';base64,'+raw
+  decodeAiImage(dataUrl)
+  return {dataUrl,mimeType:mime}
+}
+
 function outputFromResponse(provider: AiApiProvider, json: Record<string, unknown>): AiImageOutput {
   let base64: string | undefined
   let mimeType = 'image/png'
@@ -83,9 +104,11 @@ export async function generateAiImagesFromProvider(
   credentials: Credentials, input: GenerateAiImagesInput, fetchImpl: typeof fetch = fetch
 ): Promise<AiImageOutput[]> {
   validateAiImageInput(input)
-  if (credentials.provider === 'anthropic') {
-    throw new Error('Kết nối Anthropic hiện không có endpoint tạo ảnh. Chọn OpenAI-compatible hoặc Gemini hỗ trợ ảnh.')
-  }
+  const capability = canGenerateImageOnConnection(credentials, input.modelId, input.mode)
+  if (!capability.ok) throw new Error(capability.reason)
+  const nvidia = isNvidiaNimBase(credentials.baseUrl)
+  const nvidiaEndpoint = nvidia ? nvidiaHostedImageEndpoint(input.modelId) : null
+  if (nvidia && input.size !== '1024x1024') throw new Error('NVIDIA preview chỉ hỗ trợ ảnh 1024 × 1024; đổi kích thước trước khi tạo.')
   const output: AiImageOutput[] = []
   for (let i=0; i<input.count; i++) {
     const controller = new AbortController()
@@ -94,7 +117,18 @@ export async function generateAiImagesFromProvider(
       let path: string
       let body: BodyInit
       const headers: Record<string,string> = {}
-      if (credentials.provider === 'gemini') {
+      if (nvidia && nvidiaEndpoint) {
+        path = ''
+        headers.Authorization = 'Bearer ' + credentials.apiKey
+        headers.Accept = 'application/json'
+        headers['Content-Type'] = 'application/json'
+        body = JSON.stringify({
+          prompt:promptForMode(input),height:1024,width:1024,seed:0,samples:1,
+          ...(input.modelId.endsWith('flux.1-dev') ? {mode:'base',cfg_scale:5,steps:50}
+            : input.modelId.endsWith('flux.1-schnell') ? {mode:'base',cfg_scale:0,steps:4}
+            : {mode:'Image Generation',cfg_scale:0,steps:4,image:null})
+        })
+      } else if (credentials.provider === 'gemini') {
         path = 'models/' + encodeURIComponent(input.modelId) + ':generateContent'
         headers['x-goog-api-key'] = credentials.apiKey
         headers['Content-Type'] = 'application/json'
@@ -134,7 +168,7 @@ export async function generateAiImagesFromProvider(
           body = form
         }
       }
-      const endpoint = credentials.baseUrl.replace(/\/+$/,'') + '/' + path
+      const endpoint = nvidiaEndpoint ?? (credentials.baseUrl.replace(/\/+$/,'') + '/' + path)
       let response: Response
       try { response = await fetchImpl(endpoint,{method:'POST',headers,body,redirect:'error',signal:controller.signal}) }
       catch { throw new Error(controller.signal.aborted ? 'Tạo ảnh quá thời gian 120 giây.' : 'Không kết nối được endpoint tạo ảnh HTTPS.') }
@@ -142,7 +176,7 @@ export async function generateAiImagesFromProvider(
         throw new Error('API tạo ảnh trả HTTP ' + response.status + '. Model hoặc endpoint có thể không hỗ trợ ảnh, không đủ quyền hay đã hết tín dụng.')
       }
       const parsed = await limitedResponse(response)
-      output.push(outputFromResponse(credentials.provider,parsed))
+      output.push(nvidiaEndpoint ? outputFromNvidiaArtifact(parsed) : outputFromResponse(credentials.provider,parsed))
     } finally { clearTimeout(timer) }
   }
   return output

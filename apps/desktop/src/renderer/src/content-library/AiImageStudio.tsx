@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { AiApiConnectionView, AiApiModel } from '../../../shared/aiApiConnections'
 import type { AiImageAsset, AiImageMode, AiImageOutput, AiImageSize } from '../../../shared/aiImages'
+import { canGenerateImageOnConnection, imageModelOptionsForConnection, isNvidiaNimBase } from '../../../shared/aiImageModels'
+import type { AiImageArticleRequest } from './aiImageArticleBridge'
 import './aiImageStudio.css'
 
 type GalleryImage = AiImageOutput & { id: string; name: string; selected: boolean }
@@ -21,7 +23,11 @@ function explain(error: unknown): string {
     .replace(/^Error invoking remote method '[^']+': Error: /,'')
 }
 
-export function AiImageStudio() {
+interface AiImageStudioProps {
+  articleRequest?: AiImageArticleRequest | null
+  onAttachToArticle?: (request: AiImageArticleRequest, folderPath: string) => void
+}
+export function AiImageStudio({articleRequest=null,onAttachToArticle}: AiImageStudioProps) {
   const [connections,setConnections] = useState<AiApiConnectionView[]>([])
   const [connectionId,setConnectionId] = useState('')
   const [models,setModels] = useState<AiApiModel[]>([])
@@ -48,14 +54,24 @@ export function AiImageStudio() {
       setConnections(next)
       const id = next.some(c=>c.id===connectionId) ? connectionId : (next.find(c=>c.isDefault) ?? next[0])?.id ?? ''
       setConnectionId(id)
-      setModelId(next.find(c=>c.id===id)?.modelId ?? '')
+      if (next.find(c=>c.id===id && isNvidiaNimBase(c.baseUrl))) setSize('1024x1024')
+      const saved = next.find(c=>c.id===id)
+      setModelId(saved && imageModelOptionsForConnection(saved, [{id:saved.modelId,label:saved.modelId}]).some(m=>m.id===saved.modelId) ? saved.modelId : '')
     } catch(err) {setError(explain(err))}
     finally {setBusy(null)}
   }
   useEffect(()=>{void refreshConnections()},[])
+  useEffect(()=>{
+    if (articleRequest?.content) {
+      setPrompt(articleRequest.content.slice(0,3500))
+      setMode('new')
+    }
+  },[articleRequest?.id])
   const changeConnection = (id: string) => {
     setConnectionId(id)
-    setModelId(connections.find(c=>c.id===id)?.modelId ?? '')
+    if (connections.some(c=>c.id===id && isNvidiaNimBase(c.baseUrl))) setSize('1024x1024')
+    const selected = connections.find(c=>c.id===id)
+    setModelId(selected && imageModelOptionsForConnection(selected,[{id:selected.modelId,label:selected.modelId}]).some(m=>m.id===selected.modelId) ? selected.modelId : '')
     setModels([])
     setMessage('')
     setError('')
@@ -64,11 +80,14 @@ export function AiImageStudio() {
     if (!current) return
     setBusy('models');setError('');setMessage('')
     try {
-      const list = await window.pageAuto.discoverAiApiModels({
+      const list = isNvidiaNimBase(current.baseUrl) ? [] : await window.pageAuto.discoverAiApiModels({
         connectionId:current.id,provider:current.provider,baseUrl:current.baseUrl,apiKey:''
       })
-      setModels(list)
-      setMessage('API trả ' + list.length + ' model. Danh sách chưa xác nhận model nào hỗ trợ tạo ảnh; hãy chọn model ảnh phù hợp.')
+      const imageModels = imageModelOptionsForConnection(current,list)
+      setModels(imageModels)
+      setMessage(isNvidiaNimBase(current.baseUrl)
+        ? 'Đã tải danh sách endpoint ảnh NVIDIA có giao thức được hỗ trợ. Quyền gọi phụ thuộc API key.'
+        : 'Có ' + imageModels.length + ' model có tên liên quan đến ảnh. Cần quyền API và model tương thích.')
     } catch(err) {setError(explain(err))}
     finally {setBusy(null)}
   }
@@ -88,7 +107,9 @@ export function AiImageStudio() {
     } catch(err) {setError(explain(err))}
     finally {setBusy(null)}
   }
-  const canGenerate = Boolean(current && modelId.trim() && prompt.trim() &&
+  const capability = current && modelId.trim()
+    ? canGenerateImageOnConnection(current,modelId.trim(),mode) : null
+  const canGenerate = Boolean(current && modelId.trim() && (!capability || capability.ok) && prompt.trim() &&
     (mode==='new' || source) && (mode!=='product' || product))
   const generate = async (countOverride?: number) => {
     if (!canGenerate || !current) return
@@ -109,7 +130,7 @@ export function AiImageStudio() {
     } catch(err) {setError(explain(err))}
     finally {setBusy(null)}
   }
-  const save = async (items: GalleryImage[]) => {
+  const save = async (items: GalleryImage[], attachToArticle = false) => {
     if (!items.length) return
     setBusy('save');setError('');setMessage('')
     try {
@@ -127,6 +148,9 @@ export function AiImageStudio() {
         total += files.length
       }
       setMessage('Đã lưu ' + total + ' file ảnh thật vào ' + path)
+      if (attachToArticle && articleRequest && onAttachToArticle && total===items.length) {
+        onAttachToArticle(articleRequest,path)
+      }
     } catch(err) {setError(explain(err))}
     finally {setBusy(null)}
   }
@@ -152,7 +176,7 @@ export function AiImageStudio() {
               <div className="ai-image-control-pair">
                 <select id="ai-image-connection" value={connectionId} onChange={e=>changeConnection(e.target.value)} disabled={Boolean(busy)}>
                   <option value="">— Chọn kết nối đã lưu —</option>
-                  {connections.map(c=><option value={c.id} key={c.id}>{c.name} · {c.provider}</option>)}
+                  {connections.map(c=><option value={c.id} key={c.id}>{c.name} · {c.modelId}</option>)}
                 </select>
                 <button type="button" onClick={()=>void refreshConnections()} disabled={Boolean(busy)} title="Tải lại kết nối AI">↻</button>
               </div>
@@ -165,7 +189,8 @@ export function AiImageStudio() {
                 <datalist id="ai-image-model-options">{models.map(m=><option key={m.id} value={m.id}>{m.label}</option>)}</datalist>
                 <button type="button" onClick={()=>void loadModels()} disabled={!current || Boolean(busy)}>Tải model</button>
               </div>
-              <small>Model phải hỗ trợ ảnh. Kết nối chỉ tạo văn bản sẽ báo lỗi rõ ràng.</small>
+              <small>Model ảnh dùng chung API key đã lưu, không dùng model viết bài làm mặc định. NVIDIA hosted preview hỗ trợ ảnh 1024 × 1024.</small>
+              {capability && !capability.ok ? <small role="alert" className="ai-image-capability-error">{capability.reason}</small> : null}
             </div>
             <div className="ai-image-field">
               <strong>Chế độ tạo ảnh</strong>
@@ -201,7 +226,7 @@ export function AiImageStudio() {
             <div className="ai-image-half-fields">
               <label>Kích thước
                 <select value={size} onChange={e=>setSize(e.target.value as AiImageSize)} disabled={Boolean(busy)}>
-                  {sizes.map(s=><option key={s.value} value={s.value}>{s.label}</option>)}
+                  {sizes.map(s=><option key={s.value} value={s.value} disabled={Boolean(current && isNvidiaNimBase(current.baseUrl) && s.value!=='1024x1024')}>{s.label}</option>)}
                 </select>
               </label>
               <label>Số lượng
@@ -257,7 +282,11 @@ export function AiImageStudio() {
               <div><span title={folder}>{folder || 'Chưa chọn ổ đĩa / thư mục'}</span><button type="button" onClick={()=>void chooseFolder()} disabled={Boolean(busy)}>Chọn thư mục…</button></div>
               <small>Ảnh được lưu thành file thật; nếu trùng tên sẽ tự thêm số, không ghi đè.</small>
             </div>
-            <button className="ai-image-primary" type="button" onClick={()=>void save(selected)} disabled={Boolean(busy)||!selected.length}>Lưu {selected.length} ảnh đã chọn</button>
+            {articleRequest && onAttachToArticle ? <button className="ai-image-primary" type="button"
+              onClick={()=>void save(selected,true)} disabled={Boolean(busy)||!selected.length}>
+              Lưu & gắn vào bài
+            </button> : <button className="ai-image-primary" type="button"
+              onClick={()=>void save(selected)} disabled={Boolean(busy)||!selected.length}>Lưu {selected.length} ảnh đã chọn</button>}
           </div>
         </div>
       </div>

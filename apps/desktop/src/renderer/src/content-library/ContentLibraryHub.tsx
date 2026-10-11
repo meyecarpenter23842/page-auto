@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { AiContentWorkspaceAgentBuilder } from './AiContentWorkspaceAgentBuilder'
 import { AiImageStudio } from './AiImageStudio'
+import type { AiImageArticleRequest, AiImageAttachment } from './aiImageArticleBridge'
 import { CONTENT_LIBRARY_EXTERNAL_CHANGE_EVENT } from './aiDraftResults'
 import { ContentLibraryWorkspace } from './ContentLibraryWorkspace'
 import { ScanDatasetLibrary } from './ScanDatasetLibrary'
@@ -13,6 +14,16 @@ export function ContentLibraryHub() {
   const [activeTab, setActiveTab] = useState<ContentLibraryTab>('posts')
   const [libraryRevision, setLibraryRevision] = useState(0)
   const [libraryStale, setLibraryStale] = useState(false)
+  const [imageArticle, setImageArticle] = useState<AiImageArticleRequest | null>(null)
+  const [imageAttachment, setImageAttachment] = useState<AiImageAttachment | null>(null)
+  const openImageForArticle = (request: AiImageArticleRequest) => {
+    setImageArticle(request)
+    setActiveTab('images')
+  }
+  const attachImagesToArticle = (request: AiImageArticleRequest, folderPath: string) => {
+    setImageAttachment(current => ({id:request.id,folderPath,version:(current?.version??0)+1}))
+    setActiveTab('ai')
+  }
 
   useEffect(() => {
     const markLibraryStale = () => setLibraryStale(true)
@@ -48,8 +59,8 @@ export function ContentLibraryHub() {
       <div className="content-library-hub-body">
         <div id="content-library-panel-posts" role="tabpanel" aria-labelledby="content-library-tab-posts" hidden={activeTab !== 'posts'}><ContentLibraryWorkspace key={libraryRevision} /></div>
         <div id="content-library-panel-scanner" role="tabpanel" aria-labelledby="content-library-tab-scanner" hidden={activeTab !== 'scanner'}><ScanDatasetLibrary /></div>
-        <div id="content-library-panel-ai" role="tabpanel" aria-labelledby="content-library-tab-ai" hidden={activeTab !== 'ai'}><AiContentWorkspaceAgentBuilder /></div>
-        <div id="content-library-panel-images" role="tabpanel" aria-labelledby="content-library-tab-images" hidden={activeTab !== 'images'}><AiImageStudio /></div>
+        <div id="content-library-panel-ai" role="tabpanel" aria-labelledby="content-library-tab-ai" hidden={activeTab !== 'ai'}><AiContentWorkspaceAgentBuilder onCreateImageForArticle={openImageForArticle} imageAttachment={imageAttachment} /></div>
+        <div id="content-library-panel-images" role="tabpanel" aria-labelledby="content-library-tab-images" hidden={activeTab !== 'images'}><AiImageStudio articleRequest={imageArticle} onAttachToArticle={attachImagesToArticle} /></div>
       </div>
     </section>
   )

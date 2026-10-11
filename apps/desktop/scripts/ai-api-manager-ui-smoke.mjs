@@ -166,6 +166,31 @@ try {
   assert(!(await page.locator('body').innerText()).includes('fixture-do-not-use-as-a-real-secret'),
     'Secret must not appear in visible text')
   await page.setViewportSize({width:1280,height:800})
+  // Regression for the blinding white AI Manager in Windows dark theme.
+  await page.evaluate(()=>document.documentElement.setAttribute('data-theme','dark'))
+  const dark=await page.evaluate(()=>{
+    const rgb=selector=>{
+      const element=document.querySelector(selector)
+      if(!(element instanceof HTMLElement))throw new Error('Missing dark-theme control '+selector)
+      return getComputedStyle(element).backgroundColor
+    }
+    return {
+      modal:rgb('.ai-api-only-modal'),
+      model:rgb('.ai-api-model-block'),
+      saved:rgb('.ai-api-saved'),
+      button:rgb('.ai-api-saved-row button'),
+      field:rgb('.ai-api-manager select')
+    }
+  })
+  const brightness=color=>{
+    const values=color.match(/\d+/g)?.slice(0,3).map(Number)??[255,255,255]
+    return values.reduce((sum,n)=>sum+n,0)/3
+  }
+  for(const [name,color] of Object.entries(dark)){
+    assert(brightness(color)<110,'AI Manager dark theme still has bright '+name+': '+color)
+  }
+  await page.screenshot({path:resolve(appDirectory,'../../dist/ai-api-manager-dark.png'),fullPage:true})
+  await page.evaluate(()=>document.documentElement.removeAttribute('data-theme'))
   await page.screenshot({path:screen,fullPage:true})
   await page.setViewportSize({width:1084,height:655})
   const compact = await modal.boundingBox()
