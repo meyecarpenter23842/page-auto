@@ -50,6 +50,7 @@ import {
   type GenerateAiPostsResult
 } from '../shared/aiAgents'
 import { AI_API_IPC, type AiApiConnectionDraft, type AiApiConnectionView, type AiApiDiscoveryInput, type AiApiModel, type AiApiTestInput } from '../shared/aiApiConnections'
+import { AI_IMAGE_IPC, type AiImageAsset, type AiImageOutput, type GenerateAiImagesInput, type SaveAiImagesInput } from '../shared/aiImages'
 import type { AppSettings, AppSettingsPatch } from '../shared/appSettings'
 import type { BrowserExecutableResult, BrowserTestRequest, BrowserTestResult } from '../shared/browserSettings'
 import type { BrowserDisplayInfo, BrowserRetileResult, BrowserWindowLayoutSettings } from '../shared/browserWindowLayout'
@@ -179,6 +180,10 @@ const api = {
   updateAiApiModel: (payload: { id: string; modelId: string }): Promise<AiApiConnectionView[]> => ipcRenderer.invoke(AI_API_IPC.updateModel, payload) as Promise<AiApiConnectionView[]>,
   setDefaultAiApiConnection: (id: string): Promise<AiApiConnectionView[]> => ipcRenderer.invoke(AI_API_IPC.setDefault, id) as Promise<AiApiConnectionView[]>,
   generateAiPosts: (input: GenerateAiPostsInput): Promise<GenerateAiPostsResult> => ipcRenderer.invoke(AI_AGENT_IPC.generatePosts, input) as Promise<GenerateAiPostsResult>,
+  pickAiImageSource: (): Promise<AiImageAsset | null> => ipcRenderer.invoke(AI_IMAGE_IPC.pickSource) as Promise<AiImageAsset | null>,
+  chooseAiImageFolder: (): Promise<string | null> => ipcRenderer.invoke(AI_IMAGE_IPC.chooseFolder) as Promise<string | null>,
+  generateAiImages: (input: GenerateAiImagesInput): Promise<AiImageOutput[]> => ipcRenderer.invoke(AI_IMAGE_IPC.generate,input) as Promise<AiImageOutput[]>,
+  saveAiImages: (input: SaveAiImagesInput): Promise<string[]> => ipcRenderer.invoke(AI_IMAGE_IPC.save,input) as Promise<string[]>,
   listContentLibraries: (): Promise<ContentLibrarySetSummary[]> => ipcRenderer.invoke(CONTENT_LIBRARY_IPC.list) as Promise<ContentLibrarySetSummary[]>,
   getContentLibrary: (payload: ContentLibrarySetIdPayload): Promise<ContentLibrarySetDetails | null> => ipcRenderer.invoke(CONTENT_LIBRARY_IPC.get, payload) as Promise<ContentLibrarySetDetails | null>,
   createContentLibrary: (input: CreateContentLibrarySetInput): Promise<ContentLibrarySetDetails> => ipcRenderer.invoke(CONTENT_LIBRARY_IPC.createSet, input) as Promise<ContentLibrarySetDetails>,
