@@ -26,6 +26,50 @@ async function toAi(page) {
   await page.locator('.content-library-hub').getByRole('tab',{name:'Tạo bài bằng AI'}).click()
   await page.locator('.ai-content-workspace').waitFor({state:'visible'})
 }
+
+async function assertEditorLayout(page, label) {
+  const geometry = await page.evaluate(() => {
+    const pick = (selector) => {
+      const element = document.querySelector(selector)
+      if (!(element instanceof HTMLElement)) throw new Error('Missing AI editor element: ' + selector)
+      return element
+    }
+    const canvas = pick('.ai-results-canvas')
+    const toolbar = pick('.ai-results-toolbar')
+    const workspace = pick('.ai-results-workspace')
+    const list = pick('.ai-draft-list')
+    const editor = pick('.ai-draft-editor')
+    const textarea = pick('.ai-draft-editor-content textarea')
+    const rect = (element) => {
+      const b = element.getBoundingClientRect()
+      return {x:b.x,y:b.y,width:b.width,height:b.height,bottom:b.bottom}
+    }
+    return {
+      display:getComputedStyle(canvas).display,
+      align:getComputedStyle(canvas).alignItems,
+      canvas:rect(canvas),toolbar:rect(toolbar),workspace:rect(workspace),
+      list:rect(list),editor:rect(editor),
+      textareaHeight:textarea.clientHeight,
+      textareaScrollHeight:textarea.scrollHeight,
+      textareaOverflow:getComputedStyle(textarea).overflowY
+    }
+  })
+  assert(geometry.display === 'flex' && geometry.align === 'stretch',
+    label + ': result canvas must use the canonical flex layout: ' + JSON.stringify(geometry))
+  assert(geometry.workspace.y - geometry.toolbar.bottom >= 0 &&
+    geometry.workspace.y - geometry.toolbar.bottom <= 18,
+    label + ': gap between toolbar and editor is too large: ' + JSON.stringify(geometry))
+  assert(Math.abs(geometry.list.y - geometry.workspace.y) <= 3 &&
+    Math.abs(geometry.editor.y - geometry.workspace.y) <= 3,
+    label + ': draft list and editor must start together: ' + JSON.stringify(geometry))
+  assert(geometry.workspace.bottom >= geometry.canvas.bottom - 22 &&
+    geometry.editor.height >= 120,
+    label + ': editor must fill the remaining results height: ' + JSON.stringify(geometry))
+  assert(geometry.textareaOverflow === 'auto' && geometry.textareaScrollHeight > geometry.textareaHeight,
+    label + ': long post must scroll inside editor: ' + JSON.stringify(geometry))
+  console.log('AI editor layout geometry passed:',label,JSON.stringify(geometry))
+}
+
 try {
   const launched=await launch()
   app=launched.app
@@ -44,6 +88,24 @@ try {
   await page.locator('.ai-extra-options summary').click()
   assert(await page.locator('.ai-extra-options').evaluate(node => node.open),
     'Advanced AI controls must expand on demand')
+
+  // Populate draft cards through the normal UI, without provider/API credits.
+  await page.locator('.ai-count-field input').fill('2')
+  await page.locator('.ai-agent-output-bridge summary').click()
+  const postOne = ('Bài giới thiệu sản phẩm với thông tin rõ ràng, dễ đọc và được kiểm chứng. ').repeat(110)
+  const postTwo = ('Bài hướng dẫn sử dụng sản phẩm, cách bảo quản và những lưu ý hữu ích. ').repeat(23)
+  await page.locator('.ai-agent-output-body textarea').fill(postOne + '\n|\n' + postTwo)
+  await page.locator('.ai-agent-output-body button').click()
+  await page.locator('.ai-agent-output-bridge summary').click()
+  assert(await page.locator('.ai-draft-row').count() === 2, 'Must produce two drafts from fixture')
+  for (const [width,height] of [[1280,720],[1366,768],[1600,900],[1920,1080],[1084,655]]) {
+    await page.setViewportSize({width,height})
+    await assertEditorLayout(page,width+'x'+height)
+    if (width === 1280 || width === 1600) {
+      await page.screenshot({path:resolve(appDirectory,'../../dist/ai-post-editor-'+width+'x'+height+'.png'),fullPage:true})
+    }
+  }
+  await page.setViewportSize({width:1280,height:800})
   await page.setViewportSize({width:1084,height:655})
   const editorBounds = await page.locator('.ai-preview-panel').boundingBox()
   assert(editorBounds && editorBounds.width >= 480,

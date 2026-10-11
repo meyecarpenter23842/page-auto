@@ -145,3 +145,10 @@ html[data-theme='dark'] .ai-draft-media-config>summary strong{color:var(--pa-dar
 html[data-theme='dark'] .ai-draft-media-config>summary small{color:var(--pa-dark-muted)!important}
 html[data-theme='dark'] .ai-draft-media-config>summary>span{background:var(--pa-dark-surface-3)!important;color:var(--pa-dark-text-soft)!important}
 html[data-theme='dark'] .ai-draft-media-config>summary:after{color:var(--pa-dark-muted)}
+/* The raw output now opens from the results header. */
+html[data-theme='dark'] .ai-agent-output-bridge>summary,
+html[data-theme='dark'] .ai-agent-output-body {
+  color:var(--pa-dark-text-soft);
+  background:var(--pa-dark-surface-2);
+  border-color:var(--pa-dark-border);
+}

@@ -1,14 +1,15 @@
-.ai-results-canvas{display:flex;flex-direction:column;place-items:stretch;gap:9px;padding:10px 12px;overflow:hidden}
+.ai-results-canvas{gap:8px;overflow:hidden}
 .ai-save-selected:not(:disabled){border-color:#1677ff!important;background:#1677ff!important;color:#fff!important;cursor:pointer}
 .ai-output-contract{display:block;margin-top:3px;color:#788b9f;font-size:9.5px;font-weight:600}
 .ai-output-contract code{display:inline-grid;place-items:center;min-width:17px;height:17px;margin:0 2px;border-radius:5px;background:#eef5fd;color:#397dcc;font-size:10px}
-.ai-agent-output-bridge{flex:0 0 auto;border:1px solid #dce6f0;border-radius:10px;background:#fff;overflow:hidden}
-.ai-agent-output-bridge summary{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 10px;cursor:pointer;list-style:none}
+.ai-agent-output-bridge{position:relative;flex:0 0 auto;z-index:3}
+.ai-agent-output-bridge summary{display:flex;align-items:center;gap:6px;min-height:34px;padding:5px 10px;border:1px solid #dce6f0;border-radius:8px;background:#fff;cursor:pointer;list-style:none;white-space:nowrap}
 .ai-agent-output-bridge summary::-webkit-details-marker{display:none}
 .ai-agent-output-bridge summary>span{display:flex;flex-direction:column;gap:1px}
 .ai-agent-output-bridge summary strong{font-size:10.5px;color:#42586f}
-.ai-agent-output-bridge summary small{font-size:9px;color:#91a0b0}
-.ai-agent-output-bridge summary>b{border-radius:999px;background:#eef5fd;color:#3e76b5;padding:4px 7px;font-size:9px}
+.ai-agent-output-bridge summary small{display:none}
+.ai-agent-output-bridge summary>b{display:none}
+.ai-agent-output-body{position:absolute;top:calc(100% + 6px);right:0;z-index:5;width:min(520px,calc(100vw - 72px));max-height:min(420px,65vh);overflow:auto;padding:12px;border:1px solid #d9e2eb;border-radius:10px;background:#fff;box-shadow:0 16px 32px rgba(0,0,0,.2)}
 .ai-agent-output-body{padding:0 10px 9px}
 .ai-agent-output-body textarea{box-sizing:border-box;width:100%;min-height:150px;max-height:300px;resize:vertical;border:1px solid #d8e2ec;border-radius:8px;padding:8px 9px;font-family:inherit;font-size:10.5px;line-height:1.5;color:#34495e;outline:0}
 .ai-agent-output-body textarea:focus{border-color:#82b7fa;box-shadow:0 0 0 3px rgba(22,119,255,.07)}
@@ -25,7 +26,7 @@
 .ai-results-toolbar strong{font-size:10.5px;color:#52677d}
 .ai-results-toolbar span{font-size:9.5px;color:#8b9aaa}
 .ai-results-toolbar>div:last-child{display:flex;gap:6px}
-.ai-results-workspace{display:grid;grid-template-columns:minmax(210px,270px) minmax(0,1fr);gap:9px;min-height:0;overflow:hidden;flex:1}
+.ai-results-workspace{display:grid;grid-template-columns:minmax(210px,3fr) minmax(0,7fr);gap:9px;min-width:0;min-height:0;overflow:hidden;flex:1 1 0;align-items:stretch}
 .ai-draft-list{display:flex;flex-direction:column;gap:6px;min-height:0;overflow:auto;padding-right:2px}
 .ai-draft-row{display:grid;grid-template-columns:26px minmax(0,1fr);align-items:stretch;min-height:68px;border:1px solid #dfe7ef;border-radius:10px;background:#fff;overflow:hidden;box-shadow:0 3px 10px rgba(31,57,84,.035);transition:border-color .15s ease,box-shadow .15s ease,background .15s ease}
 .ai-draft-row:hover{border-color:#b9d3ef;box-shadow:0 5px 15px rgba(31,80,130,.07)}
@@ -43,7 +44,7 @@
 .ai-draft-status.ready{background:#edf4fb;color:#5a7590}
 .ai-draft-status.saved{background:#e6f6ec;color:#2d8050}
 .ai-draft-status.error{background:#fde8eb;color:#b14d5a}
-.ai-draft-editor{display:grid;grid-template-rows:auto auto minmax(150px,1fr) auto auto;gap:8px;min-width:0;min-height:0;height:100%;padding:12px;border:1px solid #dfe7ef;border-radius:11px;background:#fff;box-shadow:0 5px 16px rgba(31,57,84,.04);overflow:hidden}
+.ai-draft-editor{display:grid;grid-template-rows:auto auto minmax(150px,1fr) auto auto;gap:7px;min-width:0;min-height:0;height:100%;padding:11px;border:1px solid #dfe7ef;border-radius:11px;background:#fff;box-shadow:0 5px 16px rgba(31,57,84,.04);overflow:hidden}
 .ai-draft-editor-header{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin:0}
 .ai-draft-editor-header>div{display:flex;flex-direction:column;gap:2px;min-width:0}
 .ai-draft-editor-header strong{color:#33495f;font-size:12px}
@@ -84,13 +85,6 @@
 @media(max-width:1240px){.ai-results-workspace{grid-template-columns:minmax(190px,230px) minmax(0,1fr)}.ai-media-grid{grid-template-columns:1fr 82px}.ai-media-grid>.ai-media-field:last-child{grid-column:1/-1}}
 @media(max-width:1040px){.ai-results-workspace{grid-template-columns:1fr}.ai-draft-list{max-height:180px}.ai-draft-editor{grid-template-rows:auto auto minmax(180px,1fr) auto auto}.ai-media-grid{grid-template-columns:1fr 82px}.ai-media-grid>.ai-media-field:last-child{grid-column:1/-1}}
 
-/* Once drafts exist, remove debug/status chrome so the result list and editor own the canvas. */
-.ai-results-canvas:has(.ai-results-workspace){gap:8px;padding:8px 12px 12px}
-.ai-results-canvas:has(.ai-results-workspace)>.ai-batch-notice.success{display:none}
-.ai-results-canvas:has(.ai-results-workspace)>.ai-batch-notice.warning,
-.ai-results-canvas:has(.ai-results-workspace)>.ai-batch-notice.error{margin-bottom:8px}
-.ai-results-canvas:has(.ai-results-workspace)>.ai-results-workspace{flex:1 1 auto;height:100%;min-height:0}
-
 /* Raw AI output stays accessible via its collapsible header even after reading drafts. */
 .ai-agent-output-bridge summary strong{font-size:12px}
 .ai-agent-output-body textarea{font-size:12px}
@@ -100,11 +94,6 @@
 html[data-theme='dark'] .ai-quality-notice{background:#30291e;border-color:#8b6b35;color:#f4dba7}
 
 /* R6: reclaim editing height and replace the always-open image form with details. */
-.ai-results-canvas:has(.ai-results-workspace)>.ai-agent-output-bridge{flex:0 0 auto}
-.ai-results-canvas:has(.ai-results-workspace)>.ai-results-toolbar{flex:0 0 auto}
-.ai-results-canvas:has(.ai-results-workspace)>.ai-results-workspace{min-height:0}
-.ai-results-canvas{padding:8px 10px;gap:7px}
-.ai-agent-output-bridge summary{padding:6px 10px}
 .ai-agent-output-bridge summary small{font-size:11px}
 .ai-agent-output-bridge summary b{font-size:11px}
 .ai-batch-notice{font-size:12px;padding:6px 10px;line-height:1.4}
@@ -117,7 +106,6 @@ html[data-theme='dark'] .ai-quality-notice{background:#30291e;border-color:#8b6b
 .ai-draft-open{padding:10px}
 .ai-draft-open>small{font-size:11px}
 .ai-draft-open>p{font-size:12px;line-height:1.4}
-.ai-draft-editor{grid-template-rows:auto auto minmax(190px,1fr) auto auto;padding:11px;gap:7px}
 .ai-draft-editor-header strong{font-size:14px}
 .ai-draft-editor-header small{font-size:11px}
 .ai-draft-name>span,.ai-draft-content>span,.ai-media-field>span{font-size:12px}
@@ -140,21 +128,6 @@ html[data-theme='dark'] .ai-quality-notice{background:#30291e;border-color:#8b6b
 .ai-quality-notice{font-size:12px}
 .ai-quality-notice summary{padding:2px 0}
 @media(max-height:750px){.ai-draft-editor{grid-template-rows:auto auto minmax(145px,1fr) auto auto;gap:5px;padding:9px}.ai-draft-row{min-height:68px}}
-
-/* Keep the editable drafts in the main canvas; raw output is a disclosure in the header. */
-.ai-preview-header{min-width:0}
-.ai-preview-header>div:first-child{min-width:0}
-.ai-preview-header .ai-output-contract{display:none}
-.ai-preview-header .ai-preview-actions{min-width:0;flex-wrap:wrap;justify-content:flex-end}
-.ai-preview-actions .ai-agent-output-bridge{position:relative;overflow:visible;border:0;background:transparent;z-index:5}
-.ai-preview-actions .ai-agent-output-bridge>summary{min-height:34px;border:1px solid #d9e2eb;border-radius:8px;padding:6px 10px;background:var(--ai-output-surface,#fff);white-space:nowrap}
-.ai-preview-actions .ai-agent-output-bridge>summary>span{display:block}
-.ai-preview-actions .ai-agent-output-bridge>summary small,.ai-preview-actions .ai-agent-output-bridge>summary>b{display:none}
-.ai-preview-actions .ai-agent-output-bridge>summary strong{font-size:12px}
-.ai-preview-actions .ai-agent-output-bridge[open] .ai-agent-output-body{position:absolute;right:0;top:calc(100% + 6px);width:min(520px,calc(100vw - 100px));max-height:min(420px,70vh);overflow:auto;z-index:10;padding:12px;border:1px solid #d9e2eb;border-radius:10px;background:var(--ai-output-surface,#fff);box-shadow:0 15px 35px rgba(0,0,0,.18)}
-.ai-results-canvas:has(.ai-results-workspace){justify-content:flex-start;align-items:stretch;min-height:0;flex:1 1 0}
-.ai-results-canvas:has(.ai-results-workspace)>.ai-results-workspace{height:auto;flex:1 1 0;min-height:0}
-.ai-results-workspace>.ai-draft-editor,.ai-draft-editor-content{min-height:0}
-.ai-draft-editor-content textarea{overflow-y:auto}
-@media(max-width:1120px){.ai-preview-header{gap:6px;padding:8px 10px}.ai-preview-header h2{font-size:14px}.ai-preview-actions .ai-agent-output-bridge>summary{padding:5px 8px}}
-html[data-theme='dark'] .ai-preview-actions .ai-agent-output-bridge{--ai-output-surface:var(--pa-dark-surface-2)}
+/* Keep the successful parse notice out of the draft editing area. */
+.ai-results-canvas[data-has-drafts='true']>.ai-batch-notice.success{display:none}
+.ai-results-canvas[data-has-drafts='true']>.ai-results-workspace{flex:1 1 0}

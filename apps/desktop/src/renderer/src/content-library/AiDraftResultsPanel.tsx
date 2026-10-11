@@ -276,7 +276,7 @@ export function AiDraftResultsPanel({
                 ? 'Lưu bài Random'
                 : `Lưu ${savableCount || ''} bài đã chọn`.replace('  ', ' ')}
           </button>
-        <details className="ai-agent-output-bridge" open={false}>
+          <details className="ai-agent-output-bridge">
             <summary>
               <span>
                 <strong>Kết quả Agent</strong>
@@ -305,9 +305,7 @@ export function AiDraftResultsPanel({
         </div>
       </div>
 
-      <div className="ai-preview-canvas ai-results-canvas">
-
-
+      <div className="ai-preview-canvas ai-results-canvas" data-has-drafts={drafts.length > 0}>
         {notice ? (
           <div className={`ai-batch-notice ${notice.kind}`}>{notice.message}</div>
         ) : null}
