@@ -1,5 +1,6 @@
 /* AI composer desktop ergonomics. Scoped to the AI workspace, no business logic changes. */
 .ai-content-workspace{gap:8px}
+.ai-content-layout.ai-resizable-layout{column-gap:0}
 .ai-content-topbar{min-height:44px}
 .ai-provider-state{font-size:12px}
 .ai-compose-scroll{padding:12px}

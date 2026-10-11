@@ -46,5 +46,6 @@ describe('AI composer Windows workspace ergonomics', () => {
     expect(resultsCss).toContain('grid-template-rows:auto auto minmax(190px,1fr) auto auto')
     expect(polish).toContain('.ai-field input,.ai-field select,.ai-field textarea{font-size:13px}')
     expect(responsive).toContain('var(--ai-compose-width, 400px)')
+    expect(polish).toContain('.ai-content-layout.ai-resizable-layout{column-gap:0}')
   })
 })
