@@ -129,7 +129,7 @@ describe('AI API connections and model discovery', () => {
     expect(parseApiModels('gemini',{models:[
       {name:'models/gemini-test',supportedGenerationMethods:['generateContent']},
       {name:'models/embedding-only',supportedGenerationMethods:['embedContent']}
-    ]})).toEqual([{id:'gemini-test',label:'gemini-test'}])
+    ]})).toEqual([{id:'embedding-only',label:'embedding-only'},{id:'gemini-test',label:'gemini-test'}])
     expect(parseApiModels('anthropic',{data:[{id:'claude-test',display_name:'Claude'}]}))
       .toEqual([{id:'claude-test',label:'claude-test'}])
     expect(()=>parseApiModels('openai-compatible',{items:[]})).toThrow('danh sách model')

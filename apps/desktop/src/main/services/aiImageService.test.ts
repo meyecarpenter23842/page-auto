@@ -101,13 +101,23 @@ describe('NVIDIA hosted image NIM transport',()=>{
     expect(JSON.parse(String(requests[0]?.init.body))).toMatchObject({samples:1,seed:0,steps:4,prompt:request.prompt})
     expect(JSON.stringify(requests[0]?.init.body)).not.toContain('nvidia-private-fixture')
   })
-  it('rejects a text model and editing on NVIDIA preview before sending a request',async()=>{
-    const mock=vi.fn(async()=>new Response(JSON.stringify({artifacts:[{base64:imageB64}]}))) as unknown as typeof fetch
-    await expect(generateAiImagesFromProvider(nvidia,{...request,modelId:'meta/llama-3.2-11b-vision-instruct'},mock)).rejects.toThrow('không phải model tạo ảnh')
-    await expect(generateAiImagesFromProvider(nvidia,{...request,modelId:'black-forest-labs/flux.2-klein-4b',mode:'edit',source:asset},mock)).rejects.toThrow('preview')
-    await expect(generateAiImagesFromProvider(nvidia,{...request,modelId:'black-forest-labs/flux.1-schnell',size:'1536x1024'},mock))
-      .rejects.toThrow('1024')
-    expect(mock).not.toHaveBeenCalled()
+  it('sends any user-selected model, mode, size, and images; reports provider error instead of guessing capabilities',async()=>{
+    const calls:{url:string;body:Record<string,unknown>}[]=[]
+    const mock=vi.fn(async(url:string,init:RequestInit)=>{
+      calls.push({url,body:JSON.parse(String(init.body)) as Record<string,unknown>})
+      return new Response(JSON.stringify({detail:'Unsupported mode or model'}),{status:422})
+    }) as unknown as typeof fetch
+    await expect(generateAiImagesFromProvider(nvidia,{
+      ...request,modelId:'custom/any-image-model',mode:'product',source:asset,product:asset,size:'1536x1024',count:1
+    },mock)).rejects.toThrow('HTTP 422')
+    expect(calls[0]?.url).toBe('https://ai.api.nvidia.com/v1/genai/custom/any-image-model')
+    expect(calls[0]?.body).toMatchObject({width:1536,height:1024,mode:'Image Editing'})
+    expect(calls[0]?.body.reference_images).toHaveLength(2)
+    expect(mock).toHaveBeenCalledTimes(1)
+    await expect(generateAiImagesFromProvider(nvidia,{
+      ...request,modelId:'meta/llama-3.2-11b-vision-instruct',count:1
+    },mock)).rejects.toThrow('HTTP 422')
+    expect(mock).toHaveBeenCalledTimes(2)
   })
   it('rejects corrupt or absent NVIDIA artifacts, never silently accepts chat JSON',()=>{
     expect(()=>outputFromNvidiaArtifact({choices:[{message:{content:'hello'}}]})).toThrow('artifacts')

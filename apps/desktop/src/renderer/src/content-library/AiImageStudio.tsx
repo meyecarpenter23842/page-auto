@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { AiApiConnectionView, AiApiModel } from '../../../shared/aiApiConnections'
 import type { AiImageAsset, AiImageMode, AiImageOutput, AiImageSize } from '../../../shared/aiImages'
-import { canGenerateImageOnConnection, imageModelOptionsForConnection, isNvidiaNimBase } from '../../../shared/aiImageModels'
 import type { AiImageArticleRequest } from './aiImageArticleBridge'
 import './aiImageStudio.css'
 
@@ -54,9 +53,11 @@ export function AiImageStudio({articleRequest=null,onAttachToArticle}: AiImageSt
       setConnections(next)
       const id = next.some(c=>c.id===connectionId) ? connectionId : (next.find(c=>c.isDefault) ?? next[0])?.id ?? ''
       setConnectionId(id)
-      if (next.find(c=>c.id===id && isNvidiaNimBase(c.baseUrl))) setSize('1024x1024')
-      const saved = next.find(c=>c.id===id)
-      setModelId(saved && imageModelOptionsForConnection(saved, [{id:saved.modelId,label:saved.modelId}]).some(m=>m.id===saved.modelId) ? saved.modelId : '')
+      // Reload preserves the user's current model when the connection is unchanged.
+      if (id !== connectionId) {
+        setModelId('')
+        setModels([])
+      }
     } catch(err) {setError(explain(err))}
     finally {setBusy(null)}
   }
@@ -69,9 +70,7 @@ export function AiImageStudio({articleRequest=null,onAttachToArticle}: AiImageSt
   },[articleRequest?.id])
   const changeConnection = (id: string) => {
     setConnectionId(id)
-    if (connections.some(c=>c.id===id && isNvidiaNimBase(c.baseUrl))) setSize('1024x1024')
-    const selected = connections.find(c=>c.id===id)
-    setModelId(selected && imageModelOptionsForConnection(selected,[{id:selected.modelId,label:selected.modelId}]).some(m=>m.id===selected.modelId) ? selected.modelId : '')
+    setModelId('')
     setModels([])
     setMessage('')
     setError('')
@@ -80,14 +79,12 @@ export function AiImageStudio({articleRequest=null,onAttachToArticle}: AiImageSt
     if (!current) return
     setBusy('models');setError('');setMessage('')
     try {
-      const list = isNvidiaNimBase(current.baseUrl) ? [] : await window.pageAuto.discoverAiApiModels({
+      const list = await window.pageAuto.discoverAiApiModels({
         connectionId:current.id,provider:current.provider,baseUrl:current.baseUrl,apiKey:''
       })
-      const imageModels = imageModelOptionsForConnection(current,list)
-      setModels(imageModels)
-      setMessage(isNvidiaNimBase(current.baseUrl)
-        ? 'Đã tải danh sách endpoint ảnh NVIDIA có giao thức được hỗ trợ. Quyền gọi phụ thuộc API key.'
-        : 'Có ' + imageModels.length + ' model có tên liên quan đến ảnh. Cần quyền API và model tương thích.')
+      // Display every model returned by the provider; model capabilities remain the provider's decision.
+      setModels(list)
+      setMessage('API trả ' + list.length + ' model. Anh tự chọn hoặc nhập Model ID; không tự động chọn model.')
     } catch(err) {setError(explain(err))}
     finally {setBusy(null)}
   }
@@ -107,9 +104,7 @@ export function AiImageStudio({articleRequest=null,onAttachToArticle}: AiImageSt
     } catch(err) {setError(explain(err))}
     finally {setBusy(null)}
   }
-  const capability = current && modelId.trim()
-    ? canGenerateImageOnConnection(current,modelId.trim(),mode) : null
-  const canGenerate = Boolean(current && modelId.trim() && (!capability || capability.ok) && prompt.trim() &&
+  const canGenerate = Boolean(current && modelId.trim() && prompt.trim() &&
     (mode==='new' || source) && (mode!=='product' || product))
   const generate = async (countOverride?: number) => {
     if (!canGenerate || !current) return
@@ -185,12 +180,19 @@ export function AiImageStudio({articleRequest=null,onAttachToArticle}: AiImageSt
             <div className="ai-image-field">
               <label htmlFor="ai-image-model">Model ảnh</label>
               <div className="ai-image-control-pair">
-                <input id="ai-image-model" list="ai-image-model-options" value={modelId} onChange={e=>setModelId(e.target.value)} placeholder="Ví dụ: gpt-image-1" disabled={Boolean(busy)}/>
-                <datalist id="ai-image-model-options">{models.map(m=><option key={m.id} value={m.id}>{m.label}</option>)}</datalist>
+                <input id="ai-image-model" value={modelId} onChange={e=>setModelId(e.target.value)} placeholder="Nhập Model ID, hoặc tải danh sách phía dưới" disabled={Boolean(busy)}/>
                 <button type="button" onClick={()=>void loadModels()} disabled={!current || Boolean(busy)}>Tải model</button>
               </div>
-              <small>Model ảnh dùng chung API key đã lưu, không dùng model viết bài làm mặc định. NVIDIA hosted preview hỗ trợ ảnh 1024 × 1024.</small>
-              {capability && !capability.ok ? <small role="alert" className="ai-image-capability-error">{capability.reason}</small> : null}
+              {models.length ? (
+                <select aria-label="Danh sách Model do API trả về"
+                  value={models.some(item=>item.id===modelId) ? modelId : ''}
+                  onChange={event=>{if(event.target.value) setModelId(event.target.value)}}
+                  disabled={Boolean(busy)}>
+                  <option value="">— Chọn trong {models.length} model API trả về —</option>
+                  {models.map(item=><option key={item.id} value={item.id}>{item.label}</option>)}
+                </select>
+              ) : null}
+              <small>Hiện toàn bộ model API trả về, không lọc hoặc tự chọn. Luôn có thể nhập ID thủ công. Nếu model không hỗ trợ tạo/chỉnh ảnh, API sẽ trả lỗi.</small>
             </div>
             <div className="ai-image-field">
               <strong>Chế độ tạo ảnh</strong>
@@ -226,7 +228,7 @@ export function AiImageStudio({articleRequest=null,onAttachToArticle}: AiImageSt
             <div className="ai-image-half-fields">
               <label>Kích thước
                 <select value={size} onChange={e=>setSize(e.target.value as AiImageSize)} disabled={Boolean(busy)}>
-                  {sizes.map(s=><option key={s.value} value={s.value} disabled={Boolean(current && isNvidiaNimBase(current.baseUrl) && s.value!=='1024x1024')}>{s.label}</option>)}
+                  {sizes.map(s=><option key={s.value} value={s.value}>{s.label}</option>)}
                 </select>
               </label>
               <label>Số lượng
