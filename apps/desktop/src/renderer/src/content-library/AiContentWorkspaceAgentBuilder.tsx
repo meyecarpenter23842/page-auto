@@ -185,6 +185,14 @@ export function AiContentWorkspaceAgentBuilder() {
 
   return (
     <section className="ai-content-workspace" aria-label="Tạo bài bằng AI">
+      <div
+        ref={layoutRef}
+        className="ai-content-layout ai-resizable-layout"
+        style={{ '--ai-compose-width': `${composeWidth}px` } as CSSProperties}
+      >
+        <aside className="ai-compose-panel">
+          <div className="ai-compose-scroll">
+            <div className="ai-compose-heading"><strong>Tạo bài AI</strong><span>Thiết lập nội dung và tạo bài bằng AI</span></div>
       <div className="ai-content-topbar">
         <div className="ai-agent-control">
           <span className="ai-control-label">AI / Model</span>
@@ -212,14 +220,6 @@ export function AiContentWorkspaceAgentBuilder() {
           {currentApi ? 'Đã chọn kết nối' : 'Chưa kết nối AI'}
         </div>
       </div>
-
-      <div
-        ref={layoutRef}
-        className="ai-content-layout ai-resizable-layout"
-        style={{ '--ai-compose-width': `${composeWidth}px` } as CSSProperties}
-      >
-        <aside className="ai-compose-panel">
-          <div className="ai-compose-scroll">
             <section className="ai-form-section">
               <div className="ai-section-heading compact">
                 <div>

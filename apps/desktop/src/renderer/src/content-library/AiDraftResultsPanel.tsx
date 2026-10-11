@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ContentLibraryImageConfig } from '../../../shared/contentLibrary'
 import {
   buildAiDraftBatch,
@@ -35,7 +35,7 @@ function errorMessage(cause: unknown): string {
 }
 
 function excerpt(value: string): string {
-  return value.replace(/\s+/g, ' ').trim().slice(0, 120)
+  return (value.split(/\r?\n/, 1)[0] ?? '').replace(/\s+/g, ' ').trim().slice(0, 160)
 }
 
 export function AiDraftResultsPanel({
@@ -48,6 +48,8 @@ export function AiDraftResultsPanel({
   const [activeId, setActiveId] = useState('')
   const [notice, setNotice] = useState<BatchNotice | null>(null)
   const [saving, setSaving] = useState(false)
+  const [editorTab, setEditorTab] = useState<'edit' | 'preview'>('edit')
+  const editorRef = useRef<HTMLTextAreaElement>(null)
 
   const isRandom = actionLabel.toLocaleLowerCase('vi').includes('random')
   const selectedCount = useMemo(
@@ -239,6 +241,18 @@ export function AiDraftResultsPanel({
     ))
   }
 
+  const formatSelection = (before: string, after = '') => {
+    if (!activeDraft || saving || editorTab !== 'edit') return
+    const field = editorRef.current
+    if (!field) return
+    const from = field.selectionStart
+    const to = field.selectionEnd
+    updateDraft(activeDraft.id, {
+      content: activeDraft.content.slice(0, from) + before + activeDraft.content.slice(from, to) + after + activeDraft.content.slice(to)
+    })
+    field.focus()
+  }
+
   const clearResults = () => {
     setDrafts([])
     setActiveId('')
@@ -246,62 +260,35 @@ export function AiDraftResultsPanel({
     setNotice(null)
   }
 
-  const headerSummary = groupedRandomDraft
-    ? `1 bài · ${getAiDraftVariantCount(groupedRandomDraft)} biến thể · ${selectedCount} chọn`
-    : `${drafts.length} bài · ${selectedCount} chọn`
-
   return (
     <section className="ai-preview-panel">
       <div className="ai-preview-header">
-        <div>
+        <div className="ai-preview-title">
           <p>KẾT QUẢ AI</p>
-          <h2>Chọn và chỉnh sửa bài viết</h2>
-          <span className="ai-output-contract">
-            {isRandom
-              ? <>Random lưu thành 1 bài; các biến thể cách nhau bằng <code>{AI_POST_DELIMITER}</code></>
-              : <>Chuẩn đầu ra: Bài 1 <code>{AI_POST_DELIMITER}</code> Bài 2 <code>{AI_POST_DELIMITER}</code> ...</>}
-          </span>
+          <h2>Kết quả tạo bài</h2>
+          <small>{drafts.length ? 'Đã tạo ' + drafts.length + ' bài · ' + selectedCount + ' bài đang chọn' : 'Chọn bài để xem và chỉnh sửa'}</small>
         </div>
         <div className="ai-preview-actions">
-          <span className="ai-result-count">{headerSummary}</span>
-          <button
-            className="ai-save-selected"
-            type="button"
-            disabled={saving || savableCount === 0}
-            onClick={() => void saveSelected()}
-          >
-            {saving
-              ? 'Đang lưu...'
-              : groupedRandomDraft
-                ? 'Lưu bài Random'
-                : `Lưu ${savableCount || ''} bài đã chọn`.replace('  ', ' ')}
-          </button>
           <details className="ai-agent-output-bridge">
-            <summary>
-              <span>
-                <strong>Kết quả Agent</strong>
-                <small>
-                  {drafts.length ? 'Mở để kiểm tra hoặc sửa dữ liệu gốc' : 'AI tự đổ kết quả vào đây hoặc dán thủ công'}
-                </small>
-              </span>
-              <b>{expectedCount} {isRandom ? 'biến thể' : 'bài'}</b>
-            </summary>
+            <summary>Xem output gốc</summary>
             <div className="ai-agent-output-body">
+              <label htmlFor="ai-raw-output">Dữ liệu gốc từ AI</label>
               <textarea
+                id="ai-raw-output"
                 value={rawOutput}
                 onChange={(event) => setRawOutput(event.target.value)}
-                placeholder={`Dán output ${actionLabel.toLocaleLowerCase('vi')} từ Agent tại đây. Mỗi bài cách nhau bằng ${AI_POST_DELIMITER}.`}
+                placeholder={'Dán output từ AI tại đây. Mỗi bài cách nhau bằng ' + AI_POST_DELIMITER + '.'}
               />
               <div>
-                <span>
-                  {isRandom
-                    ? 'Đọc kết quả sẽ gom toàn bộ biến thể thành một bài Random.'
-                    : 'Không tự lưu. Output chỉ trở thành draft để duyệt/sửa trước.'}
-                </span>
+                <span>{isRandom ? 'Đọc kết quả sẽ gom các biến thể thành một bài Random.' : 'Không tự lưu, chỉ tạo bản nháp.'}</span>
                 <button type="button" onClick={loadAgentOutput}>Đọc kết quả</button>
               </div>
             </div>
           </details>
+          <button type="button" disabled={!drafts.length || saving} onClick={clearResults}>Xóa kết quả</button>
+          <button className="ai-save-selected" type="button" disabled={saving || savableCount === 0} onClick={() => void saveSelected()}>
+            {saving ? 'Đang lưu...' : groupedRandomDraft ? 'Lưu bài Random' : 'Lưu ' + savableCount + ' bài đã chọn'}
+          </button>
         </div>
       </div>
 
@@ -318,75 +305,44 @@ export function AiDraftResultsPanel({
         ) : null}
 
         {drafts.length ? (
-          <div className="ai-results-toolbar">
-            <div>
-              <strong>
-                {groupedRandomDraft
-                  ? `1 bài Random · ${getAiDraftVariantCount(groupedRandomDraft)} biến thể`
-                  : `${drafts.length} kết quả`}
-              </strong>
-              <span>
-                {savedCount ? `${savedCount} đã vào Thư viện` : 'Chưa bài nào được lưu'}
-              </span>
-            </div>
-            <div>
-              <button type="button" disabled={saving} onClick={toggleAll}>
-                {selectedCount ? 'Đổi lựa chọn' : 'Chọn tất cả'}
-              </button>
-              <button type="button" disabled={saving} onClick={clearResults}>
-                Xóa kết quả
-              </button>
-            </div>
-          </div>
-        ) : null}
-
-        {drafts.length ? (
           <div className="ai-results-workspace">
-            <div className="ai-draft-list" aria-label="Danh sách kết quả AI">
+            <div className="ai-draft-strip-heading">
+              <span>Danh sách bài viết ({drafts.length}) · {savedCount ? savedCount + ' đã lưu' : 'Chưa lưu vào thư viện'}</span>
+              <button type="button" disabled={saving} onClick={toggleAll}>{selectedCount ? 'Đổi lựa chọn' : 'Chọn tất cả'}</button>
+            </div>
+            <div className="ai-draft-list" role="list" aria-label="Danh sách kết quả AI">
               {drafts.map((draft, index) => {
                 const variantCount = getAiDraftVariantCount(draft)
+                const name = draft.kind === 'variant_group' ? 'Bài Random' : 'Bài ' + (index + 1)
+                const line = excerpt(draft.content) || 'Chưa có nội dung'
                 return (
-                  <article
-                    key={draft.id}
-                    className={`ai-draft-row ${draft.status} ${activeDraft?.id === draft.id ? 'active' : ''}`}
-                  >
-                    <label
-                      className="ai-draft-check"
-                      onClick={(event) => event.stopPropagation()}
-                    >
+                  <article key={draft.id} role="listitem" className={'ai-draft-row ' + draft.status + (activeDraft?.id === draft.id ? ' active' : '')}>
+                    <label className="ai-draft-check" title={'Chọn lưu ' + name}>
                       <input
+                        aria-label={'Chọn lưu ' + name}
                         type="checkbox"
                         checked={draft.selected}
                         disabled={saving || draft.status === 'saved'}
-                        onChange={(event) => updateDraft(
-                          draft.id,
-                          { selected: event.target.checked }
-                        )}
+                        onChange={(event) => updateDraft(draft.id, { selected: event.target.checked })}
                       />
                     </label>
                     <button
                       className="ai-draft-open"
                       type="button"
-                      onClick={() => setActiveId(draft.id)}
+                      title={line}
+                      aria-label={'Mở ' + name + ': ' + line}
+                      aria-pressed={activeDraft?.id === draft.id}
+                      onClick={() => { setActiveId(draft.id); setEditorTab('edit') }}
                     >
-                      <span className="ai-draft-row-title">
-                        <strong>
-                          {draft.kind === 'variant_group' ? 'Bài Random' : `Bài ${index + 1}`}
-                        </strong>
-                        <span className={`ai-draft-status ${draft.status}`}>
-                          {draft.status === 'saved'
-                            ? 'Đã lưu'
-                            : draft.status === 'error'
-                              ? 'Lỗi lưu'
-                              : 'Bản nháp'}
+                      <span className="ai-draft-row-title"><strong>{name}: {line}</strong></span>
+                      <span className="ai-draft-row-meta">
+                        <small>{draft.kind === 'variant_group'
+                          ? variantCount + ' biến thể · ' + draft.content.trim().length.toLocaleString('vi-VN') + ' ký tự'
+                          : draft.content.trim().length.toLocaleString('vi-VN') + ' ký tự'}</small>
+                        <span className={'ai-draft-status ' + draft.status}>
+                          {draft.status === 'saved' ? 'Đã lưu' : draft.status === 'error' ? 'Lỗi lưu' : 'Bản nháp'}
                         </span>
                       </span>
-                      <small>
-                        {draft.kind === 'variant_group'
-                          ? `${variantCount} biến thể · ${draft.content.trim().length.toLocaleString('vi-VN')} ký tự`
-                          : `${draft.content.trim().length.toLocaleString('vi-VN')} ký tự`}
-                      </small>
-                      <p>{excerpt(draft.content) || 'Chưa có nội dung'}</p>
                     </button>
                   </article>
                 )
@@ -396,30 +352,10 @@ export function AiDraftResultsPanel({
             <section className="ai-draft-editor" aria-label="Preview bài đang chọn">
               {activeDraft ? (
                 <>
-                  <header className="ai-draft-editor-header">
-                    <div>
-                      <strong>
-                        {activeDraft.kind === 'variant_group'
-                          ? 'Preview bài Random'
-                          : 'Preview bài đang chọn'}
-                      </strong>
-                      <small>
-                        {activeDraft.kind === 'variant_group'
-                          ? `${getAiDraftVariantCount(activeDraft)} biến thể trong cùng 1 bài Thư viện`
-                          : `${activeDraft.content.trim().length.toLocaleString('vi-VN')} ký tự · Có thể sửa trực tiếp`}
-                      </small>
-                    </div>
-                    <span className={`ai-draft-status ${activeDraft.status}`}>
-                      {activeDraft.status === 'saved'
-                        ? 'Đã lưu'
-                        : activeDraft.status === 'error'
-                          ? 'Lỗi lưu'
-                          : 'Bản nháp'}
-                    </span>
-                  </header>
+
 
                   <label className="ai-draft-name ai-draft-editor-name">
-                    <span>Tên bài</span>
+                    <span>Tiêu đề bài viết</span>
                     <input
                       value={activeDraft.name}
                       disabled={saving}
@@ -430,24 +366,38 @@ export function AiDraftResultsPanel({
                     />
                   </label>
 
-                  <label className="ai-draft-content ai-draft-editor-content">
-                    <span>
-                      Nội dung
-                      {activeDraft.kind === 'variant_group'
-                        ? ` · ${getAiDraftVariantCount(activeDraft)} biến thể, cách nhau bằng ${AI_POST_DELIMITER}`
-                        : ''}
-                    </span>
-                    <textarea
-                      value={activeDraft.content}
-                      disabled={saving}
-                      onChange={(event) => updateDraft(
-                        activeDraft.id,
-                        { content: event.target.value }
-                      )}
-                    />
-                  </label>
+                  <div className="ai-draft-content ai-draft-editor-content">
+                    <div className="ai-editor-tabs" role="tablist" aria-label="Chế độ xem bài viết">
+                      <button type="button" role="tab" aria-selected={editorTab === 'edit'} onClick={() => setEditorTab('edit')}>Nội dung bài viết</button>
+                      <button type="button" role="tab" aria-selected={editorTab === 'preview'} onClick={() => setEditorTab('preview')}>Xem trước</button>
+                      <span>{activeDraft.content.trim().length.toLocaleString('vi-VN')} ký tự</span>
+                    </div>
+                    {editorTab === 'edit' ? (
+                      <>
+                        <div className="ai-editor-tools" role="toolbar" aria-label="Công cụ soạn bài">
+                          <button type="button" disabled={saving} title="In đậm đoạn chọn (Markdown)" aria-label="In đậm" onClick={() => formatSelection('**', '**')}><b>B</b></button>
+                          <button type="button" disabled={saving} title="In nghiêng đoạn chọn (Markdown)" aria-label="In nghiêng" onClick={() => formatSelection('*', '*')}><i>I</i></button>
+                          <button type="button" disabled={saving} title="Thêm đầu dòng" aria-label="Danh sách gạch đầu dòng" onClick={() => formatSelection('• ')}>≡</button>
+                          <button type="button" disabled={saving} title="Thêm số đầu dòng" aria-label="Danh sách đánh số" onClick={() => formatSelection('1. ')}>1.</button>
+                        </div>
+                        <label className="ai-editor-content-label" htmlFor="ai-draft-body">Nội dung</label>
+                        <textarea
+                          id="ai-draft-body"
+                          ref={editorRef}
+                          value={activeDraft.content}
+                          disabled={saving}
+                          onChange={(event) => updateDraft(activeDraft.id, { content: event.target.value })}
+                          aria-label="Nội dung bài viết đang chọn"
+                        />
+                      </>
+                    ) : (
+                      <div className="ai-editor-plain-preview" role="tabpanel" tabIndex={0} aria-label="Xem trước nội dung văn bản">
+                        {activeDraft.content || 'Bài viết chưa có nội dung.'}
+                      </div>
+                    )}
+                  </div>
 
-                  <details className="ai-draft-media-config" aria-label="Ảnh đính kèm">
+                  <details key={activeDraft.id} className="ai-draft-media-config" aria-label="Ảnh đính kèm">
                     <summary>
                       <div>
                         <strong>Ảnh đính kèm (nếu có)</strong>
@@ -527,11 +477,8 @@ export function AiDraftResultsPanel({
                     </div>
                   </details>
 
-                  <footer className="ai-draft-editor-footer">
-                    <span>
-                      {activeDraft.content.trim().length.toLocaleString('vi-VN')} ký tự · Nội dung và cấu hình ảnh sẽ đi cùng nhau khi lưu
-                    </span>
-                    {activeDraft.error ? (
+                  {activeDraft.error ? (
+                    <footer className="ai-draft-editor-footer">
                       <div className="ai-draft-error">
                         <b>!</b>
                         <span>{activeDraft.error}</span>
@@ -543,8 +490,8 @@ export function AiDraftResultsPanel({
                           Thử lưu lại
                         </button>
                       </div>
-                    ) : null}
-                  </footer>
+                    </footer>
+                  ) : null}
                 </>
               ) : (
                 <div className="ai-preview-empty ai-result-editor-empty">
@@ -560,7 +507,7 @@ export function AiDraftResultsPanel({
             <p>
               {isRandom
                 ? `Agent trả ${expectedCount} biến thể → gom thành 1 bài → sửa/copy cả khối với dấu ${AI_POST_DELIMITER} → lưu một lần vào Thư viện gốc.`
-                : 'Agent trả bài → card ngang gọn bên trái → bấm card để sửa/xem trên preview lớn bên phải → chỉ khi bấm Lưu mới vào Thư viện gốc.'}
+                : 'Agent trả bài → card ngang gọn phía trên → chọn bài trong editor rộng bên dưới → chỉ khi bấm Lưu mới vào Thư viện gốc.'}
             </p>
             <div className="ai-preview-empty-notes">
               <span>✓ Không tự lưu</span>

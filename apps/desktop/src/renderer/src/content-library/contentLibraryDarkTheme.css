@@ -59,7 +59,7 @@ html[data-theme='dark'] .ai-draft-content textarea,
 html[data-theme='dark'] .ai-media-field input,
 html[data-theme='dark'] .ai-media-field select,
 html[data-theme='dark'] .ai-media-folder-row button,
-html[data-theme='dark'] .ai-results-toolbar button {
+html[data-theme='dark'] .ai-draft-strip-heading button {
   color: var(--pa-dark-text-soft) !important;
   background: var(--pa-dark-surface-2) !important;
   border-color: var(--pa-dark-border-strong) !important;
@@ -92,7 +92,7 @@ html[data-theme='dark'] .ai-random-source-state strong {
 
 html[data-theme='dark'] .ai-agent-output-bridge summary small,
 html[data-theme='dark'] .ai-agent-output-body span,
-html[data-theme='dark'] .ai-results-toolbar span,
+html[data-theme='dark'] .ai-draft-strip-heading,
 html[data-theme='dark'] .ai-draft-open > small,
 html[data-theme='dark'] .ai-draft-open > p,
 html[data-theme='dark'] .ai-draft-editor-header small,
@@ -152,3 +152,17 @@ html[data-theme='dark'] .ai-agent-output-body {
   background:var(--pa-dark-surface-2);
   border-color:var(--pa-dark-border);
 }
+/* Canonical dark treatments for the approved article editor components. */
+html[data-theme='dark'] .ai-compose-heading{border-color:var(--pa-dark-border)}
+html[data-theme='dark'] .ai-compose-heading strong{color:var(--pa-dark-text)}
+html[data-theme='dark'] .ai-compose-heading span,
+html[data-theme='dark'] .ai-preview-title small,
+html[data-theme='dark'] .ai-draft-strip-heading{color:var(--pa-dark-muted)}
+html[data-theme='dark'] .ai-editor-tabs{border-color:var(--pa-dark-border)}
+html[data-theme='dark'] .ai-editor-tabs button{color:var(--pa-dark-muted)}
+html[data-theme='dark'] .ai-editor-tabs button[aria-selected='true']{color:#86efac;border-bottom-color:#86efac}
+html[data-theme='dark'] .ai-editor-tools{border-color:var(--pa-dark-border);background:var(--pa-dark-surface-2)}
+html[data-theme='dark'] .ai-editor-tools button{color:var(--pa-dark-text-soft)}
+html[data-theme='dark'] .ai-editor-tools button:hover{background:var(--pa-dark-surface-3)}
+html[data-theme='dark'] .ai-editor-plain-preview{color:var(--pa-dark-text-soft);background:var(--pa-dark-surface-2);border-color:var(--pa-dark-border)}
+html[data-theme='dark'] .ai-agent-output-body>label{color:var(--pa-dark-text-soft)}

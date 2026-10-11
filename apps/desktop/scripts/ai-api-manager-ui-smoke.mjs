@@ -28,46 +28,50 @@ async function toAi(page) {
 }
 
 async function assertEditorLayout(page, label) {
-  const geometry = await page.evaluate(() => {
-    const pick = (selector) => {
-      const element = document.querySelector(selector)
-      if (!(element instanceof HTMLElement)) throw new Error('Missing AI editor element: ' + selector)
-      return element
+  const g = await page.evaluate(() => {
+    const pick = s => {
+      const e = document.querySelector(s)
+      if (!(e instanceof HTMLElement)) throw new Error('Missing element: '+s)
+      return e
     }
-    const canvas = pick('.ai-results-canvas')
-    const toolbar = pick('.ai-results-toolbar')
-    const workspace = pick('.ai-results-workspace')
-    const list = pick('.ai-draft-list')
-    const editor = pick('.ai-draft-editor')
-    const textarea = pick('.ai-draft-editor-content textarea')
-    const rect = (element) => {
-      const b = element.getBoundingClientRect()
+    const rect = e => {
+      const b=e.getBoundingClientRect()
       return {x:b.x,y:b.y,width:b.width,height:b.height,bottom:b.bottom}
     }
+    const area=pick('.ai-results-canvas')
+    const workspace=pick('.ai-results-workspace')
+    const list=pick('.ai-draft-list')
+    const cards=[...list.querySelectorAll('.ai-draft-row')]
+    const editor=pick('.ai-draft-editor')
+    const title=pick('.ai-draft-row-title strong')
+    const input=pick('.ai-draft-editor-content textarea')
     return {
-      display:getComputedStyle(canvas).display,
-      align:getComputedStyle(canvas).alignItems,
-      canvas:rect(canvas),toolbar:rect(toolbar),workspace:rect(workspace),
-      list:rect(list),editor:rect(editor),
-      textareaHeight:textarea.clientHeight,
-      textareaScrollHeight:textarea.scrollHeight,
-      textareaOverflow:getComputedStyle(textarea).overflowY
+      area:rect(area),workspace:rect(workspace),list:rect(list),
+      first:rect(cards[0]),second:rect(cards[1]),editor:rect(editor),title:rect(title),
+      display:getComputedStyle(workspace).display,
+      direction:getComputedStyle(workspace).flexDirection,
+      cardDirection:getComputedStyle(list).flexDirection,
+      truncation:getComputedStyle(title).textOverflow,
+      nowrap:getComputedStyle(title).whiteSpace,
+      textHeight:input.clientHeight,textScrollHeight:input.scrollHeight,textOverflow:getComputedStyle(input).overflowY
     }
   })
-  assert(geometry.display === 'flex' && geometry.align === 'stretch',
-    label + ': result canvas must use the canonical flex layout: ' + JSON.stringify(geometry))
-  assert(geometry.workspace.y - geometry.toolbar.bottom >= 0 &&
-    geometry.workspace.y - geometry.toolbar.bottom <= 18,
-    label + ': gap between toolbar and editor is too large: ' + JSON.stringify(geometry))
-  assert(Math.abs(geometry.list.y - geometry.workspace.y) <= 3 &&
-    Math.abs(geometry.editor.y - geometry.workspace.y) <= 3,
-    label + ': draft list and editor must start together: ' + JSON.stringify(geometry))
-  assert(geometry.workspace.bottom >= geometry.canvas.bottom - 22 &&
-    geometry.editor.height >= 120,
-    label + ': editor must fill the remaining results height: ' + JSON.stringify(geometry))
-  assert(geometry.textareaOverflow === 'auto' && geometry.textareaScrollHeight > geometry.textareaHeight,
-    label + ': long post must scroll inside editor: ' + JSON.stringify(geometry))
-  console.log('AI editor layout geometry passed:',label,JSON.stringify(geometry))
+  assert(g.display==='flex' && g.direction==='column' && g.cardDirection==='row',
+    label+': expected horizontal cards over the full-width editor '+JSON.stringify(g))
+  assert(Math.abs(g.first.y-g.second.y)<=2 && g.second.x>g.first.x,
+    label+': cards must form a single horizontal row '+JSON.stringify(g))
+  assert(g.first.height<=64 && g.second.height<=64 && g.title.height<=21 &&
+    g.nowrap==='nowrap' && g.truncation==='ellipsis',
+    label+': card must show at most one text line '+JSON.stringify(g))
+  assert(g.editor.y>=g.list.bottom && g.editor.y-g.list.bottom<=18,
+    label+': editor is not directly below the cards '+JSON.stringify(g))
+  assert(Math.abs(g.editor.x-g.workspace.x)<=3 && Math.abs(g.editor.width-g.workspace.width)<=3,
+    label+': editor should fill the available width '+JSON.stringify(g))
+  assert(g.editor.bottom>=g.area.bottom-22 && g.editor.height>=145,
+    label+': editor should fill the available height '+JSON.stringify(g))
+  assert(g.textHeight>=60 && g.textOverflow==='auto' && g.textScrollHeight>g.textHeight,
+    label+': long article must scroll independently '+JSON.stringify(g))
+  console.log('AI approved layout passed:',label,JSON.stringify(g))
 }
 
 try {
@@ -98,6 +102,11 @@ try {
   await page.locator('.ai-agent-output-body button').click()
   await page.locator('.ai-agent-output-bridge summary').click()
   assert(await page.locator('.ai-draft-row').count() === 2, 'Must produce two drafts from fixture')
+  assert(await page.locator('.ai-draft-media-config').evaluate(el=>!el.open), 'Image settings must start collapsed')
+  await page.getByRole('tab',{name:'Xem trước'}).click()
+  assert(await page.locator('.ai-editor-plain-preview').isVisible(), 'Preview tab must display text')
+  await page.getByRole('tab',{name:'Nội dung bài viết'}).click()
+  assert(await page.locator('.ai-draft-editor-content textarea').isVisible(), 'Edit tab must restore textarea')
   for (const [width,height] of [[1280,720],[1366,768],[1600,900],[1920,1080],[1084,655]]) {
     await page.setViewportSize({width,height})
     await assertEditorLayout(page,width+'x'+height)
