@@ -109,13 +109,11 @@ export function parseApiModels(provider: AiApiProvider, payload: unknown): AiApi
     const name = typeof entry.id === 'string' ? entry.id : typeof entry.name === 'string' ? entry.name : ''
     const id = provider === 'gemini' ? name.replace(/^models\//, '') : name
     try { validateAiApiModelId(id) } catch { return [] }
-    if (provider === 'gemini' && Array.isArray(entry.supportedGenerationMethods)
-      && !entry.supportedGenerationMethods.includes('generateContent')) return []
     const label = typeof entry.displayName === 'string' && entry.displayName ? entry.displayName + ' · ' + id : id
     return [{ id, label }]
   })
   const unique = [...new Map(models.map((m) => [m.id, m])).values()]
-  return unique.sort((a,b)=>a.id.localeCompare(b.id)).slice(0, 2000)
+  return unique.sort((a,b)=>a.id.localeCompare(b.id))
 }
 
 async function readJson(response: Response): Promise<Record<string, unknown>> {

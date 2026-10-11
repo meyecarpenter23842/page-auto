@@ -26,9 +26,16 @@ try {
     const connection={id:'00000000-0000-4000-8000-000000000000',name:'Image test provider',
       provider:'openai-compatible',baseUrl:'https://api.openai.com/v1',modelId:'gpt-image-1',
       createdAt:0,isDefault:true}
+    const nvidia={...connection,id:'00000000-0000-4000-8000-000000000001',name:'NVIDIA fixture',
+      baseUrl:'https://integrate.api.nvidia.com/v1',modelId:'meta/llama-3.2-11b-vision-instruct',isDefault:false}
     for(const [key,callback] of [
-      ['ai-api:list',()=>[connection]],
-      ['ai-api:discover',()=>[{id:'gpt-image-1',label:'gpt-image-1'}]],
+      ['ai-api:list',()=>[connection,nvidia]],
+      ['ai-api:discover',(_event,input)=>input.connectionId===nvidia.id
+        ? [{id:'meta/llama-3.2-11b-vision-instruct',label:'Vision language model'},
+           {id:'black-forest-labs/flux.2-klein-4b',label:'FLUX image model'}]
+        : [{id:'gpt-image-1',label:'gpt-image-1'},
+           {id:'plain/text-model',label:'Plain language model'},
+           {id:'vendor/custom-model',label:'Unclassified model'}]],
       ['ai-image:pick-source',()=>({name:'product.png',dataUrl:tiny})],
       ['ai-image:choose-folder',()=> 'D:\\PageAuto\\AIImages'],
       ['ai-image:generate',(_event,input)=> {
@@ -45,8 +52,16 @@ try {
   await page.setViewportSize({width:1600,height:900})
   await page.locator('.ai-image-control-pair button').first().click()
   await page.locator('#ai-image-connection').selectOption('00000000-0000-4000-8000-000000000000')
+  assert(await page.locator('#ai-image-model').inputValue()==='', 'Image Studio must not auto-select the saved text model')
   await page.locator('#ai-image-prompt').fill('White canvas shoe in modern studio lighting')
   await page.getByRole('button',{name:/Tải model/}).click()
+  const models=page.getByRole('combobox',{name:'Danh sách Model do API trả về'})
+  assert(await models.locator('option').count()===4, 'Show all 3 model IDs including text/unknown; plus placeholder')
+  await page.locator('#ai-image-model').fill('vendor/manual-custom-id')
+  assert(await page.locator('#ai-image-model').inputValue()==='vendor/manual-custom-id',
+    'Manual Model ID must not be overwritten by the loaded list')
+  await models.selectOption('gpt-image-1')
+  assert(await page.locator('#ai-image-model').inputValue()==='gpt-image-1', 'User chooses the model explicitly')
   await page.getByRole('button',{name:/Ghép sản phẩm/}).click()
   await page.getByRole('button',{name:/Chọn ảnh từ máy/}).click()
   await page.getByRole('button',{name:/Chọn ảnh sản phẩm/}).click()
@@ -90,6 +105,22 @@ try {
   assert(await page.getByRole('tab',{name:'Tạo bài bằng AI'}).getAttribute('aria-selected')==='true',
     'Saving/attaching returns to the article editor')
   console.log('AI image-to-article attachment passed:',folder)
+  await page.getByRole('tab',{name:'Tạo ảnh AI'}).click()
+  // NVIDIA: load exactly the API's models, including text models; never force FLUX.
+  await page.locator('#ai-image-connection').selectOption('00000000-0000-4000-8000-000000000001')
+  assert(await page.locator('#ai-image-model').inputValue()==='', 'Changing API must not silently pick a model')
+  await page.getByRole('button',{name:/Tải model/}).click()
+  const nvidiaModels=page.getByRole('combobox',{name:'Danh sách Model do API trả về'})
+  assert(await nvidiaModels.locator('option').count()===3, 'NVIDIA API model list must not be replaced with a FLUX whitelist')
+  await nvidiaModels.selectOption('meta/llama-3.2-11b-vision-instruct')
+  assert(await page.locator('#ai-image-model').inputValue()==='meta/llama-3.2-11b-vision-instruct',
+    'The selected model must be exactly the NVIDIA model chosen by the user')
+  assert(await page.getByRole('button',{name:/Tạo 4 ảnh bằng AI/}).isEnabled(),
+    'Do not locally block user-selected NVIDIA model/mode; provider decides')
+  await page.locator('#ai-image-model').fill('vendor/another-manual-model')
+  assert(await page.getByRole('button',{name:/Tạo 4 ảnh bằng AI/}).isEnabled(),
+    'Manual unknown model IDs must not be locally blocked')
+  console.log('AI image studio model selection smoke passed')
   console.log('AI image studio Windows smoke passed:',JSON.stringify(geom))
 } finally {
   await app?.close().catch(()=>undefined)

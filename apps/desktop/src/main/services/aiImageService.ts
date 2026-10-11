@@ -5,7 +5,7 @@ import {
   type GenerateAiImagesInput, type SaveAiImagesInput, validateAiImageDataUrl, validateAiImageInput
 } from '../../shared/aiImages'
 import type { AiApiProvider } from '../../shared/aiApiConnections'
-import { canGenerateImageOnConnection, isNvidiaNimBase, nvidiaHostedImageEndpoint } from '../../shared/aiImageModels'
+import { isNvidiaNimBase, nvidiaHostedImageEndpoint } from '../../shared/aiImageModels'
 
 type Credentials = { provider: AiApiProvider; baseUrl: string; apiKey: string }
 const MAX_RESPONSE_BYTES = 24 * 1024 * 1024
@@ -104,11 +104,12 @@ export async function generateAiImagesFromProvider(
   credentials: Credentials, input: GenerateAiImagesInput, fetchImpl: typeof fetch = fetch
 ): Promise<AiImageOutput[]> {
   validateAiImageInput(input)
-  const capability = canGenerateImageOnConnection(credentials, input.modelId, input.mode)
-  if (!capability.ok) throw new Error(capability.reason)
+  if (credentials.provider === 'anthropic') {
+    throw new Error('Kết nối Anthropic hiện không có endpoint tạo ảnh; API này chỉ hỗ trợ đọc/hiểu ảnh. Chọn một kết nối có API tạo ảnh.')
+  }
   const nvidia = isNvidiaNimBase(credentials.baseUrl)
+  // Route by provider protocol and exact user-selected model, not guessed capabilities.
   const nvidiaEndpoint = nvidia ? nvidiaHostedImageEndpoint(input.modelId) : null
-  if (nvidia && input.size !== '1024x1024') throw new Error('NVIDIA preview chỉ hỗ trợ ảnh 1024 × 1024; đổi kích thước trước khi tạo.')
   const output: AiImageOutput[] = []
   for (let i=0; i<input.count; i++) {
     const controller = new AbortController()
@@ -122,12 +123,25 @@ export async function generateAiImagesFromProvider(
         headers.Authorization = 'Bearer ' + credentials.apiKey
         headers.Accept = 'application/json'
         headers['Content-Type'] = 'application/json'
-        body = JSON.stringify({
-          prompt:promptForMode(input),height:1024,width:1024,seed:0,samples:1,
-          ...(input.modelId.endsWith('flux.1-dev') ? {mode:'base',cfg_scale:5,steps:50}
-            : input.modelId.endsWith('flux.1-schnell') ? {mode:'base',cfg_scale:0,steps:4}
-            : {mode:'Image Generation',cfg_scale:0,steps:4,image:null})
+        const [width,height] = input.size.split('x').map(Number)
+        const inputImages = [input.source,input.product].filter((asset): asset is NonNullable<typeof asset> => Boolean(asset))
+        // Include every image selected by the user. A provider rejecting a mode or
+        // parameter reports HTTP 4xx, not a speculative application-side block.
+        const imageInputs = inputImages.map(asset=>{
+          const decoded = decodeAiImage(asset.dataUrl, MAX_IMAGE_SOURCE_BYTES)
+          return 'data:'+decoded.mimeType+';base64,'+decoded.bytes.toString('base64')
         })
+        const flux1 = /flux\.1-(?:dev|schnell)$/i.test(input.modelId)
+        const schnell = /flux\.1-schnell$/i.test(input.modelId)
+        const payload: Record<string, unknown> = {
+          prompt:promptForMode(input),width,height,seed:0,samples:1,
+          ...(flux1
+            ? {mode:'base',cfg_scale:schnell ? 0 : 5,steps:schnell ? 4 : 50}
+            : {mode:inputImages.length ? 'Image Editing' : 'Image Generation',cfg_scale:0,steps:4}),
+          image:imageInputs[0] ?? null
+        }
+        if (imageInputs.length > 1) payload.reference_images = imageInputs
+        body = JSON.stringify(payload)
       } else if (credentials.provider === 'gemini') {
         path = 'models/' + encodeURIComponent(input.modelId) + ':generateContent'
         headers['x-goog-api-key'] = credentials.apiKey
@@ -173,7 +187,13 @@ export async function generateAiImagesFromProvider(
       try { response = await fetchImpl(endpoint,{method:'POST',headers,body,redirect:'error',signal:controller.signal}) }
       catch { throw new Error(controller.signal.aborted ? 'Tạo ảnh quá thời gian 120 giây.' : 'Không kết nối được endpoint tạo ảnh HTTPS.') }
       if (!response.ok) {
-        throw new Error('API tạo ảnh trả HTTP ' + response.status + '. Model hoặc endpoint có thể không hỗ trợ ảnh, không đủ quyền hay đã hết tín dụng.')
+        const reason = response.status === 401 ? 'API key không hợp lệ.'
+          : response.status === 403 ? 'API key không có quyền gọi endpoint/model này.'
+          : response.status === 404 ? 'Endpoint hoặc Model ID không tồn tại trên API đã chọn.'
+          : response.status === 422 || response.status === 400 ? 'Model không chấp nhận chế độ, ảnh đầu vào hoặc tham số đã chọn.'
+          : response.status === 429 ? 'Hết lượt hoặc vượt giới hạn tốc độ/tín dụng.'
+          : response.status >= 500 ? 'Máy chủ AI đang lỗi.' : 'Kiểm tra API và khả năng của model.'
+        throw new Error('API tạo ảnh trả HTTP ' + response.status + ': ' + reason)
       }
       const parsed = await limitedResponse(response)
       output.push(nvidiaEndpoint ? outputFromNvidiaArtifact(parsed) : outputFromResponse(credentials.provider,parsed))
