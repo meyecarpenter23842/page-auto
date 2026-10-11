@@ -140,3 +140,21 @@ html[data-theme='dark'] .ai-quality-notice{background:#30291e;border-color:#8b6b
 .ai-quality-notice{font-size:12px}
 .ai-quality-notice summary{padding:2px 0}
 @media(max-height:750px){.ai-draft-editor{grid-template-rows:auto auto minmax(145px,1fr) auto auto;gap:5px;padding:9px}.ai-draft-row{min-height:68px}}
+
+/* Keep the editable drafts in the main canvas; raw output is a disclosure in the header. */
+.ai-preview-header{min-width:0}
+.ai-preview-header>div:first-child{min-width:0}
+.ai-preview-header .ai-output-contract{display:none}
+.ai-preview-header .ai-preview-actions{min-width:0;flex-wrap:wrap;justify-content:flex-end}
+.ai-preview-actions .ai-agent-output-bridge{position:relative;overflow:visible;border:0;background:transparent;z-index:5}
+.ai-preview-actions .ai-agent-output-bridge>summary{min-height:34px;border:1px solid #d9e2eb;border-radius:8px;padding:6px 10px;background:var(--ai-output-surface,#fff);white-space:nowrap}
+.ai-preview-actions .ai-agent-output-bridge>summary>span{display:block}
+.ai-preview-actions .ai-agent-output-bridge>summary small,.ai-preview-actions .ai-agent-output-bridge>summary>b{display:none}
+.ai-preview-actions .ai-agent-output-bridge>summary strong{font-size:12px}
+.ai-preview-actions .ai-agent-output-bridge[open] .ai-agent-output-body{position:absolute;right:0;top:calc(100% + 6px);width:min(520px,calc(100vw - 100px));max-height:min(420px,70vh);overflow:auto;z-index:10;padding:12px;border:1px solid #d9e2eb;border-radius:10px;background:var(--ai-output-surface,#fff);box-shadow:0 15px 35px rgba(0,0,0,.18)}
+.ai-results-canvas:has(.ai-results-workspace){justify-content:flex-start;align-items:stretch;min-height:0;flex:1 1 0}
+.ai-results-canvas:has(.ai-results-workspace)>.ai-results-workspace{height:auto;flex:1 1 0;min-height:0}
+.ai-results-workspace>.ai-draft-editor,.ai-draft-editor-content{min-height:0}
+.ai-draft-editor-content textarea{overflow-y:auto}
+@media(max-width:1120px){.ai-preview-header{gap:6px;padding:8px 10px}.ai-preview-header h2{font-size:14px}.ai-preview-actions .ai-agent-output-bridge>summary{padding:5px 8px}}
+html[data-theme='dark'] .ai-preview-actions .ai-agent-output-bridge{--ai-output-surface:var(--pa-dark-surface-2)}

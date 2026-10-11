@@ -276,36 +276,37 @@ export function AiDraftResultsPanel({
                 ? 'Lưu bài Random'
                 : `Lưu ${savableCount || ''} bài đã chọn`.replace('  ', ' ')}
           </button>
+        <details className="ai-agent-output-bridge" open={false}>
+            <summary>
+              <span>
+                <strong>Kết quả Agent</strong>
+                <small>
+                  {drafts.length ? 'Mở để kiểm tra hoặc sửa dữ liệu gốc' : 'AI tự đổ kết quả vào đây hoặc dán thủ công'}
+                </small>
+              </span>
+              <b>{expectedCount} {isRandom ? 'biến thể' : 'bài'}</b>
+            </summary>
+            <div className="ai-agent-output-body">
+              <textarea
+                value={rawOutput}
+                onChange={(event) => setRawOutput(event.target.value)}
+                placeholder={`Dán output ${actionLabel.toLocaleLowerCase('vi')} từ Agent tại đây. Mỗi bài cách nhau bằng ${AI_POST_DELIMITER}.`}
+              />
+              <div>
+                <span>
+                  {isRandom
+                    ? 'Đọc kết quả sẽ gom toàn bộ biến thể thành một bài Random.'
+                    : 'Không tự lưu. Output chỉ trở thành draft để duyệt/sửa trước.'}
+                </span>
+                <button type="button" onClick={loadAgentOutput}>Đọc kết quả</button>
+              </div>
+            </div>
+          </details>
         </div>
       </div>
 
       <div className="ai-preview-canvas ai-results-canvas">
-        <details className="ai-agent-output-bridge" open={!drafts.length}>
-          <summary>
-            <span>
-              <strong>Kết quả Agent</strong>
-              <small>
-                {drafts.length ? 'Mở để kiểm tra hoặc sửa dữ liệu gốc' : 'AI tự đổ kết quả vào đây hoặc dán thủ công'}
-              </small>
-            </span>
-            <b>{expectedCount} {isRandom ? 'biến thể' : 'bài'}</b>
-          </summary>
-          <div className="ai-agent-output-body">
-            <textarea
-              value={rawOutput}
-              onChange={(event) => setRawOutput(event.target.value)}
-              placeholder={`Dán output ${actionLabel.toLocaleLowerCase('vi')} từ Agent tại đây. Mỗi bài cách nhau bằng ${AI_POST_DELIMITER}.`}
-            />
-            <div>
-              <span>
-                {isRandom
-                  ? 'Đọc kết quả sẽ gom toàn bộ biến thể thành một bài Random.'
-                  : 'Không tự lưu. Output chỉ trở thành draft để duyệt/sửa trước.'}
-              </span>
-              <button type="button" onClick={loadAgentOutput}>Đọc kết quả</button>
-            </div>
-          </div>
-        </details>
+
 
         {notice ? (
           <div className={`ai-batch-notice ${notice.kind}`}>{notice.message}</div>
