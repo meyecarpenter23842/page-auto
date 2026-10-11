@@ -42,6 +42,16 @@ describe('resolveCheckLiveAccountStatus', () => {
     await expect(resolveCheckLiveAccountStatus(page, session('checkpoint'), async () => detected)).resolves.toBe(detected)
   })
 
+  it('reports Disabled for Check Live from the explicit Facebook URL even without loaded body text', async () => {
+    const disabledPage = {
+      url: () => 'https://www.facebook.com/checkpoint/disabled/?next&lsrc=cf',
+      locator: (selector: string) => selector === 'body'
+        ? { innerText: async () => '' }
+        : { first: () => ({ isVisible: async () => false }) }
+    } as unknown as Page
+    await expect(resolveCheckLiveAccountStatus(disabledPage, session('checkpoint'))).resolves.toBe('disabled')
+  })
+
   it('does not report false valid if a checkpoint disappears during classification', async () => {
     await expect(resolveCheckLiveAccountStatus(page, session('checkpoint'), async () => 'valid')).resolves.toBe('checkpoint_unknown')
   })

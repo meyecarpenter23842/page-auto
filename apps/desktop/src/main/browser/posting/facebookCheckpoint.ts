@@ -30,6 +30,8 @@ export function facebookCheckpointKindFromUrl(rawUrl: string): PostingCheckpoint
     if (checkpointIndex < 0) return null
 
     const pathId = segments[checkpointIndex + 1] ?? ''
+    // The explicit disabled checkpoint route remains authoritative even before DOM text loads.
+    if (pathId.toLowerCase() === 'disabled') return 'disabled'
     const pathKind = knownCheckpointSuffix(pathId)
     if (pathKind) return pathKind
 
@@ -54,7 +56,7 @@ export function facebookRestrictionKindFromText(
   text: string,
   urlKind: PostingCheckpointKind | null = null
 ): '956_purple_lock' | 'disabled' | null {
-  if (DISABLED_PATTERN.test(text)) return 'disabled'
+  if (urlKind === 'disabled' || DISABLED_PATTERN.test(text)) return 'disabled'
   if (PURPLE_LOCK_PATTERN.test(text) && (urlKind === '956' || urlKind === 'unknown' || urlKind === null)) {
     return '956_purple_lock'
   }
