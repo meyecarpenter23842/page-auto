@@ -1,3 +1,4 @@
+import type { AccountStatus } from '../../shared/accounts'
 import type { ExecuteSinglePostingJobResult, PostingCheckpointKind } from '../../shared/posting'
 import type {
   PostingJobPreview,
@@ -35,6 +36,11 @@ function runtimeCheckpointKind(outcome: ExecuteSinglePostingJobResult): PostingC
   const checkpoint = outcome.result.code === 'verification_required' || validation?.state === 'verification_required'
   if (!checkpoint) return undefined
   return validation?.checkpointKind ?? 'unknown'
+}
+
+function runtimeCheckpointAccountStatus(outcome: ExecuteSinglePostingJobResult): AccountStatus | undefined {
+  if (outcome.result.sessionValidation?.state !== 'verification_required') return undefined
+  return outcome.result.sessionValidation.accountStatus
 }
 
 export class RotationRuntimeOverlayRegistry {
@@ -127,7 +133,7 @@ export class RotationRuntimeOverlayRegistry {
     if (!state || accountId === null) return
 
     if (runtimeAccountError(outcome)) {
-      this.setAccountState(state, accountId, 'error', outcome.result.message, runtimeCheckpointKind(outcome))
+      this.setAccountState(state, accountId, 'error', outcome.result.message, runtimeCheckpointKind(outcome), runtimeCheckpointAccountStatus(outcome))
     } else if (state.accountStates.get(accountId)?.status !== 'error') {
       this.setAccountState(state, accountId, 'running', outcome.result.message)
     }
@@ -213,14 +219,16 @@ export class RotationRuntimeOverlayRegistry {
     accountId: number,
     status: RotationAccountRuntimeStatus,
     message: string | null,
-    checkpointKind?: PostingCheckpointKind
+    checkpointKind?: PostingCheckpointKind,
+    accountStatus?: AccountStatus
   ): void {
     if (!state.accountStates.has(accountId)) state.accountOrder.push(accountId)
     state.accountStates.set(accountId, {
       accountId,
       status,
       message,
-      ...(checkpointKind ? { checkpointKind } : {})
+      ...(checkpointKind ? { checkpointKind } : {}),
+      ...(accountStatus ? { accountStatus } : {})
     })
   }
 

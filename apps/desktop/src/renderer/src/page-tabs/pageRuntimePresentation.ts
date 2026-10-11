@@ -1,3 +1,4 @@
+import type { AccountStatus } from '../../../shared/accounts'
 import type { PostingCheckpointKind } from '../../../shared/posting'
 import type {
   RotationAccountRuntimeStatus,
@@ -22,6 +23,16 @@ const CHECKPOINT_RUNTIME_LABELS: Record<PostingCheckpointKind, string> = {
   unknown: 'Checkpoint không xác định'
 }
 
+const CHECKPOINT_ACCOUNT_LABELS: Partial<Record<AccountStatus, string>> = {
+  checkpoint_282: 'CP282',
+  checkpoint_956: 'CP956',
+  checkpoint_956_phone: 'CP956 Phone',
+  checkpoint_956_mail: 'CP956 Mail',
+  checkpoint_956_old_device: 'CP956 Thiết bị cũ',
+  checkpoint_956_purple_lock: 'CP956 Khóa tím',
+  disabled: 'Disabled'
+}
+
 const ROTATION_RUNTIME_LABELS: Record<RotationRuntimeStatus, string> = {
   idle: 'Chưa chạy',
   starting: 'Đang khởi động',
@@ -36,8 +47,12 @@ const ROTATION_RUNTIME_LABELS: Record<RotationRuntimeStatus, string> = {
 
 export function accountRuntimeLabel(
   status: RotationAccountRuntimeStatus,
-  checkpointKind?: PostingCheckpointKind
+  checkpointKind?: PostingCheckpointKind,
+  accountStatus?: AccountStatus
 ): string {
+  if (status === 'error' && accountStatus && CHECKPOINT_ACCOUNT_LABELS[accountStatus]) {
+    return CHECKPOINT_ACCOUNT_LABELS[accountStatus]
+  }
   if (status === 'error' && checkpointKind) return CHECKPOINT_RUNTIME_LABELS[checkpointKind]
   return ACCOUNT_RUNTIME_LABELS[status]
 }

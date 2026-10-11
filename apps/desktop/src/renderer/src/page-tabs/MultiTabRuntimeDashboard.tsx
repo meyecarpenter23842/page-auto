@@ -3,6 +3,7 @@ import type { AccountRecord } from '../../../shared/accounts'
 import type { PageTabSummary } from '../../../shared/pageTabs'
 import type { PostingResultStatus } from '../../../shared/posting'
 import type { RotationAccountRuntimeStatus, RotationRuntimeSnapshot } from '../../../shared/rotation'
+import { accountRuntimeLabel } from './pageRuntimePresentation'
 import './multiTabRuntime.css'
 
 const runtimeStatusLabels: Record<RotationRuntimeSnapshot['status'], string> = {
@@ -314,11 +315,11 @@ export function MultiTabRuntimeDashboard({ pageTabId = null, compact = false }: 
                       <span
                         className={`multi-runtime-account account-${accountState.status}`}
                         key={accountState.accountId}
-                        title={accountState.message ?? accountRuntimeLabels[accountState.status]}
+                        title={accountRuntimeLabel(accountState.status, accountState.checkpointKind, accountState.accountStatus)}
                       >
                         <i aria-hidden="true" />
                         <b>{accountLabels.get(accountState.accountId) ?? `#${accountState.accountId}`}</b>
-                        <em>{accountRuntimeLabels[accountState.status]}</em>
+                        <em>{accountRuntimeLabel(accountState.status, accountState.checkpointKind, accountState.accountStatus)}</em>
                       </span>
                     ))}
                   </div>

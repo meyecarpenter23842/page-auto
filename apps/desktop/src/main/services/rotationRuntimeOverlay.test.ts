@@ -95,6 +95,30 @@ describe('RotationRuntimeOverlayRegistry', () => {
     })
   })
 
+  it('passes the checkpoint subtype to the Page Tab state without modifying posting decisions', () => {
+    const overlay = new RotationRuntimeOverlayRegistry()
+    overlay.decorate(runtimeSnapshot())
+    const outcome = postingOutcome(11, 'failed')
+    outcome.result = {
+      status: 'needs_login',
+      code: 'verification_required',
+      message: 'Cần xác minh.',
+      sessionValidation: {
+        phase: 'before_run',
+        state: 'verification_required',
+        accountStatus: 'checkpoint_956_phone',
+        checkpointKind: '956',
+        message: 'Cần xác minh.'
+      }
+    }
+    overlay.notePostingResult(outcome)
+    expect(overlay.decorate(runtimeSnapshot()).accountStates?.find((state) => state.accountId === 11)).toMatchObject({
+      status: 'error',
+      checkpointKind: '956',
+      accountStatus: 'checkpoint_956_phone'
+    })
+  })
+
   it('resets per-run account colors when the next account cycle starts', () => {
     const overlay = new RotationRuntimeOverlayRegistry()
     overlay.decorate(runtimeSnapshot())
