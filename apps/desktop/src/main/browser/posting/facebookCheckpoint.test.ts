@@ -7,6 +7,7 @@ import {
   detectFacebookCheckpointKind,
   facebookCheckpointKindFromText,
   facebookCheckpointKindFromUrl,
+  facebook956AccountStatusFromText,
   facebookRestrictionKindFromText,
   withFacebookCheckpointKind
 } from './facebookCheckpoint'
@@ -119,10 +120,38 @@ describe('Facebook checkpoint classifier', () => {
   it('maps live challenge surfaces to canonical account status', async () => {
     await expect(detectFacebookAccountStatus(
       pageAt('https://www.facebook.com/checkpoint/1234567890956/', 'Your account has been locked')
-    )).resolves.toBe('locked')
+    )).resolves.toBe('checkpoint_956_purple_lock')
     await expect(detectFacebookAccountStatus(
       pageAt('https://www.facebook.com/checkpoint/1501092823525282/', 'Checkpoint')
     )).resolves.toBe('checkpoint_282')
+  })
+
+  it.each([
+    ['CP956 old device despite locked wording', 'We locked your account. Log in with another device to unlock your account', 'checkpoint_956_old_device'],
+    ['CP956 phone', 'Confirm that this is your account. Get a code on your phone. Get a code on WhatsApp', 'checkpoint_956_phone'],
+    ['CP956 WhatsApp only', 'Get a code on WhatsApp', 'checkpoint_956_phone'],
+    ['CP956 mail', 'Confirm that this is your account. Get a code by email', 'checkpoint_956_mail'],
+    ['CP956 purple lock', 'We locked your account. Get started', 'checkpoint_956_purple_lock']
+  ] as const)('persists %s as %s', async (_label, body, status) => {
+    const url = 'https://www.facebook.com/checkpoint/828281030927956/?next=%2F'
+    expect(facebook956AccountStatusFromText(body)).toBe(status)
+    await expect(detectFacebookAccountStatus(pageAt(url, body))).resolves.toBe(status)
+  })
+
+  it('keeps 282 as one status and disabled as a separate terminal status', async () => {
+    await expect(detectFacebookAccountStatus(
+      pageAt('https://www.facebook.com/checkpoint/1501092823525282/', 'Confirm your identity. Start video selfie')
+    )).resolves.toBe('checkpoint_282')
+    await expect(detectFacebookAccountStatus(
+      pageAt('https://www.facebook.com/checkpoint/disabled/', 'We disabled your account')
+    )).resolves.toBe('disabled')
+    await expect(detectFacebookAccountStatus(
+      pageAt('https://www.facebook.com/checkpoint/828281030927956/', 'Confirm that this is your account')
+    )).resolves.toBe('checkpoint_956')
+  })
+
+  it('does not infer CP956 verification method from an unrelated page', () => {
+    expect(facebook956AccountStatusFromText('Home')).toBeNull()
   })
 
   it('classifies a known checkpoint immediately and keeps the default observation window at 10 seconds', async () => {

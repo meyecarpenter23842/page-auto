@@ -61,6 +61,26 @@ export function facebookRestrictionKindFromText(
   return null
 }
 
+/**
+ * Classify the visible CP956 verification method only; never advance the checkpoint
+ * flow. A single CP956 URL hosts several different screens, so URL alone is insufficient.
+ * Phone and WhatsApp intentionally share one operator-facing label.
+ */
+export function facebook956AccountStatusFromText(text: string): AccountStatus | null {
+  const visibleText = text.replace(/\s+/g, ' ').trim()
+  if (/(?:get\s+(?:a\s+)?code\s+(?:on|via)\s+(?:(?:your|my)\s+)?(?:phone|whatsapp)|(?:mã|code)\s+(?:qua|bằng)\s+(?:điện thoại|sms|whatsapp))/i.test(visibleText)) {
+    return 'checkpoint_956_phone'
+  }
+  if (/(?:get\s+(?:a\s+)?code\s+(?:by|via|on)\s+(?:your\s+)?e-?mail|(?:mã|code)\s+(?:qua|bằng)\s+(?:e-?mail|thư điện tử))/i.test(visibleText)) {
+    return 'checkpoint_956_mail'
+  }
+  if (/(?:log\s+in\s+(?:with\s+another|using\s+a)\s+device|device\s+you(?:'ve|\s+have)\s+accessed\s+this\s+account\s+with\s+before|đăng nhập.*thiết bị.*(?:trước|khác))/i.test(visibleText)) {
+    return 'checkpoint_956_old_device'
+  }
+  if (PURPLE_LOCK_PATTERN.test(visibleText)) return 'checkpoint_956_purple_lock'
+  return null
+}
+
 export function facebookCheckpointKindLabel(kind: PostingCheckpointKind): string {
   if (kind === '282') return 'checkpoint 282'
   if (kind === '956') return 'checkpoint 956'
@@ -147,7 +167,19 @@ export async function inspectFacebookCommonChallenge(page: Page): Promise<Facebo
 
 export async function detectFacebookAccountStatus(page: Page): Promise<AccountStatus> {
   const classification = await inspectFacebookCommonChallenge(page)
-  return accountStatusFromFacebookChallenge(classification.type, classification.checkpointKind)
+  const baseStatus = accountStatusFromFacebookChallenge(classification.type, classification.checkpointKind)
+  if (classification.checkpointKind === 'disabled') return 'disabled'
+  if (classification.checkpointKind === '282') return 'checkpoint_282'
+  if (classification.checkpointKind === '956' || classification.checkpointKind === '956_purple_lock') {
+    // An actual 2FA/email-code form remains under the existing login/challenge policy.
+    if (classification.type === 'totp_2fa_challenge' || classification.type === 'email_code_challenge') {
+      return baseStatus
+    }
+    const text = await page.locator('body').innerText({ timeout: 1_000 }).catch(() => '')
+    return facebook956AccountStatusFromText(text)
+      ?? (classification.checkpointKind === '956_purple_lock' ? 'checkpoint_956_purple_lock' : 'checkpoint_956')
+  }
+  return baseStatus
 }
 
 async function inspectCheckpointKind(page: Page): Promise<PostingCheckpointKind | null> {

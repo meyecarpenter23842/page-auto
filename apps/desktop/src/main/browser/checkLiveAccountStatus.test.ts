@@ -33,6 +33,10 @@ describe('resolveCheckLiveAccountStatus', () => {
     'security_review_required',
     'checkpoint_282',
     'checkpoint_956',
+    'checkpoint_956_phone',
+    'checkpoint_956_mail',
+    'checkpoint_956_old_device',
+    'checkpoint_956_purple_lock',
     'checkpoint_unknown'
   ])('uses live checkpoint classification: %s', async (detected) => {
     await expect(resolveCheckLiveAccountStatus(page, session('checkpoint'), async () => detected)).resolves.toBe(detected)
