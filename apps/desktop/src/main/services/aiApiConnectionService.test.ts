@@ -194,4 +194,53 @@ describe('AI API connections and model discovery', () => {
     expect(fake).toHaveBeenCalledTimes(2)
     runtime.close()
   })
+  it('budgets long Gemini posts in batches and keeps the exact saved model',async()=>{
+    const requests:{model:string;maxTokens:number;prompt:string}[]=[]
+    const fake=vi.fn(async(_url:string|URL|Request,init?:RequestInit)=>{
+      const body=JSON.parse(String(init?.body)) as {
+        contents:{parts:{text:string}[]}[];generationConfig:{maxOutputTokens:number}
+      }
+      const prompt=body.contents[0]!.parts[0]!.text
+      const count=Number(prompt.match(/Số lượng:\s*(\d+) bài/)?.[1] ?? '0')
+      requests.push({model:'gemini/custom-chosen-model',maxTokens:body.generationConfig.maxOutputTokens,prompt})
+      return new Response(JSON.stringify({candidates:[{finishReason:'STOP',content:{
+        parts:[{text:Array.from({length:count},(_,i)=>'Nội dung đầy đủ '.repeat(110)+' '+i).join('\n|\n')}]
+      }}]}),{status:200})
+    }) as unknown as typeof fetch
+    const {runtime,service}=setup(fake)
+    try {
+      const saved=service.save({...draft,name:'Gemini free',provider:'gemini',baseUrl:'https://generativelanguage.googleapis.com/v1beta',
+        modelId:'gemini-2.5-flash'})
+      const output=await service.generate({...postInput('api:'+saved[0]!.id),postCount:5,length:'Dài'})
+      expect(output.posts).toHaveLength(5)
+      expect(output.model).toBe('gemini-2.5-flash')
+      expect(output.warning).toBeNull()
+      expect(requests.map(x=>x.maxTokens)).toEqual([7456,7456,3856])
+      expect(requests.every(x=>x.prompt.includes('1200–2000 ký tự'))).toBe(true)
+      expect(fake).toHaveBeenCalledTimes(3)
+    } finally { runtime.close() }
+  })
+  it('warns rather than pretending a short response satisfies the selected length',async()=>{
+    const fake=vi.fn(async()=>new Response(JSON.stringify({choices:[{finish_reason:'stop',message:{content:'Quá ngắn.'}}]}))) as unknown as typeof fetch
+    const {runtime,service}=setup(fake)
+    try {
+      const connection=service.save(draft)
+      const result=await service.generate({...postInput('api:'+connection[0]!.id),postCount:1,length:'Dài'})
+      expect(result.posts).toEqual(['Quá ngắn.'])
+      expect(result.warning).toContain('ngắn hơn mức 1200 ký tự')
+    } finally {runtime.close()}
+  })
+  it('rejects truncated Gemini output instead of accepting cut-off posts',async()=>{
+    const fake=vi.fn(async()=>new Response(JSON.stringify({candidates:[{
+      finishReason:'MAX_TOKENS',content:{parts:[{text:'Bài dở dang'}]}
+    }]}))) as unknown as typeof fetch
+    const {runtime,service}=setup(fake)
+    try {
+      const connection=service.save({...draft,provider:'gemini',baseUrl:'https://generativelanguage.googleapis.com/v1beta'})
+      await expect(service.generate({...postInput('api:'+connection[0]!.id),postCount:1,length:'Dài'}))
+        .rejects.toThrow('hết output tokens')
+      expect(fake).toHaveBeenCalledTimes(1)
+    } finally {runtime.close()}
+  })
+
 })

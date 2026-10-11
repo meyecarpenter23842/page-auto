@@ -1,5 +1,37 @@
 import type { GenerateAiPostsInput } from '../../shared/aiAgents'
 
+/** Character targets and token budgets belong to the article-writing contract, not individual model IDs. */
+export const AI_POST_LENGTH_PROFILES = {
+  'Ngắn': { minChars:300, maxChars:500, outputTokensPerPost:1100 },
+  'Trung bình': { minChars:650, maxChars:1000, outputTokensPerPost:2100 },
+  'Dài': { minChars:1200, maxChars:2000, outputTokensPerPost:3600 }
+} as const
+
+const AI_POST_MAX_OUTPUT_TOKENS = 8192
+const AI_POST_BATCH_OVERHEAD_TOKENS = 256
+
+export function aiPostLengthProfile(length: string) {
+  return AI_POST_LENGTH_PROFILES[length as keyof typeof AI_POST_LENGTH_PROFILES]
+    ?? AI_POST_LENGTH_PROFILES['Trung bình']
+}
+
+/** Batch large requests so selecting "Dài" for many posts never silently reduces tokens per post. */
+export function planAiPostRequests(postCount: number, length: string): { postCount:number; maxTokens:number }[] {
+  if (!Number.isInteger(postCount) || postCount < 1 || postCount > 50) {
+    throw new Error('Số lượng bài phải từ 1 đến 50.')
+  }
+  const {outputTokensPerPost} = aiPostLengthProfile(length)
+  const maxPerBatch = Math.max(1,Math.floor((AI_POST_MAX_OUTPUT_TOKENS - AI_POST_BATCH_OVERHEAD_TOKENS) / outputTokensPerPost))
+  const plan: {postCount:number; maxTokens:number}[] = []
+  for (let remaining=postCount;remaining>0;) {
+    const count = Math.min(remaining,maxPerBatch)
+    plan.push({postCount:count,maxTokens:Math.min(AI_POST_MAX_OUTPUT_TOKENS,
+      AI_POST_BATCH_OVERHEAD_TOKENS + count * outputTokensPerPost)})
+    remaining -= count
+  }
+  return plan
+}
+
 interface LayoutRecipe {
   name: string
   guidance: string
@@ -9,27 +41,27 @@ const MIXED_LAYOUT = 'Trộn bố cục'
 const LAYOUT_RECIPES: readonly LayoutRecipe[] = [
   {
     name: 'Hook → Ý chính → CTA',
-    guidance: 'Mở bằng 1 câu hook ngắn; triển khai 1–2 ý chính thành các đoạn ngắn; CTA tách riêng ở cuối.'
+    guidance: 'Mở bằng 1 câu hook; triển khai các ý chính thành nhiều đoạn tương ứng với độ dài đã chọn; CTA tách riêng ở cuối.'
   },
   {
     name: 'Vấn đề → Giải pháp → Liên hệ',
-    guidance: 'Nêu vấn đề thật gọn; xuống đoạn; đưa giải pháp bằng 2–3 ý rõ ràng; thông tin liên hệ tách riêng.'
+    guidance: 'Nêu vấn đề rõ ràng; triển khai các giải pháp và lợi ích có căn cứ thành các đoạn riêng; thông tin liên hệ tách riêng.'
   },
   {
     name: 'Hook → Bullet → CTA',
-    guidance: 'Mở bằng 1 câu hook; xuống dòng; dùng 3–5 bullet ngắn, mỗi bullet một ý; CTA tách riêng.'
+    guidance: 'Mở bằng 1 câu hook; mỗi bullet trình bày một ý có đủ chi tiết theo độ dài đã chọn; CTA tách riêng.'
   },
   {
     name: 'Hỏi → Trả lời → Gợi ý',
-    guidance: 'Mở bằng một câu hỏi; trả lời bằng 1–2 đoạn ngắn; thêm gợi ý hành động hoặc CTA ở đoạn riêng nếu phù hợp.'
+    guidance: 'Mở bằng một câu hỏi; trả lời với số đoạn và độ chi tiết tương ứng độ dài đã chọn; thêm CTA nếu phù hợp.'
   },
   {
     name: 'Thông tin nhanh',
-    guidance: 'Có thể có tiêu đề ngắn; trình bày 3–5 dòng thông tin hoặc bullet súc tích; địa chỉ hoặc liên hệ để dòng riêng.'
+    guidance: 'Có thể có tiêu đề; trình bày thông tin theo từng dòng hoặc bullet rõ ràng, số ý phù hợp độ dài đã chọn; liên hệ để dòng riêng.'
   },
   {
     name: 'Chia sẻ tự nhiên',
-    guidance: 'Không bắt buộc tiêu đề; viết 2–4 đoạn ngắn, mỗi đoạn một ý; CTA chỉ đặt ở đoạn cuối nếu cần.'
+    guidance: 'Không bắt buộc tiêu đề; chia thành các đoạn tự nhiên, mỗi đoạn một ý; số đoạn theo độ dài đã chọn; CTA ở cuối nếu cần.'
   }
 ] as const
 
@@ -130,12 +162,18 @@ function layoutPlanLines(input: GenerateAiPostsInput): string[] {
 }
 
 export function buildAiPostPrompt(input: GenerateAiPostsInput): string {
+  const profile = aiPostLengthProfile(input.length)
   const common = [
     `Số lượng: ${input.postCount} bài.`,
     `Loại bài: ${input.postType}.`,
     `Giọng văn: ${input.tone}.`,
     `Kiểu bố cục: ${input.structure}.`,
     `Độ dài: ${input.length}.`,
+    'ĐỘ DÀI TỪNG BÀI — yêu cầu bắt buộc, không chỉ là nhãn mô tả:',
+    `- Mỗi bài khoảng ${profile.minChars}–${profile.maxChars} ký tự tiếng Việt, tính cả dấu cách và xuống dòng (không tính dòng phân tách |).`,
+    '- Không viết dạng tóm tắt quá ngắn khi đã chọn Trung bình hoặc Dài.',
+    '- Triển khai nhiều đoạn với thông tin, cách sử dụng và lợi ích có cơ sở từ nguồn; tránh lặp ý để đủ độ dài.',
+    '- Nếu nguồn không đủ dữ kiện, diễn giải những dữ kiện đã có; tuyệt đối không bịa thêm tính năng, thành tích, ưu đãi hay số liệu.',
     `Emoji: ${input.emoji ? 'có, dùng nhẹ' : 'không'}.`,
     `Hashtag: ${input.hashtag ? 'có, dùng vừa phải' : 'không'}.`,
     ...layoutPlanLines(input),
