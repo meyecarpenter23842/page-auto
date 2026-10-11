@@ -124,7 +124,8 @@ describe('checkpoint status propagation', () => {
       accountId: account.id,
       status: 'error',
       message: 'Facebook yêu cầu checkpoint 282.',
-      checkpointKind: '282'
+      checkpointKind: '282',
+      accountStatus: 'checkpoint_282'
     })
 
     service.closeAll()
