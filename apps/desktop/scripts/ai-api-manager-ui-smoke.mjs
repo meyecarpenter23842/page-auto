@@ -31,6 +31,26 @@ try {
   app=launched.app
   let page=launched.page
   await toAi(page)
+  await page.setViewportSize({width:1280,height:800})
+  const divider = page.getByRole('separator',{name:'Độ rộng khung thiết lập AI'})
+  await divider.waitFor({state:'visible'})
+  const originalWidth = Number(await divider.getAttribute('aria-valuenow'))
+  await divider.focus()
+  await divider.press('ArrowRight')
+  const resizedWidth = Number(await divider.getAttribute('aria-valuenow'))
+  assert(resizedWidth === originalWidth + 20, 'AI composer keyboard divider must resize its sidebar')
+  assert(await page.locator('.ai-extra-options').evaluate(node => !node.open),
+    'Advanced AI controls should be collapsed by default')
+  await page.locator('.ai-extra-options summary').click()
+  assert(await page.locator('.ai-extra-options').evaluate(node => node.open),
+    'Advanced AI controls must expand on demand')
+  await page.setViewportSize({width:1084,height:655})
+  const editorBounds = await page.locator('.ai-preview-panel').boundingBox()
+  assert(editorBounds && editorBounds.width >= 480,
+    'Result editor must remain usable at the compact Windows viewport: ' + JSON.stringify({
+      editorBounds,
+      layout: await page.locator('.ai-content-layout').boundingBox()
+    }))
   await page.getByRole('button',{name:/Quản lý AI/}).click()
   const modal=page.getByRole('dialog',{name:'Quản lý AI'})
   await modal.waitFor({state:'visible'})
@@ -93,6 +113,8 @@ try {
   app=restarted.app
   page=restarted.page
   await toAi(page)
+  const restoredWidth = Number(await page.getByRole('separator',{name:'Độ rộng khung thiết lập AI'}).getAttribute('aria-valuenow'))
+  assert(restoredWidth === resizedWidth, 'AI sidebar width must survive Electron restart')
   await page.waitForFunction(() => {
     const select = document.querySelector('select[aria-label="Chọn AI và Model"]')
     return select && select.value.startsWith('api:')

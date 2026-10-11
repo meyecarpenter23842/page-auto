@@ -13,7 +13,7 @@
 }
 
 .workspace-content-library .ai-content-layout {
-  grid-template-columns: minmax(340px, 380px) minmax(0, 1fr);
+  grid-template-columns: minmax(320px, min(var(--ai-compose-width, 400px), 43%)) 12px minmax(0, 1fr);
 }
 
 /* Result rail always stays visible, including Random/single-result batches.
@@ -85,7 +85,7 @@
 
 @media (min-width: 1500px) {
   .workspace-content-library .ai-content-layout {
-    grid-template-columns: 370px minmax(0, 1fr);
+    grid-template-columns: minmax(320px, min(var(--ai-compose-width, 400px), 43%)) 12px minmax(0, 1fr);
   }
 
   .workspace-content-library .ai-results-workspace {
@@ -94,7 +94,13 @@
 }
 
 @media (max-width: 1120px) {
-  .workspace-content-library .ai-content-layout {
-    grid-template-columns: 330px minmax(0, 1fr);
+  /* Size the setting column from remaining space so the preview gets priority.
+     At a 766px work area: 266px controls + 10px divider + 490px preview. */
+  .workspace-content-library .ai-content-layout.ai-resizable-layout {
+    grid-template-columns: minmax(210px, min(var(--ai-compose-width, 400px), calc(100% - 500px))) 10px minmax(0, 1fr) !important;
+  }
+
+  .workspace-content-library .ai-content-layout.ai-resizable-layout > .ai-compose-panel {
+    min-width: 0;
   }
 }

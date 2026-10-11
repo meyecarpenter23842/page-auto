@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from 'react'
+import { clampAiComposerWidth, DEFAULT_AI_COMPOSER_WIDTH, readAiComposerWidth, saveAiComposerWidth } from './aiComposerLayout'
 import { aiApiChoice, isAiApiChoice, type AiApiConnectionView } from '../../../shared/aiApiConnections'
 import type {
   AiContentAction,
@@ -15,6 +16,7 @@ import { captureAiRequestContext } from './aiDraftResults'
 import { AI_POST_DELIMITER, parseAiPostOutput } from './aiPostOutputFormat'
 import './aiContentWorkspace.css'
 import './aiContentWorkspaceModes.css'
+import './aiWorkspacePolish.css'
 
 const POST_TYPES = ['Bán hàng', 'Chia sẻ', 'Review', 'Giới thiệu'] as const
 const TONES = ['Tự nhiên', 'Gần gũi', 'Chuyên nghiệp', 'Ngắn gọn'] as const
@@ -58,6 +60,37 @@ export function AiContentWorkspaceAgentBuilder() {
   const [incomingBatch, setIncomingBatch] = useState<AiIncomingDraftBatch | null>(null)
   const [resultAction, setResultAction] = useState<AiContentAction>('create')
   const [resultPostCount, setResultPostCount] = useState(5)
+  const layoutRef = useRef<HTMLDivElement>(null)
+  const resizingRef = useRef(false)
+  const widthRef = useRef(DEFAULT_AI_COMPOSER_WIDTH)
+  const [composeWidth, setComposeWidth] = useState(() => {
+    const stored = readAiComposerWidth(window.localStorage)
+    widthRef.current = stored
+    return stored
+  })
+  const updateComposeWidth = (value: number, availableWidth?: number) => {
+    const next = clampAiComposerWidth(value, availableWidth)
+    widthRef.current = next
+    setComposeWidth(next)
+  }
+  const stopResizing = () => {
+    if (!resizingRef.current) return
+    resizingRef.current = false
+    saveAiComposerWidth(window.localStorage, widthRef.current)
+  }
+  const resizePointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    if (!resizingRef.current || !layoutRef.current) return
+    const bounds = layoutRef.current.getBoundingClientRect()
+    updateComposeWidth(event.clientX - bounds.left, bounds.width)
+  }
+  const resizeKeyboard = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Home') updateComposeWidth(DEFAULT_AI_COMPOSER_WIDTH, layoutRef.current?.clientWidth)
+    else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      updateComposeWidth(widthRef.current + (event.key === 'ArrowRight' ? 20 : -20), layoutRef.current?.clientWidth)
+    } else return
+    event.preventDefault()
+    saveAiComposerWidth(window.localStorage, widthRef.current)
+  }
 
   const currentApi = apiConnections.find((connection) => aiApiChoice(connection.id) === selectedAgent)
   const randomSourcePosts = useMemo(
@@ -174,13 +207,17 @@ export function AiContentWorkspaceAgentBuilder() {
           </button>
         </div>
 
-        <div className={selectedAgent ? 'ai-provider-state connected' : 'ai-provider-state'}>
+        <div className={currentApi ? 'ai-provider-state connected' : 'ai-provider-state'} title={currentApi?.modelId ?? 'Chưa kết nối AI'}>
           <span />
-          {currentApi ? `API: ${currentApi.name} · ${currentApi.modelId}` : 'Chưa kết nối AI'}
+          {currentApi ? 'Đã chọn kết nối' : 'Chưa kết nối AI'}
         </div>
       </div>
 
-      <div className="ai-content-layout">
+      <div
+        ref={layoutRef}
+        className="ai-content-layout ai-resizable-layout"
+        style={{ '--ai-compose-width': `${composeWidth}px` } as CSSProperties}
+      >
         <aside className="ai-compose-panel">
           <div className="ai-compose-scroll">
             <section className="ai-form-section">
@@ -347,58 +384,44 @@ export function AiContentWorkspaceAgentBuilder() {
                 </select>
               </label>
 
-              <div className="ai-form-grid two">
-                <label className="ai-field">
-                  <span>Độ dài</span>
-                  <select
-                    value={length}
-                    onChange={(event) => setLength(event.target.value as (typeof LENGTHS)[number])}
-                  >
-                    {LENGTHS.map((item) => <option key={item}>{item}</option>)}
-                  </select>
-                </label>
-                <div className="ai-option-stack" aria-label="Tùy chọn nội dung">
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={emoji}
-                      onChange={(event) => setEmoji(event.target.checked)}
-                    />
-                    Emoji nhẹ
-                  </label>
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={hashtag}
-                      onChange={(event) => setHashtag(event.target.checked)}
-                    />
-                    Hashtag
-                  </label>
-                </div>
-              </div>
-
               <label className="ai-field">
-                <span>Ký tự spin đầu dòng</span>
+                <span>Độ dài</span>
                 <select
-                  value={lineSpinToken}
-                  onChange={(event) => setLineSpinToken(
-                    event.target.value as ContentSpinIconToken | ''
-                  )}
+                  value={length}
+                  onChange={(event) => setLength(event.target.value as (typeof LENGTHS)[number])}
                 >
-                  <option value="">Không dùng</option>
-                  {CONTENT_SPIN_ICON_OPTIONS.map((option) => (
-                    <option key={option.token} value={option.token}>{option.label} · {option.pool.length} ký tự</option>
-                  ))}
+                  {LENGTHS.map((item) => <option key={item}>{item}</option>)}
                 </select>
-                <small>
-                  Hai ký tự trong tên token chỉ là ví dụ; xem số lượng thực tế bên cạnh. AI giữ nguyên token như [r3] để Page-Auto spin khi đăng. Token ngữ cảnh: [u] [g] [f] [n] [d] [t] [w].
-                </small>
               </label>
 
-              <div className="ai-image-option disabled" aria-disabled="true">
-                <span><input type="checkbox" disabled /><b>Tạo ảnh bằng AI</b></span>
-                <small>Ảnh sẽ nối qua Agent/tool riêng ở lô image, không gọi model ảnh trực tiếp ở đây.</small>
-              </div>
+              <details className="ai-extra-options">
+                <summary>Tùy chọn nâng cao <span>Emoji · Hashtag · Spin</span></summary>
+                <div className="ai-extra-options-body">
+                  <div className="ai-option-stack" aria-label="Tùy chọn nội dung">
+                    <label>
+                      <input type="checkbox" checked={emoji} onChange={(event) => setEmoji(event.target.checked)} />
+                      Emoji nhẹ
+                    </label>
+                    <label>
+                      <input type="checkbox" checked={hashtag} onChange={(event) => setHashtag(event.target.checked)} />
+                      Hashtag
+                    </label>
+                  </div>
+                  <label className="ai-field">
+                    <span>Ký tự spin đầu dòng</span>
+                    <select
+                      value={lineSpinToken}
+                      onChange={(event) => setLineSpinToken(event.target.value as ContentSpinIconToken | '')}
+                    >
+                      <option value="">Không dùng</option>
+                      {CONTENT_SPIN_ICON_OPTIONS.map((option) => (
+                        <option key={option.token} value={option.token}>{option.label} · {option.pool.length} ký tự</option>
+                      ))}
+                    </select>
+                    <small>Token được giữ nguyên trong bài và sẽ Spin khi đăng.</small>
+                  </label>
+                </div>
+              </details>
             </section>
           </div>
 
@@ -420,6 +443,31 @@ export function AiContentWorkspaceAgentBuilder() {
             </button>
           </div>
         </aside>
+        <div
+          className="ai-layout-resizer"
+          role="separator"
+          aria-label="Độ rộng khung thiết lập AI"
+          aria-orientation="vertical"
+          aria-valuemin={320}
+          aria-valuemax={620}
+          aria-valuenow={composeWidth}
+          tabIndex={0}
+          title="Kéo hoặc dùng phím mũi tên; nhấp đúp để đặt lại"
+          onPointerDown={(event) => {
+            if (event.button !== 0) return
+            resizingRef.current = true
+            event.currentTarget.setPointerCapture(event.pointerId)
+          }}
+          onPointerMove={resizePointerMove}
+          onPointerUp={stopResizing}
+          onPointerCancel={stopResizing}
+          onLostPointerCapture={stopResizing}
+          onKeyDown={resizeKeyboard}
+          onDoubleClick={() => {
+            updateComposeWidth(DEFAULT_AI_COMPOSER_WIDTH, layoutRef.current?.clientWidth)
+            saveAiComposerWidth(window.localStorage, widthRef.current)
+          }}
+        />
 
         <AiDraftResultsPanel
           expectedCount={previewPostCount}

@@ -254,8 +254,8 @@ export function AiDraftResultsPanel({
     <section className="ai-preview-panel">
       <div className="ai-preview-header">
         <div>
-          <p>KẾT QUẢ</p>
-          <h2>Bài viết xem trước</h2>
+          <p>KẾT QUẢ AI</p>
+          <h2>Chọn và chỉnh sửa bài viết</h2>
           <span className="ai-output-contract">
             {isRandom
               ? <>Random lưu thành 1 bài; các biến thể cách nhau bằng <code>{AI_POST_DELIMITER}</code></>
@@ -285,7 +285,7 @@ export function AiDraftResultsPanel({
             <span>
               <strong>Kết quả Agent</strong>
               <small>
-                Agent tự đổ kết quả vào đây; có thể mở ra để kiểm tra output thô.
+                {drafts.length ? 'Mở để kiểm tra hoặc sửa dữ liệu gốc' : 'AI tự đổ kết quả vào đây hoặc dán thủ công'}
               </small>
             </span>
             <b>{expectedCount} {isRandom ? 'biến thể' : 'bài'}</b>
@@ -312,7 +312,7 @@ export function AiDraftResultsPanel({
         ) : null}
 
         {qualityWarnings.length ? (
-          <details className="ai-quality-notice" open>
+          <details className="ai-quality-notice">
             <summary>Kiểm tra chất lượng · {qualityWarnings.length} cảnh báo (không tự xóa bài)</summary>
             <ul>{qualityWarnings.slice(0, 8).map((warning, index) => <li key={index}>{warning}</li>)}</ul>
           </details>
@@ -407,7 +407,7 @@ export function AiDraftResultsPanel({
                       <small>
                         {activeDraft.kind === 'variant_group'
                           ? `${getAiDraftVariantCount(activeDraft)} biến thể trong cùng 1 bài Thư viện`
-                          : 'Bấm card bên trái để đổi bài xem trước'}
+                          : `${activeDraft.content.trim().length.toLocaleString('vi-VN')} ký tự · Có thể sửa trực tiếp`}
                       </small>
                     </div>
                     <span className={`ai-draft-status ${activeDraft.status}`}>
@@ -448,14 +448,14 @@ export function AiDraftResultsPanel({
                     />
                   </label>
 
-                  <section className="ai-draft-media-config" aria-label="Ảnh và lưu Thư viện">
-                    <header>
+                  <details className="ai-draft-media-config" aria-label="Ảnh đính kèm">
+                    <summary>
                       <div>
-                        <strong>Ảnh & lưu Thư viện</strong>
-                        <small>Cấu hình này được lưu cùng bài, không phải nhập lại sau.</small>
+                        <strong>Ảnh đính kèm (nếu có)</strong>
+                        <small>Chọn ảnh có sẵn để đi kèm bài</small>
                       </div>
                       <span>{activeDraft.image.folderPath ? 'Có folder ảnh' : 'Chưa chọn ảnh'}</span>
-                    </header>
+                    </summary>
 
                     <label className="ai-media-field ai-media-folder-field">
                       <span>Folder ảnh</span>
@@ -526,7 +526,7 @@ export function AiDraftResultsPanel({
                         </select>
                       </label>
                     </div>
-                  </section>
+                  </details>
 
                   <footer className="ai-draft-editor-footer">
                     <span>
