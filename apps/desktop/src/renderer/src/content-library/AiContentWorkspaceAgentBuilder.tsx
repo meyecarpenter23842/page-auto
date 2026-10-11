@@ -12,6 +12,7 @@ import {
 } from '../../../shared/contentSpin'
 import { AiAgentManagerModal } from './AiAgentManagerModal'
 import { AiDraftResultsPanel, type AiIncomingDraftBatch } from './AiDraftResultsPanel'
+import type { AiImageArticleRequest, AiImageAttachment } from './aiImageArticleBridge'
 import { captureAiRequestContext } from './aiDraftResults'
 import { AI_POST_DELIMITER, parseAiPostOutput } from './aiPostOutputFormat'
 import './aiContentWorkspace.css'
@@ -35,7 +36,11 @@ function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause)
 }
 
-export function AiContentWorkspaceAgentBuilder() {
+interface AiContentWorkspaceProps {
+  onCreateImageForArticle?: (request: AiImageArticleRequest) => void
+  imageAttachment?: AiImageAttachment | null
+}
+export function AiContentWorkspaceAgentBuilder({onCreateImageForArticle,imageAttachment}: AiContentWorkspaceProps) {
   const [agentManagerOpen, setAgentManagerOpen] = useState(false)
   const [apiConnections, setApiConnections] = useState<AiApiConnectionView[]>([])
   const [connectionError, setConnectionError] = useState<string | null>(null)
@@ -473,6 +478,8 @@ export function AiContentWorkspaceAgentBuilder() {
           expectedCount={previewPostCount}
           actionLabel={previewActionVerb}
           incomingBatch={incomingBatch}
+          onCreateImageForArticle={onCreateImageForArticle}
+          imageAttachment={imageAttachment}
         />
       </div>
 

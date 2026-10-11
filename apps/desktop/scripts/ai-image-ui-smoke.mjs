@@ -72,6 +72,24 @@ try {
   await page.getByRole('button',{name:'Đóng ×'}).click()
   await page.setViewportSize({width:1280,height:720})
   await page.screenshot({path:resolve(root,'../../dist/ai-image-studio-1280.png'),fullPage:true})
+  // Integration: an unsaved article passes its current text to the image studio.
+  // Once images are saved, the exact draft gets its canonical image folder.
+  await page.getByRole('tab',{name:'Tạo bài bằng AI'}).click()
+  await page.locator('.ai-agent-output-bridge summary').click()
+  await page.locator('.ai-agent-output-body textarea').fill('Bài giới thiệu giày màu trắng, nền studio rõ nét.')
+  await page.locator('.ai-agent-output-body button').click()
+  await page.locator('.ai-agent-output-bridge summary').click()
+  await page.getByRole('button',{name:'Tạo ảnh cho bài'}).click()
+  await page.getByRole('tab',{name:'Tạo ảnh AI'}).waitFor({state:'visible'})
+  assert((await page.locator('#ai-image-prompt').inputValue()).includes('giày màu trắng'),
+    'AI image prompt must use the selected article content')
+  await page.getByRole('button',{name:'Lưu & gắn vào bài'}).click()
+  await page.locator('.ai-draft-media-config summary').click()
+  const folder=await page.locator('.ai-media-folder-row input').inputValue()
+  assert(folder==='D:\\PageAuto\\AIImages','Image folder must propagate back to the same draft: '+folder)
+  assert(await page.getByRole('tab',{name:'Tạo bài bằng AI'}).getAttribute('aria-selected')==='true',
+    'Saving/attaching returns to the article editor')
+  console.log('AI image-to-article attachment passed:',folder)
   console.log('AI image studio Windows smoke passed:',JSON.stringify(geom))
 } finally {
   await app?.close().catch(()=>undefined)

@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { decodeAiImage, generateAiImagesFromProvider, saveAiImageFiles } from './aiImageService'
+import { decodeAiImage, generateAiImagesFromProvider, outputFromNvidiaArtifact, saveAiImageFiles } from './aiImageService'
 
 const imageB64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/qT8AAAAASUVORK5CYII='
 const image = 'data:image/png;base64,' + imageB64
@@ -82,5 +82,35 @@ describe('Windows image export safety', () => {
     if (!firstFile) throw new Error('First file missing')
     expect(readFileSync(firstFile).subarray(0,8)).toEqual(Buffer.from([137,80,78,71,13,10,26,10]))
     await expect(saveAiImageFiles(dir,{images:[]})).rejects.toThrow('1 đến 40')
+  })
+})
+
+
+describe('NVIDIA hosted image NIM transport',()=>{
+  const nvidia={provider:'openai-compatible' as const,baseUrl:'https://integrate.api.nvidia.com/v1',apiKey:'nvidia-private-fixture'}
+  it('routes FLUX requests to NVIDIA Visual GenAI, not chat or OpenAI images',async()=>{
+    const requests:{url:string;init:RequestInit}[]=[]
+    const mock = vi.fn(async(url:string,init:RequestInit)=>{
+      requests.push({url,init})
+      return new Response(JSON.stringify({artifacts:[{base64:imageB64}]}))
+    }) as unknown as typeof fetch
+    const generated=await generateAiImagesFromProvider(nvidia,{...request,modelId:'black-forest-labs/flux.1-schnell',count:1,size:'1024x1024'},mock)
+    expect(generated[0]?.mimeType).toBe('image/png')
+    expect(requests[0]?.url).toBe('https://ai.api.nvidia.com/v1/genai/black-forest-labs/flux.1-schnell')
+    expect(requests[0]?.init.headers).toMatchObject({Authorization:'Bearer nvidia-private-fixture'})
+    expect(JSON.parse(String(requests[0]?.init.body))).toMatchObject({samples:1,seed:0,steps:4,prompt:request.prompt})
+    expect(JSON.stringify(requests[0]?.init.body)).not.toContain('nvidia-private-fixture')
+  })
+  it('rejects a text model and editing on NVIDIA preview before sending a request',async()=>{
+    const mock=vi.fn(async()=>new Response(JSON.stringify({artifacts:[{base64:imageB64}]}))) as unknown as typeof fetch
+    await expect(generateAiImagesFromProvider(nvidia,{...request,modelId:'meta/llama-3.2-11b-vision-instruct'},mock)).rejects.toThrow('không phải model tạo ảnh')
+    await expect(generateAiImagesFromProvider(nvidia,{...request,modelId:'black-forest-labs/flux.2-klein-4b',mode:'edit',source:asset},mock)).rejects.toThrow('preview')
+    await expect(generateAiImagesFromProvider(nvidia,{...request,modelId:'black-forest-labs/flux.1-schnell',size:'1536x1024'},mock))
+      .rejects.toThrow('1024')
+    expect(mock).not.toHaveBeenCalled()
+  })
+  it('rejects corrupt or absent NVIDIA artifacts, never silently accepts chat JSON',()=>{
+    expect(()=>outputFromNvidiaArtifact({choices:[{message:{content:'hello'}}]})).toThrow('artifacts')
+    expect(()=>outputFromNvidiaArtifact({artifacts:[{base64:'bm90LWFuLWltYWdl'}]})).toThrow('không trả ảnh')
   })
 })

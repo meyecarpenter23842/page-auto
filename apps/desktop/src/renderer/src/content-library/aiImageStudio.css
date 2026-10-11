@@ -18,6 +18,7 @@
 .ai-image-field{display:flex;flex-direction:column;gap:7px;min-width:0}
 .ai-image-field>label,.ai-image-field>strong,.ai-image-half-fields label{font-size:12px;font-weight:750}
 .ai-image-field small,.ai-image-half-fields small{color:var(--ai-img-muted);font-size:10px;line-height:1.5}
+.ai-image-field .ai-image-capability-error{color:#ef7777;font-weight:700}
 .ai-image-field textarea,.ai-image-field input,.ai-image-field select,.ai-image-half-fields select{
   box-sizing:border-box;width:100%;min-width:0;border:1px solid var(--ai-img-border);
   border-radius:9px;background:var(--ai-img-input);color:var(--ai-img-text);font:inherit;font-size:12px;

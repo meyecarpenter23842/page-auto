@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ContentLibraryImageConfig } from '../../../shared/contentLibrary'
+import type { AiImageArticleRequest, AiImageAttachment } from './aiImageArticleBridge'
 import {
   buildAiDraftBatch,
   CONTENT_LIBRARY_EXTERNAL_CHANGE_EVENT,
@@ -23,6 +24,8 @@ interface AiDraftResultsPanelProps {
   expectedCount: number
   actionLabel: string
   incomingBatch?: AiIncomingDraftBatch | null
+  onCreateImageForArticle?: ((request: AiImageArticleRequest) => void) | undefined
+  imageAttachment?: AiImageAttachment | null | undefined
 }
 
 interface BatchNotice {
@@ -41,7 +44,9 @@ function excerpt(value: string): string {
 export function AiDraftResultsPanel({
   expectedCount,
   actionLabel,
-  incomingBatch = null
+  incomingBatch = null,
+  onCreateImageForArticle,
+  imageAttachment = null
 }: AiDraftResultsPanelProps) {
   const [rawOutput, setRawOutput] = useState('')
   const [drafts, setDrafts] = useState<AiDraftResult[]>([])
@@ -139,6 +144,15 @@ export function AiDraftResultsPanel({
         : draft
     )))
   }
+
+  useEffect(() => {
+    if (!imageAttachment) return
+    setDrafts(current => current.map(draft => draft.id === imageAttachment.id
+      ? {...draft,image:{...draft.image,folderPath:imageAttachment.folderPath,imagesPerPost:1},
+          status:'ready',error:null} : draft))
+    setActiveId(imageAttachment.id)
+    setNotice({kind:'success',message:'Đã gắn folder ảnh AI vào bài đang chọn. Lưu bài để cập nhật Thư viện.'})
+  }, [imageAttachment?.version])
 
   const pickImageFolder = async () => {
     if (!activeDraft) return
@@ -285,6 +299,10 @@ export function AiDraftResultsPanel({
               </div>
             </div>
           </details>
+          {onCreateImageForArticle ? <button type="button" disabled={!activeDraft || saving}
+            onClick={() => {if(activeDraft) onCreateImageForArticle({id:activeDraft.id,content:activeDraft.content})}}>
+            Tạo ảnh cho bài
+          </button> : null}
           <button type="button" disabled={!drafts.length || saving} onClick={clearResults}>Xóa kết quả</button>
           <button className="ai-save-selected" type="button" disabled={saving || savableCount === 0} onClick={() => void saveSelected()}>
             {saving ? 'Đang lưu...' : groupedRandomDraft ? 'Lưu bài Random' : 'Lưu ' + savableCount + ' bài đã chọn'}
