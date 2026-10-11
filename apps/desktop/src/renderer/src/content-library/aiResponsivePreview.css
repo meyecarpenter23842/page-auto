@@ -94,8 +94,13 @@
 }
 
 @media (max-width: 1120px) {
-  /* Compact desktop: reserve at least ~500px for the result/editor at a 766px work area. */
+  /* Size the setting column from remaining space so the preview gets priority.
+     At a 766px work area: 266px controls + 10px divider + 490px preview. */
   .workspace-content-library .ai-content-layout.ai-resizable-layout {
-    grid-template-columns: minmax(260px, min(var(--ai-compose-width, 400px), 33%)) 10px minmax(0, 1fr) !important;
+    grid-template-columns: minmax(210px, min(var(--ai-compose-width, 400px), calc(100% - 500px))) 10px minmax(0, 1fr) !important;
+  }
+
+  .workspace-content-library .ai-content-layout.ai-resizable-layout > .ai-compose-panel {
+    min-width: 0;
   }
 }
