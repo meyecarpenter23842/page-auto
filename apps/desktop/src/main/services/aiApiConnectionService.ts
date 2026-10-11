@@ -7,7 +7,7 @@ import {
   validateAiApiDraft, validateAiApiEndpoint, validateAiApiModelId, validateAiModelTestTimeout
 } from '../../shared/aiApiConnections'
 import { assertGenerateAiPostsInput, joinAiPosts, type GenerateAiPostsInput, type GenerateAiPostsResult } from '../../shared/aiAgents'
-import { buildAiPostPrompt, parseAiPostOutput } from './aiPostPrompt'
+import { aiPostLengthProfile, buildAiPostPrompt, parseAiPostOutput, planAiPostRequests } from './aiPostPrompt'
 import { generateAiImagesFromProvider } from './aiImageService'
 import type { GenerateAiImagesInput, AiImageOutput } from '../../shared/aiImages'
 
@@ -262,15 +262,22 @@ export class AiApiConnectionService {
     }
     const data = await this.request(provider,baseUrl,apiKey,path,'POST',body,timeoutMs,externalSignal)
     let output: unknown
+    let finishReason: unknown
     if (provider === 'gemini') {
       const candidates = data.candidates
       const first = Array.isArray(candidates) ? candidates[0] as {content?:{parts?:{text?:string}[]}}|undefined : undefined
       output = first?.content?.parts?.map((x)=>x.text??'').join('')
+      finishReason = (first as {finishReason?:unknown}|undefined)?.finishReason
     } else if (provider === 'anthropic') {
       output = textContent(data.content)
+      finishReason = data.stop_reason
     } else {
-      const first = Array.isArray(data.choices) ? data.choices[0] as {message?:{content?:unknown}}|undefined : undefined
+      const first = Array.isArray(data.choices) ? data.choices[0] as {message?:{content?:unknown};finish_reason?:unknown}|undefined : undefined
       output = textContent(first?.message?.content)
+      finishReason = first?.finish_reason
+    }
+    if (finishReason === 'MAX_TOKENS' || finishReason === 'length' || finishReason === 'max_tokens') {
+      throw new Error('Model đã dừng vì hết output tokens; bài có thể bị cắt. Không nhận nội dung thiếu. Hãy thử tạo ít bài hơn hoặc đổi model có giới hạn cao hơn.')
     }
     if (typeof output !== 'string' || !output.trim()) throw new Error('Model không trả nội dung văn bản. Kiểm tra khả năng của model.')
     return output.trim()
@@ -291,14 +298,27 @@ export class AiApiConnectionService {
     assertGenerateAiPostsInput(input)
     if (!input.agentId.startsWith('api:')) throw new Error('Không phải kết nối API.')
     const stored = this.byId(input.agentId.slice(4))
-    const prompt = buildAiPostPrompt(input)
-    const text = await this.completion(stored.provider,stored.baseUrl,stored.apiKey,stored.modelId,prompt,Math.min(8192,Math.max(512,input.postCount*450)))
-    const posts = parseAiPostOutput(text)
-    if (!posts.length) throw new Error('Model không trả bài viết nào.')
+    const plan = planAiPostRequests(input.postCount,input.length)
+    const posts: string[] = []
+    for (const [index,batch] of plan.entries()) {
+      const prompt = buildAiPostPrompt({...input,postCount:batch.postCount})
+      // Keep exactly the chosen provider/model. No silent model switching or paid retries.
+      const text = await this.completion(
+        stored.provider,stored.baseUrl,stored.apiKey,stored.modelId,prompt,batch.maxTokens
+      )
+      const created = parseAiPostOutput(text)
+      if (!created.length) throw new Error(`Lượt ${index+1}/${plan.length}: Model không trả bài viết nào.`)
+      posts.push(...created)
+    }
+    const profile = aiPostLengthProfile(input.length)
+    const tooShort = posts.filter(post=>post.length < profile.minChars).length
+    const warnings: string[] = []
+    if (posts.length !== input.postCount) warnings.push(`Yêu cầu ${input.postCount} bài, model trả về ${posts.length} bài.`)
+    if (tooShort) warnings.push(`${tooShort} bài ngắn hơn mức ${profile.minChars} ký tự của lựa chọn ${input.length}. Model chưa tuân thủ độ dài; kiểm tra nội dung trước khi lưu.`)
     return {
       agentId: input.agentId, model: stored.modelId, posts,
       output: joinAiPosts(posts),
-      warning: posts.length === input.postCount ? null : `Yêu cầu ${input.postCount} bài, model trả về ${posts.length} bài.`
+      warning: warnings.length ? warnings.join(' ') : null
     }
   }
 }

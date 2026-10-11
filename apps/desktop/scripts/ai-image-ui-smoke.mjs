@@ -56,6 +56,7 @@ try {
   await page.locator('#ai-image-prompt').fill('White canvas shoe in modern studio lighting')
   await page.getByRole('button',{name:/Tải model/}).click()
   const models=page.getByRole('combobox',{name:'Danh sách Model do API trả về'})
+  await models.locator('option').nth(3).waitFor({state:'attached'})
   assert(await models.locator('option').count()===4, 'Show all 3 model IDs including text/unknown; plus placeholder')
   await page.locator('#ai-image-model').fill('vendor/manual-custom-id')
   assert(await page.locator('#ai-image-model').inputValue()==='vendor/manual-custom-id',
@@ -111,6 +112,7 @@ try {
   assert(await page.locator('#ai-image-model').inputValue()==='', 'Changing API must not silently pick a model')
   await page.getByRole('button',{name:/Tải model/}).click()
   const nvidiaModels=page.getByRole('combobox',{name:'Danh sách Model do API trả về'})
+  await nvidiaModels.locator('option').nth(2).waitFor({state:'attached'})
   assert(await nvidiaModels.locator('option').count()===3, 'NVIDIA API model list must not be replaced with a FLUX whitelist')
   await nvidiaModels.selectOption('meta/llama-3.2-11b-vision-instruct')
   assert(await page.locator('#ai-image-model').inputValue()==='meta/llama-3.2-11b-vision-instruct',
