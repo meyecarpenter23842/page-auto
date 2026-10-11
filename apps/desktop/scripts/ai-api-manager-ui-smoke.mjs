@@ -47,7 +47,10 @@ try {
   await page.setViewportSize({width:1084,height:655})
   const editorBounds = await page.locator('.ai-preview-panel').boundingBox()
   assert(editorBounds && editorBounds.width >= 480,
-    'Result editor must remain usable at the compact Windows viewport')
+    'Result editor must remain usable at the compact Windows viewport: ' + JSON.stringify({
+      editorBounds,
+      layout: await page.locator('.ai-content-layout').boundingBox()
+    }))
   await page.getByRole('button',{name:/Quản lý AI/}).click()
   const modal=page.getByRole('dialog',{name:'Quản lý AI'})
   await modal.waitFor({state:'visible'})
