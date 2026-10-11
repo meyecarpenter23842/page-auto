@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react'
 import { AiContentWorkspaceAgentBuilder } from './AiContentWorkspaceAgentBuilder'
+import { AiImageStudio } from './AiImageStudio'
 import { CONTENT_LIBRARY_EXTERNAL_CHANGE_EVENT } from './aiDraftResults'
 import { ContentLibraryWorkspace } from './ContentLibraryWorkspace'
 import { ScanDatasetLibrary } from './ScanDatasetLibrary'
 import './contentLibraryHub.css'
 import './contentLibraryDarkTheme.css'
 
-type ContentLibraryTab = 'posts' | 'scanner' | 'ai'
+type ContentLibraryTab = 'posts' | 'scanner' | 'ai' | 'images'
 
 export function ContentLibraryHub() {
   const [activeTab, setActiveTab] = useState<ContentLibraryTab>('posts')
@@ -39,12 +40,16 @@ export function ContentLibraryHub() {
         <button id="content-library-tab-ai" className={activeTab === 'ai' ? 'active' : ''} type="button" role="tab" aria-controls="content-library-panel-ai" aria-selected={activeTab === 'ai'} onClick={() => setActiveTab('ai')}>
           <span aria-hidden="true">✦</span>Tạo bài bằng AI
         </button>
+        <button id="content-library-tab-images" className={activeTab === 'images' ? 'active' : ''} type="button" role="tab" aria-controls="content-library-panel-images" aria-selected={activeTab === 'images'} onClick={() => setActiveTab('images')}>
+          <span aria-hidden="true">✧</span>Tạo ảnh AI
+        </button>
       </div>
 
       <div className="content-library-hub-body">
         <div id="content-library-panel-posts" role="tabpanel" aria-labelledby="content-library-tab-posts" hidden={activeTab !== 'posts'}><ContentLibraryWorkspace key={libraryRevision} /></div>
         <div id="content-library-panel-scanner" role="tabpanel" aria-labelledby="content-library-tab-scanner" hidden={activeTab !== 'scanner'}><ScanDatasetLibrary /></div>
         <div id="content-library-panel-ai" role="tabpanel" aria-labelledby="content-library-tab-ai" hidden={activeTab !== 'ai'}><AiContentWorkspaceAgentBuilder /></div>
+        <div id="content-library-panel-images" role="tabpanel" aria-labelledby="content-library-tab-images" hidden={activeTab !== 'images'}><AiImageStudio /></div>
       </div>
     </section>
   )

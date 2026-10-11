@@ -1,0 +1,79 @@
+import { mkdirSync,mkdtempSync,rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join,resolve } from 'node:path'
+import { createRequire } from 'node:module'
+import { _electron as electron } from 'playwright-core'
+const require=createRequire(import.meta.url)
+const root=resolve(import.meta.dirname,'..')
+const data=mkdtempSync(join(tmpdir(),'page-auto-ai-image-'))
+mkdirSync(resolve(root,'../../dist'),{recursive:true})
+const png='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/qT8AAAAASUVORK5CYII='
+let app
+const assert=(condition,message)=>{if(!condition)throw new Error(message)}
+try {
+  app=await electron.launch({
+    executablePath:require('electron'),args:[join(root,'out','main','index.js')],cwd:root,
+    env:{...process.env,PAGE_AUTO_DATA_DIR:data,PAGE_AUTO_PWA_RELAY_DISABLED:'1'}
+  })
+  const page=await app.firstWindow()
+  await page.locator('.app-shell').waitFor({state:'visible',timeout:30000})
+  await page.locator('.sidebar-nav').getByRole('button',{name:'Thư viện',exact:true}).click()
+  await page.getByRole('tab',{name:'Tạo ảnh AI'}).click()
+  await page.locator('.ai-image-studio').waitFor({state:'visible'})
+  // Only isolated Main IPC fixture handlers are replaced, never real provider credentials.
+  await app.evaluate(({ipcMain})=>{
+    const tiny='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/qT8AAAAASUVORK5CYII='
+    const connection={id:'00000000-0000-4000-8000-000000000000',name:'Image test provider',
+      provider:'openai-compatible',baseUrl:'https://api.openai.com/v1',modelId:'gpt-image-1',
+      createdAt:0,isDefault:true}
+    for(const [key,callback] of [
+      ['ai-api:list',()=>[connection]],
+      ['ai-api:discover',()=>[{id:'gpt-image-1',label:'gpt-image-1'}]],
+      ['ai-image:pick-source',()=>({name:'product.png',dataUrl:tiny})],
+      ['ai-image:choose-folder',()=> 'D:\\PageAuto\\AIImages'],
+      ['ai-image:generate',(_event,input)=> {
+        if(!input.prompt||!input.modelId||input.count<1||input.count>4)throw new Error('Invalid fixture generation request')
+        if(input.mode==='product'&&(!input.source||!input.product))throw new Error('Missing product inputs')
+        return Array.from({length:input.count},()=>({dataUrl:tiny,mimeType:'image/png'}))
+      }],
+      ['ai-image:save',(_event,input)=>input.images.map((x,index)=>'D:\\PageAuto\\AIImages\\image-'+index+'.png')]
+    ]) {
+      ipcMain.removeHandler(key)
+      ipcMain.handle(key,callback)
+    }
+  })
+  await page.setViewportSize({width:1600,height:900})
+  await page.locator('.ai-image-control-pair button').first().click()
+  await page.locator('#ai-image-connection').selectOption('00000000-0000-4000-8000-000000000000')
+  await page.locator('#ai-image-prompt').fill('White canvas shoe in modern studio lighting')
+  await page.getByRole('button',{name:/Tải model/}).click()
+  await page.getByRole('button',{name:/Ghép sản phẩm/}).click()
+  await page.getByRole('button',{name:/Chọn ảnh từ máy/}).click()
+  await page.getByRole('button',{name:/Chọn ảnh sản phẩm/}).click()
+  await page.getByRole('button',{name:/Tạo 4 ảnh bằng AI/}).click()
+  await page.locator('.ai-image-tile').first().waitFor({state:'visible'})
+  assert(await page.locator('.ai-image-tile').count()===4,'Image gallery must contain 4 real img results')
+  const geom=await page.evaluate(()=>{
+    const panel=document.querySelector('.ai-image-settings').getBoundingClientRect()
+    const gallery=document.querySelector('.ai-image-gallery-pane').getBoundingClientRect()
+    const tiles=[...document.querySelectorAll('.ai-image-tile')].map(x=>x.getBoundingClientRect())
+    return {panel:{x:panel.x,y:panel.y,w:panel.width,h:panel.height},
+      gallery:{x:gallery.x,y:gallery.y,w:gallery.width,h:gallery.height},
+      tiles:tiles.map(x=>({x:x.x,y:x.y,w:x.width,h:x.height}))}
+  })
+  assert(geom.gallery.x>geom.panel.x+geom.panel.w,'Gallery must appear to the right of settings')
+  assert(geom.tiles[1].x>geom.tiles[0].x && Math.abs(geom.tiles[1].y-geom.tiles[0].y)<3,'Gallery must use 2-column cards')
+  await page.screenshot({path:resolve(root,'../../dist/ai-image-studio-1600.png'),fullPage:true})
+  await page.getByRole('button',{name:'Chọn thư mục…'}).click()
+  await page.getByRole('button',{name:'Lưu 4 ảnh đã chọn'}).click()
+  await page.getByRole('status').getByText(/Đã lưu 4 file ảnh thật/).waitFor({state:'visible'})
+  await page.getByRole('button',{name:'Xem lớn ảnh 1'}).click()
+  assert(await page.getByRole('dialog',{name:'Xem ảnh AI kích thước lớn'}).isVisible(),'Image preview must open')
+  await page.getByRole('button',{name:'Đóng ×'}).click()
+  await page.setViewportSize({width:1280,height:720})
+  await page.screenshot({path:resolve(root,'../../dist/ai-image-studio-1280.png'),fullPage:true})
+  console.log('AI image studio Windows smoke passed:',JSON.stringify(geom))
+} finally {
+  await app?.close().catch(()=>undefined)
+  rmSync(data,{recursive:true,force:true})
+}

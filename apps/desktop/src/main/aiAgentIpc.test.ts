@@ -23,6 +23,7 @@ vi.mock('electron', () => ({
 }))
 import { registerAiAgentIpcHandlers } from './aiAgentIpc'
 import { AiApiConnectionService } from './services/aiApiConnectionService'
+import { AI_IMAGE_IPC } from '../shared/aiImages'
 
 const dirs: string[] = []
 afterEach(() => {
@@ -49,7 +50,8 @@ describe('AI API-only IPC registration', () => {
       expect(generate).toBeDefined()
       expect(() => generate?.({}, { agentId: 'old-google-agent-123' })).toThrow('đã được gỡ')
       expect(mock.handlers.has('ai-api:cancel-test')).toBe(true)
-      expect(mock.handlers.size).toBe(9)
+      for (const channel of Object.values(AI_IMAGE_IPC)) expect(mock.handlers.has(channel)).toBe(true)
+      expect(mock.handlers.size).toBe(13)
     } finally {
       handlers.dispose()
       expect(mock.handlers.size).toBe(0)

@@ -121,6 +121,18 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: AI image studio Windows UI smoke
+        run: node apps/desktop/scripts/ai-image-ui-smoke.mjs
+
+      - name: Upload AI image studio UI evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: PageAuto-ai-image-studio-${{ github.sha }}
+          path: dist/ai-image-studio-*.png
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: R5 Windows workspace fixture QA
         run: node apps/desktop/scripts/windows-r5-ui-smoke.mjs
 

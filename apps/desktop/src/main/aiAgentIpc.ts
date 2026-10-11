@@ -1,10 +1,14 @@
-import { ipcMain } from 'electron'
+import { dialog, ipcMain } from 'electron'
+import { readFile, stat } from 'node:fs/promises'
+import { basename, extname } from 'node:path'
 import type Database from 'better-sqlite3'
 import { AI_AGENT_IPC, type GenerateAiPostsInput } from '../shared/aiAgents'
 import {
   AI_API_IPC, type AiApiConnectionDraft, type AiApiDiscoveryInput, type AiApiTestInput
 } from '../shared/aiApiConnections'
 import { AiApiConnectionService } from './services/aiApiConnectionService'
+import { AI_IMAGE_IPC, MAX_IMAGE_SOURCE_BYTES, type GenerateAiImagesInput, type SaveAiImagesInput } from '../shared/aiImages'
+import { saveAiImageFiles } from './services/aiImageService'
 
 export interface AiAgentIpcRuntime {
   dispose: () => void
@@ -17,6 +21,8 @@ export interface AiAgentIpcRuntime {
 export function registerAiAgentIpcHandlers(database: Database.Database): AiAgentIpcRuntime {
   const apis = new AiApiConnectionService(database)
   const activeTests = new Map<string, AbortController>()
+  const outputFolders = new Map<number,string>()
+  const activeImageRequests = new Set<number>()
 
   ipcMain.handle(AI_API_IPC.list, () => apis.list())
   ipcMain.handle(AI_API_IPC.discover, (_event, payload: AiApiDiscoveryInput) => apis.discover(payload))
@@ -56,10 +62,53 @@ export function registerAiAgentIpcHandlers(database: Database.Database): AiAgent
     return apis.generate(input)
   })
 
+  ipcMain.handle(AI_IMAGE_IPC.pickSource, async () => {
+    const chosen = await dialog.showOpenDialog({
+      title:'Chọn ảnh đầu vào cho AI',properties:['openFile'],
+      filters:[{name:'Ảnh PNG, JPEG, WEBP',extensions:['png','jpg','jpeg','webp']}]
+    })
+    const path = chosen.filePaths[0]
+    if (chosen.canceled || !path) return null
+    const info = await stat(path)
+    if (!info.isFile() || !info.size || info.size > MAX_IMAGE_SOURCE_BYTES) {
+      throw new Error('Ảnh đầu vào phải nhỏ hơn 10 MB.')
+    }
+    const bytes = await readFile(path)
+    if (!bytes.length || bytes.length > MAX_IMAGE_SOURCE_BYTES) {
+      throw new Error('Ảnh đầu vào phải nhỏ hơn 10 MB.')
+    }
+    const extension = extname(path).toLowerCase()
+    const mime = extension === '.png' ? 'image/png' : extension === '.webp' ? 'image/webp' : 'image/jpeg'
+    // Signature and MIME validation is repeated by the service before sending.
+    return {name:basename(path),dataUrl:'data:'+mime+';base64,'+bytes.toString('base64')}
+  })
+  ipcMain.handle(AI_IMAGE_IPC.chooseFolder, async (event) => {
+    const chosen = await dialog.showOpenDialog({title:'Chọn ổ đĩa hoặc thư mục lưu ảnh AI',properties:['openDirectory','createDirectory']})
+    const path = chosen.filePaths[0]
+    if (chosen.canceled || !path) return null
+    outputFolders.set(event.sender.id,path)
+    return path
+  })
+  ipcMain.handle(AI_IMAGE_IPC.generate, async (event,input: GenerateAiImagesInput) => {
+    const owner = event.sender.id
+    if (activeImageRequests.has(owner)) throw new Error('Đang tạo ảnh. Vui lòng chờ lượt hiện tại.')
+    activeImageRequests.add(owner)
+    try { return await apis.generateImages(input) }
+    finally { activeImageRequests.delete(owner) }
+  })
+  ipcMain.handle(AI_IMAGE_IPC.save, async (event,input: SaveAiImagesInput) => {
+    const folder = outputFolders.get(event.sender.id)
+    if (!folder) throw new Error('Chọn thư mục lưu ảnh trước khi lưu.')
+    return saveAiImageFiles(folder,input)
+  })
+
   return {
     dispose: () => {
       for (const controller of activeTests.values()) controller.abort()
       activeTests.clear()
+      outputFolders.clear()
+      activeImageRequests.clear()
+      for (const channel of Object.values(AI_IMAGE_IPC)) ipcMain.removeHandler(channel)
       ipcMain.removeHandler(AI_AGENT_IPC.generatePosts)
       for (const channel of Object.values(AI_API_IPC)) ipcMain.removeHandler(channel)
     }

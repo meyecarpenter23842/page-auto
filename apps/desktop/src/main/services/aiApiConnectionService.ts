@@ -8,6 +8,8 @@ import {
 } from '../../shared/aiApiConnections'
 import { assertGenerateAiPostsInput, joinAiPosts, type GenerateAiPostsInput, type GenerateAiPostsResult } from '../../shared/aiAgents'
 import { buildAiPostPrompt, parseAiPostOutput } from './aiPostPrompt'
+import { generateAiImagesFromProvider } from './aiImageService'
+import type { GenerateAiImagesInput, AiImageOutput } from '../../shared/aiImages'
 
 const KEY = 'ai.api.connections.encrypted.v1'
 const MAX_CONNECTIONS = 30
@@ -282,6 +284,10 @@ export class AiApiConnectionService {
       provider, baseUrl, apiKey, input.modelId, 'Trả lời ngắn gọn một từ: OK', 256, timeoutMs, externalSignal
     )
     return Boolean(result)
+  }
+  async generateImages(input: GenerateAiImagesInput): Promise<AiImageOutput[]> {
+    const stored = this.byId(input.connectionId)
+    return generateAiImagesFromProvider(stored,input,this.fetchImpl)
   }
   async generate(input: GenerateAiPostsInput): Promise<GenerateAiPostsResult> {
     assertGenerateAiPostsInput(input)
