@@ -94,7 +94,8 @@
 }
 
 @media (max-width: 1120px) {
-  .workspace-content-library .ai-content-layout {
-    grid-template-columns: minmax(280px, min(var(--ai-compose-width, 400px), 34%)) 12px minmax(0, 1fr);
+  /* Compact desktop: reserve at least ~500px for the result/editor at a 766px work area. */
+  .workspace-content-library .ai-content-layout.ai-resizable-layout {
+    grid-template-columns: minmax(260px, min(var(--ai-compose-width, 400px), 33%)) 10px minmax(0, 1fr) !important;
   }
 }
